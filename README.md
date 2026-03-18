@@ -20,9 +20,7 @@ Mbeditor exposes read and write access to your Rails application directory over 
 1. Add the gem to the host app Gemfile in development only:
 
 ```ruby
-group :development do
-  gem "mbeditor"
-end
+gem 'mbeditor', group: :development
 ```
 
 2. Install dependencies:
@@ -50,7 +48,7 @@ end
 
 5. Boot your app and open `/mbeditor`.
 
-## Host Requirements
+## Host Requirements (Optional)
 The gem keeps host/tooling responsibilities in the host app:
 - `rubocop` and `rubocop-rails` gems (optional, required for lint/format endpoints)
 - `git` installed in environment (for Git panel data)
