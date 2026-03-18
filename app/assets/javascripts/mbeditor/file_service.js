@@ -47,6 +47,10 @@ var FileService = (function () {
     return axios.post(basePath() + '/reload').then(function(res) { return res.data; });
   }
 
+  function ping() {
+    return axios.get(basePath() + '/ping', { timeout: 4000 }).then(function(res) { return res.data; });
+  }
+
   function getState() {
     return axios.get(basePath() + '/state').then(function(res) { return res.data; });
   }
@@ -67,6 +71,7 @@ var FileService = (function () {
     lintFile: lintFile,
     formatFile: formatFile,
     reloadRails: reloadRails,
+    ping: ping,
     getState: getState,
     saveState: saveState
   };

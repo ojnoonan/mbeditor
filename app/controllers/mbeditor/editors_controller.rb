@@ -24,6 +24,11 @@ module Mbeditor
       render layout: "mbeditor/application"
     end
 
+    # GET /mbeditor/ping — heartbeat for the frontend connectivity check
+    def ping
+      render json: { ok: true }
+    end
+
     # GET /mbeditor/workspace — metadata about current workspace root
     def workspace
       render json: {

@@ -25,6 +25,7 @@ const MbeditorApp = () => {
   const [draggedTab, setDraggedTab] = useState(null);
   const [dragOverPaneId, setDragOverPaneId] = useState(null);
   const [showGitPanel, setShowGitPanel] = useState(false);
+  const [serverOnline, setServerOnline] = useState(true);
   const [collapsedSections, setCollapsedSections] = useState({
     openEditors: false,
     projects: false
@@ -276,6 +277,25 @@ const MbeditorApp = () => {
       document.body.style.userSelect = '';
     };
   }, [showGitPanel]);
+
+  // Heartbeat — poll /ping every 5s and reflect connectivity in the status bar
+  useEffect(() => {
+    var wasOnline = true;
+    var interval = setInterval(function() {
+      FileService.ping().then(function() {
+        if (!wasOnline) {
+          wasOnline = true;
+          setServerOnline(true);
+        }
+      }).catch(function() {
+        if (wasOnline) {
+          wasOnline = false;
+          setServerOnline(false);
+        }
+      });
+    }, 5000);
+    return function() { clearInterval(interval); };
+  }, []);
 
   const handleSelectFile = (path, name, line) => {
     TabManager.openTab(path, name, line);
@@ -1168,7 +1188,13 @@ const MbeditorApp = () => {
             <i className="fas fa-code-branch"></i> {state.gitBranch}
           </div>
         )}
-        
+
+        {!serverOnline && (
+          <div className="statusbar-offline">
+            <i className="fas fa-exclamation-triangle"></i> Server offline
+          </div>
+        )}
+
         <div className={`statusbar-msg ${state.statusMessage.kind}`}>
           {state.statusMessage.text}
         </div>
