@@ -305,6 +305,126 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # index (HTML smoke test)
+    # ---------------------------------------------------------------------------
+
+    test "index renders the IDE shell as HTML" do
+      get "/mbeditor"
+      assert_response :ok
+      assert_includes response.content_type, "text/html"
+      assert_match "mbeditor", response.body
+    end
+
+    # ---------------------------------------------------------------------------
+    # git_status
+    # ---------------------------------------------------------------------------
+
+    test "git_status returns expected JSON keys" do
+      get "/mbeditor/git_status"
+      assert_response :ok
+      assert json.key?("ok")
+      assert json.key?("files")
+      assert json.key?("branch")
+      assert_kind_of Array, json["files"]
+    end
+
+    # ---------------------------------------------------------------------------
+    # git_info
+    # ---------------------------------------------------------------------------
+
+    test "git_info returns error JSON in a non-git workspace" do
+      get "/mbeditor/git_info"
+      # temp workspace is not a git repo — controller returns 422
+      assert_response :unprocessable_entity
+      assert json.key?("error")
+    end
+
+    # ---------------------------------------------------------------------------
+    # lint
+    # ---------------------------------------------------------------------------
+
+    test "lint returns 403 for path traversal" do
+      post "/mbeditor/lint", params: { path: "../../evil.rb", code: "x = 1" }, as: :json
+      assert_response :forbidden
+    end
+
+    test "lint returns markers array for a valid Ruby file" do
+      Mbeditor.configure { |c| c.rubocop_command = "bundle exec rubocop" }
+      post "/mbeditor/lint",
+           params: { path: "app/models/user.rb", code: "class User; end\n" },
+           as: :json
+      assert_response :ok
+      assert json.key?("markers"), "response should have markers key"
+      assert_kind_of Array, json["markers"]
+    end
+
+    test "lint returns empty markers for clean Ruby code" do
+      Mbeditor.configure { |c| c.rubocop_command = "bundle exec rubocop" }
+      clean_code = "# frozen_string_literal: true\n\nclass User\nend\n"
+      post "/mbeditor/lint",
+           params: { path: "app/models/user.rb", code: clean_code },
+           as: :json
+      assert_response :ok
+      assert_equal [], json["markers"]
+    end
+
+    # ---------------------------------------------------------------------------
+    # format_file
+    # ---------------------------------------------------------------------------
+
+    test "format_file returns 403 for path traversal" do
+      post "/mbeditor/format", params: { path: "../../evil.rb" }, as: :json
+      assert_response :forbidden
+    end
+
+    test "format_file returns corrected content for a Ruby file" do
+      Mbeditor.configure { |c| c.rubocop_command = "bundle exec rubocop" }
+      unformatted = "x=1\n"
+      File.write(File.join(@workspace, "app", "models", "user.rb"), unformatted)
+
+      post "/mbeditor/format", params: { path: "app/models/user.rb" }, as: :json
+      assert_response :ok
+      assert json.key?("content"), "response should have content key"
+      assert_kind_of String, json["content"]
+    end
+
+    # ---------------------------------------------------------------------------
+    # monaco_asset
+    # ---------------------------------------------------------------------------
+
+    test "monaco_asset serves an existing Monaco file" do
+      get "/mbeditor/monaco-editor/vs/loader.js"
+      assert_response :ok
+      assert_includes response.content_type, "javascript"
+    end
+
+    test "monaco_asset returns 404 for a missing file" do
+      get "/mbeditor/monaco-editor/vs/nonexistent.js"
+      assert_response :not_found
+    end
+
+    test "monaco_asset returns 404 for a path traversal attempt" do
+      get "/mbeditor/monaco-editor/../../etc/passwd"
+      assert_response :not_found
+    end
+
+    test "monaco_asset serves a language file" do
+      get "/mbeditor/monaco-editor/vs/basic-languages/ruby/ruby.js"
+      assert_response :ok
+      assert_includes response.content_type, "javascript"
+    end
+
+    # ---------------------------------------------------------------------------
+    # monaco_worker
+    # ---------------------------------------------------------------------------
+
+    test "monaco_worker serves the worker JS file" do
+      get "/mbeditor/monaco_worker.js"
+      assert_response :ok
+      assert_includes response.content_type, "javascript"
+    end
+
+    # ---------------------------------------------------------------------------
     # Environment gating
     # ---------------------------------------------------------------------------
 
