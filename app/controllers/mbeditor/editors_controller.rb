@@ -17,6 +17,7 @@ module Mbeditor
 
     IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
     MAX_OPEN_FILE_SIZE_BYTES = 5 * 1024 * 1024
+    RUBOCOP_TIMEOUT_SECONDS = 15
 
     # GET /mbeditor — renders the IDE shell
     def index
@@ -340,7 +341,7 @@ module Mbeditor
 
       cmd = rubocop_command + ["--no-server", "--cache", "false", "--stdin", filename, "--format", "json", "--no-color", "--force-exclusion"]
       env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
-      output, _err, _status = Open3.capture3(env, *cmd, stdin_data: code)
+      output = run_with_timeout(env, cmd, stdin_data: code)
 
       idx = output.index("{")
       result = idx ? JSON.parse(output[idx..]) : {}
@@ -449,6 +450,32 @@ module Mbeditor
           name == pattern || relative_path.split("/").include?(pattern)
         end
       end
+    end
+
+    def run_with_timeout(env, cmd, stdin_data:)
+      output = +""
+      timed_out = false
+
+      Open3.popen3(env, *cmd) do |stdin, stdout, _stderr, wait_thr|
+        stdin.write(stdin_data)
+        stdin.close
+
+        timer = Thread.new do
+          sleep RUBOCOP_TIMEOUT_SECONDS
+          timed_out = true
+          Process.kill('KILL', wait_thr.pid)
+        rescue Errno::ESRCH
+          nil
+        end
+
+        output = stdout.read
+        wait_thr.value
+        timer.kill
+      end
+
+      raise "RuboCop timed out after #{RUBOCOP_TIMEOUT_SECONDS} seconds" if timed_out
+
+      output
     end
 
     def cop_severity(severity)
