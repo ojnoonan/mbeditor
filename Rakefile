@@ -3,7 +3,13 @@ require 'rake/testtask'
 
 Rake::TestTask.new(:test) do |t|
   t.libs << 'test'
-  t.test_files = FileList['test/**/*_test.rb']
+  t.test_files = FileList['test/controllers/**/*_test.rb']
+  t.verbose = false
+end
+
+Rake::TestTask.new(:system_test) do |t|
+  t.libs << 'test'
+  t.test_files = FileList['test/system/**/*_test.rb']
   t.verbose = false
 end
 
