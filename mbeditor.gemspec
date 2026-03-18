@@ -25,7 +25,6 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency "rails", ">= 7.1", "< 9.0"
   spec.add_dependency "sprockets-rails", ">= 3.4"
-  spec.add_dependency "babel-transpiler", "~> 0.7"
 
   spec.add_development_dependency "rubocop", "~> 1.80"
   spec.add_development_dependency "rubocop-rails", "~> 2.33"

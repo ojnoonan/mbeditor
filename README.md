@@ -55,9 +55,26 @@ The gem keeps host/tooling responsibilities in the host app:
 
 Everything else is intended to be packaged in the gem.
 
+### Syntax Highlighting Support
 Monaco runtime assets are served from the engine route namespace (`/mbeditor/monaco-editor/*` and `/mbeditor/monaco_worker.js`).
-For local development, the controller falls back to host `public/monaco-editor` and `public/monaco_worker.js` if packaged engine assets are not present yet.
-If a requested Monaco runtime file is still missing, mbeditor returns 404.
+The gem includes syntax highlighting for common Rails and React development file types:
+
+**Web & Template Languages:**
+- **Ruby** (.rb, Gemfile, gemspec, Rakefile)
+- **HTML** 
+- **ERB** (.html.erb, .erb) — Handlebars-based template syntax
+- **HAML** (.haml) — Pug-based template syntax
+- **CSS** and **SCSS** stylesheets
+
+**JavaScript & React:**
+- **JavaScript** (.js, .jsx)
+- **TypeScript** for JSX with full language server support
+
+**Configuration & Documentation:**
+- **YAML** (.yml, .yaml)
+- **Markdown** (.md)
+
+These language modules are packaged locally with the gem for true offline operation. No network fallback is needed—all highlighting works without internet connectivity.
 
 ## Configuration
 Configure environments/workspace root in an initializer:

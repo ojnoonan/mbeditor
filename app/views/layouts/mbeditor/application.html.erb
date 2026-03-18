@@ -54,18 +54,6 @@
 
     // Wait for Monaco to load before initializing application scripts
     require(['vs/editor/editor.main'], function() {
-      // Disable Monaco's built-in JS/TS workers — they can't parse JSX and throw false-positive errors
-      if (monaco && monaco.languages && monaco.languages.typescript) {
-        monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
-          noSemanticValidation: true,
-          noSyntaxValidation: true
-        });
-        monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
-          noSemanticValidation: true,
-          noSyntaxValidation: true
-        });
-      }
-
       var appScript = document.createElement('script');
       appScript.src = '<%= asset_path("mbeditor/application.js") %>';
       appScript.onload = function() {
