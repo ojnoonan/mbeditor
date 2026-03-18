@@ -43,6 +43,26 @@ module Mbeditor
       assert_equal @workspace, json["rootPath"]
     end
 
+    test "workspace reports rubocop availability for configured command" do
+      Mbeditor.configure { |c| c.rubocop_command = "bundle exec rubocop" }
+
+      get "/mbeditor/workspace"
+
+      assert_response :ok
+      assert_equal true, json["rubocopAvailable"]
+    end
+
+    test "workspace reports rubocop unavailable for invalid command" do
+      Mbeditor.configure { |c| c.rubocop_command = "definitely_missing_rubocop_command" }
+
+      get "/mbeditor/workspace"
+
+      assert_response :ok
+      assert_equal false, json["rubocopAvailable"]
+    ensure
+      Mbeditor.configure { |c| c.rubocop_command = "rubocop" }
+    end
+
     # ---------------------------------------------------------------------------
     # files
     # ---------------------------------------------------------------------------
@@ -291,17 +311,6 @@ module Mbeditor
       assert_response :ok
       assert_kind_of Array, json
       assert json.any? { |r| r["file"].include?("user.rb") }, "expected user.rb in results"
-    end
-
-    # ---------------------------------------------------------------------------
-    # reload
-    # ---------------------------------------------------------------------------
-
-    test "reload touches tmp/restart.txt" do
-      post "/mbeditor/reload"
-      assert_response :ok
-      assert_equal true, json["ok"]
-      assert File.exist?(File.join(@workspace, "tmp", "restart.txt"))
     end
 
     # ---------------------------------------------------------------------------

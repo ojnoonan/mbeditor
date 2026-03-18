@@ -147,6 +147,13 @@ var MbeditorApp = function MbeditorApp() {
   var serverOnline = _useState18b2[0];
   var setServerOnline = _useState18b2[1];
 
+  var _useState18c = useState(false);
+
+  var _useState18c2 = _slicedToArray(_useState18c, 2);
+
+  var rubocopAvailable = _useState18c2[0];
+  var setRubocopAvailable = _useState18c2[1];
+
   var _useState19 = useState({
     openEditors: false,
     projects: false
@@ -349,6 +356,9 @@ var MbeditorApp = function MbeditorApp() {
 
       if (workspace && workspace.rootName) {
         setProjectRootName(workspace.rootName);
+      }
+      if (workspace && typeof workspace.rubocopAvailable === 'boolean') {
+        setRubocopAvailable(workspace.rubocopAvailable);
       }
     });
     GitService.fetchStatus();
@@ -601,13 +611,14 @@ var MbeditorApp = function MbeditorApp() {
 
   useEffect(function () {
     if (!activeTab || typeof activeTab.content !== 'string') return;
+    if (isRubyPath(activeTab.path) && !rubocopAvailable) return;
 
     _debouncedAutoLint(activeTab, focusedPane.id);
 
     return function () {
       _debouncedAutoLint.cancel();
     };
-  }, [focusedPane.id, activeTab ? activeTab.id : null, activeTab ? activeTab.content : null]);
+  }, [focusedPane.id, activeTab ? activeTab.id : null, activeTab ? activeTab.content : null, rubocopAvailable]);
 
   var handleSave = function handleSave(paneId, tab) {
     setLoading(function (prev) {
@@ -694,6 +705,11 @@ var MbeditorApp = function MbeditorApp() {
     if (!activeTab) return;
 
     var isRubyLang = activeTab.path.endsWith('.rb') || activeTab.path.endsWith('.gemspec') || activeTab.path.endsWith("Rakefile") || activeTab.path.endsWith("Gemfile");
+
+    if (isRubyLang && !rubocopAvailable) {
+      EditorStore.setStatus("RuboCop is not available for this workspace.", "warning");
+      return;
+    }
 
     if (activeTab.dirty) handleSave(focusedPane.id, activeTab); // save first
 
@@ -1141,7 +1157,7 @@ var MbeditorApp = function MbeditorApp() {
   var isRuby = activeTab && isRubyPath(activeTab.path);
   var supportedPrettierExts = ['js', 'jsx', 'json', 'css', 'scss', 'html', 'md'];
   var isPrettierable = activeTab && supportedPrettierExts.includes(activeTab.path.split('.').pop().toLowerCase());
-  var canLintAndFormat = activeTab && (isRuby || isPrettierable);
+  var canLintAndFormat = activeTab && (isPrettierable || isRuby && rubocopAvailable);
   var hasGitBranch = !!(state.gitBranch && state.gitBranch.trim());
 
   return React.createElement(

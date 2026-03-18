@@ -35,7 +35,8 @@ module Mbeditor
     def workspace
       render json: {
         rootName: workspace_root.basename.to_s,
-        rootPath: workspace_root.to_s
+        rootPath: workspace_root.to_s,
+        rubocopAvailable: rubocop_available?
       }
     end
 
@@ -495,6 +496,13 @@ module Mbeditor
       tokens
     rescue ArgumentError
       ["rubocop"]
+    end
+
+    def rubocop_available?
+      _out, _err, status = Open3.capture3(*rubocop_command, "--version")
+      status.success?
+    rescue StandardError
+      false
     end
 
     def parse_porcelain_status(output)

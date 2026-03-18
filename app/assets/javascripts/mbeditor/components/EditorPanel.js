@@ -39,69 +39,12 @@ var EditorPanel = function EditorPanel(_ref) {
   };
 
   useEffect(function () {
-    if (!window._editorExtensionsRegistered && window.monaco) {
-      window._editorExtensionsRegistered = true;
-
-      // 1. Ruby Auto-End Plugin (Mimics vscode-ruby)
-      window.monaco.languages.setLanguageConfiguration('ruby', {
-        indentationRules: {
-          increaseIndentPattern: /^\s*(def|class|module|if|unless|case|while|until|for|begin|elsif|else|rescue|ensure|when)\b/,
-          decreaseIndentPattern: /^\s*(end|elsif|else|rescue|ensure|when)\b/
-        },
-        onEnterRules: [{
-          beforeText: /^\s*(def|class|module|if|unless|case|while|until|for|begin)\b.*/,
-          action: { indentAction: 2, appendText: 'end' } // IndentOutdent
-        }, {
-          beforeText: /.*do(\s*\|.*\|)?\s*$/,
-          action: { indentAction: 2, appendText: 'end' } // IndentOutdent
-        }]
-      });
-
-      // 2. JSX/HTML Auto Rename Tag (Linked Editing)
-      var genericLinkedProvider = {
-        provideLinkedEditingRanges: function provideLinkedEditingRanges(model, position) {
-          var line = model.getLineContent(position.lineNumber);
-          var wordInfo = model.getWordAtPosition(position);
-          if (!wordInfo) return null;
-
-          var word = wordInfo.word;
-          var startCol = wordInfo.startColumn;
-          var endCol = wordInfo.endColumn;
-
-          if (line[startCol - 2] === '<') {
-            var closeTagStr = '</' + word + '>';
-            var closeIdx = line.indexOf(closeTagStr, endCol - 1);
-            if (closeIdx !== -1) {
-              return {
-                ranges: [new window.monaco.Range(position.lineNumber, startCol, position.lineNumber, endCol), new window.monaco.Range(position.lineNumber, closeIdx + 3, position.lineNumber, closeIdx + 3 + word.length)],
-                wordPattern: /[a-zA-Z0-9:\-_]+/
-              };
-            }
-          }
-
-          if (line[startCol - 3] === '<' && line[startCol - 2] === '/') {
-            var openTagRegex = new RegExp('<' + word + '(?:\\s|>)');
-            var match = line.match(openTagRegex);
-            if (match) {
-              var openStart = match.index + 2;
-              if (openStart < startCol) {
-                return {
-                  ranges: [new window.monaco.Range(position.lineNumber, openStart, position.lineNumber, openStart + word.length), new window.monaco.Range(position.lineNumber, startCol, position.lineNumber, endCol)],
-                  wordPattern: /[a-zA-Z0-9:\-_]+/
-                };
-              }
-            }
-          }
-          return null;
-        }
-      };
-      window.monaco.languages.registerLinkedEditingRangeProvider('javascript', genericLinkedProvider);
-      window.monaco.languages.registerLinkedEditingRangeProvider('ruby', genericLinkedProvider);
-    }
-  }, []);
-  useEffect(function () {
     if (tab.isPreview) return;
     if (!editorRef.current || !window.monaco) return;
+
+    if (window.MbeditorEditorPlugins && window.MbeditorEditorPlugins.registerGlobalExtensions) {
+      window.MbeditorEditorPlugins.registerGlobalExtensions(window.monaco);
+    }
 
     var parts = tab.path.split('.');
     var extension = parts.length > 1 ? parts.pop().toLowerCase() : '';
@@ -159,11 +102,17 @@ var EditorPanel = function EditorPanel(_ref) {
     }
 
     monacoRef.current = editor;
+    window.__mbeditorActiveEditor = editor;
 
     var modelObj = editor.getModel();
 
+    var editorPluginDisposable = null;
+    if (window.MbeditorEditorPlugins && window.MbeditorEditorPlugins.attachEditorFeatures) {
+      editorPluginDisposable = window.MbeditorEditorPlugins.attachEditorFeatures(editor, language);
+    }
+
     // Change listener
-    var disposable = modelObj.onDidChangeContent(function (e) {
+    var contentDisposable = modelObj.onDidChangeContent(function (e) {
       var val = editor.getValue();
       var currentContent = monacoRef.current._latestContent || '';
 
@@ -173,48 +122,15 @@ var EditorPanel = function EditorPanel(_ref) {
       if (vNorm !== cNorm) {
         onContentChange(val);
       }
-
-      // Auto-Close Tag Plugin Logic
-      if (!e.isUndoing && !e.isRedoing && e.changes.length === 1) {
-        var change = e.changes[0];
-        if (change.text === '>' && change.rangeLength === 0) {
-          (function () {
-            var lineNum = change.range.startLineNumber;
-            var col = change.range.startColumn; // Is the column immediately before where the '>' was inserted
-            var lineContent = modelObj.getLineContent(lineNum);
-
-            var textBefore = lineContent.substring(0, col - 1); // text before the '>'
-            var match = textBefore.match(/<([a-zA-Z][a-zA-Z0-9:\-_]*)(?:\s+[^>]*?)?$/);
-
-            if (match && !textBefore.endsWith('/')) {
-              (function () {
-                var tagName = match[1];
-                var voidElements = ['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'];
-
-                if (!voidElements.includes(tagName.toLowerCase())) {
-                  var textAfter = lineContent.substring(col); // text after the '>'
-                  if (!textAfter.startsWith('</' + tagName + '>')) {
-                    setTimeout(function () {
-                      if (!monacoRef.current) return;
-                      var currentPos = monacoRef.current.getPosition();
-                      monacoRef.current.executeEdits("auto-close", [{
-                        range: new window.monaco.Range(lineNum, col + 1, lineNum, col + 1),
-                        text: '</' + tagName + '>'
-                      }]);
-                      monacoRef.current.setPosition(currentPos);
-                    }, 0);
-                  }
-                }
-              })();
-            }
-          })();
-        }
-      }
     });
 
     return function () {
       TabManager.saveTabViewState(tab.id, editor.saveViewState());
-      disposable.dispose();
+      if (window.__mbeditorActiveEditor === editor) {
+        window.__mbeditorActiveEditor = null;
+      }
+      if (editorPluginDisposable) editorPluginDisposable.dispose();
+      contentDisposable.dispose();
       editor.dispose();
     };
   }, [tab.id, tab.isPreview]); // re-run ONLY on tab switch, not on content change (Monaco handles its own content state)

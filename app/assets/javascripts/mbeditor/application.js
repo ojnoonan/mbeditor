@@ -1,3 +1,4 @@
+//= require mbeditor/editor_plugins
 //= require mbeditor/components/CollapsibleSection
 //= require mbeditor/components/EditorPanel
 //= require mbeditor/components/FileTree
