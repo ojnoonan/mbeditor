@@ -103,6 +103,26 @@ cd test/dummy && rails server
 
 Then visit http://localhost:3000/mbeditor.
 
+## Testing
+
+The test suite uses Minitest via the dummy Rails app. Run all tests from the project root:
+
+```bash
+bundle exec rake test
+```
+
+Run a single test file:
+
+```bash
+bundle exec ruby -Itest test/controllers/mbeditor/editors_controller_test.rb
+```
+
+Run a single test by name:
+
+```bash
+bundle exec ruby -Itest test/controllers/mbeditor/editors_controller_test.rb -n test_ping_returns_ok
+```
+
 ## Notes
 - The engine is intended for development-time use.
 - RuboCop is intentionally not a runtime dependency of the gem; it is discovered from host app environment.
