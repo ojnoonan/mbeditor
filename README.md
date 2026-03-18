@@ -12,7 +12,13 @@ Mbeditor (Mini Browser Editor) is a mountable Rails engine that adds a browser-b
 Add to the host app Gemfile:
 
 ```ruby
-gem "mbeditor", path: "../mbeditor"
+gem "mbeditor", group: :development
+```
+
+If you prefer tracking the GitHub repo directly before a RubyGems release:
+
+```ruby
+gem "mbeditor", git: "https://github.com/ojnoonan/mbeditor.git", group: :development
 ```
 
 Then mount the engine in host app routes:
@@ -25,15 +31,26 @@ mount Mbeditor::Engine, at: "/mbeditor"
 The gem keeps host/tooling responsibilities in the host app:
 - `rubocop` and `rubocop-rails` gems (optional, required for lint/format endpoints)
 - `git` installed in environment (for Git panel data)
-- Monaco assets served at `/monaco-editor` and `/monaco_worker.js`
+
+Everything else is intended to be packaged in the gem.
+
+Monaco runtime assets are served from the engine route namespace (`/mbeditor/monaco-editor/*` and `/mbeditor/monaco_worker.js`).
+For local development, the controller falls back to host `public/monaco-editor` and `public/monaco_worker.js` if packaged engine assets are not present yet.
 
 ## Configuration
 Configure environments/workspace root in an initializer:
 
 ```ruby
-Mbeditor.configure do |config|
+MBEditor.configure do |config|
   config.allowed_environments = [:development]
   # config.workspace_root = Rails.root
+
+  # Paths to exclude from the file browser (default shown below)
+  config.excluded_paths = %w[.git tmp log node_modules .bundle coverage vendor/bundle]
+
+  # RuboCop command used for inline linting (default: "rubocop")
+  # Use "bundle exec rubocop" if RuboCop is managed via Bundler
+  config.rubocop_command = "bundle exec rubocop"
 end
 ```
 
