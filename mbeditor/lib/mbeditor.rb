@@ -15,3 +15,5 @@ module Mbeditor
     end
   end
 end
+
+MBEditor = Mbeditor unless defined?(MBEditor)

@@ -122,6 +122,8 @@ const EditorPanel = ({ tab, onContentChange, markers }) => {
       insertSpaces: true,
       wordWrap: 'on',
       linkedEditing: true, // Enables Auto-Rename Tag natively!
+      fixedOverflowWidgets: true,
+      hover: { above: false },
       autoClosingBrackets: 'always',
       autoClosingQuotes: 'always',
       autoIndent: 'full',

@@ -4,6 +4,25 @@ const TabBar = ({ tabs, activeId, onSelect, onClose, onTabDragStart, onTabDragEn
   const containerRef = useRef(null);
   const [draggingTabId, setDraggingTabId] = useState(null);
 
+  const getTabMarkerClass = (tab) => {
+    const tabMarkers = tab.markers || [];
+    if (!tabMarkers.length) return '';
+
+    const hasError = tabMarkers.some((marker) => {
+      const severity = String((marker && marker.severity) || '').toLowerCase();
+      return severity === 'error' || severity === 'fatal';
+    });
+    if (hasError) return 'tab-has-error';
+
+    const hasWarning = tabMarkers.some((marker) => {
+      const severity = String((marker && marker.severity) || '').toLowerCase();
+      return severity !== 'error' && severity !== 'fatal';
+    });
+    if (hasWarning) return 'tab-has-warning';
+
+    return '';
+  };
+
   // Scroll active tab into view
   useEffect(() => {
     if (containerRef.current) {
@@ -23,7 +42,7 @@ const TabBar = ({ tabs, activeId, onSelect, onClose, onTabDragStart, onTabDragEn
       {tabs.map(tab => (
         <div 
           key={tab.id} 
-          className={`tab-item ${activeId === tab.id ? 'active' : ''} ${(tab.markers && tab.markers.length > 0) ? 'tab-has-error' : ''} ${draggingTabId === tab.id ? 'dragging' : ''}`}
+          className={`tab-item ${activeId === tab.id ? 'active' : ''} ${getTabMarkerClass(tab)} ${draggingTabId === tab.id ? 'dragging' : ''}`}
           onClick={() => onSelect(tab.id)}
           title={`${tab.path} - Drag to move to another pane`}
           draggable

@@ -1,5 +1,5 @@
-/.bundle
-/log
-/tmp
-/*.gem
-/vendor/bundle
+# Keep this repository focused on the local gem only
+*
+!.gitignore
+!mbeditor/
+!mbeditor/**

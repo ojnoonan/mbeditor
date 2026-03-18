@@ -218,6 +218,15 @@ html, body, #mbeditor-root {
   border-bottom: none !important;
 }
 
+.tab-has-warning {
+  border-bottom: 2px solid #f9a825 !important;
+}
+
+.tab-item.active.tab-has-warning {
+  border-top: 2px solid #f9a825 !important;
+  border-bottom: none !important;
+}
+
 .tab-item-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -273,6 +282,11 @@ html, body, #mbeditor-root {
 .monaco-container {
   flex: 1;
   overflow: hidden;
+}
+
+.monaco-editor .monaco-hover,
+.monaco-editor .suggest-widget {
+  z-index: 2000 !important;
 }
 
 /* ── Status Bar ──────────────────────────────────────────── */

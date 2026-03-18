@@ -6,32 +6,38 @@
   <title>Mbeditor — <%= Rails.root.basename %></title>
 
   <!-- ── Fonts and Styles ──────────────────────────────── -->
-  <!-- Direct load FontAwesome to bypass 404s on local woff2 files -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" />
+  <%= stylesheet_link_tag "fontawesome.min", media: "all" %>
   <%= stylesheet_link_tag "mbeditor/application", media: "all" %>
 
   <!-- ── Vendor JS (order matters) ─────────────────────── -->
-  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/minisearch@6.1.0/dist/umd/index.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked@10.0.0/marked.min.js"></script>
-  <!-- Prettier -->
-  <script src="https://cdn.jsdelivr.net/npm/prettier@3.0.3/standalone.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prettier@3.0.3/plugins/babel.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prettier@3.0.3/plugins/estree.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prettier@3.0.3/plugins/html.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prettier@3.0.3/plugins/postcss.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prettier@3.0.3/plugins/markdown.js"></script>
+  <script src="<%= asset_path('react.min.js') %>"></script>
+  <script src="<%= asset_path('react-dom.min.js') %>"></script>
+  <script src="<%= asset_path('axios.min.js') %>"></script>
+  <script src="<%= asset_path('lodash.min.js') %>"></script>
+  <script src="<%= asset_path('minisearch.min.js') %>"></script>
+  <script src="<%= asset_path('marked.min.js') %>"></script>
+  <script src="<%= asset_path('prettier-standalone.js') %>"></script>
+  <script src="<%= asset_path('prettier-plugin-babel.js') %>"></script>
+  <script src="<%= asset_path('prettier-plugin-estree.js') %>"></script>
+  <script src="<%= asset_path('prettier-plugin-html.js') %>"></script>
+  <script src="<%= asset_path('prettier-plugin-postcss.js') %>"></script>
+  <script src="<%= asset_path('prettier-plugin-markdown.js') %>"></script>
 
   <!-- ── Monaco loader ─────────────────────────────────── -->
-  <script>var require = { paths: { vs: '/monaco-editor/vs' } };</script>
-  <script src="/monaco-editor/vs/loader.js"></script>
+  <% base_path = request.script_name.to_s.sub(%r{/$}, '') %>
+  <script>var require = { paths: { vs: '<%= "#{base_path}/monaco-editor/vs" %>' } };</script>
+  <script src="<%= "#{base_path}/monaco-editor/vs/loader.js" %>"></script>
 </head>
 <body data-rails-root="<%= Rails.root.to_s %>">
   <script>
-    window.MBEDITOR_BASE_PATH = "<%= request.script_name.to_s.sub(%r{/$}, '') %>";
+    window.MBEDITOR_BASE_PATH = "<%= base_path %>";
+    window.prettierPlugins = {
+      babel: window.prettierPluginsBabel,
+      estree: window.prettierPluginsEstree,
+      html: window.prettierPluginsHtml,
+      postcss: window.prettierPluginsPostcss,
+      markdown: window.prettierPluginsMarkdown
+    };
   </script>
 
   <div id="mbeditor-root">
@@ -41,7 +47,7 @@
   <script>
     window.MonacoEnvironment = {
       getWorkerUrl: function(workerId, label) {
-        return '/monaco_worker.js';
+        return (window.MBEDITOR_BASE_PATH || '') + '/monaco_worker.js';
       }
     };
 
