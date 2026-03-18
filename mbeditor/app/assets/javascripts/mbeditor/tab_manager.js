@@ -76,7 +76,7 @@ var TabManager = (function () {
     });
   }
 
-  function openTab(path, name, line, forcePaneId) {
+  function openTab(path, name, line, forcePaneId, isSoftOpen) {
     var state = EditorStore.getState();
     var paneId = forcePaneId || state.focusedPaneId;
     var pane = state.panes.find(function(p) { return p.id === paneId; });
@@ -91,7 +91,7 @@ var TabManager = (function () {
     }
 
     if (!pane) return;
-    
+
     var existing = pane.tabs.find(function(t) { return t.path === path; });
 
     if (existing) {
@@ -103,6 +103,12 @@ var TabManager = (function () {
       return;
     }
 
+    // For soft-opens, discard any existing non-dirty soft tab so this one replaces it.
+    var tabsList = pane.tabs;
+    if (isSoftOpen) {
+      tabsList = pane.tabs.filter(function(t) { return !t.isSoftOpen || t.dirty; });
+    }
+
     // Create placeholder then load
     var newTab = {
       id: path,
@@ -111,13 +117,14 @@ var TabManager = (function () {
       dirty: false,
       content: "",
       viewState: null,
-      isImage: _isImagePath(path)
+      isImage: _isImagePath(path),
+      isSoftOpen: isSoftOpen ? true : false
     };
     if (line) newTab.gotoLine = line;
 
     var newPanes = state.panes.map(function(p) {
       if (p.id === paneId) {
-        return Object.assign({}, p, { tabs: p.tabs.concat(newTab), activeTabId: path });
+        return Object.assign({}, p, { tabs: tabsList.concat(newTab), activeTabId: path });
       }
       return p;
     });
@@ -192,10 +199,22 @@ var TabManager = (function () {
   }
 
   function markDirty(paneId, path, content) {
-    _updateTab(paneId, path, { content: content, dirty: true });
+    // Auto-harden any soft-open tab on first edit.
+    var st = EditorStore.getState();
+    var paneForTab = st.panes.find(function(p) { return p.id === paneId; });
+    var existingTab = paneForTab && paneForTab.tabs.find(function(t) { return t.path === path; });
+    var updates = { content: content, dirty: true };
+    if (existingTab && existingTab.isSoftOpen) {
+      updates.isSoftOpen = false;
+    }
+    _updateTab(paneId, path, updates);
     if (_isMarkdownPath(path)) {
       _syncMarkdownPreviewContent(path, content);
     }
+  }
+
+  function hardenTab(paneId, path) {
+    _updateTab(paneId, path, { isSoftOpen: false });
   }
 
   function saveTabViewState(paneIdOrPath, pathOrViewState, maybeViewState) {
@@ -266,6 +285,7 @@ var TabManager = (function () {
     switchTab: switchTab,
     focusPane: focusPane,
     markDirty: markDirty,
+    hardenTab: hardenTab,
     saveTabViewState: saveTabViewState,
     moveTabToPane: moveTabToPane
   };

@@ -11,6 +11,8 @@ const MbeditorApp = () => {
   const [state, setState] = useState(EditorStore.getState());
   const [quickOpen, setQuickOpen] = useState(false);
   const [treeData, setTreeData] = useState([]);
+  const [projectRootName, setProjectRootName] = useState("");
+  const [selectedTreeNode, setSelectedTreeNode] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSidebarTab, setActiveSidebarTab] = useState("explorer");
   const [markers, setMarkers] = useState({}); // { tabId: [] }
@@ -23,9 +25,51 @@ const MbeditorApp = () => {
   const [draggedTab, setDraggedTab] = useState(null);
   const [dragOverPaneId, setDragOverPaneId] = useState(null);
   const [showGitPanel, setShowGitPanel] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState({
+    openEditors: false,
+    projects: false
+  });
+  const [expandedDirs, setExpandedDirs] = useState({});
+  const [pendingCreate, setPendingCreate] = useState(null);
+  const [pendingRename, setPendingRename] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
   const resizeSessionRef = useRef(null);
 
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+  const normalizeRelativePath = (input) => {
+    return (input || "")
+      .replace(/\\/g, "/")
+      .trim()
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "")
+      .replace(/\/+/g, "/");
+  };
+
+  const parentDir = (path) => {
+    if (!path) return "";
+    const idx = path.lastIndexOf("/");
+    return idx > 0 ? path.slice(0, idx) : "";
+  };
+
+  const deriveProjectRootName = () => {
+    if (projectRootName) return projectRootName;
+    const railsRoot = document && document.body && document.body.dataset ? document.body.dataset.railsRoot : "";
+    if (!railsRoot) return "PROJECT";
+    const parts = railsRoot.split("/").filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : "PROJECT";
+  };
+
+  const refreshProjectTree = () => {
+    return FileService.getTree().then((data) => {
+      setTreeData(data || []);
+      SearchService.buildIndex(data || []);
+      return data || [];
+    }).catch((err) => {
+      EditorStore.setStatus("Failed to refresh files: " + ((err && err.message) || "Unknown error"), "error");
+      return [];
+    });
+  };
 
   const isRubyPath = (path) => {
     return path && (path.endsWith('.rb') || path.endsWith('.gemspec') || path.endsWith('Rakefile') || path.endsWith('Gemfile'));
@@ -124,9 +168,13 @@ const MbeditorApp = () => {
     const unsubscribe = EditorStore.subscribe(setState);
 
     // Initial load
-    FileService.getTree().then(data => {
-      setTreeData(data);
-      SearchService.buildIndex(data);
+    Promise.all([
+      FileService.getWorkspace().catch(() => null),
+      refreshProjectTree()
+    ]).then(([workspace]) => {
+      if (workspace && workspace.rootName) {
+        setProjectRootName(workspace.rootName);
+      }
     });
     GitService.fetchStatus();
     
@@ -151,6 +199,13 @@ const MbeditorApp = () => {
               tabs: p.tabs.map(t => ({ ...t, content: results[resIdx++].content }))
             }));
             EditorStore.setState({ ...savedState, panes: restoredPanes, openTabs: undefined });
+            // Restore collapsedSections UI state
+            if (savedState.collapsedSections) {
+              setCollapsedSections(savedState.collapsedSections);
+            }
+            if (savedState.expandedDirs) {
+              setExpandedDirs(savedState.expandedDirs);
+            }
           });
       }
     });
@@ -169,6 +224,9 @@ const MbeditorApp = () => {
           const tab = focusedPane.tabs.find(t => t.id === focusedPane.activeTabId);
           if (tab && tab.dirty) handleSave(focusedPane.id, tab);
         }
+      }
+      if (e.key === 'Escape') {
+        setContextMenu(null);
       }
     };
 
@@ -221,7 +279,27 @@ const MbeditorApp = () => {
 
   const handleSelectFile = (path, name, line) => {
     TabManager.openTab(path, name, line);
+    setSelectedTreeNode({ path: path, name: name || path.split('/').pop(), type: 'file' });
     setQuickOpen(false);
+  };
+
+  // Single-click in explorer: soft (preview) open — replaces any existing soft tab
+  const handleSoftOpenFile = (path, name) => {
+    TabManager.openTab(path, name, null, null, true);
+    setSelectedTreeNode({ path: path, name: name || path.split('/').pop(), type: 'file' });
+  };
+
+  // Double-click in explorer or on tab: harden the tab (remove italic/preview)
+  const handleHardOpenFile = (path, name) => {
+    const st = EditorStore.getState();
+    const targetPane = st.panes.find(p => p.tabs.some(t => t.path === path));
+    if (targetPane) {
+      TabManager.hardenTab(targetPane.id, path);
+      TabManager.switchTab(targetPane.id, path);
+    } else {
+      TabManager.openTab(path, name, null, null, false);
+    }
+    setSelectedTreeNode({ path: path, name: name || path.split('/').pop(), type: 'file' });
   };
 
   const requestCloseTab = (paneId, id) => {
@@ -265,7 +343,7 @@ const MbeditorApp = () => {
     }
   };
 
-  // Persist state when panes or focusedPaneId changes
+  // Persist state when panes, focusedPaneId, or collapsedSections changes
   useEffect(() => {
     // debounce explicitly using setTimeout to avoid spamming the backend
     const timeoutId = setTimeout(() => {
@@ -283,10 +361,10 @@ const MbeditorApp = () => {
           previewFor: t.previewFor || null
         }))
       }));
-      FileService.saveState({ panes: lightweightPanes, focusedPaneId: st.focusedPaneId });
+      FileService.saveState({ panes: lightweightPanes, focusedPaneId: st.focusedPaneId, collapsedSections, expandedDirs });
     }, 1000);
     return () => clearTimeout(timeoutId);
-  }, [state.panes, state.focusedPaneId]);
+  }, [state.panes, state.focusedPaneId, collapsedSections, expandedDirs]);
 
   const focusedPane = state.panes.find(p => p.id === state.focusedPaneId) || state.panes[0];
   const activeTab = focusedPane.tabs.find(t => t.id === focusedPane.activeTabId);
@@ -460,6 +538,35 @@ const MbeditorApp = () => {
     });
   };
 
+  const handleToggleSection = (sectionKey, isCollapsed) => {
+    setCollapsedSections(prev => ({ ...prev, [sectionKey]: isCollapsed }));
+  };
+
+  const handleCollapseAll = () => setExpandedDirs({});
+
+  const openContextMenu = (e, node) => {
+    setContextMenu({ x: e.clientX, y: e.clientY, node });
+    setSelectedTreeNode(node);
+  };
+
+  const closeContextMenu = () => setContextMenu(null);
+
+  const handleContextMenuAction = (action) => {
+    const node = contextMenu && contextMenu.node;
+    closeContextMenu();
+    if (action === 'open' && node) { handleHardOpenFile(node.path, node.name); return; }
+    if (action === 'newFile') { handleCreateFile(node); return; }
+    if (action === 'newFolder') { handleCreateDir(node); return; }
+    if (action === 'rename') { handleRenamePath(node); return; }
+    if (action === 'delete') { handleDeletePath(node); return; }
+    if (action === 'copyPath' && node) {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(node.path).catch(() => {});
+      }
+      EditorStore.setStatus('Copied: ' + node.path, 'info');
+    }
+  };
+
   const startPaneResize = (e) => {
     e.preventDefault();
     resizeSessionRef.current = { mode: 'pane' };
@@ -481,6 +588,241 @@ const MbeditorApp = () => {
     handleSelectFile(path, name || path.split('/').pop());
   };
 
+  const pathMatchesNodeOrDescendant = (value, targetPath) => {
+    if (!value || !targetPath) return false;
+    return value === targetPath || value.indexOf(targetPath + '/') === 0 || value.indexOf(targetPath + '::preview') === 0;
+  };
+
+  const rewritePathAfterRename = (value, oldPath, newPath) => {
+    if (!value || !oldPath || !newPath) return value;
+    if (value === oldPath) return newPath;
+    if (value === oldPath + '::preview') return newPath + '::preview';
+    if (value.indexOf(oldPath + '/') === 0) return newPath + value.slice(oldPath.length);
+    return value;
+  };
+
+  const applyRenameToOpenTabs = (oldPath, newPath) => {
+    const currentState = EditorStore.getState();
+    const newPanes = currentState.panes.map((pane) => {
+      const renamedTabs = pane.tabs.map((tab) => {
+        const nextPath = rewritePathAfterRename(tab.path, oldPath, newPath);
+        const nextPreviewFor = rewritePathAfterRename(tab.previewFor, oldPath, newPath);
+        if (nextPath === tab.path && nextPreviewFor === tab.previewFor) return tab;
+
+        const defaultName = nextPath.split('/').pop();
+        const previewSourceName = nextPreviewFor ? nextPreviewFor.split('/').pop() : defaultName;
+        return {
+          ...tab,
+          id: nextPath,
+          path: nextPath,
+          name: tab.isPreview ? (previewSourceName + '-preview') : defaultName,
+          previewFor: nextPreviewFor
+        };
+      });
+
+      return {
+        ...pane,
+        tabs: renamedTabs,
+        activeTabId: rewritePathAfterRename(pane.activeTabId, oldPath, newPath)
+      };
+    });
+
+    EditorStore.setState({
+      panes: newPanes,
+      activeTabId: rewritePathAfterRename(currentState.activeTabId, oldPath, newPath)
+    });
+  };
+
+  const removeDeletedPathFromOpenTabs = (targetPath) => {
+    const currentState = EditorStore.getState();
+    const removedTabIds = [];
+
+    const newPanes = currentState.panes.map((pane) => {
+      const keptTabs = pane.tabs.filter((tab) => {
+        const removeTab = pathMatchesNodeOrDescendant(tab.path, targetPath) || pathMatchesNodeOrDescendant(tab.previewFor, targetPath);
+        if (removeTab) {
+          removedTabIds.push(tab.id);
+        }
+        return !removeTab;
+      });
+
+      let nextActiveTabId = pane.activeTabId;
+      const activeStillExists = keptTabs.some((tab) => tab.id === nextActiveTabId);
+      if (!activeStillExists) {
+        nextActiveTabId = keptTabs.length ? keptTabs[keptTabs.length - 1].id : null;
+      }
+
+      return {
+        ...pane,
+        tabs: keptTabs,
+        activeTabId: nextActiveTabId
+      };
+    });
+
+    let nextFocusedPaneId = currentState.focusedPaneId;
+    const focusedPane = newPanes.find((pane) => pane.id === nextFocusedPaneId);
+    if (!focusedPane || focusedPane.tabs.length === 0) {
+      const paneWithTabs = newPanes.find((pane) => pane.tabs.length > 0);
+      nextFocusedPaneId = paneWithTabs ? paneWithTabs.id : 1;
+    }
+
+    const activePane = newPanes.find((pane) => pane.id === nextFocusedPaneId);
+    EditorStore.setState({
+      panes: newPanes,
+      focusedPaneId: nextFocusedPaneId,
+      activeTabId: activePane ? activePane.activeTabId : null
+    });
+
+    if (removedTabIds.length) {
+      setMarkers((prev) => {
+        const next = { ...prev };
+        removedTabIds.forEach((tabId) => delete next[tabId]);
+        return next;
+      });
+    }
+  };
+
+  const handleCreateFile = (targetNode) => {
+    const node = targetNode !== undefined ? targetNode : selectedTreeNode;
+    const baseDir = node
+      ? (node.type === 'folder' ? node.path : parentDir(node.path))
+      : '';
+    // Ensure the target folder is expanded so the inline row is visible
+    if (baseDir) setExpandedDirs(prev => Object.assign({}, prev, { [baseDir]: true }));
+    setPendingRename(null);
+    setPendingCreate({ type: 'file', parentPath: baseDir });
+  };
+
+  const handleCreateDir = (targetNode) => {
+    const node = targetNode !== undefined ? targetNode : selectedTreeNode;
+    const baseDir = node
+      ? (node.type === 'folder' ? node.path : parentDir(node.path))
+      : '';
+    if (baseDir) setExpandedDirs(prev => Object.assign({}, prev, { [baseDir]: true }));
+    setPendingRename(null);
+    setPendingCreate({ type: 'folder', parentPath: baseDir });
+  };
+
+  const handleCreateConfirm = (name) => {
+    if (!pendingCreate || !name) return;
+    const { type, parentPath } = pendingCreate;
+    const path = normalizeRelativePath(parentPath ? (parentPath + '/' + name) : name);
+    setPendingCreate(null);
+
+    if (type === 'file') {
+      setLoading((prev) => ({ ...prev, createFile: true }));
+      FileService.createFile(path, '').then((res) => {
+        const createdPath = (res && res.path) || path;
+        const createdName = createdPath.split('/').pop();
+        setSelectedTreeNode({ path: createdPath, name: createdName, type: 'file' });
+        EditorStore.setStatus('Created file: ' + createdName, 'success');
+        return refreshProjectTree().then(() => {
+          handleSelectFile(createdPath, createdName);
+          GitService.fetchStatus();
+        });
+      }).catch((err) => {
+        const message = (err && err.response && err.response.data && err.response.data.error) || err.message;
+        EditorStore.setStatus('Create file failed: ' + message, 'error');
+      }).finally(() => setLoading((prev) => ({ ...prev, createFile: false })));
+    } else {
+      setLoading((prev) => ({ ...prev, createDir: true }));
+      FileService.createDir(path).then((res) => {
+        const createdPath = (res && res.path) || path;
+        setSelectedTreeNode({ path: createdPath, name: createdPath.split('/').pop(), type: 'folder' });
+        EditorStore.setStatus('Created folder: ' + createdPath, 'success');
+        return refreshProjectTree().then(() => GitService.fetchStatus());
+      }).catch((err) => {
+        const message = (err && err.response && err.response.data && err.response.data.error) || err.message;
+        EditorStore.setStatus('Create folder failed: ' + message, 'error');
+      }).finally(() => setLoading((prev) => ({ ...prev, createDir: false })));
+    }
+  };
+
+  const handleCreateCancel = () => setPendingCreate(null);
+
+  const handleRenamePath = (targetNode) => {
+    const node = targetNode !== undefined ? targetNode : selectedTreeNode;
+    if (!node || !node.path) {
+      EditorStore.setStatus('Select a file or folder to rename first.', 'warning');
+      return;
+    }
+
+    const itemPath = node.path;
+    const parentPath = parentDir(itemPath);
+    if (parentPath) {
+      setExpandedDirs(prev => Object.assign({}, prev, { [parentPath]: true }));
+    }
+    setPendingCreate(null);
+    setPendingRename({
+      path: itemPath,
+      parentPath: parentPath,
+      type: node.type,
+      currentName: node.name || itemPath.split('/').pop()
+    });
+  };
+
+  const handleRenameConfirm = (name, renameTarget) => {
+    const target = renameTarget || pendingRename;
+    if (!target || !name) return;
+
+    const oldPath = target.path;
+    const currentName = target.currentName || oldPath.split('/').pop();
+    const nextName = name.trim();
+    setPendingRename(null);
+
+    if (!nextName || nextName === currentName) return;
+
+    const nextPath = normalizeRelativePath(parentDir(oldPath) ? (parentDir(oldPath) + '/' + nextName) : nextName);
+    if (!nextPath || nextPath === oldPath) return;
+
+    setLoading((prev) => ({ ...prev, renamePath: true }));
+    FileService.renamePath(oldPath, nextPath).then((res) => {
+      const renamedPath = (res && res.path) || nextPath;
+      applyRenameToOpenTabs(oldPath, renamedPath);
+      setSelectedTreeNode((prev) => prev ? { ...prev, path: renamedPath, name: renamedPath.split('/').pop() } : prev);
+      EditorStore.setStatus('Renamed to: ' + renamedPath, 'success');
+      return refreshProjectTree().then(() => {
+        GitService.fetchStatus();
+      });
+    }).catch((err) => {
+      const message = (err && err.response && err.response.data && err.response.data.error) || err.message;
+      EditorStore.setStatus('Rename failed: ' + message, 'error');
+    }).finally(() => {
+      setLoading((prev) => ({ ...prev, renamePath: false }));
+    });
+  };
+
+  const handleRenameCancel = () => setPendingRename(null);
+
+  const handleDeletePath = (targetNode) => {
+    const node = targetNode !== undefined ? targetNode : selectedTreeNode;
+    if (!node || !node.path) {
+      EditorStore.setStatus('Select a file or folder to delete first.', 'warning');
+      return;
+    }
+
+    const targetPath = node.path;
+    const confirmed = window.confirm('Delete ' + targetPath + '? This cannot be undone.');
+    if (!confirmed) return;
+
+    setLoading((prev) => ({ ...prev, deletePath: true }));
+    FileService.deletePath(targetPath).then(() => {
+      removeDeletedPathFromOpenTabs(targetPath);
+      setSelectedTreeNode(null);
+      EditorStore.setStatus('Deleted: ' + targetPath, 'success');
+      return refreshProjectTree().then(() => {
+        GitService.fetchStatus();
+      });
+    }).catch((err) => {
+      const message = (err && err.response && err.response.data && err.response.data.error) || err.message;
+      EditorStore.setStatus('Delete failed: ' + message, 'error');
+    }).finally(() => {
+      setLoading((prev) => ({ ...prev, deletePath: false }));
+    });
+  };
+
+  const projectSectionTitle = deriveProjectRootName().toUpperCase();
+  const selectedTreePath = selectedTreeNode ? selectedTreeNode.path : null;
   const isRuby = activeTab && isRubyPath(activeTab.path);
   const supportedPrettierExts = ['js', 'jsx', 'json', 'css', 'scss', 'html', 'md'];
   const isPrettierable = activeTab && supportedPrettierExts.includes(activeTab.path.split('.').pop().toLowerCase());
@@ -532,49 +874,119 @@ const MbeditorApp = () => {
           {activeSidebarTab === 'explorer' && (
             <div className="ide-sidebar-content">
               {state.panes.flatMap(p => p.tabs).length > 0 && (
-                <div style={{ marginBottom: "12px" }}>
-                  <div className="ide-sidebar-header">OPEN EDITORS</div>
-                  {state.panes.map(pane => {
-                    if (pane.tabs.length === 0) return null;
-                    const isPane2 = pane.id === 2;
-                    return (
-                      <div key={pane.id} style={{ marginBottom: pane.id === 1 && state.panes[1].tabs.length > 0 ? "10px" : "0" }}>
-                        {state.panes[1].tabs.length > 0 && <div className="ide-sidebar-header" style={{ fontSize: '10px', opacity: 0.7, paddingLeft: '8px', marginBottom: '4px' }}>GROUP {pane.id}</div>}
-                        <div className="file-tree">
-                          {pane.tabs.map(tab => (
-                            <div 
-                              key={tab.id} 
-                              className={`tree-item ${pane.activeTabId === tab.id && state.focusedPaneId === pane.id ? "active" : ""}`}
-                              onClick={() => { TabManager.focusPane(pane.id); TabManager.switchTab(pane.id, tab.id); }}
-                            >
-                              <i className={`tree-item-icon ${window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code'} tree-file-icon`}></i>
-                              <div className="tree-item-name" style={{ display: 'flex', alignItems: 'center' }}>
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.name}</span>
-                                {tab.dirty && <i className="fas fa-circle" style={{ fontSize: '5px', color: '#e3d286', marginLeft: '6px', marginTop: '1px' }}></i>}
-                              </div>
-                              <div className="tab-actions" style={{ display: 'flex', position: 'absolute', right: '4px', top: 0, height: '100%', alignItems: 'center' }}>
-                                <div className="tab-split" onClick={(e) => { e.stopPropagation(); TabManager.moveTabToPane(pane.id, pane.id === 1 ? 2 : 1, tab.id); }} style={{ padding: '0 4px', cursor: 'pointer', opacity: 0.6 }} title={`Move to Group ${pane.id === 1 ? 2 : 1}`}>
-                                  <i className={isPane2 ? "fas fa-chevron-left" : "fas fa-chevron-right"}></i>
+                <CollapsibleSection 
+                  title="OPEN EDITORS"
+                  isCollapsed={collapsedSections.openEditors}
+                  onToggle={(isCollapsed) => handleToggleSection('openEditors', isCollapsed)}
+                >
+                  <div style={{ marginBottom: "12px" }}>
+                    {state.panes.map(pane => {
+                      if (pane.tabs.length === 0) return null;
+                      const isPane2 = pane.id === 2;
+                      return (
+                        <div key={pane.id} style={{ marginBottom: pane.id === 1 && state.panes[1].tabs.length > 0 ? "10px" : "0" }}>
+                          {state.panes[1].tabs.length > 0 && <div className="ide-sidebar-header" style={{ fontSize: '10px', opacity: 0.7, paddingLeft: '8px', marginBottom: '4px' }}>GROUP {pane.id}</div>}
+                          <div className="file-tree">
+                            {pane.tabs.map(tab => (
+                              <div 
+                                key={tab.id} 
+                                className={`tree-item ${pane.activeTabId === tab.id && state.focusedPaneId === pane.id ? "active" : ""}`}
+                                onClick={() => { TabManager.focusPane(pane.id); TabManager.switchTab(pane.id, tab.id); }}
+                              >
+                                <i className={`tree-item-icon ${window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code'} tree-file-icon`}></i>
+                                <div className="tree-item-name" style={{ display: 'flex', alignItems: 'center' }}>
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.name}</span>
+                                  {tab.dirty && <i className="fas fa-circle" style={{ fontSize: '5px', color: '#e3d286', marginLeft: '6px', marginTop: '1px' }}></i>}
                                 </div>
-                                <div className="tab-close" onClick={(e) => { e.stopPropagation(); requestCloseTab(pane.id, tab.id); }} style={{ padding: '0 4px', cursor: 'pointer', opacity: 0.6 }}>
-                                  <i className="fas fa-times"></i>
+                                <div className="tab-actions" style={{ display: 'flex', position: 'absolute', right: '4px', top: 0, height: '100%', alignItems: 'center' }}>
+                                  <div className="tab-split" onClick={(e) => { e.stopPropagation(); TabManager.moveTabToPane(pane.id, pane.id === 1 ? 2 : 1, tab.id); }} style={{ padding: '0 4px', cursor: 'pointer', opacity: 0.6 }} title={`Move to Group ${pane.id === 1 ? 2 : 1}`}>
+                                    <i className={isPane2 ? "fas fa-chevron-left" : "fas fa-chevron-right"}></i>
+                                  </div>
+                                  <div className="tab-close" onClick={(e) => { e.stopPropagation(); requestCloseTab(pane.id, tab.id); }} style={{ padding: '0 4px', cursor: 'pointer', opacity: 0.6 }}>
+                                    <i className="fas fa-times"></i>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                </CollapsibleSection>
               )}
-              <div className="ide-sidebar-header">PROJECT</div>
-              <FileTree 
-                items={treeData} 
-                onSelect={handleSelectFile} 
-                activePath={activeTab && activeTab.path}
-                gitFiles={state.gitFiles}
-              />
+              <CollapsibleSection
+                title={projectSectionTitle}
+                isCollapsed={collapsedSections.projects}
+                onToggle={(isCollapsed) => handleToggleSection('projects', isCollapsed)}
+                  actions={(
+                  <div className="project-actions" role="toolbar" aria-label="Project actions">
+                    <button
+                      type="button"
+                      className="project-action-btn"
+                      title="Collapse all folders"
+                      onClick={handleCollapseAll}
+                    >
+                      <i className="fas fa-compress-alt"></i>
+                    </button>
+                    <button
+                      type="button"
+                      className="project-action-btn"
+                      title="New file"
+                      onClick={() => handleCreateFile()}
+                      disabled={!!loading.createFile}
+                    >
+                      <i className={loading.createFile ? 'fas fa-spinner fa-spin' : 'far fa-file'}></i>
+                    </button>
+                    <button
+                      type="button"
+                      className="project-action-btn"
+                      title="New folder"
+                      onClick={() => handleCreateDir()}
+                      disabled={!!loading.createDir}
+                    >
+                      <i className={loading.createDir ? 'fas fa-spinner fa-spin' : 'far fa-folder'}></i>
+                    </button>
+                    <button
+                      type="button"
+                      className="project-action-btn"
+                      title="Rename selected"
+                      onClick={() => handleRenamePath()}
+                      disabled={!!loading.renamePath || !selectedTreePath}
+                    >
+                      <i className={loading.renamePath ? 'fas fa-spinner fa-spin' : 'fas fa-pen'}></i>
+                    </button>
+                    <button
+                      type="button"
+                      className="project-action-btn danger"
+                      title="Delete selected"
+                      onClick={() => handleDeletePath()}
+                      disabled={!!loading.deletePath || !selectedTreePath}
+                    >
+                      <i className={loading.deletePath ? 'fas fa-spinner fa-spin' : 'far fa-trash-alt'}></i>
+                    </button>
+                  </div>
+                )}
+              >
+                <FileTree
+                  items={treeData}
+                  onSelect={handleSoftOpenFile}
+                  activePath={activeTab && activeTab.path}
+                  selectedPath={selectedTreePath}
+                  onNodeSelect={setSelectedTreeNode}
+                  gitFiles={state.gitFiles}
+                  expandedDirs={expandedDirs}
+                  onExpandedDirsChange={setExpandedDirs}
+                  onFileDoubleClick={handleHardOpenFile}
+                  onContextMenu={openContextMenu}
+                  pendingCreate={pendingCreate}
+                  onCreateConfirm={handleCreateConfirm}
+                  onCreateCancel={handleCreateCancel}
+                  pendingRename={pendingRename}
+                  onRenameConfirm={handleRenameConfirm}
+                  onRenameCancel={handleRenameCancel}
+                />
+              </CollapsibleSection>
             </div>
           )}
 
@@ -698,6 +1110,7 @@ const MbeditorApp = () => {
                           onClose={(id) => requestCloseTab(pane.id, id)}
                           onTabDragStart={(id) => handleTabDragStart(pane.id, id)}
                           onTabDragEnd={clearDragState}
+                          onHardenTab={(tabId) => TabManager.hardenTab(pane.id, tabId)}
                         />
                         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', visibility: activeResizeMode === 'pane' ? 'hidden' : 'visible' }}>
                           <EditorPanel 
@@ -761,6 +1174,45 @@ const MbeditorApp = () => {
       </div>
 
       {quickOpen && <QuickOpenDialog onSelect={handleSelectFile} onClose={() => setQuickOpen(false)} />}
+
+      {/* Right-click context menu */}
+      {contextMenu && (
+        <React.Fragment>
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
+            onClick={closeContextMenu}
+            onContextMenu={(e) => { e.preventDefault(); closeContextMenu(); }}
+          />
+          <div
+            className="context-menu"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {contextMenu.node && contextMenu.node.type === 'file' && (
+              <div className="context-menu-item" onClick={() => handleContextMenuAction('open')}>
+                <i className="far fa-file-code context-menu-icon"></i> Open
+              </div>
+            )}
+            <div className="context-menu-item" onClick={() => handleContextMenuAction('newFile')}>
+              <i className="far fa-file context-menu-icon"></i> New File
+            </div>
+            <div className="context-menu-item" onClick={() => handleContextMenuAction('newFolder')}>
+              <i className="far fa-folder context-menu-icon"></i> New Folder
+            </div>
+            <div className="context-menu-divider"></div>
+            <div className="context-menu-item" onClick={() => handleContextMenuAction('rename')}>
+              <i className="fas fa-pen context-menu-icon"></i> Rename
+            </div>
+            <div className="context-menu-item context-menu-item-danger" onClick={() => handleContextMenuAction('delete')}>
+              <i className="far fa-trash-alt context-menu-icon"></i> Delete
+            </div>
+            <div className="context-menu-divider"></div>
+            <div className="context-menu-item" onClick={() => handleContextMenuAction('copyPath')}>
+              <i className="fas fa-copy context-menu-icon"></i> Copy Path
+            </div>
+          </div>
+        </React.Fragment>
+      )}
 
       {closingTabId && (
         <div className="quick-open-overlay" style={{ zIndex: 10001 }}>

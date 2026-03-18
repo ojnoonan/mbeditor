@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "shellwords"
 
 module Mbeditor
@@ -19,6 +20,14 @@ module Mbeditor
     # GET /mbeditor — renders the IDE shell
     def index
       render layout: "mbeditor/application"
+    end
+
+    # GET /mbeditor/workspace — metadata about current workspace root
+    def workspace
+      render json: {
+        rootName: workspace_root.basename.to_s,
+        rootPath: workspace_root.to_s
+      }
     end
 
     # GET /mbeditor/files — recursive file tree
@@ -89,11 +98,90 @@ module Mbeditor
     def save
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
+      return render json: { error: "Cannot write to this path" }, status: :forbidden if path_blocked_for_operations?(path)
 
       File.write(path, params[:code])
       render json: { ok: true, path: relative_path(path) }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_entity
+    end
+
+    # POST /mbeditor/create_file — create file and parent directories if needed
+    def create_file
+      path = resolve_path(params[:path])
+      return render json: { error: "Forbidden" }, status: :forbidden unless path
+      return render json: { error: "Cannot create file in this path" }, status: :forbidden if path_blocked_for_operations?(path)
+      return render json: { error: "File already exists" }, status: :unprocessable_entity if File.exist?(path)
+
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, params[:code].to_s)
+
+      render json: { ok: true, type: "file", path: relative_path(path), name: File.basename(path) }
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_entity
+    end
+
+    # POST /mbeditor/create_dir — create directory recursively
+    def create_dir
+      path = resolve_path(params[:path])
+      return render json: { error: "Forbidden" }, status: :forbidden unless path
+      return render json: { error: "Cannot create directory in this path" }, status: :forbidden if path_blocked_for_operations?(path)
+      return render json: { error: "Path already exists" }, status: :unprocessable_entity if File.exist?(path)
+
+      FileUtils.mkdir_p(path)
+      render json: { ok: true, type: "folder", path: relative_path(path), name: File.basename(path) }
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_entity
+    end
+
+    # PATCH /mbeditor/rename — rename file or directory
+    def rename
+      old_path = resolve_path(params[:path])
+      new_path = resolve_path(params[:new_path])
+      return render json: { error: "Forbidden" }, status: :forbidden unless old_path && new_path
+      return render json: { error: "Path not found" }, status: :not_found unless File.exist?(old_path)
+      return render json: { error: "Target path already exists" }, status: :unprocessable_entity if File.exist?(new_path)
+      return render json: { error: "Cannot rename this path" }, status: :forbidden if path_blocked_for_operations?(old_path) || path_blocked_for_operations?(new_path)
+
+      FileUtils.mkdir_p(File.dirname(new_path))
+      FileUtils.mv(old_path, new_path)
+
+      render json: {
+        ok: true,
+        oldPath: relative_path(old_path),
+        path: relative_path(new_path),
+        name: File.basename(new_path)
+      }
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_entity
+    end
+
+    # Backward compatibility for stale route/action caches.
+    def rename_path
+      rename
+    end
+
+    # DELETE /mbeditor/delete — remove file or directory
+    def destroy_path
+      path = resolve_path(params[:path])
+      return render json: { error: "Forbidden" }, status: :forbidden unless path
+      return render json: { error: "Path not found" }, status: :not_found unless File.exist?(path)
+      return render json: { error: "Cannot delete this path" }, status: :forbidden if path_blocked_for_operations?(path)
+
+      if File.directory?(path)
+        FileUtils.rm_rf(path)
+        render json: { ok: true, type: "folder", path: relative_path(path) }
+      else
+        File.delete(path)
+        render json: { ok: true, type: "file", path: relative_path(path) }
+      end
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_entity
+    end
+
+    # Backward compatibility for stale route/action caches.
+    def delete_path
+      destroy_path
     end
 
     # GET /mbeditor/search?q=...
@@ -308,7 +396,17 @@ module Mbeditor
     end
 
     def relative_path(full)
-      full.delete_prefix(workspace_root.to_s + "/")
+      root = workspace_root.to_s
+      return "" if full == root
+
+      full.delete_prefix(root + "/")
+    end
+
+    def path_blocked_for_operations?(full_path)
+      rel = relative_path(full_path)
+      return true if rel.blank?
+
+      excluded_path?(rel, File.basename(full_path))
     end
 
     def build_tree(dir, max_depth: 10, depth: 0)

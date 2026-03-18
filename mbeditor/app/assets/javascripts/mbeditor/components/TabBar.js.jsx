@@ -1,6 +1,6 @@
 const { useState, useEffect, useRef } = React;
 
-const TabBar = ({ tabs, activeId, onSelect, onClose, onTabDragStart, onTabDragEnd }) => {
+const TabBar = ({ tabs, activeId, onSelect, onClose, onTabDragStart, onTabDragEnd, onHardenTab }) => {
   const containerRef = useRef(null);
   const [draggingTabId, setDraggingTabId] = useState(null);
 
@@ -42,8 +42,9 @@ const TabBar = ({ tabs, activeId, onSelect, onClose, onTabDragStart, onTabDragEn
       {tabs.map(tab => (
         <div 
           key={tab.id} 
-          className={`tab-item ${activeId === tab.id ? 'active' : ''} ${getTabMarkerClass(tab)} ${draggingTabId === tab.id ? 'dragging' : ''}`}
+          className={`tab-item ${activeId === tab.id ? 'active' : ''} ${tab.isSoftOpen ? 'tab-soft' : ''} ${getTabMarkerClass(tab)} ${draggingTabId === tab.id ? 'dragging' : ''}`}
           onClick={() => onSelect(tab.id)}
+          onDoubleClick={() => { if (tab.isSoftOpen && onHardenTab) onHardenTab(tab.id); }}
           title={`${tab.path} - Drag to move to another pane`}
           draggable
           onDragStart={(e) => {
