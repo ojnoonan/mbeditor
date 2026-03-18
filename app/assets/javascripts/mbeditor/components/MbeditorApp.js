@@ -140,6 +140,13 @@ var MbeditorApp = function MbeditorApp() {
   var showGitPanel = _useState182[0];
   var setShowGitPanel = _useState182[1];
 
+  var _useState18b = useState(true);
+
+  var _useState18b2 = _slicedToArray(_useState18b, 2);
+
+  var serverOnline = _useState18b2[0];
+  var setServerOnline = _useState18b2[1];
+
   var _useState19 = useState({
     openEditors: false,
     projects: false
@@ -454,6 +461,25 @@ var MbeditorApp = function MbeditorApp() {
       document.body.style.userSelect = '';
     };
   }, [showGitPanel]);
+
+  // Heartbeat — poll /ping every 5s and reflect connectivity in the status bar
+  useEffect(function () {
+    var wasOnline = true;
+    var interval = setInterval(function () {
+      FileService.ping().then(function () {
+        if (!wasOnline) {
+          wasOnline = true;
+          setServerOnline(true);
+        }
+      }).catch(function () {
+        if (wasOnline) {
+          wasOnline = false;
+          setServerOnline(false);
+        }
+      });
+    }, 5000);
+    return function () { clearInterval(interval); };
+  }, []);
 
   var handleSelectFile = function handleSelectFile(path, name, line) {
     TabManager.openTab(path, name, line);
@@ -1643,6 +1669,12 @@ var MbeditorApp = function MbeditorApp() {
         React.createElement("i", { className: "fas fa-code-branch" }),
         " ",
         state.gitBranch
+      ),
+      !serverOnline && React.createElement(
+        "div",
+        { className: "statusbar-offline" },
+        React.createElement("i", { className: "fas fa-exclamation-triangle" }),
+        " Server offline"
       ),
       React.createElement(
         "div",

@@ -22,8 +22,6 @@ bundle exec rubocop
 cd test/dummy && rails server
 # Then visit http://localhost:3000/mbeditor
 
-# Recompile JSX source to plain JS (requires Node >= 18)
-node build_js.js
 ```
 
 ## Architecture
@@ -31,39 +29,36 @@ node build_js.js
 ### Backend (Rails Engine)
 
 - **`lib/mbeditor.rb`** — Main module entry point with `configure` DSL
-- **`lib/mbeditor/engine.rb`** — Rails Engine definition, asset precompilation setup, and JSX staleness check on boot
+- **`lib/mbeditor/engine.rb`** — Rails Engine definition and asset precompilation setup
 - **`lib/mbeditor/configuration.rb`** — Config class (allowed_environments, workspace_root, excluded_paths, rubocop_command)
 - **`app/controllers/mbeditor/editors_controller.rb`** — Core controller with endpoints handling file I/O, git commands, search, RuboCop lint/format, workspace state, and Monaco asset serving
 - **`config/routes.rb`** — All engine routes
 
 Path security: `resolve_path()` validates all file paths stay within `workspace_root`. File size capped at 5MB. Environment gating via `ensure_allowed_environment!`.
 
-Git/RuboCop use `Open3.capture2/3` for subprocess execution. Search tries `rg` first, falls back to `grep`. RuboCop lint uses `Open3.popen3` with a 15-second timeout thread.
+Git/RuboCop use `Open3.capture2/3` for subprocess execution. Search tries `rg` first (checked once at startup via `RG_AVAILABLE` constant), falls back to `grep -F`. RuboCop lint uses `Open3.popen3` with a 15-second timeout thread.
 
 ### Frontend (React + Monaco)
 
-The frontend is pre-compiled — JSX source lives in `src/` and is compiled to a single plain JS file. Do not edit the compiled output directly.
+All frontend code is plain JS — edit the files directly, no compilation step required.
 
-**Compiled output (do not edit directly):**
-- **`app/assets/javascripts/mbeditor/mbeditor_components.js`** — All React components compiled from JSX
+**React components (`app/assets/javascripts/mbeditor/components/`):**
+- **`MbeditorApp.js`** — Main React component: state management, pane layout, keyboard shortcuts (Ctrl+P, Ctrl+S), server heartbeat
+- **`EditorPanel.js`** — Monaco editor wrapper with Ruby syntax helpers
+- **`FileTree.js`** — Recursive file browser with git status badges, inline create/rename
+- **`TabBar.js`** — Draggable tab UI
+- **`GitPanel.js`** — Git branch/status display
+- **`QuickOpenDialog.js`** — Ctrl+P file finder
+- **`CollapsibleSection.js`** — Collapsible sidebar section
 
-**JSX source (edit these, then run `node build_js.js`):**
-- **`src/javascripts/mbeditor/components/MbeditorApp.js.jsx`** — Main React component: state management, pane layout, keyboard shortcuts (Ctrl+P, Ctrl+S)
-- **`src/javascripts/mbeditor/components/EditorPanel.js.jsx`** — Monaco editor wrapper with Ruby syntax helpers
-- **`src/javascripts/mbeditor/components/FileTree.js.jsx`** — Recursive file browser with git status badges, inline create/rename
-- **`src/javascripts/mbeditor/components/TabBar.js.jsx`** — Draggable tab UI
-- **`src/javascripts/mbeditor/components/GitPanel.js.jsx`** — Git branch/status display
-- **`src/javascripts/mbeditor/components/QuickOpenDialog.js.jsx`** — Ctrl+P file finder
-- **`src/javascripts/mbeditor/components/CollapsibleSection.js.jsx`** — Collapsible sidebar section
+**Service modules (`app/assets/javascripts/mbeditor/`):**
+- **`editor_store.js`** — Flux-style centralized state
+- **`file_service.js`** — Axios HTTP client for file operations (includes `ping` for heartbeat)
+- **`git_service.js`** — Git status/info API client
+- **`search_service.js`** — Client-side full-text search via MiniSearch
+- **`tab_manager.js`** — Tab/pane/preview lifecycle management
 
-**Plain JS service modules (edit directly, no compilation needed):**
-- **`app/assets/javascripts/mbeditor/editor_store.js`** — Flux-style centralized state
-- **`app/assets/javascripts/mbeditor/file_service.js`** — Axios HTTP client for file operations
-- **`app/assets/javascripts/mbeditor/git_service.js`** — Git status/info API client
-- **`app/assets/javascripts/mbeditor/search_service.js`** — Client-side full-text search via MiniSearch
-- **`app/assets/javascripts/mbeditor/tab_manager.js`** — Tab/pane/preview lifecycle management
-
-The engine's `mbeditor.jsx.rebuild` initializer automatically detects stale JSX (by comparing mtimes) and re-runs `node build_js.js` on server boot when working from a development checkout.
+Components are loaded individually via `application.js` Sprockets directives. `build_js.js` at the project root is retained as a utility for experimenting with JSX syntax but is not part of the normal build.
 
 ### Vendored Libraries
 
@@ -85,4 +80,3 @@ Tests live in `test/controllers/mbeditor/editors_controller_test.rb` and run aga
 - Ruby >= 3.0, Rails >= 7.1, < 9.0
 - `sprockets-rails >= 3.4`
 - Dev: `rubocop ~> 1.80`, `rubocop-rails ~> 2.33`, `minitest-reporters`
-- Build tooling (not a gem dependency): Node >= 18 for recompiling JSX via `build_js.js`
