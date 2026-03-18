@@ -217,10 +217,12 @@ module Mbeditor
 
     # GET /mbeditor/monaco-editor/*asset_path — serve packaged Monaco files
     def monaco_asset
-      path = resolve_monaco_asset_path(params[:asset_path])
+      # path_info is the path within the engine, e.g. "/monaco-editor/vs/loader.js"
+      relative = request.path_info.delete_prefix("/")
+      path = resolve_monaco_asset_path(relative)
       return render plain: "Not found", status: :not_found unless path
 
-      send_file path, disposition: "inline"
+      send_file path, disposition: "inline", type: Mime::Type.lookup_by_extension(File.extname(path).delete_prefix(".")) || "application/octet-stream"
     end
 
     # GET /mbeditor/monaco_worker.js — serve packaged Monaco worker entrypoint
@@ -231,7 +233,7 @@ module Mbeditor
       send_file path, disposition: "inline", type: "application/javascript"
     end
 
-    # POST /mbeditor/reload — touch tmp/restart.txt
+# POST /mbeditor/reload — touch tmp/restart.txt
     def reload
       FileUtils.touch(workspace_root.join("tmp", "restart.txt"))
       render json: { ok: true, message: "Rails reload triggered" }
@@ -410,22 +412,20 @@ module Mbeditor
       Rails.root.join("public", "monaco_worker.js")
     end
 
-    def monaco_root
-      engine_root = Mbeditor::Engine.root.join("public", "monaco-editor")
-      return engine_root if engine_root.directory?
-
-      Rails.root.join("public", "monaco-editor")
-    end
-
-    def resolve_monaco_asset_path(asset_path)
+def resolve_monaco_asset_path(asset_path)
       return nil if asset_path.blank?
 
-      base = monaco_root.to_s
-      full = File.expand_path(asset_path.to_s, base)
-      return nil unless full.start_with?(base + "/")
-      return nil unless File.file?(full)
+      [
+        Mbeditor::Engine.root.join("public"),
+        Rails.root.join("public")
+      ].each do |public_root|
+        base = public_root.to_s
+        full = File.expand_path(asset_path.to_s, base)
+        next unless full.start_with?(base + "/")
+        return full if File.file?(full)
+      end
 
-      full
+      nil
     end
 
     def image_path?(path)
