@@ -26,12 +26,12 @@
 
   <!-- ── Monaco loader ─────────────────────────────────── -->
   <% base_path = request.script_name.to_s.sub(%r{/$}, '') %>
-  <script>var require = { paths: { vs: '<%= "#{base_path}/monaco-editor/vs" %>' } };</script>
+  <script>var require = { paths: { vs: '<%= json_escape("#{base_path}/monaco-editor/vs") %>' } };</script>
   <script src="<%= "#{base_path}/monaco-editor/vs/loader.js" %>"></script>
 </head>
 <body data-rails-root="<%= Rails.root.to_s %>">
   <script>
-    window.MBEDITOR_BASE_PATH = "<%= base_path %>";
+    window.MBEDITOR_BASE_PATH = "<%= json_escape(base_path) %>";
     window.prettierPlugins = {
       babel: window.prettierPluginsBabel,
       estree: window.prettierPluginsEstree,

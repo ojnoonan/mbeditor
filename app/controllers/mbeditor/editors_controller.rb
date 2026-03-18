@@ -202,7 +202,7 @@ module Mbeditor
       cmd = if rg_available
               ["rg", "--json", "--max-count", "30", "--", query, workspace_root.to_s]
             else
-              ["grep", "-rn", "-m", "30", query, workspace_root.to_s]
+              ["grep", "-rn", "-F", "-m", "30", query, workspace_root.to_s]
             end
 
       unless rg_available
@@ -329,7 +329,7 @@ module Mbeditor
       send_file path, disposition: "inline", type: "application/javascript"
     end
 
-# POST /mbeditor/reload — touch tmp/restart.txt
+    # POST /mbeditor/reload — touch tmp/restart.txt
     def reload
       FileUtils.touch(workspace_root.join("tmp", "restart.txt"))
       render json: { ok: true, message: "Rails reload triggered" }
