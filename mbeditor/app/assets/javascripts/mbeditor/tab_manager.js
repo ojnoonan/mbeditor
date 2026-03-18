@@ -1,4 +1,8 @@
 var TabManager = (function () {
+  function _isImagePath(path) {
+    return /\.(png|jpe?g|gif|svg|ico|webp|bmp|avif)$/i.test(path || "");
+  }
+
   function _isMarkdownPath(path) {
     return /\.(md|markdown)$/i.test(path || "");
   }
@@ -76,6 +80,17 @@ var TabManager = (function () {
     var state = EditorStore.getState();
     var paneId = forcePaneId || state.focusedPaneId;
     var pane = state.panes.find(function(p) { return p.id === paneId; });
+
+    // If pane 2 is currently empty/hidden, prefer opening new tabs in pane 1.
+    if (!forcePaneId && paneId === 2 && (!pane || pane.tabs.length === 0)) {
+      var primaryPane = state.panes.find(function(p) { return p.id === 1; });
+      if (primaryPane && primaryPane.tabs.length > 0) {
+        paneId = 1;
+        pane = primaryPane;
+      }
+    }
+
+    if (!pane) return;
     
     var existing = pane.tabs.find(function(t) { return t.path === path; });
 
@@ -89,7 +104,15 @@ var TabManager = (function () {
     }
 
     // Create placeholder then load
-    var newTab = { id: path, path: path, name: name, dirty: false, content: "", viewState: null };
+    var newTab = {
+      id: path,
+      path: path,
+      name: name,
+      dirty: false,
+      content: "",
+      viewState: null,
+      isImage: _isImagePath(path)
+    };
     if (line) newTab.gotoLine = line;
 
     var newPanes = state.panes.map(function(p) {
@@ -106,9 +129,12 @@ var TabManager = (function () {
     }
 
     FileService.getFile(path).then(function(data) {
-      _updateTab(paneId, path, { content: data.content });
+      _updateTab(paneId, path, {
+        content: typeof data.content === 'string' ? data.content : "",
+        isImage: data.image === true ? true : _isImagePath(path)
+      });
       if (_isMarkdownPath(path)) {
-        _syncMarkdownPreviewContent(path, data.content);
+        _syncMarkdownPreviewContent(path, typeof data.content === 'string' ? data.content : "");
       }
     }).catch(function(err) {
       EditorStore.setStatus("Failed to load file: " + ((err.response && err.response.data && err.response.data.error) || err.message), "error");
@@ -130,11 +156,23 @@ var TabManager = (function () {
       return pane;
     });
 
-    // Determine what happens to global activeTabId if we closed it
-    var focusedPane = newPanes.find(function(p) { return p.id === state.focusedPaneId; });
+    var nextFocusedPaneId = state.focusedPaneId;
+    var focusedPane = newPanes.find(function(p) { return p.id === nextFocusedPaneId; });
+
+    // If the currently focused pane became empty, move focus to a pane that still has tabs.
+    if (!focusedPane || focusedPane.tabs.length === 0) {
+      var paneWithTabs = newPanes.find(function(p) { return p.tabs.length > 0; });
+      nextFocusedPaneId = paneWithTabs ? paneWithTabs.id : 1;
+      focusedPane = newPanes.find(function(p) { return p.id === nextFocusedPaneId; });
+    }
+
     var maybeNewGlobalActiveTab = focusedPane ? focusedPane.activeTabId : null;
 
-    EditorStore.setState({ panes: newPanes, activeTabId: maybeNewGlobalActiveTab });
+    EditorStore.setState({
+      panes: newPanes,
+      focusedPaneId: nextFocusedPaneId,
+      activeTabId: maybeNewGlobalActiveTab
+    });
   }
 
   function switchTab(paneId, path) {

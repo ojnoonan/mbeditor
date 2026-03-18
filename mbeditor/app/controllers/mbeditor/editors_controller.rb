@@ -13,6 +13,9 @@ module Mbeditor
       gitignore env sh bash zsh conf config toml
     ].freeze
 
+    IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
+    MAX_OPEN_FILE_SIZE_BYTES = 5 * 1024 * 1024
+
     # GET /mbeditor — renders the IDE shell
     def index
       render layout: "mbeditor/application"
@@ -52,6 +55,18 @@ module Mbeditor
 
       return render json: { error: "Not found" }, status: :not_found unless File.file?(path)
 
+      size = File.size(path)
+      return render_file_too_large(size) if size > MAX_OPEN_FILE_SIZE_BYTES
+
+      if image_path?(path)
+        return render json: {
+          path: relative_path(path),
+          image: true,
+          size: size,
+          content: ""
+        }
+      end
+
       content = File.read(path, encoding: "UTF-8", invalid: :replace, undef: :replace)
       render json: { path: relative_path(path), content: content }
     rescue StandardError => e
@@ -63,6 +78,9 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
       return render json: { error: "Not found" }, status: :not_found unless File.file?(path)
+
+      size = File.size(path)
+      return render_file_too_large(size) if size > MAX_OPEN_FILE_SIZE_BYTES
 
       send_file path, disposition: "inline"
     end
@@ -408,6 +426,31 @@ module Mbeditor
       return nil unless File.file?(full)
 
       full
+    end
+
+    def image_path?(path)
+      extension = File.extname(path).delete_prefix(".").downcase
+      IMAGE_EXTENSIONS.include?(extension)
+    end
+
+    def render_file_too_large(size)
+      render json: {
+        error: "File is too large to open (#{human_size(size)}). Limit is #{human_size(MAX_OPEN_FILE_SIZE_BYTES)}."
+      }, status: :payload_too_large
+    end
+
+    def human_size(bytes)
+      units = %w[B KB MB GB TB]
+      value = bytes.to_f
+      unit_index = 0
+
+      while value >= 1024.0 && unit_index < units.length - 1
+        value /= 1024.0
+        unit_index += 1
+      end
+
+      precision = unit_index.zero? ? 0 : 1
+      format("%.#{precision}f %s", value, units[unit_index])
     end
   end
 end

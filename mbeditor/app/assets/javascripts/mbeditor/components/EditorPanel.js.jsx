@@ -1,5 +1,7 @@
 const { useState, useEffect, useRef } = React;
 
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp', 'bmp', 'avif'];
+
 const EditorPanel = ({ tab, onContentChange, markers }) => {
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
@@ -115,7 +117,7 @@ const EditorPanel = ({ tab, onContentChange, markers }) => {
       case 'yaml': case 'yml': language = 'yaml'; break;
       case 'md': case 'markdown': language = 'markdown'; break;
       case 'sh': case 'bash': case 'zsh': language = 'shell'; break;
-      case 'png': case 'jpg': case 'jpeg': case 'gif': case 'svg': case 'ico': case 'webp': language = 'image'; break;
+      case 'png': case 'jpg': case 'jpeg': case 'gif': case 'svg': case 'ico': case 'webp': case 'bmp': case 'avif': language = 'image'; break;
     }
 
     if (language === 'image') return;
@@ -276,7 +278,7 @@ const EditorPanel = ({ tab, onContentChange, markers }) => {
   const sourcePath = tab.isPreview ? (tab.previewFor || tab.path) : tab.path;
   const parts = sourcePath.split('.');
   const ext = parts.length > 1 ? parts.pop().toLowerCase() : '';
-  const isImage = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp'].includes(ext);
+  const isImage = tab.isImage || IMAGE_EXTENSIONS.includes(ext);
   const isMarkdown = ['md', 'markdown'].includes(ext);
 
   useEffect(() => {

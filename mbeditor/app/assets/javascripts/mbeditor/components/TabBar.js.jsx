@@ -57,6 +57,7 @@ const TabBar = ({ tabs, activeId, onSelect, onClose, onTabDragStart, onTabDragEn
             if (onTabDragEnd) onTabDragEnd();
           }}
         >
+          <i className={`tab-item-icon ${window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code'}`}></i>
           <div className="tab-item-name">{tab.name}</div>
           {tab.dirty && <div className="tab-dirty-dot">●</div>}
           <div 

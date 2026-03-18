@@ -36,9 +36,11 @@ const FileTree = ({ items, onSelect, activePath, gitFiles }) => {
     if (lName === 'gemfile' || ext === 'gemspec' || ext === 'lock') return 'fas fa-gem ruby-icon';
     if (ext === 'rb' || ext === 'rake' || lName === 'rakefile') return 'far fa-gem ruby-icon';
     if (ext === 'jsx' || name.endsWith('.js.jsx')) return 'fas fa-atom react-icon';
-    if (ext === 'js' || ext === 'mjs') return 'fab fa-js js-icon';
-    if (ext === 'html' || ext === 'erb') return 'fab fa-html5 erb-icon';
-    if (ext === 'css' || ext === 'scss' || ext === 'sass') return 'fab fa-css3-alt css-icon';
+    if (ext === 'js' || ext === 'mjs' || ext === 'cjs') return 'fa-brands fa-js js-icon';
+    if (ext === 'html') return 'fa-brands fa-html5 html-icon';
+    if (ext === 'erb') return 'fa-brands fa-html5 erb-icon';
+    if (ext === 'css' || ext === 'scss' || ext === 'sass') return 'fa-brands fa-css3-alt css-icon';
+    if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp', 'bmp', 'avif'].includes(ext)) return 'far fa-file-image image-icon';
     if (ext === 'json') return 'fas fa-code json-icon';
     if (ext === 'md' || ext === 'txt') return 'fas fa-file-alt md-icon';
     if (ext === 'yml' || ext === 'yaml') return 'fas fa-cogs yml-icon';
