@@ -1,10 +1,15 @@
 Mbeditor::Engine.routes.draw do
   root to: "editors#index"
 
+  get  "workspace",  to: "editors#workspace"
   get  "files",      to: "editors#files"
   get  "file",       to: "editors#show"
   get  "raw",        to: "editors#raw"
   post "file",       to: "editors#save"
+  post "create_file", to: "editors#create_file"
+  post "create_dir",  to: "editors#create_dir"
+  patch "rename",     to: "editors#rename"
+  delete "delete",    to: "editors#destroy_path"
   get  "state",      to: "editors#state"
   post "state",      to: "editors#save_state"
   get  "search",     to: "editors#search"

@@ -308,7 +308,12 @@ module Mbeditor
       # path_info is the path within the engine, e.g. "/monaco-editor/vs/loader.js"
       relative = request.path_info.delete_prefix("/")
       path = resolve_monaco_asset_path(relative)
-      return render plain: "Not found", status: :not_found unless path
+      unless path
+        fallback_url = monaco_cdn_url_for(relative)
+        return redirect_to(fallback_url, allow_other_host: true) if fallback_url.present?
+
+        return head :not_found
+      end
 
       send_file path, disposition: "inline", type: Mime::Type.lookup_by_extension(File.extname(path).delete_prefix(".")) || "application/octet-stream"
     end
@@ -521,6 +526,25 @@ def resolve_monaco_asset_path(asset_path)
         full = File.expand_path(asset_path.to_s, base)
         next unless full.start_with?(base + "/")
         return full if File.file?(full)
+      end
+
+      nil
+    end
+
+    def monaco_cdn_url_for(relative_path)
+      base = Mbeditor.configuration.monaco_cdn_base.to_s.strip
+      return nil if base.empty?
+
+      normalized_base = base.sub(%r{/$}, "")
+
+      if relative_path.start_with?("monaco-editor/")
+        suffix = relative_path.delete_prefix("monaco-editor/")
+        return "#{normalized_base}/min/#{suffix}"
+      end
+
+      if relative_path.start_with?("min-maps/")
+        suffix = relative_path.delete_prefix("min-maps/")
+        return "#{normalized_base}/min-maps/#{suffix}"
       end
 
       nil

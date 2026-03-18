@@ -131,7 +131,8 @@ html, body, #mbeditor-root {
 .ide-sidebar-content::-webkit-scrollbar-thumb { background: #424242; border-radius: 3px; }
 
 /* ── File Tree ────────────────────────────────────────────── */
-.file-tree { padding: 4px 0; }
+.file-tree-root { padding: 4px 0; }
+.file-tree { padding: 0; }
 
 .tree-item {
   display: flex;

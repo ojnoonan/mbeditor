@@ -40,6 +40,7 @@ Everything else is intended to be packaged in the gem.
 
 Monaco runtime assets are served from the engine route namespace (`/mbeditor/monaco-editor/*` and `/mbeditor/monaco_worker.js`).
 For local development, the controller falls back to host `public/monaco-editor` and `public/monaco_worker.js` if packaged engine assets are not present yet.
+If a requested Monaco runtime file is still missing, mbeditor can redirect to the configured Monaco CDN base.
 
 ## Configuration
 Configure environments/workspace root in an initializer:
@@ -55,6 +56,10 @@ MBEditor.configure do |config|
   # RuboCop command used for inline linting (default: "rubocop")
   # Use "bundle exec rubocop" if RuboCop is managed via Bundler
   config.rubocop_command = "bundle exec rubocop"
+
+  # Optional Monaco CDN fallback for missing local runtime files
+  # Set to nil to disable fallback
+  # config.monaco_cdn_base = "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2"
 end
 ```
 
