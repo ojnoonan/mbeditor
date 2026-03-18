@@ -23,7 +23,7 @@ Gem::Specification.new do |spec|
     "bug_tracker_uri" => "https://github.com/ojnoonan/mbeditor/issues"
   }
 
-  spec.add_dependency "rails", ">= 7.0", "< 9.0"
+  spec.add_dependency "rails", ">= 7.1", "< 9.0"
   spec.add_dependency "sprockets-rails", ">= 3.4"
   spec.add_dependency "babel-transpiler", "~> 0.7"
 
