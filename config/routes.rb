@@ -21,7 +21,6 @@ Mbeditor::Engine.routes.draw do
   get    'monaco_worker.js',                to: 'editors#monaco_worker'
   get    'monaco-editor/*asset_path',       to: 'editors#monaco_asset', format: false
   get    'min-maps/*asset_path',            to: 'editors#monaco_asset', format: false
-  post   'reload',          to: 'editors#reload'
   post   'lint',            to: 'editors#lint'
   post   'format',          to: 'editors#format_file'
 end

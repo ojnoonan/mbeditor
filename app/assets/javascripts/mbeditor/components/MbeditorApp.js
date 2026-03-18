@@ -768,22 +768,6 @@ var MbeditorApp = function MbeditorApp() {
     }
   };
 
-  var handleReloadRails = function handleReloadRails() {
-    setLoading(function (prev) {
-      return _extends({}, prev, { reload: true });
-    });
-    EditorStore.setStatus("Reloading Rails...", "info");
-    FileService.reloadRails().then(function () {
-      return EditorStore.setStatus("Rails reloaded (restart.txt touched)", "success");
-    })["catch"](function (e) {
-      return EditorStore.setStatus("Reload failed", "error");
-    })["finally"](function () {
-      return setLoading(function (prev) {
-        return _extends({}, prev, { reload: false });
-      });
-    });
-  };
-
   var _debouncedSearch = useRef(window._.debounce(function (q) {
     if (!q.trim()) {
       EditorStore.setState({ searchResults: [] });
@@ -1205,13 +1189,6 @@ var MbeditorApp = function MbeditorApp() {
           { className: "statusbar-btn", onClick: handleFormat, disabled: loading.format || !canLintAndFormat },
           React.createElement("i", { className: loading.format ? "fas fa-spinner fa-spin" : "fas fa-magic" }),
           " Format"
-        ),
-        React.createElement("div", { className: "statusbar-sep" }),
-        React.createElement(
-          "button",
-          { className: "statusbar-btn", onClick: handleReloadRails, disabled: loading.reload },
-          React.createElement("i", { className: loading.reload ? "fas fa-spinner fa-spin" : "fas fa-sync-alt" }),
-          " Reload Rails"
         ),
         hasGitBranch && React.createElement(
           React.Fragment,

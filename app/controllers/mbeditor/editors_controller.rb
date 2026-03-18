@@ -329,14 +329,6 @@ module Mbeditor
       send_file path, disposition: "inline", type: "application/javascript"
     end
 
-    # POST /mbeditor/reload — touch tmp/restart.txt
-    def reload
-      FileUtils.touch(workspace_root.join("tmp", "restart.txt"))
-      render json: { ok: true, message: "Rails reload triggered" }
-    rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
-    end
-
     # POST /mbeditor/lint — run rubocop --stdin
     def lint
       path = resolve_path(params[:path])
