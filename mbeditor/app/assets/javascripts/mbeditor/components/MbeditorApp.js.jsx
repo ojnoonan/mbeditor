@@ -1,5 +1,12 @@
 const { useState, useEffect, useRef } = React;
 
+const SIDEBAR_MIN_WIDTH = 240;
+const SIDEBAR_MAX_WIDTH = 560;
+const EDITOR_MIN_WIDTH = 320;
+const GIT_PANEL_MIN_WIDTH = 280;
+const PANE_MIN_WIDTH_PERCENT = 20;
+const PANE_MAX_WIDTH_PERCENT = 80;
+
 const MbeditorApp = () => {
   const [state, setState] = useState(EditorStore.getState());
   const [quickOpen, setQuickOpen] = useState(false);
@@ -10,11 +17,15 @@ const MbeditorApp = () => {
   const [loading, setLoading] = useState({});
   const [closingTabId, setClosingTabId] = useState(null);
   const [closingPaneId, setClosingPaneId] = useState(null);
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_MIN_WIDTH);
   const [pane1Width, setPane1Width] = useState(50); // percentage
-  const [isResizing, setIsResizing] = useState(false);
+  const [activeResizeMode, setActiveResizeMode] = useState(null);
   const [draggedTab, setDraggedTab] = useState(null);
   const [dragOverPaneId, setDragOverPaneId] = useState(null);
   const [showGitPanel, setShowGitPanel] = useState(false);
+  const resizeSessionRef = useRef(null);
+
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
   const isRubyPath = (path) => {
     return path && (path.endsWith('.rb') || path.endsWith('.gemspec') || path.endsWith('Rakefile') || path.endsWith('Gemfile'));
@@ -127,7 +138,12 @@ const MbeditorApp = () => {
       }
       if (panesToLoad && panesToLoad.length > 0) {
         const allTabs = panesToLoad.flatMap(p => p.tabs);
-        Promise.all(allTabs.map(t => FileService.getFile(t.path).catch(() => ({ content: '' }))))
+        Promise.all(allTabs.map((t) => {
+          const sourcePath = (t.isPreview || /::preview$/.test(t.path || ''))
+            ? (t.previewFor || (t.path || '').replace(/::preview$/, ''))
+            : t.path;
+          return FileService.getFile(sourcePath).catch(() => ({ content: '' }));
+        }))
           .then(results => {
             let resIdx = 0;
             const restoredPanes = panesToLoad.map(p => ({
@@ -157,21 +173,37 @@ const MbeditorApp = () => {
     };
 
     const handleMouseMove = (e) => {
-      if (!window.__isResizing) return;
-      const container = document.getElementById('ide-main-split-container');
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
-      const newWidth = ((e.clientX - rect.left) / rect.width) * 100;
-      if (newWidth > 10 && newWidth < 90) {
-        setPane1Width(newWidth);
+      const session = resizeSessionRef.current;
+      if (!session) return;
+
+      if (session.mode === 'pane') {
+        const container = document.getElementById('ide-main-split-container');
+        if (!container) return;
+
+        const rect = container.getBoundingClientRect();
+        const nextWidth = ((e.clientX - rect.left) / rect.width) * 100;
+        setPane1Width(clamp(nextWidth, PANE_MIN_WIDTH_PERCENT, PANE_MAX_WIDTH_PERCENT));
+      }
+
+      if (session.mode === 'sidebar') {
+        const body = document.getElementById('ide-body-container');
+        if (!body) return;
+
+        const rect = body.getBoundingClientRect();
+        const reservedRight = EDITOR_MIN_WIDTH + (showGitPanel ? GIT_PANEL_MIN_WIDTH : 0);
+        const maxSidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, rect.width - reservedRight));
+        const nextWidth = e.clientX - rect.left;
+        setSidebarWidth(clamp(nextWidth, SIDEBAR_MIN_WIDTH, maxSidebarWidth));
       }
     };
     
     const handleMouseUp = () => {
-      if (window.__isResizing) {
-        window.__isResizing = false;
-        setIsResizing(false);
-      }
+      if (!resizeSessionRef.current) return;
+
+      resizeSessionRef.current = null;
+      setActiveResizeMode(null);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -182,8 +214,10 @@ const MbeditorApp = () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     };
-  }, []);
+  }, [showGitPanel]);
 
   const handleSelectFile = (path, name, line) => {
     TabManager.openTab(path, name, line);
@@ -239,7 +273,15 @@ const MbeditorApp = () => {
       const lightweightPanes = st.panes.map(p => ({
         id: p.id,
         activeTabId: p.activeTabId,
-        tabs: p.tabs.map(t => ({ id: t.id, path: t.path, name: t.name, dirty: t.dirty, viewState: t.viewState }))
+        tabs: p.tabs.map(t => ({
+          id: t.id,
+          path: t.path,
+          name: t.name,
+          dirty: t.dirty,
+          viewState: t.viewState,
+          isPreview: !!t.isPreview,
+          previewFor: t.previewFor || null
+        }))
       }));
       FileService.saveState({ panes: lightweightPanes, focusedPaneId: st.focusedPaneId });
     }, 1000);
@@ -418,6 +460,22 @@ const MbeditorApp = () => {
     });
   };
 
+  const startPaneResize = (e) => {
+    e.preventDefault();
+    resizeSessionRef.current = { mode: 'pane' };
+    setActiveResizeMode('pane');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const startSidebarResize = (e) => {
+    e.preventDefault();
+    resizeSessionRef.current = { mode: 'sidebar' };
+    setActiveResizeMode('sidebar');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
   const openFileFromGitPanel = (path, name) => {
     if (!path) return;
     handleSelectFile(path, name || path.split('/').pop());
@@ -463,9 +521,9 @@ const MbeditorApp = () => {
         </div>
       </div>
 
-      <div className="ide-body">
+      <div className="ide-body" id="ide-body-container">
         {/* SIDEBAR */}
-        <div className="ide-sidebar">
+        <div className="ide-sidebar" style={{ width: `${sidebarWidth}px` }}>
           <div className="ide-sidebar-tabs">
             <button type="button" className={`ide-sidebar-tab ${activeSidebarTab === 'explorer' ? 'active' : ''}`} onClick={() => setActiveSidebarTab('explorer')}>EXPLORER</button>
             <button type="button" className={`ide-sidebar-tab ${activeSidebarTab === 'search' ? 'active' : ''}`} onClick={() => setActiveSidebarTab('search')}>SEARCH</button>
@@ -543,11 +601,19 @@ const MbeditorApp = () => {
           )}
         </div>
 
+        <div
+          className={`panel-divider sidebar-divider ${activeResizeMode === 'sidebar' ? 'active' : ''}`}
+          onMouseDown={startSidebarResize}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize explorer panel"
+        ></div>
+
         {/* EDITOR AREA */}
         <div
           id="ide-main-split-container"
           className="ide-main"
-          style={{ display: 'flex', flexDirection: 'row', width: '100%', height: '100%', cursor: isResizing ? 'col-resize' : 'default', userSelect: isResizing ? 'none' : 'auto' }}
+          style={{ display: 'flex', flexDirection: 'row', width: '100%', height: '100%', cursor: activeResizeMode === 'pane' ? 'col-resize' : 'default', userSelect: activeResizeMode ? 'none' : 'auto' }}
           onDragOverCapture={(e) => {
             if (!draggedTab) return;
             e.preventDefault();
@@ -592,10 +658,8 @@ const MbeditorApp = () => {
                <React.Fragment key={pane.id}>
                  {idx === 1 && isSplit && (
                    <div 
-                     onMouseDown={() => { window.__isResizing = true; setIsResizing(true); }}
-                     style={{ width: '4px', background: isResizing ? '#007acc' : '#333', cursor: 'col-resize', zIndex: 10, transition: 'background 0.2s' }}
-                     onMouseEnter={(e) => e.target.style.background = '#007acc'}
-                     onMouseLeave={(e) => { if (!isResizing) e.target.style.background = '#333'; }}
+                     className={`panel-divider pane-divider ${activeResizeMode === 'pane' ? 'active' : ''}`}
+                     onMouseDown={startPaneResize}
                    ></div>
                  )}
                  <div
@@ -635,7 +699,7 @@ const MbeditorApp = () => {
                           onTabDragStart={(id) => handleTabDragStart(pane.id, id)}
                           onTabDragEnd={clearDragState}
                         />
-                        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', visibility: isResizing ? 'hidden' : 'visible' }}>
+                        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', visibility: activeResizeMode === 'pane' ? 'hidden' : 'visible' }}>
                           <EditorPanel 
                             key={pActiveTab.id} 
                             tab={pActiveTab} 

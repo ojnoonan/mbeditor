@@ -52,14 +52,37 @@ html, body, #mbeditor-root {
 /* ── Sidebar ─────────────────────────────────────────────── */
 .ide-sidebar {
   width: 240px;
-  min-width: 160px;
-  max-width: 400px;
+  min-width: 240px;
+  max-width: 560px;
   background: #252526;
   border-right: 1px solid #3c3c3c;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   flex-shrink: 0;
+}
+
+.panel-divider {
+  flex-shrink: 0;
+  cursor: col-resize;
+  transition: background 0.12s ease;
+}
+
+.sidebar-divider {
+  width: 6px;
+  background: #2a2a2a;
+  border-right: 1px solid #3c3c3c;
+}
+
+.pane-divider {
+  width: 4px;
+  background: #333;
+  z-index: 10;
+}
+
+.panel-divider:hover,
+.panel-divider.active {
+  background: #007acc;
 }
 
 .ide-sidebar-header {
@@ -287,6 +310,40 @@ html, body, #mbeditor-root {
 .monaco-editor .monaco-hover,
 .monaco-editor .suggest-widget {
   z-index: 2000 !important;
+}
+
+.markdown-preview {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  background: #1e1e1e;
+  color: #ccc;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  padding: 20px;
+}
+
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.markdown-preview h4 {
+  color: #ffffff;
+}
+
+.markdown-preview a {
+  color: #4ec9b0;
+}
+
+.markdown-preview code {
+  background: #2d2d2d;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+}
+
+.markdown-preview pre code {
+  display: block;
+  padding: 12px;
+  overflow-x: auto;
 }
 
 /* ── Status Bar ──────────────────────────────────────────── */

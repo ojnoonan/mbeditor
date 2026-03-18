@@ -5,6 +5,17 @@ const EditorPanel = ({ tab, onContentChange, markers }) => {
   const monacoRef = useRef(null);
   const [markup, setMarkup] = useState('');
 
+  const findTabByPath = (path) => {
+    if (!path) return null;
+    const state = EditorStore.getState();
+    for (let i = 0; i < state.panes.length; i += 1) {
+      const pane = state.panes[i];
+      const match = pane.tabs.find((t) => t.path === path);
+      if (match) return match;
+    }
+    return null;
+  };
+
   useEffect(() => {
     if (!window._editorExtensionsRegistered && window.monaco) {
       window._editorExtensionsRegistered = true;
@@ -88,6 +99,7 @@ const EditorPanel = ({ tab, onContentChange, markers }) => {
     }
   }, []);
   useEffect(() => {
+    if (tab.isPreview) return;
     if (!editorRef.current || !window.monaco) return;
 
     const parts = tab.path.split('.');
@@ -190,7 +202,7 @@ const EditorPanel = ({ tab, onContentChange, markers }) => {
       disposable.dispose();
       editor.dispose();
     };
-  }, [tab.id]); // re-run ONLY on tab switch, not on content change (Monaco handles its own content state)
+  }, [tab.id, tab.isPreview]); // re-run ONLY on tab switch, not on content change (Monaco handles its own content state)
 
   // Listen for external content changes (e.g. after Format/Save/Load)
   useEffect(() => {
@@ -258,16 +270,20 @@ const EditorPanel = ({ tab, onContentChange, markers }) => {
     }
   }, [markers, tab.id]);
 
-  const parts = tab.path.split('.');
+  const sourceTab = tab.isPreview ? findTabByPath(tab.previewFor) : null;
+  const markdownContent = tab.isPreview ? ((sourceTab && sourceTab.content) || tab.content || '') : (tab.content || '');
+
+  const sourcePath = tab.isPreview ? (tab.previewFor || tab.path) : tab.path;
+  const parts = sourcePath.split('.');
   const ext = parts.length > 1 ? parts.pop().toLowerCase() : '';
   const isImage = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp'].includes(ext);
   const isMarkdown = ['md', 'markdown'].includes(ext);
 
   useEffect(() => {
     if (isMarkdown && window.marked) {
-      setMarkup(window.marked.parse(tab.content || ''));
+      setMarkup(window.marked.parse(markdownContent));
     }
-  }, [tab.content, isMarkdown]);
+  }, [markdownContent, isMarkdown]);
 
   if (isImage) {
     const basePath = (window.MBEDITOR_BASE_PATH || '/mbeditor').replace(/\/$/, '');
@@ -278,12 +294,9 @@ const EditorPanel = ({ tab, onContentChange, markers }) => {
     );
   }
 
-  if (isMarkdown) {
+  if (tab.isPreview && isMarkdown) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'row', width: '100%', height: '100%' }}>
-        <div ref={editorRef} className="monaco-container" style={{ flex: 1, borderRight: '1px solid #333' }}></div>
-        <div className="markdown-preview" style={{ flex: 1, padding: '20px', overflowY: 'auto', background: '#1e1e1e', color: '#ccc', fontFamily: 'sans-serif' }} dangerouslySetInnerHTML={{ __html: markup }}></div>
-      </div>
+      <div className="markdown-preview markdown-preview-full" dangerouslySetInnerHTML={{ __html: markup }}></div>
     );
   }
 

@@ -1,4 +1,77 @@
 var TabManager = (function () {
+  function _isMarkdownPath(path) {
+    return /\.(md|markdown)$/i.test(path || "");
+  }
+
+  function _previewPath(path) {
+    return path + "::preview";
+  }
+
+  function _previewName(name) {
+    return (name || "preview") + "-preview";
+  }
+
+  function _ensureMarkdownPreview(sourcePaneId, sourcePath, sourceName, sourceContent) {
+    var state = EditorStore.getState();
+    var targetPaneId = sourcePaneId === 1 ? 2 : 1;
+    var previewPath = _previewPath(sourcePath);
+    var targetPane = state.panes.find(function(p) { return p.id === targetPaneId; });
+    if (!targetPane) return;
+
+    var existing = targetPane.tabs.find(function(t) { return t.path === previewPath; });
+    if (existing) {
+      _updateTab(targetPaneId, previewPath, {
+        name: _previewName(sourceName),
+        isPreview: true,
+        previewFor: sourcePath,
+        content: typeof sourceContent === 'string' ? sourceContent : existing.content
+      });
+      return;
+    }
+
+    var previewTab = {
+      id: previewPath,
+      path: previewPath,
+      name: _previewName(sourceName),
+      dirty: false,
+      content: typeof sourceContent === 'string' ? sourceContent : "",
+      viewState: null,
+      isPreview: true,
+      previewFor: sourcePath
+    };
+
+    var newPanes = state.panes.map(function(p) {
+      if (p.id === targetPaneId) {
+        return Object.assign({}, p, {
+          tabs: p.tabs.concat(previewTab),
+          activeTabId: previewPath
+        });
+      }
+      return p;
+    });
+
+    EditorStore.setState({ panes: newPanes, focusedPaneId: sourcePaneId, activeTabId: sourcePath });
+  }
+
+  function _syncMarkdownPreviewContent(sourcePath, sourceContent) {
+    var state = EditorStore.getState();
+    var previewPath = _previewPath(sourcePath);
+
+    state.panes.forEach(function(pane) {
+      var previewTab = pane.tabs.find(function(tab) {
+        return tab.path === previewPath || (tab.isPreview && tab.previewFor === sourcePath);
+      });
+
+      if (previewTab) {
+        _updateTab(pane.id, previewTab.path, {
+          content: sourceContent,
+          previewFor: sourcePath,
+          isPreview: true
+        });
+      }
+    });
+  }
+
   function openTab(path, name, line, forcePaneId) {
     var state = EditorStore.getState();
     var paneId = forcePaneId || state.focusedPaneId;
@@ -9,6 +82,9 @@ var TabManager = (function () {
     if (existing) {
       if (line) _updateTab(paneId, path, { gotoLine: line });
       switchTab(paneId, path);
+      if (_isMarkdownPath(path)) {
+        _ensureMarkdownPreview(paneId, path, existing.name || name, existing.content || "");
+      }
       return;
     }
 
@@ -25,8 +101,15 @@ var TabManager = (function () {
 
     EditorStore.setState({ panes: newPanes, focusedPaneId: paneId, activeTabId: path });
 
+    if (_isMarkdownPath(path)) {
+      _ensureMarkdownPreview(paneId, path, name, "");
+    }
+
     FileService.getFile(path).then(function(data) {
       _updateTab(paneId, path, { content: data.content });
+      if (_isMarkdownPath(path)) {
+        _syncMarkdownPreviewContent(path, data.content);
+      }
     }).catch(function(err) {
       EditorStore.setStatus("Failed to load file: " + ((err.response && err.response.data && err.response.data.error) || err.message), "error");
       closeTab(paneId, path);
@@ -72,6 +155,9 @@ var TabManager = (function () {
 
   function markDirty(paneId, path, content) {
     _updateTab(paneId, path, { content: content, dirty: true });
+    if (_isMarkdownPath(path)) {
+      _syncMarkdownPreviewContent(path, content);
+    }
   }
 
   function saveTabViewState(paneIdOrPath, pathOrViewState, maybeViewState) {
