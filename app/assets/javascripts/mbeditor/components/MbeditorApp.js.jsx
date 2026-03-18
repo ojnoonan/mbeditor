@@ -1113,9 +1113,10 @@ const MbeditorApp = () => {
                           onHardenTab={(tabId) => TabManager.hardenTab(pane.id, tabId)}
                         />
                         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', visibility: activeResizeMode === 'pane' ? 'hidden' : 'visible' }}>
-                          <EditorPanel 
-                            key={pActiveTab.id} 
-                            tab={pActiveTab} 
+                          <EditorPanel
+                            key={pActiveTab.id}
+                            tab={pActiveTab}
+                            paneId={pane.id}
                             markers={markers[pActiveTab.id] || []}
                             onContentChange={(val) => {
                               TabManager.markDirty(pane.id, pActiveTab.id, val);
