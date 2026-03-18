@@ -18,6 +18,7 @@ module Mbeditor
 
     IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
     MAX_OPEN_FILE_SIZE_BYTES = 5 * 1024 * 1024
+    RG_AVAILABLE = system("which rg > /dev/null 2>&1")
     RUBOCOP_TIMEOUT_SECONDS = 15
 
     # GET /mbeditor — renders the IDE shell
@@ -198,20 +199,19 @@ module Mbeditor
       return render json: [] if query.blank?
 
       results = []
-      rg_available = system("which rg > /dev/null 2>&1")
-      cmd = if rg_available
+      cmd = if RG_AVAILABLE
               ["rg", "--json", "--max-count", "30", "--", query, workspace_root.to_s]
             else
               ["grep", "-rn", "-F", "-m", "30", query, workspace_root.to_s]
             end
 
-      unless rg_available
+      unless RG_AVAILABLE
         excluded_dirnames.each do |dir_name|
           cmd.insert(2, "--exclude-dir=#{dir_name}")
         end
       end
 
-      if rg_available
+      if RG_AVAILABLE
         output, = Open3.capture2(*cmd)
         output.lines.each do |line|
           data = JSON.parse(line) rescue next
