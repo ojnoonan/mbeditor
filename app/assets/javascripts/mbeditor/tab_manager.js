@@ -260,6 +260,10 @@ var TabManager = (function () {
     EditorStore.setState({ panes: newPanes });
   }
 
+  function clearGotoLine(paneId, path) {
+    _updateTab(paneId, path, { gotoLine: null });
+  }
+
   return {
     openTab: openTab,
     closeTab: closeTab,
@@ -267,6 +271,7 @@ var TabManager = (function () {
     focusPane: focusPane,
     markDirty: markDirty,
     saveTabViewState: saveTabViewState,
-    moveTabToPane: moveTabToPane
+    moveTabToPane: moveTabToPane,
+    clearGotoLine: clearGotoLine
   };
 })();

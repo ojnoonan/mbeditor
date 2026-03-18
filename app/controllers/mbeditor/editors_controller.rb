@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "shellwords"
+require "tmpdir"
 
 module Mbeditor
   class EditorsController < ApplicationController
@@ -250,11 +251,12 @@ module Mbeditor
       code = params[:code] || File.read(path)
 
       cmd = rubocop_command + ["--no-server", "--cache", "false", "--stdin", filename, "--format", "json", "--no-color", "--force-exclusion"]
-      env = { "RUBOCOP_CACHE_ROOT" => "/tmp/rubocop" }
+      env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
       output, _err, _status = Open3.capture3(env, *cmd, stdin_data: code)
 
-      json_str = output[output.index("{")..] rescue nil
-      result = json_str ? JSON.parse(json_str) : {}
+      idx = output.index("{")
+      result = idx ? JSON.parse(output[idx..]) : {}
+      result = {} unless result.is_a?(Hash)
       offenses = result.dig("files", 0, "offenses") || []
 
       markers = offenses.map do |offense|
@@ -279,7 +281,7 @@ module Mbeditor
       return render json: { error: "Forbidden" }, status: :forbidden unless path
 
       cmd = rubocop_command + ["--no-server", "--cache", "false", "-A", "--no-color", path]
-      env = { "RUBOCOP_CACHE_ROOT" => "/tmp/rubocop" }
+      env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
       _out, _err, status = Open3.capture3(env, *cmd)
 
       content = File.read(path, encoding: "UTF-8", invalid: :replace, undef: :replace)
@@ -412,7 +414,7 @@ module Mbeditor
       Rails.root.join("public", "monaco_worker.js")
     end
 
-def resolve_monaco_asset_path(asset_path)
+    def resolve_monaco_asset_path(asset_path)
       return nil if asset_path.blank?
 
       [
@@ -421,7 +423,7 @@ def resolve_monaco_asset_path(asset_path)
       ].each do |public_root|
         base = public_root.to_s
         full = File.expand_path(asset_path.to_s, base)
-        next unless full.start_with?(base + "/")
+        next unless full.start_with?(base + '/')
         return full if File.file?(full)
       end
 

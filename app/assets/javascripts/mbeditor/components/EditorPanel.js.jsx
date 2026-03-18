@@ -2,7 +2,7 @@ const { useState, useEffect, useRef } = React;
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp', 'bmp', 'avif'];
 
-const EditorPanel = ({ tab, onContentChange, markers }) => {
+const EditorPanel = ({ tab, paneId, onContentChange, markers }) => {
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
   const [markup, setMarkup] = useState('');
@@ -246,10 +246,8 @@ const EditorPanel = ({ tab, onContentChange, markers }) => {
         editor.setPosition({ lineNumber: tab.gotoLine, column: 1 });
         editor.focus();
         
-        // Remove gotoLine from tab state so it doesn't refire
-        TabManager.saveTabViewState(tab.id, editor.saveViewState()); // save view state, but how to unset gotoLine?
-        // We'll just mutate the local object so this effect doesn't spam jump if the component re-renders
-        delete tab.gotoLine;
+        TabManager.saveTabViewState(tab.id, editor.saveViewState());
+        TabManager.clearGotoLine(paneId, tab.path);
       }, 50);
     }
   }, [tab.gotoLine, tab.content]); // need tab.content in dep array so if it loads asynchronously, the jump happens AFTER content loads
@@ -283,7 +281,10 @@ const EditorPanel = ({ tab, onContentChange, markers }) => {
 
   useEffect(() => {
     if (isMarkdown && window.marked) {
-      setMarkup(window.marked.parse(markdownContent));
+      const renderer = new window.marked.Renderer();
+      const escapeHtml = (str) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      renderer.html = (token) => '<pre>' + escapeHtml(typeof token === 'object' ? token.text : token) + '</pre>';
+      setMarkup(window.marked.parse(markdownContent, { renderer }));
     }
   }, [markdownContent, isMarkdown]);
 
