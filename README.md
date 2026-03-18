@@ -25,6 +25,10 @@ Then mount the engine in host app routes:
 
 ```ruby
 mount Mbeditor::Engine, at: "/mbeditor"
+
+# Monaco asset redirects (required for the editor worker)
+get "monaco_worker.js",   to: redirect("/mbeditor/monaco_worker.js")
+get "monaco-editor/*asset_path", to: redirect("/mbeditor/monaco-editor/%{asset_path}"), format: false
 ```
 
 ## Host Requirements
@@ -53,6 +57,16 @@ MBEditor.configure do |config|
   config.rubocop_command = "bundle exec rubocop"
 end
 ```
+
+## Development
+
+A minimal dummy Rails app is included for local development and testing:
+
+```bash
+cd test/dummy && rails server
+```
+
+Then visit http://localhost:3000/mbeditor.
 
 ## Notes
 - The engine is intended for development-time use.
