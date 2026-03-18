@@ -4,5 +4,3 @@ gemspec
 
 gem "puma"
 gem "minitest-reporters", require: false
-gem "rubocop", "~> 1.80", require: false
-gem "rubocop-rails", "~> 2.33", require: false

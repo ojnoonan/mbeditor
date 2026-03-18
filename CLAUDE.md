@@ -15,9 +15,6 @@ bundle install
 # Run tests
 bundle exec rake test
 
-# Lint Ruby code
-bundle exec rubocop
-
 # Run the dummy app for development/testing
 cd test/dummy && rails server
 # Then visit http://localhost:3000/mbeditor
@@ -79,4 +76,4 @@ Tests live in `test/controllers/mbeditor/editors_controller_test.rb` and run aga
 
 - Ruby >= 3.0, Rails >= 7.1, < 9.0
 - `sprockets-rails >= 3.4`
-- Dev: `rubocop ~> 1.80`, `rubocop-rails ~> 2.33`, `minitest-reporters`
+- Dev: `minitest-reporters`

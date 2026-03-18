@@ -2,11 +2,9 @@
 
 ## Release blockers
 
-- [ ] Add `LICENSE` file (gemspec declares MIT but no file exists)
+- [x] Add `LICENSE` file (gemspec declares MIT but no file exists)
 - [ ] Add `CHANGELOG.md`
 - [ ] Verify gemspec author email before publishing — currently set to `s3660457@student.rmit.edu.au`
-- [ ] Add `.rubocop.yml` — rubocop is a dev dependency but no config file exists
-- [ ] Add RuboCop step to CI — neither `test.yml` nor `publish.yml` runs rubocop
 
 ## Gem / packaging
 
