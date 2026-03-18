@@ -1,5 +1,12 @@
-# Keep this repository focused on the local gem only
-*
-!.gitignore
-!mbeditor/
-!mbeditor/**
+/.bundle/
+/tmp/
+/log/
+/*.gem
+/vendor/bundle/
+/pkg/
+/test/dummy/db/*.sqlite3
+/test/dummy/db/*.sqlite3-journal
+/test/dummy/log/
+/test/dummy/tmp/
+/test/dummy/storage/
+Gemfile.lock

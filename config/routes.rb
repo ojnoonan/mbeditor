@@ -1,10 +1,18 @@
-Rails.application.routes.draw do
-  get "up" => "rails/health#show", as: :rails_health_check
+Mbeditor::Engine.routes.draw do
+  root to: "editors#index"
 
-  # Backward-compatible root asset routes for older host-side layouts/scripts.
-  get "monaco_worker.js", to: redirect("/mbeditor/monaco_worker.js")
-  get "monaco-editor/*asset_path", to: redirect("/mbeditor/monaco-editor/%{asset_path}"), format: false
-
-  mount Mbeditor::Engine => "/mbeditor"
-  root to: redirect("/mbeditor")
+  get  "files",      to: "editors#files"
+  get  "file",       to: "editors#show"
+  get  "raw",        to: "editors#raw"
+  post "file",       to: "editors#save"
+  get  "state",      to: "editors#state"
+  post "state",      to: "editors#save_state"
+  get  "search",     to: "editors#search"
+  get  "git_info",   to: "editors#git_info"
+  get  "git_status", to: "editors#git_status"
+  get  "monaco_worker.js", to: "editors#monaco_worker"
+  get  "monaco-editor/*asset_path", to: "editors#monaco_asset", format: false
+  post "reload",     to: "editors#reload"
+  post "lint",       to: "editors#lint"
+  post "format",     to: "editors#format_file"
 end
