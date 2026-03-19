@@ -136,8 +136,10 @@ var TabManager = (function () {
     }
 
     FileService.getFile(path).then(function(data) {
+      var loadedContent = typeof data.content === 'string' ? data.content : "";
       _updateTab(paneId, path, {
-        content: typeof data.content === 'string' ? data.content : "",
+        content: loadedContent,
+        cleanContent: loadedContent,
         isImage: data.image === true ? true : _isImagePath(path)
       });
       if (_isMarkdownPath(path)) {
@@ -171,6 +173,19 @@ var TabManager = (function () {
       var paneWithTabs = newPanes.find(function(p) { return p.tabs.length > 0; });
       nextFocusedPaneId = paneWithTabs ? paneWithTabs.id : 1;
       focusedPane = newPanes.find(function(p) { return p.id === nextFocusedPaneId; });
+    }
+
+    // If pane 1 is now empty and pane 2 has tabs, migrate pane 2 tabs into pane 1.
+    var pane1AfterClose = newPanes.find(function(p) { return p.id === 1; });
+    var pane2AfterClose = newPanes.find(function(p) { return p.id === 2; });
+    if (pane1AfterClose && pane1AfterClose.tabs.length === 0 && pane2AfterClose && pane2AfterClose.tabs.length > 0) {
+      newPanes = newPanes.map(function(p) {
+        if (p.id === 1) return Object.assign({}, p, { tabs: pane2AfterClose.tabs, activeTabId: pane2AfterClose.activeTabId });
+        if (p.id === 2) return Object.assign({}, p, { tabs: [], activeTabId: null });
+        return p;
+      });
+      nextFocusedPaneId = 1;
+      focusedPane = newPanes.find(function(p) { return p.id === 1; });
     }
 
     var maybeNewGlobalActiveTab = focusedPane ? focusedPane.activeTabId : null;
@@ -211,6 +226,10 @@ var TabManager = (function () {
     if (_isMarkdownPath(path)) {
       _syncMarkdownPreviewContent(path, content);
     }
+  }
+
+  function markClean(paneId, path, content) {
+    _updateTab(paneId, path, { content: content, dirty: false });
   }
 
   function hardenTab(paneId, path) {
@@ -289,6 +308,7 @@ var TabManager = (function () {
     switchTab: switchTab,
     focusPane: focusPane,
     markDirty: markDirty,
+    markClean: markClean,
     hardenTab: hardenTab,
     saveTabViewState: saveTabViewState,
     moveTabToPane: moveTabToPane,

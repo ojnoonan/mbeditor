@@ -50,10 +50,11 @@ end
 
 ## Host Requirements (Optional)
 The gem keeps host/tooling responsibilities in the host app:
-- `rubocop` and `rubocop-rails` gems (optional, required for lint/format endpoints)
+- `rubocop` and `rubocop-rails` gems (optional, required for Ruby lint/format endpoints)
+- `haml_lint` gem (optional, required for HAML lint — add to your app's Gemfile if needed)
 - `git` installed in environment (for Git panel data)
 
-Everything else is intended to be packaged in the gem.
+All lint tools are auto-detected at startup. The engine gracefully disables lint features if the tools are not available. Neither `rubocop` nor `haml_lint` are runtime dependencies of the gem itself — they are discovered from the host app's environment.
 
 ### Syntax Highlighting Support
 Monaco runtime assets are served from the engine route namespace (`/mbeditor/monaco-editor/*` and `/mbeditor/monaco_worker.js`).
@@ -63,7 +64,7 @@ The gem includes syntax highlighting for common Rails and React development file
 - **Ruby** (.rb, Gemfile, gemspec, Rakefile)
 - **HTML** 
 - **ERB** (.html.erb, .erb) — Handlebars-based template syntax
-- **HAML** (.haml) — Pug-based template syntax
+- **HAML** (.haml) — plaintext syntax highlighting (no dedicated HAML grammar in Monaco; haml-lint provides inline error markers when available)
 - **CSS** and **SCSS** stylesheets
 
 **JavaScript & React:**
@@ -125,4 +126,5 @@ bundle exec ruby -Itest test/controllers/mbeditor/editors_controller_test.rb -n 
 
 ## Notes
 - The engine is intended for development-time use.
-- RuboCop is intentionally not a runtime dependency of the gem; it is discovered from host app environment.
+- RuboCop is intentionally not a runtime dependency of the gem; it is discovered from the host app environment.
+- haml_lint is intentionally not a runtime dependency of the gem; add `gem 'haml_lint', require: false` to your host app's Gemfile to enable HAML linting.

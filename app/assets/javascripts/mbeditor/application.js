@@ -1,5 +1,6 @@
 //= require mbeditor/editor_plugins
 //= require mbeditor/components/CollapsibleSection
+//= require mbeditor/components/ShortcutHelp
 //= require mbeditor/components/EditorPanel
 //= require mbeditor/components/FileTree
 //= require mbeditor/components/GitPanel

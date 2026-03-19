@@ -60,6 +60,8 @@ var EditorPanel = function EditorPanel(_ref) {
         language = 'css';break;
       case 'html':case 'erb':
         language = 'html';break;
+      case 'haml':
+        language = 'plaintext';break;
       case 'json':
         language = 'json';break;
       case 'yaml':case 'yml':

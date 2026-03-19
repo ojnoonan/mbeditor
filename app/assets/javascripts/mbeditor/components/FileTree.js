@@ -10,6 +10,7 @@ var _React = React;
 var useState = _React.useState;
 var useRef = _React.useRef;
 var useEffect = _React.useEffect;
+var useMemo = _React.useMemo;
 
 var FileTree = function FileTree(_ref) {
   var items = _ref.items;
@@ -80,11 +81,15 @@ var FileTree = function FileTree(_ref) {
     onNodeSelect({ path: node.path, name: node.name, type: node.type });
   };
 
+  // Build an O(1) lookup map from gitFiles so large trees don't do O(n) scans per row
+  var gitStatusMap = useMemo(function () {
+    var map = new Map();
+    (gitFiles || []).forEach(function (f) { map.set(f.path, f.status); });
+    return map;
+  }, [gitFiles]);
+
   var getGitStatus = function getGitStatus(path) {
-    var gitFile = gitFiles.find(function (f) {
-      return f.path === path;
-    });
-    return gitFile ? gitFile.status : null;
+    return gitStatusMap.get(path) || null;
   };
 
   var getTreeStatusMeta = function getTreeStatusMeta(status) {

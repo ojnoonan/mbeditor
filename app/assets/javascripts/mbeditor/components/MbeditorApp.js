@@ -140,6 +140,13 @@ var MbeditorApp = function MbeditorApp() {
   var showGitPanel = _useState182[0];
   var setShowGitPanel = _useState182[1];
 
+  var _useState18h = useState(false);
+
+  var _useState18h2 = _slicedToArray(_useState18h, 2);
+
+  var showHelp = _useState18h2[0];
+  var setShowHelp = _useState18h2[1];
+
   var _useState18b = useState(true);
 
   var _useState18b2 = _slicedToArray(_useState18b, 2);
@@ -153,6 +160,13 @@ var MbeditorApp = function MbeditorApp() {
 
   var rubocopAvailable = _useState18c2[0];
   var setRubocopAvailable = _useState18c2[1];
+
+  var _useState18d = useState(false);
+
+  var _useState18d2 = _slicedToArray(_useState18d, 2);
+
+  var hamlLintAvailable = _useState18d2[0];
+  var setHamlLintAvailable = _useState18d2[1];
 
   var _useState19 = useState({
     openEditors: false,
@@ -193,6 +207,7 @@ var MbeditorApp = function MbeditorApp() {
   var setContextMenu = _useState232[1];
 
   var resizeSessionRef = useRef(null);
+  var resizeRafRef = useRef(null);
 
   var clamp = function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
@@ -247,7 +262,7 @@ var MbeditorApp = function MbeditorApp() {
   var runRubyLint = function runRubyLint(tab, paneId) {
     var options = arguments.length <= 2 || arguments[2] === undefined ? {} : arguments[2];
 
-    if (!tab || !isRubyPath(tab.path)) return Promise.resolve(null);
+    if (!tab || (!isRubyPath(tab.path) && !tab.path.endsWith('.haml'))) return Promise.resolve(null);
 
     if (options.showLoading) {
       setLoading(function (prev) {
@@ -285,6 +300,10 @@ var MbeditorApp = function MbeditorApp() {
   var _debouncedAutoLint = useRef(window._.debounce(function (tab, paneId) {
     if (!tab) return;
     if (isRubyPath(tab.path)) {
+      runRubyLint(tab, paneId);
+      return;
+    }
+    if (tab.path.endsWith('.haml')) {
       runRubyLint(tab, paneId);
       return;
     }
@@ -360,6 +379,9 @@ var MbeditorApp = function MbeditorApp() {
       if (workspace && typeof workspace.rubocopAvailable === 'boolean') {
         setRubocopAvailable(workspace.rubocopAvailable);
       }
+      if (workspace && typeof workspace.hamlLintAvailable === 'boolean') {
+        setHamlLintAvailable(workspace.hamlLintAvailable);
+      }
     });
     GitService.fetchStatus();
 
@@ -422,6 +444,7 @@ var MbeditorApp = function MbeditorApp() {
       }
       if (e.key === 'Escape') {
         setContextMenu(null);
+        setShowHelp(false);
       }
     };
 
@@ -429,30 +452,43 @@ var MbeditorApp = function MbeditorApp() {
       var session = resizeSessionRef.current;
       if (!session) return;
 
-      if (session.mode === 'pane') {
-        var container = document.getElementById('ide-main-split-container');
-        if (!container) return;
+      // Throttle via rAF — skip if a frame is already queued to avoid paint thrashing
+      if (resizeRafRef.current) return;
+      var clientX = e.clientX;
+      resizeRafRef.current = requestAnimationFrame(function () {
+        resizeRafRef.current = null;
+        var s = resizeSessionRef.current;
+        if (!s) return;
 
-        var rect = container.getBoundingClientRect();
-        var nextWidth = (e.clientX - rect.left) / rect.width * 100;
-        setPane1Width(clamp(nextWidth, PANE_MIN_WIDTH_PERCENT, PANE_MAX_WIDTH_PERCENT));
-      }
+        if (s.mode === 'pane') {
+          var container = document.getElementById('ide-main-split-container');
+          if (!container) return;
 
-      if (session.mode === 'sidebar') {
-        var body = document.getElementById('ide-body-container');
-        if (!body) return;
+          var rect = container.getBoundingClientRect();
+          var nextWidth = (clientX - rect.left) / rect.width * 100;
+          setPane1Width(clamp(nextWidth, PANE_MIN_WIDTH_PERCENT, PANE_MAX_WIDTH_PERCENT));
+        }
 
-        var rect = body.getBoundingClientRect();
-        var reservedRight = EDITOR_MIN_WIDTH + (showGitPanel ? GIT_PANEL_MIN_WIDTH : 0);
-        var maxSidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, rect.width - reservedRight));
-        var nextWidth = e.clientX - rect.left;
-        setSidebarWidth(clamp(nextWidth, SIDEBAR_MIN_WIDTH, maxSidebarWidth));
-      }
+        if (s.mode === 'sidebar') {
+          var body = document.getElementById('ide-body-container');
+          if (!body) return;
+
+          var rect = body.getBoundingClientRect();
+          var reservedRight = EDITOR_MIN_WIDTH + (showGitPanel ? GIT_PANEL_MIN_WIDTH : 0);
+          var maxSidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, rect.width - reservedRight));
+          var nextWidth = clientX - rect.left;
+          setSidebarWidth(clamp(nextWidth, SIDEBAR_MIN_WIDTH, maxSidebarWidth));
+        }
+      });
     };
 
     var handleMouseUp = function handleMouseUp() {
       if (!resizeSessionRef.current) return;
 
+      if (resizeRafRef.current) {
+        cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = null;
+      }
       resizeSessionRef.current = null;
       setActiveResizeMode(null);
       document.body.style.cursor = '';
@@ -464,6 +500,10 @@ var MbeditorApp = function MbeditorApp() {
     window.addEventListener('mouseup', handleMouseUp);
     return function () {
       unsubscribe();
+      if (resizeRafRef.current) {
+        cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = null;
+      }
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
@@ -612,13 +652,14 @@ var MbeditorApp = function MbeditorApp() {
   useEffect(function () {
     if (!activeTab || typeof activeTab.content !== 'string') return;
     if (isRubyPath(activeTab.path) && !rubocopAvailable) return;
+    if (activeTab.path.endsWith('.haml') && !hamlLintAvailable) return;
 
     _debouncedAutoLint(activeTab, focusedPane.id);
 
     return function () {
       _debouncedAutoLint.cancel();
     };
-  }, [focusedPane.id, activeTab ? activeTab.id : null, activeTab ? activeTab.content : null, rubocopAvailable]);
+  }, [focusedPane.id, activeTab ? activeTab.id : null, activeTab ? activeTab.content : null, rubocopAvailable, hamlLintAvailable]);
 
   var handleSave = function handleSave(paneId, tab) {
     setLoading(function (prev) {
@@ -629,7 +670,7 @@ var MbeditorApp = function MbeditorApp() {
       var newPanes = EditorStore.getState().panes.map(function (p) {
         if (p.id === paneId) {
           return _extends({}, p, { tabs: p.tabs.map(function (t) {
-              return t.id === tab.id ? _extends({}, t, { dirty: false }) : t;
+              return t.id === tab.id ? _extends({}, t, { dirty: false, cleanContent: tab.content }) : t;
             }) });
         }
         return p;
@@ -664,7 +705,7 @@ var MbeditorApp = function MbeditorApp() {
     Promise.all(promises).then(function () {
       var newPanes = EditorStore.getState().panes.map(function (p) {
         return _extends({}, p, { tabs: p.tabs.map(function (t) {
-            return _extends({}, t, { dirty: false });
+            return _extends({}, t, { dirty: false, cleanContent: t.content });
           })
         });
       });
@@ -1065,16 +1106,23 @@ var MbeditorApp = function MbeditorApp() {
     }
 
     var itemPath = node.path;
-    var parentPath = parentDir(itemPath);
-    if (parentPath) {
+
+    // Expand all ancestor folders so the rename inline input is always visible
+    var parts = itemPath.split('/');
+    if (parts.length > 1) {
+      var ancestors = {};
+      for (var i = 1; i < parts.length; i++) {
+        ancestors[parts.slice(0, i).join('/')] = true;
+      }
       setExpandedDirs(function (prev) {
-        return Object.assign({}, prev, _defineProperty({}, parentPath, true));
+        return Object.assign({}, prev, ancestors);
       });
     }
+
     setPendingCreate(null);
     setPendingRename({
       path: itemPath,
-      parentPath: parentPath,
+      parentPath: parentDir(itemPath),
       type: node.type,
       currentName: node.name || itemPath.split('/').pop()
     });
@@ -1155,9 +1203,10 @@ var MbeditorApp = function MbeditorApp() {
   var projectSectionTitle = deriveProjectRootName().toUpperCase();
   var selectedTreePath = selectedTreeNode ? selectedTreeNode.path : null;
   var isRuby = activeTab && isRubyPath(activeTab.path);
+  var isHaml = activeTab && activeTab.path.endsWith('.haml');
   var supportedPrettierExts = ['js', 'jsx', 'json', 'css', 'scss', 'html', 'md'];
   var isPrettierable = activeTab && supportedPrettierExts.includes(activeTab.path.split('.').pop().toLowerCase());
-  var canLintAndFormat = activeTab && (isPrettierable || isRuby && rubocopAvailable);
+  var canLintAndFormat = activeTab && (isPrettierable || isRuby && rubocopAvailable || isHaml && hamlLintAvailable);
   var hasGitBranch = !!(state.gitBranch && state.gitBranch.trim());
 
   return React.createElement(
@@ -1216,9 +1265,17 @@ var MbeditorApp = function MbeditorApp() {
             React.createElement("i", { className: "fas fa-code-branch" }),
             " Git"
           )
+        ),
+        React.createElement("div", { className: "statusbar-sep" }),
+        React.createElement(
+          "button",
+          { type: "button", className: "statusbar-btn", onClick: function () { return setShowHelp(true); }, title: "Keyboard shortcuts & help" },
+          React.createElement("i", { className: "fas fa-keyboard" }),
+          " Help"
         )
       )
     ),
+    showHelp && React.createElement(ShortcutHelp, { onClose: function () { return setShowHelp(false); } }),
     React.createElement(
       "div",
       { className: "ide-body", id: "ide-body-container" },
@@ -1437,6 +1494,22 @@ var MbeditorApp = function MbeditorApp() {
           React.createElement(
             "div",
             { className: "search-results" },
+            searchQuery && state.searchResults.length > 0 && React.createElement(
+              "div",
+              { className: "search-results-meta" },
+              state.searchResults.length,
+              " result" + (state.searchResults.length !== 1 ? "s" : ""),
+              state.searchResults.length >= 30 && React.createElement(
+                "span",
+                { className: "search-results-capped" },
+                " — refine query to see more"
+              )
+            ),
+            searchQuery && state.searchResults.length === 0 && React.createElement(
+              "div",
+              { className: "search-results-empty" },
+              "No results"
+            ),
             state.searchResults.map(function (res, i) {
               return React.createElement(
                 "div",
@@ -1587,7 +1660,16 @@ var MbeditorApp = function MbeditorApp() {
                     paneId: pane.id,
                     markers: markers[pActiveTab.id] || [],
                     onContentChange: function (val) {
-                      TabManager.markDirty(pane.id, pActiveTab.id, val);
+                      var st = EditorStore.getState();
+                      var cp = st.panes.find(function(p) { return p.id === pane.id; });
+                      var ct = cp && cp.tabs.find(function(t) { return t.id === pActiveTab.id; });
+                      var cleanNorm = ((ct && ct.cleanContent) || '').replace(/\r\n/g, '\n');
+                      var valNorm = val.replace(/\r\n/g, '\n');
+                      if (valNorm === cleanNorm) {
+                        TabManager.markClean(pane.id, pActiveTab.id, val);
+                      } else {
+                        TabManager.markDirty(pane.id, pActiveTab.id, val);
+                      }
                     }
                   })
                 )
@@ -1614,26 +1696,61 @@ var MbeditorApp = function MbeditorApp() {
                   React.Fragment,
                   null,
                   React.createElement("i", { className: "fas fa-code" }),
+                  React.createElement("h2", null, "Mini Browser Editor"),
+                  React.createElement("p", { className: "welcome-intro" }, "Open a file from the explorer to start editing."),
                   React.createElement(
-                    "h2",
-                    null,
-                    "Mini Browser Editor"
-                  ),
-                  React.createElement(
-                    "p",
-                    null,
-                    "Welcome to the development environment."
-                  ),
-                  React.createElement(
-                    "p",
-                    null,
-                    "Open a file from the explorer or press ",
+                    "div",
+                    { className: "welcome-shortcuts" },
                     React.createElement(
-                      "kbd",
-                      null,
-                      "Ctrl+P"
+                      "div",
+                      { className: "welcome-section" },
+                      React.createElement("h3", null, "Keyboard shortcuts"),
+                      React.createElement(
+                        "table",
+                        { className: "shortcut-table" },
+                        React.createElement(
+                          "tbody",
+                          null,
+                          React.createElement("tr", null,
+                            React.createElement("td", null, React.createElement("kbd", null, "Ctrl+P")),
+                            React.createElement("td", null, "Quick-open any file by name")
+                          ),
+                          React.createElement("tr", null,
+                            React.createElement("td", null, React.createElement("kbd", null, "Ctrl+S")),
+                            React.createElement("td", null, "Save the active file")
+                          ),
+                          React.createElement("tr", null,
+                            React.createElement("td", null, React.createElement("kbd", null, "Ctrl+Z\u00a0/\u00a0Ctrl+Y")),
+                            React.createElement("td", null, "Undo / Redo")
+                          )
+                        )
+                      )
                     ),
-                    " to quick-open."
+                    React.createElement(
+                      "div",
+                      { className: "welcome-section" },
+                      React.createElement("h3", null, "Sidebar panels"),
+                      React.createElement(
+                        "ul",
+                        { className: "welcome-tips" },
+                        React.createElement("li", null, React.createElement("i", { className: "fas fa-folder-open" }), "\u00a0Explorer \u2014 browse and manage project files"),
+                        React.createElement("li", null, React.createElement("i", { className: "fas fa-search" }), "\u00a0Search \u2014 full-text search across all files"),
+                        React.createElement("li", null, React.createElement("i", { className: "fas fa-code-branch" }), "\u00a0Git panel \u2014 branch status and changed files (top-right icon)")
+                      )
+                    ),
+                    React.createElement(
+                      "div",
+                      { className: "welcome-section" },
+                      React.createElement("h3", null, "Editor tips"),
+                      React.createElement(
+                        "ul",
+                        { className: "welcome-tips" },
+                        React.createElement("li", null, "Drag any tab to the right half to open a split pane"),
+                        React.createElement("li", null, "Right-click a file in the explorer to rename or delete it"),
+                        React.createElement("li", null, "Ruby files auto-lint with RuboCop when installed"),
+                        React.createElement("li", null, "JS, CSS, HTML and Markdown auto-format with Prettier")
+                      )
+                    )
                   )
                 ) : null
               )

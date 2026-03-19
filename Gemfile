@@ -8,3 +8,4 @@ gem "capybara",            require: false
 gem "cuprite",             require: false
 gem "rubocop",             require: false
 gem "rubocop-rails",       require: false
+gem "haml_lint",           require: false

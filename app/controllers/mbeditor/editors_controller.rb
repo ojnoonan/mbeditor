@@ -3,6 +3,7 @@
 require "fileutils"
 require "open3"
 require "shellwords"
+require "tempfile"
 require "tmpdir"
 
 module Mbeditor
@@ -36,7 +37,8 @@ module Mbeditor
       render json: {
         rootName: workspace_root.basename.to_s,
         rootPath: workspace_root.to_s,
-        rubocopAvailable: rubocop_available?
+        rubocopAvailable: rubocop_available?,
+        hamlLintAvailable: haml_lint_available?
       }
     end
 
@@ -330,13 +332,22 @@ module Mbeditor
       send_file path, disposition: "inline", type: "application/javascript"
     end
 
-    # POST /mbeditor/lint — run rubocop --stdin
+    # POST /mbeditor/lint — run rubocop --stdin (or haml-lint for .haml files)
     def lint
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
 
       filename = File.basename(path)
       code = params[:code] || File.read(path)
+
+      if filename.end_with?('.haml')
+        unless haml_lint_available?
+          return render json: { error: "haml-lint not available", markers: [] }, status: :unprocessable_entity
+        end
+
+        markers = run_haml_lint(code)
+        return render json: { markers: markers }
+      end
 
       cmd = rubocop_command + ["--no-server", "--cache", "false", "--stdin", filename, "--format", "json", "--no-color", "--force-exclusion"]
       env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
@@ -503,6 +514,56 @@ module Mbeditor
       status.success?
     rescue StandardError
       false
+    end
+
+    def haml_lint_available?
+      _out, _err, status = Open3.capture3(*haml_lint_command, "--version")
+      status.success?
+    rescue StandardError
+      false
+    end
+
+    def haml_lint_command
+      workspace_bin = workspace_root.join("bin", "haml-lint")
+      return [workspace_bin.to_s] if workspace_bin.exist?
+
+      begin
+        [Gem.bin_path("haml_lint", "haml-lint")]
+      rescue Gem::Exception, Gem::GemNotFoundException
+        ["haml-lint"]
+      end
+    end
+
+    def run_haml_lint(code)
+      markers = []
+      Tempfile.create(["mbeditor_haml", ".haml"]) do |f|
+        f.write(code)
+        f.flush
+        output, _err, _status = Open3.capture3(*haml_lint_command, "--reporter", "json", "--no-color", f.path)
+        idx = output.index("{")
+        result = idx ? JSON.parse(output[idx..]) : {}
+        result = {} unless result.is_a?(Hash)
+        offenses = result.dig("files", 0, "offenses") || []
+        markers = offenses.map do |offense|
+          {
+            severity: haml_lint_severity(offense["severity"]),
+            message: "[#{offense['linter_name']}] #{offense['text']}",
+            startLine: offense.dig("location", "line"),
+            startCol: (offense.dig("location", "column") || 1) - 1,
+            endLine: offense.dig("location", "line"),
+            endCol: offense.dig("location", "column") || 1
+          }
+        end
+      end
+      markers
+    end
+
+    def haml_lint_severity(severity)
+      case severity
+      when "error" then "error"
+      when "warning" then "warning"
+      else "info"
+      end
     end
 
     def parse_porcelain_status(output)

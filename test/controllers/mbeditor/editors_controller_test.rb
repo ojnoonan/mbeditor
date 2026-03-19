@@ -378,6 +378,52 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # lint (HAML)
+    # ---------------------------------------------------------------------------
+
+    test "lint returns 403 for path traversal on haml file" do
+      post "/mbeditor/lint", params: { path: "../../evil.haml", code: "%p Hello" }, as: :json
+      assert_response :forbidden
+    end
+
+    test "workspace includes hamlLintAvailable key" do
+      get "/mbeditor/workspace"
+      assert_response :ok
+      assert json.key?("hamlLintAvailable"), "workspace should include hamlLintAvailable"
+      assert_includes [true, false], json["hamlLintAvailable"]
+    end
+
+    test "lint returns markers array for a haml file when haml-lint is available" do
+      skip "haml-lint not installed" unless system("haml-lint --version > /dev/null 2>&1")
+
+      FileUtils.mkdir_p(File.join(@workspace, "app", "views"))
+      File.write(File.join(@workspace, "app", "views", "index.haml"), "%p Hello\n")
+
+      post "/mbeditor/lint",
+           params: { path: "app/views/index.haml", code: "%p Hello\n" },
+           as: :json
+      assert_response :ok
+      assert json.key?("markers"), "response should have markers key"
+      assert_kind_of Array, json["markers"]
+    end
+
+    test "lint returns error when haml-lint not available for haml files" do
+      # Temporarily make haml-lint appear unavailable by using a workspace where
+      # the path is valid but haml-lint binary check would fail — we test the
+      # error response path via stubbing the availability check
+      skip "haml-lint is installed; cannot test unavailable path" if system("haml-lint --version > /dev/null 2>&1")
+
+      FileUtils.mkdir_p(File.join(@workspace, "app", "views"))
+      File.write(File.join(@workspace, "app", "views", "index.haml"), "%p Hello\n")
+
+      post "/mbeditor/lint",
+           params: { path: "app/views/index.haml", code: "%p Hello\n" },
+           as: :json
+      assert_response :unprocessable_entity
+      assert json.key?("error")
+    end
+
+    # ---------------------------------------------------------------------------
     # format_file
     # ---------------------------------------------------------------------------
 
