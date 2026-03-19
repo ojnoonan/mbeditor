@@ -418,6 +418,22 @@ html, body, #mbeditor-root {
   50%       { opacity: 0.5; }
 }
 
+.statusbar-collab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.collab-avatar {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-block;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  cursor: default;
+}
+
 .statusbar-btn {
   display: flex;
   align-items: center;

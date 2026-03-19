@@ -1,3 +1,5 @@
+require "action_cable/engine"
+
 module Mbeditor
   class Engine < ::Rails::Engine
     isolate_namespace Mbeditor
@@ -19,6 +21,8 @@ module Mbeditor
         prettier-plugin-html.js
         prettier-plugin-postcss.js
         prettier-plugin-markdown.js
+        yjs.min.js
+        action_cable.js
         fa-brands-400.woff2
         fa-regular-400.woff2
         fa-solid-900.woff2

@@ -11,3 +11,4 @@
 //= require mbeditor/git_service
 //= require mbeditor/search_service
 //= require mbeditor/tab_manager
+//= require mbeditor/collab_service

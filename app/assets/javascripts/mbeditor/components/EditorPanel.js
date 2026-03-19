@@ -104,6 +104,10 @@ var EditorPanel = function EditorPanel(_ref) {
     monacoRef.current = editor;
     window.__mbeditorActiveEditor = editor;
 
+    if (window.CollabService) {
+      window.CollabService.join(tab.path, editor);
+    }
+
     var modelObj = editor.getModel();
 
     var editorPluginDisposable = null;
@@ -128,6 +132,9 @@ var EditorPanel = function EditorPanel(_ref) {
       TabManager.saveTabViewState(tab.id, editor.saveViewState());
       if (window.__mbeditorActiveEditor === editor) {
         window.__mbeditorActiveEditor = null;
+      }
+      if (window.CollabService) {
+        window.CollabService.leave(tab.path);
       }
       if (editorPluginDisposable) editorPluginDisposable.dispose();
       contentDisposable.dispose();

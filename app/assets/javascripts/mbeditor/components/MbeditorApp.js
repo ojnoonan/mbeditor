@@ -154,6 +154,13 @@ var MbeditorApp = function MbeditorApp() {
   var rubocopAvailable = _useState18c2[0];
   var setRubocopAvailable = _useState18c2[1];
 
+  var _useState18d = useState([]);
+
+  var _useState18d2 = _slicedToArray(_useState18d, 2);
+
+  var collabPeers = _useState18d2[0];
+  var setCollabPeers = _useState18d2[1];
+
   var _useState19 = useState({
     openEditors: false,
     projects: false
@@ -489,6 +496,15 @@ var MbeditorApp = function MbeditorApp() {
       });
     }, 5000);
     return function () { clearInterval(interval); };
+  }, []);
+
+  // Subscribe to collab peer changes so the status bar can show connected users
+  useEffect(function () {
+    if (window.CollabService) {
+      window.CollabService.onPeersChange(function (peers) {
+        setCollabPeers(peers);
+      });
+    }
   }, []);
 
   var handleSelectFile = function handleSelectFile(path, name, line) {
@@ -1668,6 +1684,18 @@ var MbeditorApp = function MbeditorApp() {
         { className: "statusbar-offline" },
         React.createElement("i", { className: "fas fa-exclamation-triangle" }),
         " Server offline"
+      ),
+      collabPeers.length > 0 && React.createElement(
+        "div",
+        { className: "statusbar-collab" },
+        collabPeers.map(function (peer) {
+          return React.createElement("span", {
+            key: peer.userId,
+            className: "collab-avatar",
+            style: { background: peer.color },
+            title: peer.userId
+          });
+        })
       ),
       React.createElement(
         "div",

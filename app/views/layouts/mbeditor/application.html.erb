@@ -24,6 +24,10 @@
   <script src="<%= asset_path('prettier-plugin-postcss.js') %>"></script>
   <script src="<%= asset_path('prettier-plugin-markdown.js') %>"></script>
 
+  <!-- ── Action Cable + Collab ────────────────────────── -->
+  <%= javascript_include_tag "action_cable" %>
+  <script src="<%= asset_path('yjs.min.js') %>"></script>
+
   <!-- ── Monaco loader ─────────────────────────────────── -->
   <% base_path = request.script_name.to_s.sub(%r{/$}, '') %>
   <script>var require = { paths: { vs: '<%= json_escape("#{base_path}/monaco-editor/vs") %>' } };</script>
