@@ -1695,7 +1695,10 @@ var MbeditorApp = function MbeditorApp() {
             style: { background: peer.color },
             title: peer.userId
           });
-        })
+        }),
+        React.createElement("span", { className: "statusbar-collab-label" },
+          collabPeers.length === 1 ? "1 other user" : collabPeers.length + " other users"
+        )
       ),
       React.createElement(
         "div",

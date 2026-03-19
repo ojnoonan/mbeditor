@@ -44,6 +44,15 @@ module Mbeditor
       )
     end
 
+    # Client announces its presence (join/leave) so peers show the connected indicator.
+    def broadcast_presence(data)
+      ActionCable.server.broadcast(
+        "mbeditor_doc_#{doc_id}",
+        { type: "presence", userId: data["userId"], color: data["color"],
+          status: data["status"] }
+      )
+    end
+
     private
 
     def doc_id

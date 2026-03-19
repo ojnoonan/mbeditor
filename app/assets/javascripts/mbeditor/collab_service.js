@@ -40,6 +40,22 @@ var CollabService = (function () {
   }
 
   // ---------------------------------------------------------------------------
+  // Per-user CSS injection for cursor colours
+  // ---------------------------------------------------------------------------
+
+  var injectedStyles = {};
+
+  function ensureUserStyle(userId6, color) {
+    if (injectedStyles[userId6]) return;
+    injectedStyles[userId6] = true;
+    var style = document.createElement('style');
+    style.textContent =
+      '.collab-cursor-' + userId6 + ' { border-left: 2px solid ' + color + '; margin-left: -1px; pointer-events: none; }' +
+      '.collab-sel-' + userId6 + ' { background: ' + color + '40 !important; }';
+    document.head.appendChild(style);
+  }
+
+  // ---------------------------------------------------------------------------
   // Remote cursor rendering
   // ---------------------------------------------------------------------------
 
@@ -48,31 +64,48 @@ var CollabService = (function () {
     var session = findSessionByEditor(editor);
     if (!session) return;
 
-    peers[msg.userId] = { color: msg.color, cursor: msg.cursor };
-    notifyPeersChange();
+    var userId6 = msg.userId.slice(0, 6);
+    ensureUserStyle(userId6, msg.color);
 
-    // Clear previous decorations for this user
     session.decorations = session.decorations || {};
     var prevIds = session.decorations[msg.userId] || [];
 
-    if (!msg.cursor) {
+    if (msg.cursor == null) {
       session.decorations[msg.userId] = editor.deltaDecorations(prevIds, []);
       return;
     }
 
     var model = editor.getModel();
     if (!model) return;
-    var pos = model.getPositionAt(msg.cursor);
 
-    session.decorations[msg.userId] = editor.deltaDecorations(prevIds, [{
-      range: new monaco.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column + 1),
+    var newDecorations = [];
+
+    // Cursor caret — 1-char range (or end-of-line) with a left-border class
+    var caretPos = model.getPositionAt(msg.cursor);
+    var lineLen = model.getLineLength(caretPos.lineNumber);
+    var endCol = caretPos.column < lineLen + 1 ? caretPos.column + 1 : caretPos.column;
+    newDecorations.push({
+      range: new monaco.Range(caretPos.lineNumber, caretPos.column, caretPos.lineNumber, endCol),
       options: {
-        className: 'collab-cursor-' + msg.userId.slice(0, 6),
-        beforeContentClassName: 'collab-cursor-caret',
-        beforeContentCSSInline: 'border-left: 2px solid ' + msg.color + '; height: 1em;',
-        hoverMessage: { value: msg.userId }
+        inlineClassName: 'collab-cursor-' + userId6,
+        hoverMessage: { value: '\\u200b' + msg.userId },
+        zIndex: 1
       }
-    }]);
+    });
+
+    // Selection highlight
+    if (msg.selection != null && msg.selection.start !== msg.selection.end) {
+      var s = Math.min(msg.selection.start, msg.selection.end);
+      var e = Math.max(msg.selection.start, msg.selection.end);
+      var startPos = model.getPositionAt(s);
+      var endPos = model.getPositionAt(e);
+      newDecorations.push({
+        range: new monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column),
+        options: { inlineClassName: 'collab-sel-' + userId6 }
+      });
+    }
+
+    session.decorations[msg.userId] = editor.deltaDecorations(prevIds, newDecorations);
   }
 
   function findSessionByEditor(editor) {
@@ -155,11 +188,17 @@ var CollabService = (function () {
     var model = editor.getModel();
     if (!model || !session.sub) return;
     var pos = editor.getPosition();
+    var sel = editor.getSelection();
     var offset = pos ? model.getOffsetAt(pos) : null;
+    var selection = sel ? {
+      start: model.getOffsetAt({ lineNumber: sel.startLineNumber, column: sel.startColumn }),
+      end: model.getOffsetAt({ lineNumber: sel.endLineNumber, column: sel.endColumn })
+    } : null;
     session.sub.perform('broadcast_cursor', {
       userId: USER_ID,
       color: USER_COLOR,
-      cursor: offset
+      cursor: offset,
+      selection: selection
     });
   }
 
@@ -230,6 +269,9 @@ var CollabService = (function () {
 
       bindYTextToMonaco(session);
       console.log('[Collab] initialized and bound for', filePath);
+
+      // Announce ourselves — others will reply with their own join
+      sub.perform('broadcast_presence', { userId: USER_ID, color: USER_COLOR, status: 'join' });
     }
 
     var sub = cable.subscriptions.create(
@@ -253,6 +295,22 @@ var CollabService = (function () {
             Y.applyUpdate(doc, base64ToUint8(msg.update), 'remote');
           } else if (msg.type === 'cursor') {
             renderRemoteCursor(editor, msg);
+          } else if (msg.type === 'presence') {
+            if (msg.userId === USER_ID) return;
+            if (msg.status === 'join') {
+              peers[msg.userId] = { color: msg.color };
+              // Announce our own presence back so they know we're here too
+              sub.perform('broadcast_presence', { userId: USER_ID, color: USER_COLOR, status: 'join' });
+            } else if (msg.status === 'leave') {
+              delete peers[msg.userId];
+              // Clear their cursor decorations
+              var leaveSession = findSessionByEditor(editor);
+              if (leaveSession && leaveSession.decorations && leaveSession.decorations[msg.userId]) {
+                editor.deltaDecorations(leaveSession.decorations[msg.userId], []);
+                delete leaveSession.decorations[msg.userId];
+              }
+            }
+            notifyPeersChange();
           }
         }
       }
@@ -276,7 +334,10 @@ var CollabService = (function () {
 
     if (session.contentDisposable) session.contentDisposable.dispose();
     if (session.selectionDisposable) session.selectionDisposable.dispose();
-    if (session.sub) session.sub.unsubscribe();
+    if (session.sub) {
+      session.sub.perform('broadcast_presence', { userId: USER_ID, color: USER_COLOR, status: 'leave' });
+      session.sub.unsubscribe();
+    }
     session.doc.destroy();
 
     delete sessions[filePath];

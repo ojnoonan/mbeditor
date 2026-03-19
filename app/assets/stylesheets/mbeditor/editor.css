@@ -423,6 +423,12 @@ html, body, #mbeditor-root {
   align-items: center;
   gap: 4px;
   padding: 0 8px;
+  font-size: 11px;
+  color: #ccc;
+}
+
+.statusbar-collab-label {
+  opacity: 0.7;
 }
 
 .collab-avatar {
