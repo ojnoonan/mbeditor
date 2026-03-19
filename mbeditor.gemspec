@@ -4,7 +4,7 @@ Gem::Specification.new do |spec|
   spec.name        = "mbeditor"
   spec.version     = Mbeditor::VERSION
   spec.authors     = ["Oliver Noonan"]
-  spec.email       = ["s3660457@student.rmit.edu.au"]
+  spec.email       = ["ojnoonan@gmail.com"]
   spec.summary     = "Mini Browser Editor (mbeditor) mountable Rails engine"
   spec.description = "Mbeditor provides an in-browser code editor with split panes, git insights, search, and optional RuboCop linting for Rails apps."
   spec.homepage    = "https://github.com/ojnoonan/mbeditor"
