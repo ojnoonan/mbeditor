@@ -1,3 +1,7 @@
+// Identify all requests as coming from the mbeditor client.
+// The server checks this header on every non-GET request as a CSRF guard.
+axios.defaults.headers.common['X-Mbeditor-Client'] = '1';
+
 var FileService = (function () {
   function basePath() {
     return (window.MBEDITOR_BASE_PATH || '/mbeditor').replace(/\/$/, '');

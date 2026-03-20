@@ -16,6 +16,17 @@ module Mbeditor
         c.workspace_root = @workspace
         c.excluded_paths = %w[.git tmp log]
       end
+
+    end
+
+    # Automatically attach the CSRF-guard header to every non-GET/HEAD request.
+    # Rails delegates post/patch/delete directly to integration_session, so we
+    # override each method rather than process().
+    %w[post patch put delete].each do |m|
+      define_method(m) do |path, **kwargs|
+        kwargs[:headers] = (kwargs[:headers] || {}).merge('X-Mbeditor-Client' => '1')
+        super(path, **kwargs)
+      end
     end
 
     def teardown

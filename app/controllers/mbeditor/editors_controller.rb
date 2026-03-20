@@ -10,6 +10,7 @@ module Mbeditor
   class EditorsController < ApplicationController
     skip_before_action :verify_authenticity_token
     before_action :ensure_allowed_environment!
+    before_action :verify_mbeditor_client, unless: -> { request.get? || request.head? }
 
     ALLOWED_EXTENSIONS = %w[
       rb js jsx ts tsx css scss sass html erb haml slim
@@ -393,7 +394,13 @@ module Mbeditor
 
     def ensure_allowed_environment!
       allowed = Array(Mbeditor.configuration.allowed_environments).map(&:to_sym)
-      render plain: "Not found", status: :not_found unless allowed.include?(Rails.env.to_sym)
+      render plain: 'Not found', status: :not_found unless allowed.include?(Rails.env.to_sym)
+    end
+
+    def verify_mbeditor_client
+      return if request.headers['X-Mbeditor-Client'] == '1'
+
+      render plain: 'Forbidden', status: :forbidden
     end
 
     def workspace_root
