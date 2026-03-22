@@ -18,6 +18,48 @@ var GIT_PANEL_MIN_WIDTH = 280;
 var PANE_MIN_WIDTH_PERCENT = 20;
 var PANE_MAX_WIDTH_PERCENT = 80;
 
+var SidebarActionButton = function SidebarActionButton(_ref) {
+  var title = _ref.title;
+  var iconClass = _ref.iconClass;
+  var onClick = _ref.onClick;
+  var _ref$disabled = _ref.disabled;
+  var disabled = _ref$disabled === undefined ? false : _ref$disabled;
+  var _ref$danger = _ref.danger;
+  var danger = _ref$danger === undefined ? false : _ref$danger;
+  var _ref$ariaLabel = _ref.ariaLabel;
+  var ariaLabel = _ref$ariaLabel === undefined ? null : _ref$ariaLabel;
+
+  return React.createElement(
+    "button",
+    {
+      type: "button",
+      className: "project-action-btn" + (danger ? " danger" : ""),
+      title: title,
+      "aria-label": ariaLabel || title,
+      onClick: onClick,
+      disabled: !!disabled
+    },
+    React.createElement("i", { className: iconClass })
+  );
+};
+
+var SectionActionGroup = function SectionActionGroup(_ref2) {
+  var ariaLabel = _ref2.ariaLabel;
+  var children = _ref2.children;
+  var _ref2$className = _ref2.className;
+  var className = _ref2$className === undefined ? "" : _ref2$className;
+
+  return React.createElement(
+    "div",
+    {
+      className: "project-actions" + (className ? " " + className : ""),
+      role: "toolbar",
+      "aria-label": ariaLabel
+    },
+    children
+  );
+};
+
 var MbeditorApp = function MbeditorApp() {
   var _useState = useState(EditorStore.getState());
 
@@ -611,6 +653,43 @@ var MbeditorApp = function MbeditorApp() {
       setClosingTabId(null);
       setClosingPaneId(null);
     }
+  };
+
+  var confirmBulkClose = function confirmBulkClose(tabs, scopeLabel) {
+    var dirtyCount = tabs.filter(function (tab) {
+      return tab.dirty;
+    }).length;
+
+    if (dirtyCount === 0) return true;
+
+    var dirtyLabel = dirtyCount === 1 ? "1 unsaved editor has changes." : dirtyCount + " unsaved editors have changes.";
+    return window.confirm(dirtyLabel + " Close " + scopeLabel + " without saving?");
+  };
+
+  var handleCloseAllEditors = function handleCloseAllEditors() {
+    var allTabs = state.panes.flatMap(function (pane) {
+      return pane.tabs;
+    });
+    if (allTabs.length === 0) return;
+    if (!confirmBulkClose(allTabs, "all editors")) return;
+
+    TabManager.closeAllTabs();
+    setClosingTabId(null);
+    setClosingPaneId(null);
+    EditorStore.setStatus("Closed " + allTabs.length + " editor" + (allTabs.length === 1 ? "" : "s"), "info");
+  };
+
+  var handleCloseEditorsInGroup = function handleCloseEditorsInGroup(paneId) {
+    var pane = state.panes.find(function (p) {
+      return p.id === paneId;
+    });
+    if (!pane || pane.tabs.length === 0) return;
+    if (!confirmBulkClose(pane.tabs, "all editors in Group " + paneId)) return;
+
+    TabManager.closeAllTabsInPane(paneId);
+    setClosingTabId(null);
+    setClosingPaneId(null);
+    EditorStore.setStatus("Closed " + pane.tabs.length + " editor" + (pane.tabs.length === 1 ? "" : "s") + " in Group " + paneId, "info");
   };
 
   // Persist state when panes, focusedPaneId, or collapsedSections changes
@@ -1312,7 +1391,17 @@ var MbeditorApp = function MbeditorApp() {
               isCollapsed: collapsedSections.openEditors,
               onToggle: function (isCollapsed) {
                 return handleToggleSection('openEditors', isCollapsed);
-              }
+              },
+              actions: React.createElement(
+                SectionActionGroup,
+                { ariaLabel: "Open editor actions" },
+                React.createElement(SidebarActionButton, {
+                  title: "Close all editors",
+                  ariaLabel: "Close all open editors",
+                  iconClass: "far fa-window-close",
+                  onClick: handleCloseAllEditors
+                })
+              )
             },
             React.createElement(
               "div",
@@ -1322,12 +1411,32 @@ var MbeditorApp = function MbeditorApp() {
                 var isPane2 = pane.id === 2;
                 return React.createElement(
                   "div",
-                  { key: pane.id, style: { marginBottom: pane.id === 1 && state.panes[1].tabs.length > 0 ? "10px" : "0" } },
-                  state.panes[1].tabs.length > 0 && React.createElement(
+                  {
+                    key: pane.id,
+                    className: "open-editors-group",
+                    style: { marginBottom: pane.id === 1 && state.panes[1].tabs.length > 0 ? "10px" : "0" }
+                  },
+                  React.createElement(
                     "div",
-                    { className: "ide-sidebar-header", style: { fontSize: '10px', opacity: 0.7, paddingLeft: '8px', marginBottom: '4px' } },
-                    "GROUP ",
-                    pane.id
+                    { className: "ide-sidebar-header open-editors-group-header" },
+                    React.createElement(
+                      "span",
+                      { className: "open-editors-group-title" },
+                      "GROUP ",
+                      pane.id
+                    ),
+                    React.createElement(
+                      SectionActionGroup,
+                      { ariaLabel: "Group " + pane.id + " actions", className: "collapsible-actions open-editors-group-actions" },
+                      React.createElement(SidebarActionButton, {
+                        title: "Close all editors in Group " + pane.id,
+                        ariaLabel: "Close all editors in Group " + pane.id,
+                        iconClass: "far fa-window-close",
+                        onClick: function (e) {
+                          e.stopPropagation();handleCloseEditorsInGroup(pane.id);
+                        }
+                      })
+                    )
                   ),
                   React.createElement(
                     "div",
@@ -1387,70 +1496,46 @@ var MbeditorApp = function MbeditorApp() {
                 return handleToggleSection('projects', isCollapsed);
               },
               actions: React.createElement(
-                "div",
-                { className: "project-actions", role: "toolbar", "aria-label": "Project actions" },
-                React.createElement(
-                  "button",
-                  {
-                    type: "button",
-                    className: "project-action-btn",
-                    title: "Collapse all folders",
-                    onClick: handleCollapseAll
+                SectionActionGroup,
+                { ariaLabel: "Project actions" },
+                React.createElement(SidebarActionButton, {
+                  title: "Collapse all folders",
+                  iconClass: "fas fa-compress-alt",
+                  onClick: handleCollapseAll
+                }),
+                React.createElement(SidebarActionButton, {
+                  title: "New file",
+                  iconClass: loading.createFile ? 'fas fa-spinner fa-spin' : 'far fa-file',
+                  onClick: function () {
+                    return handleCreateFile();
                   },
-                  React.createElement("i", { className: "fas fa-compress-alt" })
-                ),
-                React.createElement(
-                  "button",
-                  {
-                    type: "button",
-                    className: "project-action-btn",
-                    title: "New file",
-                    onClick: function () {
-                      return handleCreateFile();
-                    },
-                    disabled: !!loading.createFile
+                  disabled: !!loading.createFile
+                }),
+                React.createElement(SidebarActionButton, {
+                  title: "New folder",
+                  iconClass: loading.createDir ? 'fas fa-spinner fa-spin' : 'far fa-folder',
+                  onClick: function () {
+                    return handleCreateDir();
                   },
-                  React.createElement("i", { className: loading.createFile ? 'fas fa-spinner fa-spin' : 'far fa-file' })
-                ),
-                React.createElement(
-                  "button",
-                  {
-                    type: "button",
-                    className: "project-action-btn",
-                    title: "New folder",
-                    onClick: function () {
-                      return handleCreateDir();
-                    },
-                    disabled: !!loading.createDir
+                  disabled: !!loading.createDir
+                }),
+                React.createElement(SidebarActionButton, {
+                  title: "Rename selected",
+                  iconClass: loading.renamePath ? 'fas fa-spinner fa-spin' : 'fas fa-pen',
+                  onClick: function () {
+                    return handleRenamePath();
                   },
-                  React.createElement("i", { className: loading.createDir ? 'fas fa-spinner fa-spin' : 'far fa-folder' })
-                ),
-                React.createElement(
-                  "button",
-                  {
-                    type: "button",
-                    className: "project-action-btn",
-                    title: "Rename selected",
-                    onClick: function () {
-                      return handleRenamePath();
-                    },
-                    disabled: !!loading.renamePath || !selectedTreePath
+                  disabled: !!loading.renamePath || !selectedTreePath
+                }),
+                React.createElement(SidebarActionButton, {
+                  title: "Delete selected",
+                  iconClass: loading.deletePath ? 'fas fa-spinner fa-spin' : 'far fa-trash-alt',
+                  onClick: function () {
+                    return handleDeletePath();
                   },
-                  React.createElement("i", { className: loading.renamePath ? 'fas fa-spinner fa-spin' : 'fas fa-pen' })
-                ),
-                React.createElement(
-                  "button",
-                  {
-                    type: "button",
-                    className: "project-action-btn danger",
-                    title: "Delete selected",
-                    onClick: function () {
-                      return handleDeletePath();
-                    },
-                    disabled: !!loading.deletePath || !selectedTreePath
-                  },
-                  React.createElement("i", { className: loading.deletePath ? 'fas fa-spinner fa-spin' : 'far fa-trash-alt' })
-                )
+                  disabled: !!loading.deletePath || !selectedTreePath,
+                  danger: true
+                })
               )
             },
             React.createElement(FileTree, {

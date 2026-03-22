@@ -197,6 +197,25 @@ var TabManager = (function () {
     });
   }
 
+  function closeAllTabsInPane(paneId) {
+    var state = EditorStore.getState();
+    var pane = state.panes.find(function(p) { return p.id === paneId; });
+    if (!pane || pane.tabs.length === 0) return;
+
+    pane.tabs.slice().forEach(function(tab) {
+      closeTab(paneId, tab.path);
+    });
+  }
+
+  function closeAllTabs() {
+    var state = EditorStore.getState();
+    var paneIds = state.panes.map(function(p) { return p.id; }).sort(function(a, b) { return b - a; });
+
+    paneIds.forEach(function(paneId) {
+      closeAllTabsInPane(paneId);
+    });
+  }
+
   function switchTab(paneId, path) {
     var state = EditorStore.getState();
     var newPanes = state.panes.map(function(p) {
@@ -312,6 +331,8 @@ var TabManager = (function () {
     hardenTab: hardenTab,
     saveTabViewState: saveTabViewState,
     moveTabToPane: moveTabToPane,
-    clearGotoLine: clearGotoLine
+    clearGotoLine: clearGotoLine,
+    closeAllTabsInPane: closeAllTabsInPane,
+    closeAllTabs: closeAllTabs
   };
 })();
