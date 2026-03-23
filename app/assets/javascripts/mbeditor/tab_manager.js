@@ -135,6 +135,11 @@ var TabManager = (function () {
       _ensureMarkdownPreview(paneId, path, name, "");
     }
 
+    // Virtual paths (diff://, combined-diff://) should never hit the file endpoint
+    if (path.indexOf('diff://') === 0 || path.indexOf('combined-diff://') === 0) {
+      return;
+    }
+
     FileService.getFile(path).then(function(data) {
       var loadedContent = typeof data.content === 'string' ? data.content : "";
       _updateTab(paneId, path, {
@@ -146,16 +151,131 @@ var TabManager = (function () {
         _syncMarkdownPreviewContent(path, typeof data.content === 'string' ? data.content : "");
       }
     }).catch(function(err) {
+      if (path.startsWith('diff://')) return; // diff tabs handle their own loading
       EditorStore.setStatus("Failed to load file: " + ((err.response && err.response.data && err.response.data.error) || err.message), "error");
       closeTab(paneId, path);
     });
+  }
+
+  function openDiffTab(repoPath, name, baseSha, headSha, paneIdOverride) {
+    var state = EditorStore.getState();
+    var paneId = paneIdOverride || state.focusedPaneId;
+    var pane = state.panes.find(function(p) { return p.id === paneId; });
+    if (!pane) return;
+
+    // diff://[base]..[head]/path
+    var baseStr = baseSha || 'HEAD';
+    var headStr = headSha || 'WORKING';
+    var diffId = 'diff://' + baseStr + '..' + headStr + '/' + repoPath;
+
+    var existing = pane.tabs.find(function(t) { return t.id === diffId; });
+    if (existing) {
+      switchTab(paneId, diffId);
+      return;
+    }
+
+    var newTab = {
+      id: diffId,
+      path: diffId,        // use diffId as path so markdown-preview logic never fires
+      repoPath: repoPath,  // original file path kept for reference
+      name: name + ' \u2195 Diff',
+      dirty: false,
+      content: "Loading diff...",
+      viewState: null,
+      isImage: false,
+      isSoftOpen: false,
+      isDiff: true,
+      diffOriginal: "",
+      diffModified: "",
+      diffBaseSha: baseSha,
+      diffHeadSha: headSha
+    };
+
+    var newPanes = state.panes.map(function(p) {
+      if (p.id === paneId) {
+        return Object.assign({}, p, { tabs: p.tabs.concat(newTab), activeTabId: diffId });
+      }
+      return p;
+    });
+
+    EditorStore.setState({ panes: newPanes, focusedPaneId: paneId, activeTabId: diffId });
+
+    GitService.fetchDiff(repoPath, baseSha, headSha).then(function(data) {
+      _updateTab(paneId, diffId, {
+        content: "Diff loaded",
+        diffOriginal: data.original || "",
+        diffModified: data.modified || ""
+      });
+    }).catch(function(err) {
+      var msg = err.response && err.response.data && err.response.data.error || err.message;
+      EditorStore.setStatus("Failed to load diff: " + msg, "error");
+      _updateTab(paneId, diffId, {
+        content: "Error: " + msg,
+        diffOriginal: "Error loading diff",
+        diffModified: "Error loading diff"
+      });
+    });
+  }
+
+  function openCombinedDiffTab(scope, label) {
+    var tabId = 'combined-diff://' + (scope || 'local');
+    var state = EditorStore.getState();
+    var paneId = state.focusedPaneId;
+    var pane = state.panes.find(function(p) { return p.id === paneId; });
+    if (!pane) return;
+
+    // Re-activate existing tab if present
+    var existing = pane.tabs.find(function(t) { return t.id === tabId; });
+    if (existing) {
+      switchTab(paneId, tabId);
+      return;
+    }
+
+    var newTab = {
+      id: tabId,
+      path: tabId,
+      name: label || 'All Changes',
+      dirty: false,
+      content: '',
+      viewState: null,
+      isImage: false,
+      isSoftOpen: false,
+      isCombinedDiff: true,
+      combinedDiffText: '',
+      combinedDiffLabel: label || 'All Changes',
+      combinedDiffLoaded: false
+    };
+
+    var newPanes = state.panes.map(function(p) {
+      if (p.id === paneId) {
+        return Object.assign({}, p, { tabs: p.tabs.concat(newTab), activeTabId: tabId });
+      }
+      return p;
+    });
+    EditorStore.setState({ panes: newPanes, focusedPaneId: paneId, activeTabId: tabId });
+
+    var basePath = (window.MBEDITOR_BASE_PATH || '/mbeditor').replace(/\/$/, '');
+    axios.get(basePath + '/git/combined_diff', { params: { scope: scope || 'local' } })
+      .then(function(res) {
+        _updateTab(paneId, tabId, {
+          combinedDiffText: typeof res.data === 'string' ? res.data : '',
+          combinedDiffLoaded: true
+        });
+      })
+      .catch(function(err) {
+        _updateTab(paneId, tabId, {
+          combinedDiffText: '# Error loading diff: ' + (err.message || 'unknown error'),
+          combinedDiffLoaded: true
+        });
+      });
   }
 
   function closeTab(paneId, path) {
     var state = EditorStore.getState();
     var newPanes = state.panes.map(function(pane) {
       if (pane.id === paneId) {
-        var newTabs = pane.tabs.filter(function(t) { return t.path !== path; });
+        // Match by t.id so diff tabs (id = 'diff://...') are closed correctly
+        var newTabs = pane.tabs.filter(function(t) { return t.id !== path; });
         var newActive = pane.activeTabId;
         if (pane.activeTabId === path) {
           newActive = newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null;
@@ -308,7 +428,8 @@ var TabManager = (function () {
     var newPanes = state.panes.map(function(pane) {
       if (pane.id === paneId) {
         var newTabs = pane.tabs.map(function(t) {
-          return t.path === path ? Object.assign({}, t, updates) : t;
+          // Match by t.id so diff tabs (where id !== path) are found correctly
+          return t.id === path ? Object.assign({}, t, updates) : t;
         });
         return Object.assign({}, pane, { tabs: newTabs });
       }
@@ -323,6 +444,8 @@ var TabManager = (function () {
 
   return {
     openTab: openTab,
+    openDiffTab: openDiffTab,
+    openCombinedDiffTab: openCombinedDiffTab,
     closeTab: closeTab,
     switchTab: switchTab,
     focusPane: focusPane,

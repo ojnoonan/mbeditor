@@ -14,16 +14,32 @@ var EditorPanel = function EditorPanel(_ref) {
   var paneId = _ref.paneId;
   var onContentChange = _ref.onContentChange;
   var markers = _ref.markers;
+  var gitAvailable = _ref.gitAvailable === true;
 
   var editorRef = useRef(null);
   var monacoRef = useRef(null);
 
   var _useState = useState('');
-
   var _useState2 = _slicedToArray(_useState, 2);
-
   var markup = _useState2[0];
   var setMarkup = _useState2[1];
+
+  var _useState3 = useState(false);
+  var _useState4 = _slicedToArray(_useState3, 2);
+  var isBlameVisible = _useState4[0];
+  var setIsBlameVisible = _useState4[1];
+
+  var _useState5 = useState(null);
+  var _useState6 = _slicedToArray(_useState5, 2);
+  var blameData = _useState6[0];
+  var setBlameData = _useState6[1];
+
+  var _useState7 = useState(false);
+  var _useState8 = _slicedToArray(_useState7, 2);
+  var isBlameLoading = _useState8[0];
+  var setIsBlameLoading = _useState8[1];
+
+  var blameDecorationsRef = useRef([]);
 
   var findTabByPath = function findTabByPath(path) {
     if (!path) return null;
@@ -55,7 +71,7 @@ var EditorPanel = function EditorPanel(_ref) {
       case 'js':case 'jsx':
         language = 'javascript';break;
       case 'ts':case 'tsx':
-        language = 'typescript';break;
+        language = 'javascript';break;
       case 'css':case 'scss':case 'sass':
         language = 'css';break;
       case 'html':case 'erb':
@@ -205,6 +221,67 @@ var EditorPanel = function EditorPanel(_ref) {
     }
   }, [markers, tab.id]);
 
+  // Reset blame state when file path changes
+  useEffect(function () {
+    setBlameData(null);
+    setIsBlameVisible(false);
+    setIsBlameLoading(false);
+  }, [tab.path]);
+
+  // Handle Blame data fetching
+  useEffect(function () {
+    if (!isBlameVisible) {
+      if (monacoRef.current && monacoRef.current.getModel()) {
+        blameDecorationsRef.current = monacoRef.current.deltaDecorations(blameDecorationsRef.current, []);
+      }
+      return;
+    }
+    
+    if (!blameData && !isBlameLoading) {
+      setIsBlameLoading(true);
+      GitService.fetchBlame(tab.path).then(function(data) {
+        setBlameData(data.lines || []);
+        setIsBlameLoading(false);
+      }).catch(function(err) {
+        var status = err.response && err.response.status;
+        var msg = status === 404
+          ? "File is not tracked by git"
+          : "Failed to load blame: " + ((err.response && err.response.data && err.response.data.error) || err.message);
+        EditorStore.setStatus(msg, "error");
+        setIsBlameLoading(false);
+        setIsBlameVisible(false);
+      });
+    }
+  }, [isBlameVisible, tab.path, blameData, isBlameLoading]);
+
+  // Render Blame decorations
+  useEffect(function () {
+    if (!monacoRef.current || !window.monaco || !isBlameVisible || !blameData) return;
+    var editor = monacoRef.current;
+    
+    var newDecorations = blameData.map(function(lineData) {
+      var ln = lineData.line;
+      var hash = lineData.sha && lineData.sha.substring(0, 8) || '';
+      var author = lineData.author || '';
+      // Exclude uncommitted changes from noisy blame
+      var isUncommitted = hash === '00000000';
+      var text = isUncommitted ? 'Not Committed' : author + ' \xB7 ' + hash;
+      
+      return {
+        range: new window.monaco.Range(ln, 1, ln, 1),
+        options: {
+          isWholeLine: false,
+          after: {
+            content: '\xA0\xA0\xA0\xA0' + text,
+            inlineClassName: isUncommitted ? 'ide-blame-annotation-uncommitted' : 'ide-blame-annotation'
+          }
+        }
+      };
+    });
+    
+    blameDecorationsRef.current = editor.deltaDecorations(blameDecorationsRef.current, newDecorations);
+  }, [blameData, isBlameVisible, tab.id, tab.content]);
+
   var sourceTab = tab.isPreview ? findTabByPath(tab.previewFor) : null;
   var markdownContent = tab.isPreview ? sourceTab && sourceTab.content || tab.content || '' : tab.content || '';
 
@@ -229,6 +306,24 @@ var EditorPanel = function EditorPanel(_ref) {
     }
   }, [markdownContent, isMarkdown]);
 
+  if (tab.isDiff) {
+    var isDiffDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches || true;
+    return React.createElement(window.DiffViewer || DiffViewer, {
+      path: tab.repoPath || tab.path,
+      original: tab.diffOriginal || "",
+      modified: tab.diffModified || "",
+      isDark: isDiffDark
+    });
+  }
+
+  if (tab.isCombinedDiff) {
+    return React.createElement(window.CombinedDiffViewer, {
+      diffText: tab.combinedDiffText || '',
+      label: tab.combinedDiffLabel || 'All Changes',
+      isLoading: !tab.combinedDiffText && !tab.combinedDiffLoaded
+    });
+  }
+
   if (isImage) {
     var basePath = (window.MBEDITOR_BASE_PATH || '/mbeditor').replace(/\/$/, '');
     return React.createElement(
@@ -242,7 +337,27 @@ var EditorPanel = function EditorPanel(_ref) {
     return React.createElement('div', { className: 'markdown-preview markdown-preview-full', dangerouslySetInnerHTML: { __html: markup } });
   }
 
-  return React.createElement('div', { ref: editorRef, className: 'monaco-container' });
+  return React.createElement(
+    'div',
+    { className: 'ide-editor-wrapper', style: { display: 'flex', flexDirection: 'column', height: '100%' } },
+    React.createElement(
+      'div',
+      { className: 'ide-editor-toolbar', style: { display: 'flex', justifyContent: 'flex-end', padding: '4px 8px', background: '#252526', borderBottom: '1px solid #3c3c3c' } },
+      React.createElement(
+        'button',
+        { 
+          className: 'ide-icon-btn ' + (isBlameVisible ? 'active' : ''), 
+          disabled: !gitAvailable,
+          onClick: gitAvailable ? function() { setIsBlameVisible(!isBlameVisible); } : undefined,
+          title: gitAvailable ? 'Toggle Git Blame' : 'Git not available in this workspace',
+          style: { fontSize: '12px', padding: '2px 6px', opacity: (gitAvailable && isBlameVisible) ? 1 : 0.6, background: isBlameVisible ? 'rgba(255,255,255,0.1)' : 'transparent', border: 'none', color: gitAvailable ? '#ccc' : '#666', cursor: gitAvailable ? 'pointer' : 'not-allowed', borderRadius: '3px' }
+        },
+        React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: '6px' } }),
+        isBlameLoading ? 'Loading...' : 'Blame'
+      )
+    ),
+    React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } })
+  );
 };
 
 window.EditorPanel = EditorPanel;

@@ -15,6 +15,7 @@ var TabBar = function TabBar(_ref) {
   var onTabDragStart = _ref.onTabDragStart;
   var onTabDragEnd = _ref.onTabDragEnd;
   var onHardenTab = _ref.onHardenTab;
+  var onShowHistory = _ref.onShowHistory;
 
   var containerRef = useRef(null);
 
@@ -62,6 +63,7 @@ var TabBar = function TabBar(_ref) {
         }
       } },
     tabs.map(function (tab) {
+      var isSpecial = tab.isCommitGraph || tab.isDiff || tab.isPreview;
       return React.createElement(
         'div',
         {
@@ -84,6 +86,11 @@ var TabBar = function TabBar(_ref) {
           onDragEnd: function () {
             setDraggingTabId(null);
             if (onTabDragEnd) onTabDragEnd();
+          },
+          onContextMenu: function (e) {
+            if (isSpecial) return;
+            e.preventDefault();
+            if (onShowHistory) onShowHistory(tab.path);
           }
         },
         React.createElement('i', { className: 'tab-item-icon ' + (window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code') }),

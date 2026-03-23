@@ -562,6 +562,27 @@ html, body, #mbeditor-root {
   font-weight: 600;
 }
 
+.statusbar-aheadbehind {
+  font-size: 11px;
+  font-weight: 600;
+  color: #89d185;
+  opacity: 0.9;
+}
+.statusbar-aheadbehind.statusbar-behind { color: #f48771; }
+
+.statusbar-file-commit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #8a9ab0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+  cursor: default;
+}
+
 .statusbar-offline {
   display: flex;
   align-items: center;
@@ -703,30 +724,16 @@ html, body, #mbeditor-root {
 .git-file-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 6px;
+  gap: 2px;
+  padding: 1px 6px 1px 2px;
   border-radius: 3px;
-  cursor: pointer;
   transition: background 0.1s;
   font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .git-file-item:hover { background: #2a2d2e; }
-
-.git-status-badge {
-  min-width: 18px;
-  text-align: center;
-  font-weight: bold;
-  font-size: 11px;
-  flex-shrink: 0;
-}
-
-.git-file-status-label {
-  margin-left: auto;
-  color: #7f8b97;
-  font-size: 11px;
-  white-space: nowrap;
-}
 
 .git-hint {
   padding: 6px 12px;
@@ -740,15 +747,37 @@ html, body, #mbeditor-root {
 .git-R { color: #78b4e0; }
 .git-Q { color: #888; }
 
-.ide-git-panel {
-  width: 340px;
-  min-width: 280px;
-  max-width: 460px;
+/* ── Right-side Git Panel ───────────────────────────────── */
+.ide-git-right-panel {
+  background: #202124;
   border-left: 1px solid #3c3c3c;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+  min-width: 260px;
+  max-width: 600px;
+}
+
+.gitpanel-divider {
+  width: 5px;
+  background: #2a2a2a;
+  border-left: 1px solid #3c3c3c;
+}
+
+.ide-git-panel {
+  width: 100%;
+  height: 100%;
   background: #202124;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  flex: 1;
+}
+
+.ide-git-panel-header-info {
+  flex: 1;
+  min-width: 0;
 }
 
 .ide-git-panel-header {
@@ -779,6 +808,19 @@ html, body, #mbeditor-root {
   gap: 4px;
 }
 
+.git-header-btn {
+  background: none;
+  border: none;
+  color: #9fabb7;
+  cursor: pointer;
+  padding: 3px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  line-height: 1;
+  transition: background 0.12s, color 0.12s;
+}
+.git-header-btn:hover { background: rgba(255,255,255,0.08); color: #cdd9e5; }
+
 .git-metadata {
   display: grid;
   grid-template-columns: 1fr;
@@ -792,6 +834,7 @@ html, body, #mbeditor-root {
 .git-section {
   border-bottom: 1px solid #2d2f31;
   min-height: 0;
+  flex-shrink: 0;  /* don't let sections steal space from the graph section */
 }
 
 .git-commit-section {
@@ -810,19 +853,126 @@ html, body, #mbeditor-root {
 }
 
 .git-list {
-  max-height: 170px;
+  max-height: 200px;
   overflow-y: auto;
 }
 
-.git-commit-section .git-list {
-  max-height: none;
-  height: 100%;
+.git-history-section .git-history-graph-wrap {
+  overflow-y: auto;
+  max-height: 400px;
 }
 
-.git-file-path {
+/* In the right panel, the history section grows to fill remaining space */
+.ide-git-right-panel .ide-git-panel {
+  /* Ensure flex column so sections stack and the history one can stretch */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex: 1;
+}
+
+.ide-git-right-panel .git-history-section {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+/* Only stretch when the graph section is open */
+.ide-git-right-panel .git-history-section.expanded {
+  flex: 1;
+  min-height: 80px;
+}
+
+.ide-git-right-panel .git-history-graph-wrap {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.git-file-info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 4px;
+  cursor: pointer;
+}
+
+.git-file-name {
+  font-size: 12px;
+  color: #c8d4df;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.git-file-dir {
+  font-size: 10px;
+  color: #6e7a85;
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.git-file-type-icon {
+  font-size: 11px;
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  opacity: 0.85;
+}
+
+.git-diff-counts {
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+  flex-shrink: 0;
+  white-space: nowrap;
+  margin-right: 4px;
+  gap: 1px;
+}
+.git-stat-add { color: #89d185; }
+.git-stat-del { color: #f48771; }
+
+.git-status-badge {
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 16px;
+  text-align: right;
+  flex-shrink: 0;
+  letter-spacing: 0;
+  padding-right: 2px;
+}
+
+.git-section-count {
+  font-size: 10px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 1px 6px;
+  color: #9db0bb;
+  font-weight: 600;
+}
+
+.git-ahead-chip {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  color: #89d185;
+  font-weight: 600;
+}
+
+.git-behind-chip {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 11px;
+  color: #f48771;
+  font-weight: 600;
 }
 
 .git-commit-item {

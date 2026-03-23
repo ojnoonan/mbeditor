@@ -1,6 +1,11 @@
 //= require mbeditor/editor_plugins
 //= require mbeditor/components/CollapsibleSection
 //= require mbeditor/components/ShortcutHelp
+//= require mbeditor/components/DiffViewer
+//= require mbeditor/components/CombinedDiffViewer
+//= require mbeditor/components/CommitGraph
+//= require mbeditor/components/FileHistoryPanel
+//= require mbeditor/components/CodeReviewPanel
 //= require mbeditor/components/EditorPanel
 //= require mbeditor/components/FileTree
 //= require mbeditor/components/GitPanel

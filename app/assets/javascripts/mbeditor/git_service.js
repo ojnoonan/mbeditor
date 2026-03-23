@@ -58,5 +58,47 @@ var GitService = (function () {
     });
   }
 
-  return { fetchStatus: fetchStatus, fetchInfo: fetchInfo };
+  function fetchDiff(path, baseSha, headSha) {
+    var query = '?file=' + encodeURIComponent(path);
+    if (baseSha) query += '&base=' + encodeURIComponent(baseSha);
+    if (headSha) query += '&head=' + encodeURIComponent(headSha);
+    
+    return axios.get(basePath() + '/git/diff' + query).then(function(res) {
+      return res.data;
+    });
+  }
+
+  function fetchBlame(path) {
+    return axios.get(basePath() + '/git/blame?file=' + encodeURIComponent(path)).then(function(res) {
+      return res.data;
+    });
+  }
+
+  function fetchFileHistory(path) {
+    return axios.get(basePath() + '/git/file_history?file=' + encodeURIComponent(path)).then(function(res) {
+      return res.data;
+    });
+  }
+
+  function fetchCommitGraph() {
+    return axios.get(basePath() + '/git/commit_graph').then(function(res) {
+      return res.data;
+    });
+  }
+
+  function fetchCommitDetail(sha) {
+    return axios.get(basePath() + '/git/commit_detail?sha=' + encodeURIComponent(sha)).then(function(res) {
+      return res.data;
+    });
+  }
+
+  return {
+    fetchStatus: fetchStatus,
+    fetchInfo: fetchInfo,
+    fetchDiff: fetchDiff,
+    fetchBlame: fetchBlame,
+    fetchFileHistory: fetchFileHistory,
+    fetchCommitGraph: fetchCommitGraph,
+    fetchCommitDetail: fetchCommitDetail
+  };
 })();

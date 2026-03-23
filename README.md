@@ -35,7 +35,13 @@ bundle install
 mount Mbeditor::Engine, at: "/mbeditor"
 ```
 
-4. Configure mbeditor in an initializer (for example `config/initializers/mbeditor.rb`):
+4. Create `config/initializers/mbeditor.rb` using the configuration options below.
+
+5. Boot your app and open `/mbeditor`.
+
+## Configuration
+
+Use a single initializer to set the engine options you need:
 
 ```ruby
 MBEditor.configure do |config|
@@ -43,10 +49,23 @@ MBEditor.configure do |config|
   # config.workspace_root = Rails.root
   config.excluded_paths = %w[.git tmp log node_modules .bundle coverage vendor/bundle]
   config.rubocop_command = "bundle exec rubocop"
+
+  # Optional Redmine integration
+  # config.redmine_enabled = true
+  # config.redmine_url = "https://redmine.example.com/"
+  # config.redmine_api_key = "optional_api_key_override"
 end
 ```
 
-5. Boot your app and open `/mbeditor`.
+Available options:
+
+- `allowed_environments` controls which Rails environments can access the engine. Default: `[:development]`.
+- `workspace_root` sets the root directory exposed by Mbeditor. Default: `Rails.root` from the host app.
+- `excluded_paths` hides files and directories from the tree and path-based operations. Entries without `/` match names anywhere in the workspace path; entries with `/` match relative paths and their descendants. Default: `%w[.git tmp log node_modules .bundle coverage vendor/bundle]`.
+- `rubocop_command` sets the command used for inline Ruby linting and formatting. Default: `"rubocop"`.
+- `redmine_enabled` enables issue lookup integration. Default: `false`.
+- `redmine_url` sets the Redmine base URL. Required when `redmine_enabled` is `true`.
+- `redmine_api_key` sets the Redmine API key. Required when `redmine_enabled` is `true`.
 
 ## Host Requirements (Optional)
 The gem keeps host/tooling responsibilities in the host app:
@@ -77,23 +96,6 @@ The gem includes syntax highlighting for common Rails and React development file
 
 These language modules are packaged locally with the gem for true offline operation. No network fallback is needed—all highlighting works without internet connectivity.
 
-## Configuration
-Configure environments/workspace root in an initializer:
-
-```ruby
-MBEditor.configure do |config|
-  config.allowed_environments = [:development]
-  # config.workspace_root = Rails.root
-
-  # Paths to exclude from the file browser (default shown below)
-  config.excluded_paths = %w[.git tmp log node_modules .bundle coverage vendor/bundle]
-
-  # RuboCop command used for inline linting (default: "rubocop")
-  # Use "bundle exec rubocop" if RuboCop is managed via Bundler
-  config.rubocop_command = "bundle exec rubocop"
-end
-```
-
 ## Development
 
 A minimal dummy Rails app is included for local development and testing:
@@ -123,8 +125,3 @@ Run a single test by name:
 ```bash
 bundle exec ruby -Itest test/controllers/mbeditor/editors_controller_test.rb -n test_ping_returns_ok
 ```
-
-## Notes
-- The engine is intended for development-time use.
-- RuboCop is intentionally not a runtime dependency of the gem; it is discovered from the host app environment.
-- haml_lint is intentionally not a runtime dependency of the gem; add `gem 'haml_lint', require: false` to your host app's Gemfile to enable HAML linting.

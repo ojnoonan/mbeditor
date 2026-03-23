@@ -23,4 +23,15 @@ Mbeditor::Engine.routes.draw do
   get    'min-maps/*asset_path',            to: 'editors#monaco_asset', format: false
   post   'lint',            to: 'editors#lint'
   post   'format',          to: 'editors#format_file'
+
+  # ── Git & Code Review ──────────────────────────────────────────────────────
+  get 'git/diff',           to: 'git#diff'
+  get 'git/blame',          to: 'git#blame'
+  get 'git/file_history',   to: 'git#file_history'
+  get 'git/commit_graph',   to: 'git#commit_graph'
+  get 'git/commit_detail',  to: 'git#commit_detail'
+  get 'git/combined_diff',  to: 'git#combined_diff'
+
+  # Redmine integration (enabled via config.mbeditor.redmine_enabled)
+  get 'redmine/issue/:id', to: 'git#redmine_issue', as: :redmine_issue
 end

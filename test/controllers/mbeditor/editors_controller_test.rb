@@ -74,6 +74,31 @@ module Mbeditor
       Mbeditor.configure { |c| c.rubocop_command = "rubocop" }
     end
 
+    test "workspace includes gitAvailable flag" do
+      get "/mbeditor/workspace"
+      assert_response :ok
+      assert json.key?("gitAvailable"), "gitAvailable missing from workspace response"
+      assert_includes [true, false], json["gitAvailable"]
+    end
+
+    test "workspace includes blameAvailable flag" do
+      get "/mbeditor/workspace"
+      assert_response :ok
+      assert json.key?("blameAvailable"), "blameAvailable missing from workspace response"
+      assert_includes [true, false], json["blameAvailable"]
+    end
+
+    test "workspace gitAvailable is false when workspace_root is not a git repo" do
+      Dir.mktmpdir("mbeditor_nongit_") do |non_git_dir|
+        Mbeditor.configure { |c| c.workspace_root = non_git_dir }
+        get "/mbeditor/workspace"
+        assert_response :ok
+        assert_equal false, json["gitAvailable"]
+      end
+    ensure
+      Mbeditor.configure { |c| c.workspace_root = @workspace }
+    end
+
     # ---------------------------------------------------------------------------
     # files
     # ---------------------------------------------------------------------------

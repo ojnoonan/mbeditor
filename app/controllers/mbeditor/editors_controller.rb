@@ -39,7 +39,9 @@ module Mbeditor
         rootName: workspace_root.basename.to_s,
         rootPath: workspace_root.to_s,
         rubocopAvailable: rubocop_available?,
-        hamlLintAvailable: haml_lint_available?
+        hamlLintAvailable: haml_lint_available?,
+        gitAvailable: git_available?,
+        blameAvailable: git_blame_available?
       }
     end
 
@@ -274,6 +276,11 @@ module Mbeditor
       working_output, working_status = Open3.capture2("git", "-C", repo, "status", "--porcelain")
       working_tree = working_status.success? ? parse_porcelain_status(working_output) : []
 
+      # Annotate each working-tree file with added/removed line counts
+      numstat_out, = Open3.capture2("git", "-C", repo, "diff", "--numstat", "HEAD")
+      numstat_map  = parse_numstat(numstat_out)
+      working_tree = working_tree.map { |f| f.merge(numstat_map.fetch(f[:path], {})) }
+
       upstream_output, upstream_status = Open3.capture2("git", "-C", repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
       upstream_branch = upstream_status.success? ? upstream_output.strip : nil
 
@@ -291,13 +298,18 @@ module Mbeditor
         end
 
         unpushed_output, unpushed_status = Open3.capture2("git", "-C", repo, "diff", "--name-status", "#{upstream_branch}..HEAD")
-        unpushed_files = parse_name_status(unpushed_output) if unpushed_status.success?
+        if unpushed_status.success?
+          unpushed_files   = parse_name_status(unpushed_output)
+          unp_numstat_out, = Open3.capture2("git", "-C", repo, "diff", "--numstat", "#{upstream_branch}..HEAD")
+          unp_numstat_map  = parse_numstat(unp_numstat_out)
+          unpushed_files   = unpushed_files.map { |f| f.merge(unp_numstat_map.fetch(f[:path], {})) }
+        end
 
         unpushed_log_output, unpushed_log_status = Open3.capture2("git", "-C", repo, "log", "#{upstream_branch}..HEAD", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
         unpushed_commits = parse_git_log(unpushed_log_output) if unpushed_log_status.success?
       end
 
-      branch_log_output, branch_log_status = Open3.capture2("git", "-C", repo, "log", branch, "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
+      branch_log_output, branch_log_status = Open3.capture2("git", "-C", repo, "log", branch, "-n", "100", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
       branch_commits = branch_log_status.success? ? parse_git_log(branch_log_output) : []
 
       render json: {
@@ -392,11 +404,6 @@ module Mbeditor
 
     private
 
-    def ensure_allowed_environment!
-      allowed = Array(Mbeditor.configuration.allowed_environments).map(&:to_sym)
-      render plain: 'Not found', status: :not_found unless allowed.include?(Rails.env.to_sym)
-    end
-
     def verify_mbeditor_client
       return if request.headers['X-Mbeditor-Client'] == '1'
 
@@ -404,8 +411,21 @@ module Mbeditor
     end
 
     def workspace_root
-      configured_root = Mbeditor.configuration.workspace_root
-      configured_root.present? ? Pathname.new(configured_root.to_s) : Rails.root
+      @workspace_root ||= begin
+        configured_root = Mbeditor.configuration.workspace_root
+        if configured_root.present?
+          Pathname.new(configured_root.to_s)
+        else
+          # Default to the git root of Rails.root so that paths returned by git
+          # commands (which are always relative to the git root) align with the
+          # file-tree paths used by the file service.
+          rails_root = Rails.root.to_s
+          out, status = Open3.capture2("git", "-C", rails_root, "rev-parse", "--show-toplevel")
+          Pathname.new(status.success? && out.strip.present? ? out.strip : rails_root)
+        end
+      rescue StandardError
+        Rails.root
+      end
     end
 
     # Expand path and confirm it's inside workspace_root
@@ -530,6 +550,15 @@ module Mbeditor
       false
     end
 
+    def git_available?
+      _out, status = Open3.capture2("git", "-C", workspace_root.to_s, "rev-parse", "--is-inside-work-tree")
+      status.success?
+    rescue StandardError
+      false
+    end
+
+    alias git_blame_available? git_available?
+
     def haml_lint_command
       workspace_bin = workspace_root.join("bin", "haml-lint")
       return [workspace_bin.to_s] if workspace_bin.exist?
@@ -589,6 +618,15 @@ module Mbeditor
         next if path.blank?
 
         { status: status, path: path }
+      end
+    end
+
+    def parse_numstat(output)
+      (output || "").lines.each_with_object({}) do |line, map|
+        parts = line.strip.split("\t", 3)
+        next if parts.length < 3 || parts[0] == "-"
+
+        map[parts[2].strip] = { added: parts[0].to_i, removed: parts[1].to_i }
       end
     end
 

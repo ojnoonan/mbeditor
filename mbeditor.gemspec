@@ -12,7 +12,8 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = ">= 3.0.0"
 
   spec.files = Dir.chdir(File.expand_path(__dir__)) do
-    Dir["app/**/*", "config/**/*", "lib/**/*", "public/**/*", "vendor/**/*", "README.md", "mbeditor.gemspec"]
+    Dir["app/**/*", "config/**/*", "lib/**/*", "public/**/*",
+        "vendor/assets/**/*", "README.md", "mbeditor.gemspec"]
   end
 
   spec.require_paths = ["lib"]

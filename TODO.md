@@ -42,3 +42,4 @@
 - [ ] Monaco lazy-load — investigate worker splitting to improve initial load time
 - [ ] Memoize `rubocop_available?` and `haml_lint_available?` at the process level (currently spawn subprocesses on every `GET /workspace`)
 - [ ] `_latestContent` stored as property on the Monaco editor object (`EditorPanel.js`) — use a `useRef` instead
+- [ ] Add a settings page to allow users to configuring their editor settings to how they like. Including things like tabs/spaces, font size, font, theme
