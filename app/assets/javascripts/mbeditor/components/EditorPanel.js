@@ -345,16 +345,13 @@ var EditorPanel = function EditorPanel(_ref) {
     return React.createElement('div', { className: 'markdown-preview markdown-preview-full', dangerouslySetInnerHTML: { __html: markup } });
   }
 
-  // Only show the blame toolbar when git is available — no point offering
-  // blame for workspaces where git doesn't work.
-  if (!gitAvailable) {
-    return React.createElement('div', { ref: editorRef, className: 'monaco-container' });
-  }
-
+  // Always render the same wrapper structure so the editorRef div is never
+  // unmounted when gitAvailable changes (e.g. loaded async after workspace
+  // call returns). The toolbar is conditionally included inside the wrapper.
   return React.createElement(
     'div',
     { className: 'ide-editor-wrapper', style: { display: 'flex', flexDirection: 'column', height: '100%' } },
-    React.createElement(
+    gitAvailable && React.createElement(
       'div',
       { className: 'ide-editor-toolbar', style: { display: 'flex', justifyContent: 'flex-end', padding: '4px 8px', background: '#252526', borderBottom: '1px solid #3c3c3c' } },
       React.createElement(
