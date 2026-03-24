@@ -47,6 +47,21 @@ module Mbeditor
       assert_response :forbidden
     end
 
+    test "diff without base/head uses working tree mode" do
+      get "/mbeditor/git/diff", params: { file: "Gemfile" }
+      assert_response :ok
+      assert json.key?("original"), "diff should return original"
+      assert json.key?("modified"), "diff should return modified"
+      assert_kind_of String, json["original"]
+      assert_kind_of String, json["modified"]
+    end
+
+    test "diff with invalid base SHA returns 400" do
+      get "/mbeditor/git/diff", params: { file: "Gemfile", base: "not-valid!!" }
+      assert_response :bad_request
+      assert json.key?("error")
+    end
+
     # ─── git/blame ─────────────────────────────────────────────────────────────
 
     test "blame returns lines array for a tracked file" do
@@ -217,6 +232,18 @@ module Mbeditor
     end
 
     # ─── redmine/issue/:id ─────────────────────────────────────────────────────
+
+    test 'redmine_issue returns 400 for non-numeric id' do
+      Mbeditor.configure do |c|
+        c.redmine_enabled = true
+        c.redmine_url     = 'https://redmine.example.com'
+        c.redmine_api_key = 'dummy_key'
+      end
+
+      get '/mbeditor/redmine/issue/abc'
+      assert_response :bad_request
+      assert json.key?('error')
+    end
 
     test "redmine_issue returns 503 when redmine_enabled is false" do
       Mbeditor.configure { |c| c.redmine_enabled = false }

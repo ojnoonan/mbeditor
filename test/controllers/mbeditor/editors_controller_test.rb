@@ -346,6 +346,53 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # show — file over size limit
+    # ---------------------------------------------------------------------------
+
+    test "show returns 413 for file over size limit" do
+      big_file = File.join(@workspace, "big.txt")
+      File.open(big_file, "wb") do |f|
+        f.write("x" * (Mbeditor::EditorsController::MAX_OPEN_FILE_SIZE_BYTES + 1))
+      end
+
+      get "/mbeditor/file", params: { path: "big.txt" }
+      assert_response 413
+    ensure
+      File.delete(big_file) if File.exist?(big_file)
+    end
+
+    # ---------------------------------------------------------------------------
+    # save — symlink path traversal
+    # ---------------------------------------------------------------------------
+
+    test "save returns 403 for symlink pointing outside workspace" do
+      outside = Tempfile.new('mbeditor_outside_save_')
+      outside.write('secret')
+      outside.flush
+      link = File.join(@workspace, 'evil_save_link.txt')
+      File.symlink(outside.path, link)
+
+      post '/mbeditor/file', params: { path: 'evil_save_link.txt', code: 'pwned' }, as: :json
+      assert_response :forbidden
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      outside&.close!
+    end
+
+    # ---------------------------------------------------------------------------
+    # state — corrupted JSON
+    # ---------------------------------------------------------------------------
+
+    test "state returns 422 for corrupted JSON in state file" do
+      state_path = File.join(@workspace, "tmp", "mbeditor_workspace.json")
+      File.write(state_path, "this is not valid json {{{{")
+
+      get "/mbeditor/state"
+      assert_response :unprocessable_entity
+      assert json.key?("error")
+    end
+
+    # ---------------------------------------------------------------------------
     # search
     # ---------------------------------------------------------------------------
 
@@ -361,6 +408,12 @@ module Mbeditor
       assert_response :ok
       assert_kind_of Array, json
       assert json.any? { |r| r["file"].include?("user.rb") }, "expected user.rb in results"
+    end
+
+    test "search returns ok with empty array when query param is absent" do
+      get "/mbeditor/search"
+      assert_response :ok
+      assert_equal [], json
     end
 
     # ---------------------------------------------------------------------------
