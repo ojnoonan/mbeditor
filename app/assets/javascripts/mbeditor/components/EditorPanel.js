@@ -258,27 +258,32 @@ var EditorPanel = function EditorPanel(_ref) {
   useEffect(function () {
     if (!monacoRef.current || !window.monaco || !isBlameVisible || !blameData) return;
     var editor = monacoRef.current;
-    
+    var model = editor.getModel();
+    var lineCount = model ? model.getLineCount() : 0;
+
     var newDecorations = blameData.map(function(lineData) {
       var ln = lineData.line;
+      if (!model || ln < 1 || ln > lineCount) return null;
       var hash = lineData.sha && lineData.sha.substring(0, 8) || '';
       var author = lineData.author || '';
       // Exclude uncommitted changes from noisy blame
       var isUncommitted = hash === '00000000';
       var text = isUncommitted ? 'Not Committed' : author + ' \xB7 ' + hash;
-      
+
+      // Inject after the last character of each line so blame appears to the right of the code.
+      var endCol = model.getLineMaxColumn(ln);
       return {
-        range: new window.monaco.Range(ln, 1, ln, 1),
+        range: new window.monaco.Range(ln, endCol, ln, endCol),
         options: {
           isWholeLine: false,
           after: {
-            content: '\xA0\xA0\xA0\xA0' + text,
+            content: '\xA0\xA0\xA0\xA0\xA0\xA0' + text,
             inlineClassName: isUncommitted ? 'ide-blame-annotation-uncommitted' : 'ide-blame-annotation'
           }
         }
       };
-    });
-    
+    }).filter(Boolean);
+
     blameDecorationsRef.current = editor.deltaDecorations(blameDecorationsRef.current, newDecorations);
   // tab.content is intentionally excluded: blame decorations come from
   // blameData (fetched once on toggle), not from the live editor content.
@@ -340,6 +345,12 @@ var EditorPanel = function EditorPanel(_ref) {
     return React.createElement('div', { className: 'markdown-preview markdown-preview-full', dangerouslySetInnerHTML: { __html: markup } });
   }
 
+  // Only show the blame toolbar when git is available — no point offering
+  // blame for workspaces where git doesn't work.
+  if (!gitAvailable) {
+    return React.createElement('div', { ref: editorRef, className: 'monaco-container' });
+  }
+
   return React.createElement(
     'div',
     { className: 'ide-editor-wrapper', style: { display: 'flex', flexDirection: 'column', height: '100%' } },
@@ -348,12 +359,11 @@ var EditorPanel = function EditorPanel(_ref) {
       { className: 'ide-editor-toolbar', style: { display: 'flex', justifyContent: 'flex-end', padding: '4px 8px', background: '#252526', borderBottom: '1px solid #3c3c3c' } },
       React.createElement(
         'button',
-        { 
-          className: 'ide-icon-btn ' + (isBlameVisible ? 'active' : ''), 
-          disabled: !gitAvailable,
-          onClick: gitAvailable ? function() { setIsBlameVisible(!isBlameVisible); } : undefined,
-          title: gitAvailable ? 'Toggle Git Blame' : 'Git not available in this workspace',
-          style: { fontSize: '12px', padding: '2px 6px', opacity: (gitAvailable && isBlameVisible) ? 1 : 0.6, background: isBlameVisible ? 'rgba(255,255,255,0.1)' : 'transparent', border: 'none', color: gitAvailable ? '#ccc' : '#666', cursor: gitAvailable ? 'pointer' : 'not-allowed', borderRadius: '3px' }
+        {
+          className: 'ide-icon-btn ' + (isBlameVisible ? 'active' : ''),
+          onClick: function() { setIsBlameVisible(!isBlameVisible); },
+          title: 'Toggle Git Blame',
+          style: { fontSize: '12px', padding: '2px 6px', opacity: isBlameVisible ? 1 : 0.6, background: isBlameVisible ? 'rgba(255,255,255,0.1)' : 'transparent', border: 'none', color: '#ccc', cursor: 'pointer', borderRadius: '3px' }
         },
         React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: '6px' } }),
         isBlameLoading ? 'Loading...' : 'Blame'
