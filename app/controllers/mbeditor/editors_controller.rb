@@ -255,11 +255,11 @@ module Mbeditor
     # GET /mbeditor/git_status
     def git_status
       output, status = Open3.capture2("git", "-C", workspace_root.to_s, "status", "--porcelain")
-      branch_output, = Open3.capture2("git", "-C", workspace_root.to_s, "branch", "--show-current")
+      branch = GitService.current_branch(workspace_root.to_s) || ""
       files = output.lines.map do |line|
         { status: line[0..1].strip, path: line[3..].strip }
       end
-      render json: { ok: status.success?, files: files, branch: branch_output.strip }
+      render json: { ok: status.success?, files: files, branch: branch }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_entity
     end
@@ -267,12 +267,10 @@ module Mbeditor
     # GET /mbeditor/git_info
     def git_info
       repo = workspace_root.to_s
-      branch_output, branch_status = Open3.capture2("git", "-C", repo, "branch", "--show-current")
-      unless branch_status.success?
+      branch = GitService.current_branch(repo)
+      unless branch
         return render json: { ok: false, error: "Unable to determine current branch" }, status: :unprocessable_entity
       end
-
-      branch = branch_output.strip
       working_output, working_status = Open3.capture2("git", "-C", repo, "status", "--porcelain")
       working_tree = working_status.success? ? parse_porcelain_status(working_output) : []
 
@@ -411,20 +409,21 @@ module Mbeditor
     end
 
     def workspace_root
-      @workspace_root ||= begin
-        configured_root = Mbeditor.configuration.workspace_root
-        if configured_root.present?
-          Pathname.new(configured_root.to_s)
-        else
-          # Default to the git root of Rails.root so that paths returned by git
-          # commands (which are always relative to the git root) align with the
-          # file-tree paths used by the file service.
-          rails_root = Rails.root.to_s
-          out, status = Open3.capture2("git", "-C", rails_root, "rev-parse", "--show-toplevel")
-          Pathname.new(status.success? && out.strip.present? ? out.strip : rails_root)
-        end
-      rescue StandardError
-        Rails.root
+      configured_root = Mbeditor.configuration.workspace_root
+      if configured_root.present?
+        # Explicitly configured — no subprocess required, just wrap it.
+        Pathname.new(configured_root.to_s)
+      else
+        # Auto-detect from git. Cache the result since the git root cannot change
+        # within a running process.
+        self.class.instance_variable_get(:@workspace_root_cache) ||
+          self.class.instance_variable_set(:@workspace_root_cache, begin
+            rails_root = Rails.root.to_s
+            out, status = Open3.capture2("git", "-C", rails_root, "rev-parse", "--show-toplevel")
+            Pathname.new(status.success? && out.strip.present? ? out.strip : rails_root)
+          rescue StandardError
+            Rails.root
+          end)
       end
     end
 
@@ -537,24 +536,48 @@ module Mbeditor
     end
 
     def rubocop_available?
-      _out, _err, status = Open3.capture3(*rubocop_command, "--version")
-      status.success?
-    rescue StandardError
-      false
+      # Key on the configured rubocop command so the cache is invalidated if the
+      # command changes (e.g., between test cases or after reconfiguration).
+      key   = Mbeditor.configuration.rubocop_command.to_s
+      cache = self.class.instance_variable_get(:@rubocop_available_cache) ||
+              self.class.instance_variable_set(:@rubocop_available_cache, {})
+      return cache[key] if cache.key?(key)
+      cache[key] = begin
+        _out, _err, status = Open3.capture3(*rubocop_command, "--version")
+        status.success?
+      rescue StandardError
+        false
+      end
     end
 
     def haml_lint_available?
-      _out, _err, status = Open3.capture3(*haml_lint_command, "--version")
-      status.success?
-    rescue StandardError
-      false
+      # Key on the resolved command array so workspace-local bin/haml-lint is
+      # respected without re-running the probe on every request.
+      cmd   = haml_lint_command
+      key   = cmd.join(" ")
+      cache = self.class.instance_variable_get(:@haml_lint_available_cache) ||
+              self.class.instance_variable_set(:@haml_lint_available_cache, {})
+      return cache[key] if cache.key?(key)
+      cache[key] = begin
+        _out, _err, status = Open3.capture3(*cmd, "--version")
+        status.success?
+      rescue StandardError
+        false
+      end
     end
 
     def git_available?
-      _out, status = Open3.capture2("git", "-C", workspace_root.to_s, "rev-parse", "--is-inside-work-tree")
-      status.success?
-    rescue StandardError
-      false
+      # Key on workspace path so different directories get their own probe result.
+      key   = workspace_root.to_s
+      cache = self.class.instance_variable_get(:@git_available_cache) ||
+              self.class.instance_variable_set(:@git_available_cache, {})
+      return cache[key] if cache.key?(key)
+      cache[key] = begin
+        _out, status = Open3.capture2("git", "-C", key, "rev-parse", "--is-inside-work-tree")
+        status.success?
+      rescue StandardError
+        false
+      end
     end
 
     alias git_blame_available? git_available?

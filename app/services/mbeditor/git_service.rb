@@ -16,8 +16,9 @@ module Mbeditor
     end
 
     # Current branch name, or nil if not in a git repo.
+    # Uses rev-parse for compatibility with Git < 2.22 (which lacks --show-current).
     def current_branch(repo_path)
-      out, status = run_git(repo_path, "branch", "--show-current")
+      out, status = run_git(repo_path, "rev-parse", "--abbrev-ref", "HEAD")
       status.success? ? out.strip : nil
     end
 
