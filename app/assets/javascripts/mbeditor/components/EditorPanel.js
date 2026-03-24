@@ -15,6 +15,7 @@ var EditorPanel = function EditorPanel(_ref) {
   var onContentChange = _ref.onContentChange;
   var markers = _ref.markers;
   var gitAvailable = _ref.gitAvailable === true;
+  var onFormat = _ref.onFormat;
 
   var editorRef = useRef(null);
   var monacoRef = useRef(null);
@@ -41,6 +42,9 @@ var EditorPanel = function EditorPanel(_ref) {
 
   var blameDecorationsRef = useRef([]);
   var blameZoneIdsRef = useRef([]);
+
+  var onFormatRef = useRef(onFormat);
+  onFormatRef.current = onFormat;
 
   var clearBlameZones = function clearBlameZones(editor) {
     if (!editor) return;
@@ -143,6 +147,16 @@ var EditorPanel = function EditorPanel(_ref) {
     monacoRef.current = editor;
     window.__mbeditorActiveEditor = editor;
 
+    var formatActionDisposable = editor.addAction({
+      id: 'mbeditor.formatDocument',
+      label: 'Format Document',
+      contextMenuGroupId: '1_modification',
+      contextMenuOrder: 1.5,
+      run: function() {
+        if (onFormatRef.current) onFormatRef.current();
+      }
+    });
+
     var modelObj = editor.getModel();
 
     var editorPluginDisposable = null;
@@ -171,6 +185,7 @@ var EditorPanel = function EditorPanel(_ref) {
         window.__mbeditorActiveEditor = null;
       }
       if (editorPluginDisposable) editorPluginDisposable.dispose();
+      formatActionDisposable.dispose();
       contentDisposable.dispose();
       editor.dispose();
     };

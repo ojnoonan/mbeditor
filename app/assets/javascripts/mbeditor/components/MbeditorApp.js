@@ -1092,6 +1092,9 @@ var MbeditorApp = function MbeditorApp() {
     }
   };
 
+  var onFormatRef = useRef(handleFormat);
+  onFormatRef.current = handleFormat;
+
   var _debouncedSearch = useRef(window._.debounce(function (q) {
     if (!q.trim()) {
       searchRequestIdRef.current += 1;
@@ -1980,6 +1983,7 @@ var MbeditorApp = function MbeditorApp() {
                   paneId: pane.id,
                   markers: markers[pActiveTab.id] || [],
                   gitAvailable: gitAvailable,
+                  onFormat: function() { onFormatRef.current(); },
                   onContentChange: function onContentChange(val) {
                     var st = EditorStore.getState();
                     var cp = st.panes.find(function(p) { return p.id === pane.id; });
