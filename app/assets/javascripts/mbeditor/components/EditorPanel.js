@@ -124,7 +124,7 @@ var EditorPanel = function EditorPanel(_ref) {
       fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
       fontSize: 13,
       tabSize: 4,
-      insertSpaces: true,
+      insertSpaces: false,
       wordWrap: 'on',
       linkedEditing: true, // Enables Auto-Rename Tag natively!
       fixedOverflowWidgets: true,
