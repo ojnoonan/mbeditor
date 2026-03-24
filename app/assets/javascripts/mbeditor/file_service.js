@@ -1,5 +1,5 @@
 // Identify all requests as coming from the mbeditor client.
-// The server checks this header on every non-GET request as a CSRF guard.
+// The server uses this header to silence editor logs and guard non-GET requests.
 axios.defaults.headers.common['X-Mbeditor-Client'] = '1';
 
 var FileService = (function () {

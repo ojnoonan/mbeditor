@@ -1,17 +1,22 @@
 # frozen_string_literal: true
 
 require "active_support/logger_silence"
+require "uri"
 
 module Mbeditor
   module Rack
-    # Silence periodic editor heartbeats so development logs stay readable.
+    # Silence editor traffic so development logs stay readable, while leaving
+    # the initial GET to the engine root visible as a signal that a developer
+    # opened Mbeditor.
     class SilencePingRequest
       def initialize(app)
         @app = app
       end
 
       def call(env)
-        if ping_request?(env)
+        if root_request?(env)
+          @app.call(env)
+        elsif mbeditor_request?(env)
           Rails.logger.silence { @app.call(env) }
         else
           @app.call(env)
@@ -20,10 +25,30 @@ module Mbeditor
 
       private
 
-      def ping_request?(env)
-        env["REQUEST_METHOD"] == "GET" &&
-          env["HTTP_X_MBEDITOR_CLIENT"] == "1" &&
-          env["PATH_INFO"].to_s.end_with?("/ping")
+      def mbeditor_request?(env)
+        normalized_request_path(env).start_with?("/mbeditor/") || request_referer_path(env).start_with?("/mbeditor")
+      end
+
+      def root_request?(env)
+        env["REQUEST_METHOD"] == "GET" && normalized_request_path(env) == "/mbeditor"
+      end
+
+      def normalized_request_path(env)
+        path = "#{env["SCRIPT_NAME"]}#{env["PATH_INFO"]}"
+        path = env["PATH_INFO"].to_s if path.empty?
+        path = "/" if path.empty?
+        path.chomp("/")
+      end
+
+      def request_referer_path(env)
+        referer = env["HTTP_REFERER"].to_s
+        return "" if referer.empty?
+
+        uri = URI.parse(referer)
+        path = uri.path.to_s
+        path.chomp("/")
+      rescue URI::InvalidURIError
+        ""
       end
     end
   end
