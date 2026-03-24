@@ -26,7 +26,7 @@ module Mbeditor
       private
 
       def mbeditor_request?(env)
-        normalized_request_path(env).start_with?("/mbeditor/") || request_referer_path(env).start_with?("/mbeditor")
+        normalized_request_path(env).start_with?("/mbeditor/")
       end
 
       def root_request?(env)
@@ -38,17 +38,6 @@ module Mbeditor
         path = env["PATH_INFO"].to_s if path.empty?
         path = "/" if path.empty?
         path.chomp("/")
-      end
-
-      def request_referer_path(env)
-        referer = env["HTTP_REFERER"].to_s
-        return "" if referer.empty?
-
-        uri = URI.parse(referer)
-        path = uri.path.to_s
-        path.chomp("/")
-      rescue URI::InvalidURIError
-        ""
       end
     end
   end

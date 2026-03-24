@@ -191,6 +191,7 @@ module Mbeditor
     def search
       query = params[:q].to_s.strip
       return render json: [] if query.blank?
+      return render json: { error: "Query too long" }, status: :bad_request if query.length > 500
 
       results = []
       cmd = if RG_AVAILABLE
