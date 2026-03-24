@@ -29,7 +29,7 @@
   <script>var require = { paths: { vs: '<%= json_escape("#{base_path}/monaco-editor/vs") %>' } };</script>
   <script src="<%= "#{base_path}/monaco-editor/vs/loader.js" %>"></script>
 </head>
-<body data-rails-root="<%= Rails.root.to_s %>">
+<body data-rails-root="<%= Rails.root.to_s %>" data-mbeditor-version="<%= Mbeditor::VERSION %>">
   <script>
     window.MBEDITOR_BASE_PATH = "<%= json_escape(base_path) %>";
     window.prettierPlugins = {

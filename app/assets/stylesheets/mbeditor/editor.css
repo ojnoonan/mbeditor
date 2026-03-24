@@ -641,6 +641,13 @@ html, body, #mbeditor-root {
 .statusbar-msg.error { color: #f48771; }
 .statusbar-msg.success { color: #89d185; }
 
+.statusbar-version {
+  color: rgba(255,255,255,0.45);
+  font-size: 10px;
+  white-space: nowrap;
+  padding-left: 8px;
+}
+
 /* ── Search Panel ─────────────────────────────────────────── */
 .search-panel {
   padding: 8px;

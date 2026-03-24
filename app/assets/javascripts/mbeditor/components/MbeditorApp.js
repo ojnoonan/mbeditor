@@ -2107,6 +2107,11 @@ var MbeditorApp = function MbeditorApp() {
         "div",
         { className: "statusbar-msg " + state.statusMessage.kind },
         state.statusMessage.text
+      ),
+      React.createElement(
+        "div",
+        { className: "statusbar-version" },
+        "v" + (document.body.dataset.mbeditorVersion || "")
       )
     ),
 
