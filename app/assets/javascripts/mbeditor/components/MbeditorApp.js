@@ -197,11 +197,15 @@ var MbeditorApp = function MbeditorApp() {
   var _useState182 = _slicedToArray(_useState18, 2);
   var showGitPanel = _useState182[0];
   var setShowGitPanel = _useState182[1];
+  var showGitPanelRef = useRef(showGitPanel);
+  showGitPanelRef.current = showGitPanel;
 
   var _useState18g = useState(320);
   var _useState18g2 = _slicedToArray(_useState18g, 2);
   var gitPanelWidth = _useState18g2[0];
   var setGitPanelWidth = _useState18g2[1];
+  var gitPanelWidthRef = useRef(gitPanelWidth);
+  gitPanelWidthRef.current = gitPanelWidth;
 
   var _useState18h = useState(false);
 
@@ -567,7 +571,7 @@ var MbeditorApp = function MbeditorApp() {
           if (!body) return;
 
           var rect = body.getBoundingClientRect();
-          var reservedRight = EDITOR_MIN_WIDTH + (showGitPanel ? gitPanelWidth : 0);
+          var reservedRight = EDITOR_MIN_WIDTH + (showGitPanelRef.current ? gitPanelWidthRef.current : 0);
           var maxSidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, rect.width - reservedRight));
           var nextWidth = clientX - rect.left;
           setSidebarWidth(clamp(nextWidth, SIDEBAR_MIN_WIDTH, maxSidebarWidth));

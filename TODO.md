@@ -14,10 +14,10 @@
 
 ## Code quality
 
-- [ ] Dotfiles silently excluded from file tree — `build_tree` rejects all entries starting with `.`, hiding `.env`, `.rubocop.yml`, `.github/`, etc. Only `.git` is in `excluded_paths` by default; the blanket dotfile rejection is unintentional. Fix `editors_controller.rb:430`
-- [ ] Remove dead code — `ALLOWED_EXTENSIONS` constant (defined but never used) and `rename_path`/`delete_path` methods (defined but never routed)
-- [ ] `application.js` Sprockets load order — services are listed after components; should be before (works today only because all cross-references are inside function bodies, not at parse time)
-- [ ] `showGitPanel` in main `useEffect` dependency array (`MbeditorApp.js`) — causes the full setup effect (EditorStore subscription, workspace/tree fetch, state load, event listeners) to re-run every time the Git panel is toggled. Read `showGitPanel` via a ref inside the resize handler instead
+- [x] Dotfiles silently excluded from file tree — `build_tree` rejects all entries starting with `.`, hiding `.env`, `.rubocop.yml`, `.github/`, etc. Only `.git` is in `excluded_paths` by default; the blanket dotfile rejection is unintentional. Fix `editors_controller.rb:430`
+- [x] Remove dead code — `ALLOWED_EXTENSIONS` constant (defined but never used) and `rename_path`/`delete_path` methods (defined but never routed)
+- [x] `application.js` Sprockets load order — services are listed after components; should be before (works today only because all cross-references are inside function bodies, not at parse time)
+- [x] `showGitPanel` in main `useEffect` dependency array (`MbeditorApp.js`) — causes the full setup effect (EditorStore subscription, workspace/tree fetch, state load, event listeners) to re-run every time the Git panel is toggled. Read `showGitPanel` via a ref inside the resize handler instead
 
 ## CI / release workflow
 

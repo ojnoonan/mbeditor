@@ -1,3 +1,8 @@
+//= require mbeditor/editor_store
+//= require mbeditor/file_service
+//= require mbeditor/git_service
+//= require mbeditor/search_service
+//= require mbeditor/tab_manager
 //= require mbeditor/editor_plugins
 //= require mbeditor/components/CollapsibleSection
 //= require mbeditor/components/ShortcutHelp
@@ -12,8 +17,3 @@
 //= require mbeditor/components/QuickOpenDialog
 //= require mbeditor/components/TabBar
 //= require mbeditor/components/MbeditorApp
-//= require mbeditor/editor_store
-//= require mbeditor/file_service
-//= require mbeditor/git_service
-//= require mbeditor/search_service
-//= require mbeditor/tab_manager

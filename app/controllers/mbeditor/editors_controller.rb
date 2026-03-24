@@ -12,12 +12,6 @@ module Mbeditor
     before_action :ensure_allowed_environment!
     before_action :verify_mbeditor_client, unless: -> { request.get? || request.head? }
 
-    ALLOWED_EXTENSIONS = %w[
-      rb js jsx ts tsx css scss sass html erb haml slim
-      json yaml yml md txt gemspec gemfile rakefile
-      gitignore env sh bash zsh conf config toml
-    ].freeze
-
     IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
     MAX_OPEN_FILE_SIZE_BYTES = 5 * 1024 * 1024
     RG_AVAILABLE = system("which rg > /dev/null 2>&1")
@@ -171,11 +165,6 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_entity
     end
 
-    # Backward compatibility for stale route/action caches.
-    def rename_path
-      rename
-    end
-
     # DELETE /mbeditor/delete — remove file or directory
     def destroy_path
       path = resolve_path(params[:path])
@@ -192,11 +181,6 @@ module Mbeditor
       end
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_entity
-    end
-
-    # Backward compatibility for stale route/action caches.
-    def delete_path
-      destroy_path
     end
 
     # GET /mbeditor/search?q=...
@@ -453,7 +437,7 @@ module Mbeditor
     def build_tree(dir, max_depth: 10, depth: 0)
       return [] if depth >= max_depth
 
-      entries = Dir.entries(dir).sort.reject { |entry| entry.start_with?(".") || entry == "." || entry == ".." }
+      entries = Dir.entries(dir).sort.reject { |entry| entry == "." || entry == ".." }
       entries.filter_map do |name|
         full = File.join(dir, name)
         rel = relative_path(full)
