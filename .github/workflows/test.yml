@@ -29,5 +29,10 @@ jobs:
       - name: Run tests
         run: bundle exec rake test
 
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+
       - name: Run system tests
         run: bundle exec rake system_test
+        env:
+          CI: "true"
