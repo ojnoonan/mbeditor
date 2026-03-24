@@ -160,6 +160,20 @@ module Mbeditor
       assert_response :forbidden
     end
 
+    test "show returns 403 when path is a symlink pointing outside the workspace" do
+      outside = Tempfile.new('mbeditor_outside_')
+      outside.write('secret')
+      outside.flush
+      link = File.join(@workspace, 'evil_link.txt')
+      File.symlink(outside.path, link)
+
+      get '/mbeditor/file', params: { path: 'evil_link.txt' }
+      assert_response :forbidden
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      outside&.close!
+    end
+
     test "show returns image metadata without content for image files" do
       png = File.join(@workspace, "logo.png")
       File.binwrite(png, "\x89PNG\r\n")
@@ -411,6 +425,36 @@ module Mbeditor
            as: :json
       assert_response :ok
       assert_equal [], json["markers"]
+    end
+
+    test 'lint returns error when rubocop command times out' do
+      # Use a temp script file so Ruby treats the appended RuboCop flags (e.g.
+      # --no-server) as ARGV rather than trying to parse them as Ruby options,
+      # which would cause immediate exit instead of sleeping.
+      script = Tempfile.new(['fake_rubocop', '.rb'])
+      script.write("sleep\n")
+      script.flush
+
+      Mbeditor.configure { |c| c.rubocop_command = "ruby #{script.path}" }
+
+      # Temporarily lower the constant so the test completes in ~2 s, not 15 s.
+      original_timeout = Mbeditor::EditorsController::RUBOCOP_TIMEOUT_SECONDS
+      $VERBOSE = nil
+      Mbeditor::EditorsController::RUBOCOP_TIMEOUT_SECONDS = 2
+      $VERBOSE = true
+
+      post '/mbeditor/lint',
+           params: { path: 'app/models/user.rb', code: 'class User; end' },
+           as: :json
+
+      assert_response :unprocessable_entity
+      assert_match(/timed out/i, json['error'])
+    ensure
+      $VERBOSE = nil
+      Mbeditor::EditorsController::RUBOCOP_TIMEOUT_SECONDS = original_timeout
+      $VERBOSE = true
+      Mbeditor.configure { |c| c.rubocop_command = 'rubocop' }
+      script&.close!
     end
 
     # ---------------------------------------------------------------------------

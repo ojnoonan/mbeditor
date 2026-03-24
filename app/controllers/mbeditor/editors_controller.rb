@@ -411,13 +411,25 @@ module Mbeditor
       end
     end
 
-    # Expand path and confirm it's inside workspace_root
+    # Expand path and confirm it's inside workspace_root.
+    # For existing paths we also resolve symlinks so that a symlink inside the
+    # workspace that points outside cannot be used to escape the sandbox.
     def resolve_path(raw)
       return nil if raw.blank?
 
       root = workspace_root.to_s
       full = File.expand_path(raw.to_s, root)
-      full.start_with?(root + "/") || full == root ? full : nil
+      return nil unless full.start_with?("#{root}/") || full == root
+
+      if File.exist?(full)
+        real_root = File.realpath(root)
+        real = File.realpath(full)
+        return nil unless real.start_with?("#{real_root}/") || real == real_root
+      end
+
+      full
+    rescue Errno::EACCES
+      nil
     end
 
     def relative_path(full)

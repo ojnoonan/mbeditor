@@ -122,6 +122,39 @@ module Mbeditor
       assert_kind_of Array, commit["parents"]
     end
 
+    # ─── git/combined_diff ─────────────────────────────────────────────────────
+
+    test 'combined_diff scope=local returns text/plain with a string body' do
+      get '/mbeditor/git/combined_diff', params: { scope: 'local' }
+      assert_response :ok
+      assert_includes response.content_type, 'text/plain'
+      assert_kind_of String, response.body
+    end
+
+    test 'combined_diff scope=branch returns text/plain with a string body' do
+      get '/mbeditor/git/combined_diff', params: { scope: 'branch' }
+      assert_response :ok
+      assert_includes response.content_type, 'text/plain'
+      assert_kind_of String, response.body
+    end
+
+    test 'combined_diff unknown scope falls back to local behaviour' do
+      get '/mbeditor/git/combined_diff', params: { scope: 'unknown' }
+      assert_response :ok
+      assert_includes response.content_type, 'text/plain'
+    end
+
+    test 'combined_diff returns empty string for a non-git workspace' do
+      Dir.mktmpdir('mbeditor_nongit_') do |dir|
+        Mbeditor.configure { |c| c.workspace_root = dir }
+        get '/mbeditor/git/combined_diff', params: { scope: 'local' }
+        assert_response :ok
+        assert_equal '', response.body
+      end
+    ensure
+      Mbeditor.configure { |c| c.workspace_root = @workspace }
+    end
+
     # ─── redmine/issue/:id ─────────────────────────────────────────────────────
 
     test "redmine_issue returns 503 when redmine_enabled is false" do
