@@ -83,10 +83,12 @@ var DiffViewer = function DiffViewer(_ref) {
 
   function getLanguageForPath(filePath) {
     if (!filePath) return 'plaintext';
+    var fileName = filePath.split('/').pop().toLowerCase();
+    if (fileName === 'gemfile' || fileName === 'gemfile.lock' || fileName === 'rakefile') return 'ruby';
     var ext = filePath.split('.').pop().toLowerCase();
     var map = {
       'rb': 'ruby', 'js': 'javascript', 'jsx': 'javascript',
-      'ts': 'javascript', 'tsx': 'javascript',
+      'ts': 'typescript', 'tsx': 'typescript',
       'json': 'json', 'yml': 'yaml', 'yaml': 'yaml',
       'css': 'css', 'scss': 'scss', 'html': 'html',
       'xml': 'xml', 'md': 'markdown', 'sh': 'shell'

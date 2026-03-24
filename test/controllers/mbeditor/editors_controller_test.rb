@@ -549,6 +549,18 @@ module Mbeditor
       assert_includes response.content_type, "javascript"
     end
 
+    test "monaco_asset serves the TypeScript language file" do
+      get "/mbeditor/monaco-editor/vs/basic-languages/typescript/typescript.js"
+      assert_response :ok
+      assert_includes response.content_type, "javascript"
+    end
+
+    test "monaco_asset serves the shell language file" do
+      get "/mbeditor/monaco-editor/vs/basic-languages/shell/shell.js"
+      assert_response :ok
+      assert_includes response.content_type, "javascript"
+    end
+
     # ---------------------------------------------------------------------------
     # monaco_worker
     # ---------------------------------------------------------------------------

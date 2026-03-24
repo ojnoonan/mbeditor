@@ -10,6 +10,8 @@ module Mbeditor
       @workspace = Dir.mktmpdir("mbeditor_sys_")
       FileUtils.mkdir_p(File.join(@workspace, "app", "models"))
       File.write(File.join(@workspace, "README.md"), "# Hello\n")
+      File.write(File.join(@workspace, "Gemfile"), "source \"https://rubygems.org\"\n")
+      File.write(File.join(@workspace, "Gemfile.lock"), "GEM\n  specs:\n")
       File.write(File.join(@workspace, "app", "models", "user.rb"), "class User; end\n")
       File.write(File.join(@workspace, "nested_example.rb"), "class Demo\n    def call\nend")
       File.write(File.join(@workspace, "component.jsx"), "<div")
@@ -39,6 +41,19 @@ module Mbeditor
       assert_selector ".file-tree", wait: 10
       all(".tree-item-name", text: "README.md").first.click
       assert_selector ".monaco-editor", wait: 10
+    end
+
+    test "Gemfile and Gemfile.lock use ruby syntax" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      all(".tree-item-name", text: "Gemfile").first.click
+      assert_selector ".monaco-editor", wait: 10
+      assert_equal "ruby", active_editor_language
+
+      all(".tree-item-name", text: "Gemfile.lock").first.click
+      assert_selector ".monaco-editor", wait: 10
+      assert_equal "ruby", active_editor_language
     end
 
     test "Ctrl+P opens the quick-open dialog" do
@@ -134,6 +149,17 @@ module Mbeditor
           if (!editor) return null;
           var position = editor.getPosition();
           return position ? { lineNumber: position.lineNumber, column: position.column } : null;
+        })()
+      JS
+    end
+
+    def active_editor_language
+      page.evaluate_script(<<~JS)
+        (function () {
+          var editor = window.__mbeditorActiveEditor;
+          if (!editor || !editor.getModel) return null;
+          var model = editor.getModel();
+          return model ? model.getLanguageId() : null;
         })()
       JS
     end

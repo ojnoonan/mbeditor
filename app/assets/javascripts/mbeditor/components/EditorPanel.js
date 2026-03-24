@@ -75,16 +75,23 @@ var EditorPanel = function EditorPanel(_ref) {
       window.MbeditorEditorPlugins.registerGlobalExtensions(window.monaco);
     }
 
-    var parts = tab.path.split('.');
+    var fileName = tab.path.split('/').pop() || '';
+    var parts = fileName.split('.');
     var extension = parts.length > 1 ? parts.pop().toLowerCase() : '';
     var language = 'plaintext';
-    switch (extension) {
-      case 'rb':case 'ruby':case 'gemspec':case 'rakefile':
+    switch (fileName.toLowerCase()) {
+      case 'gemfile':
+      case 'gemfile.lock':
+      case 'rakefile':
         language = 'ruby';break;
+      default:
+        switch (extension) {
+      case 'rb':case 'ruby':case 'gemspec':
+          language = 'ruby';break;
       case 'js':case 'jsx':
         language = 'javascript';break;
       case 'ts':case 'tsx':
-        language = 'javascript';break;
+        language = 'typescript';break;
       case 'css':case 'scss':case 'sass':
         language = 'css';break;
       case 'html':case 'erb':
@@ -101,6 +108,7 @@ var EditorPanel = function EditorPanel(_ref) {
         language = 'shell';break;
       case 'png':case 'jpg':case 'jpeg':case 'gif':case 'svg':case 'ico':case 'webp':case 'bmp':case 'avif':
         language = 'image';break;
+        }
     }
 
     if (language === 'image') return;
