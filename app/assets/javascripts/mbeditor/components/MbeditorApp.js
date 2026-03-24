@@ -247,6 +247,11 @@ var MbeditorApp = function MbeditorApp() {
   var gitAvailable = _useState18e2[0];
   var setGitAvailable = _useState18e2[1];
 
+  var _useState18f = useState(false);
+  var _useState18f2 = _slicedToArray(_useState18f, 2);
+  var redmineEnabled = _useState18f2[0];
+  var setRedmineEnabled = _useState18f2[1];
+
   var _useState19 = useState({
     openEditors: false,
     projects: false
@@ -467,6 +472,9 @@ var MbeditorApp = function MbeditorApp() {
       }
       if (workspace && typeof workspace.gitAvailable === 'boolean') {
         setGitAvailable(workspace.gitAvailable);
+      }
+      if (workspace && typeof workspace.redmineEnabled === 'boolean') {
+        setRedmineEnabled(workspace.redmineEnabled);
       }
     });
     GitService.fetchStatus();
@@ -2147,6 +2155,7 @@ var MbeditorApp = function MbeditorApp() {
         React.createElement(window.GitPanel || GitPanel, {
           gitInfo: state.gitInfo,
           error: state.gitInfoError,
+          redmineEnabled: redmineEnabled,
           onRefresh: function () { return GitService.fetchInfo(); },
           onClose: function () { return setShowGitPanel(false); },
           onOpenFile: openFileFromGitPanel,

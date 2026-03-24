@@ -1,6 +1,7 @@
 var GitPanel = function GitPanel(_ref) {
   var gitInfo = _ref.gitInfo;
   var error = _ref.error;
+  var redmineEnabled = _ref.redmineEnabled;
   var onOpenFile = _ref.onOpenFile;
   var onOpenDiff = _ref.onOpenDiff;
   var onOpenAllChanges = _ref.onOpenAllChanges;
@@ -8,6 +9,7 @@ var GitPanel = function GitPanel(_ref) {
   var onClose = _ref.onClose;
 
   var useState = React.useState;
+  var useEffect = React.useEffect;
 
   var _s1 = useState(true);  var localExpanded  = _s1[0]; var setLocalExpanded  = _s1[1];
   var _s2 = useState(true);  var branchExpanded = _s2[0]; var setBranchExpanded = _s2[1];
@@ -17,6 +19,12 @@ var GitPanel = function GitPanel(_ref) {
   // { [hash]: { loading, files: [{status,path}], error } }
   var _s5 = useState({});    var commitFiles = _s5[0]; var setCommitFiles = _s5[1];
   var _s6 = useState(false); var refreshing = _s6[0]; var setRefreshing = _s6[1];
+
+  // ── Redmine state ───────────────────────────────────────────────────────────
+  var _sr1 = useState(null);   var redmineIssue   = _sr1[0]; var setRedmineIssue   = _sr1[1];
+  var _sr2 = useState(null);   var redmineError   = _sr2[0]; var setRedmineError   = _sr2[1];
+  var _sr3 = useState(false);  var redmineLoading = _sr3[0]; var setRedmineLoading = _sr3[1];
+  var _sr4 = useState(true);   var redmineExpanded = _sr4[0]; var setRedmineExpanded = _sr4[1];
 
   var workingTree     = gitInfo && gitInfo.workingTree     || [];
   var unpushedFiles   = gitInfo && gitInfo.unpushedFiles   || [];
@@ -31,6 +39,39 @@ var GitPanel = function GitPanel(_ref) {
   var branchCommits = rawBranchCommits.map(function (c) {
     return Object.assign({}, c, { isLocal: !!localHashes[c.hash] });
   });
+
+  // Extract the first Redmine ticket ID (#123) from recent branch commit messages
+  var redmineTicketId = null;
+  if (redmineEnabled) {
+    for (var ci = 0; ci < branchCommits.length; ci++) {
+      var titleMatch = branchCommits[ci] && branchCommits[ci].title && branchCommits[ci].title.match(/#(\d+)/);
+      if (titleMatch) { redmineTicketId = titleMatch[1]; break; }
+    }
+  }
+
+  // Fetch Redmine issue whenever the ticket ID changes
+  useEffect(function () {
+    if (!redmineEnabled) return;
+    if (!redmineTicketId) {
+      setRedmineIssue(null);
+      setRedmineError(null);
+      return;
+    }
+    setRedmineLoading(true);
+    setRedmineIssue(null);
+    setRedmineError(null);
+    var basePath = (window.MBEDITOR_BASE_PATH || '/mbeditor').replace(/\/$/, '');
+    axios.get(basePath + '/redmine/issue/' + redmineTicketId)
+      .then(function (res) {
+        setRedmineIssue(res.data);
+        setRedmineLoading(false);
+      })
+      .catch(function (err) {
+        var msg = (err.response && err.response.data && err.response.data.error) || err.message || 'Failed to load Redmine issue.';
+        setRedmineError(msg);
+        setRedmineLoading(false);
+      });
+  }, [redmineEnabled, redmineTicketId]);
 
   var statusMeta = function statusMeta(rawStatus) {
     var raw = (rawStatus || '').trim();
@@ -306,6 +347,59 @@ var GitPanel = function GitPanel(_ref) {
     ),
 
     error && React.createElement('div', { className: 'git-error' }, error),
+
+    // ── Redmine Issue Section ───────────────────────────────────────────────
+    redmineEnabled && React.createElement(
+      'div',
+      { className: 'git-section ' + (redmineExpanded ? 'expanded' : '') + ' git-section--redmine' },
+      React.createElement(
+        'div',
+        { className: 'git-section-title' },
+        React.createElement(
+          'div',
+          { className: 'git-section-title-main hoverable', onClick: function () { setRedmineExpanded(!redmineExpanded); } },
+          React.createElement(
+            'span',
+            { className: 'git-redmine-section-label' },
+            React.createElement('i', { className: 'fas ' + (redmineExpanded ? 'fa-chevron-down' : 'fa-chevron-right'), style: { width: '14px', fontSize: '10px' } }),
+            '\u2002Redmine',
+            redmineTicketId && React.createElement('span', { className: 'git-section-count', style: { marginLeft: '4px' } }, '#' + redmineTicketId)
+          ),
+          redmineIssue && React.createElement('span', { className: 'redmine-badge redmine-badge--section' }, redmineIssue.status)
+        )
+      ),
+      redmineExpanded && React.createElement(
+        'div',
+        { className: 'git-redmine-content' },
+        redmineLoading
+          ? React.createElement('div', { className: 'git-empty' },
+              React.createElement('i', { className: 'fas fa-spinner fa-spin', style: { marginRight: '6px' } }),
+              'Loading issue\u2026'
+            )
+          : !redmineTicketId
+            ? React.createElement('div', { className: 'git-empty' }, 'No matching ticket found in branch commits.')
+            : redmineError
+              ? React.createElement('div', { className: 'git-redmine-error' },
+                  React.createElement('i', { className: 'fas fa-exclamation-circle', style: { marginRight: '6px', color: '#f48771' } }),
+                  redmineError
+                )
+              : redmineIssue
+                ? React.createElement(
+                      'div',
+                      { className: 'git-redmine-issue' },
+                      React.createElement('div', { className: 'git-redmine-title' }, redmineIssue.title),
+                      redmineIssue.description
+                        ? React.createElement('div', { className: 'git-redmine-desc' }, redmineIssue.description)
+                        : null,
+                      React.createElement(
+                        'div',
+                        { className: 'git-redmine-footer' },
+                        redmineIssue.author || ''
+                      )
+                  )
+                : null
+        )
+    ),
 
     // ── Section 1: Local Changes ────────────────────────────────────────────
     React.createElement(

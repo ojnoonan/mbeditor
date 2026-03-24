@@ -36,7 +36,8 @@ module Mbeditor
         rubocopAvailable: rubocop_available?,
         hamlLintAvailable: haml_lint_available?,
         gitAvailable: git_available?,
-        blameAvailable: git_blame_available?
+        blameAvailable: git_blame_available?,
+        redmineEnabled: Mbeditor.configuration.redmine_enabled == true
       }
     end
 
