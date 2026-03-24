@@ -269,6 +269,55 @@
     monaco.languages.registerLinkedEditingRangeProvider('javascript', genericLinkedProvider);
     monaco.languages.registerLinkedEditingRangeProvider('typescript', genericLinkedProvider);
     monaco.languages.registerLinkedEditingRangeProvider('ruby', genericLinkedProvider);
+
+    // RuboCop quick-fix code-action provider for Ruby files.
+    // Only registers when RuboCop is available in the workspace.
+    monaco.languages.registerCodeActionProvider('ruby', {
+      provideCodeActions: function provideCodeActions(model, _range, context) {
+        if (!window.MBEDITOR_RUBOCOP_AVAILABLE) return { actions: [], dispose: function() {} };
+
+        var correctableCops = model._mbeditorCorrectableCops || new Set();
+        var rubocopMarkers = context.markers.filter(function(m) {
+          return m.source === 'rubocop' && m.code && correctableCops.has(m.code);
+        });
+
+        if (rubocopMarkers.length === 0) return { actions: [], dispose: function() {} };
+
+        var modelPath = model._mbeditorPath || null;
+        if (!modelPath) return { actions: [], dispose: function() {} };
+
+        var code = model.getValue();
+
+        var actions = rubocopMarkers.map(function(marker) {
+          return {
+            title: 'Fix: ' + marker.code,
+            kind: 'quickfix',
+            isPreferred: rubocopMarkers.length === 1,
+            diagnostics: [marker],
+            command: {
+              id: 'mbeditor.applyRubocopFix',
+              title: 'Apply RuboCop fix for ' + marker.code,
+              arguments: [model, marker, code, modelPath]
+            }
+          };
+        });
+
+        return { actions: actions, dispose: function() {} };
+      }
+    });
+
+    // Command handler that fetches the fix from the backend and applies it.
+    monaco.editor.registerCommand('mbeditor.applyRubocopFix', function(_accessor, model, marker, code, modelPath) {
+      if (typeof FileService === 'undefined' || !FileService.quickFixOffense) return;
+      FileService.quickFixOffense(modelPath, code, marker.code).then(function(data) {
+        if (!data || !data.fix) return;
+        var fix = data.fix;
+        model.pushEditOperations([], [{
+          range: new monaco.Range(fix.startLine, fix.startCol, fix.endLine, fix.endCol),
+          text: fix.replacement
+        }], function() { return null; });
+      }).catch(function() {});
+    });
   }
 
   window.MbeditorEditorPlugins = {

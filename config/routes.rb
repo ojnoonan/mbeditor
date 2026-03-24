@@ -22,6 +22,7 @@ Mbeditor::Engine.routes.draw do
   get    'monaco-editor/*asset_path',       to: 'editors#monaco_asset', format: false
   get    'min-maps/*asset_path',            to: 'editors#monaco_asset', format: false
   post   'lint',            to: 'editors#lint'
+  post   'quick_fix',       to: 'editors#quick_fix'
   post   'format',          to: 'editors#format_file'
 
   # ── Git & Code Review ──────────────────────────────────────────────────────

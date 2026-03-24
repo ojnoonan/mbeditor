@@ -147,6 +147,11 @@ var EditorPanel = function EditorPanel(_ref) {
     monacoRef.current = editor;
     window.__mbeditorActiveEditor = editor;
 
+    // Stash the workspace-relative path on the model so code-action providers
+    // can identify which file they are operating on without needing React state.
+    var modelObj = editor.getModel();
+    if (modelObj) modelObj._mbeditorPath = tab.path;
+
     var formatActionDisposable = editor.addAction({
       id: 'mbeditor.formatDocument',
       label: 'Format Document',
@@ -156,8 +161,6 @@ var EditorPanel = function EditorPanel(_ref) {
         if (onFormatRef.current) onFormatRef.current();
       }
     });
-
-    var modelObj = editor.getModel();
 
     var editorPluginDisposable = null;
     if (window.MbeditorEditorPlugins && window.MbeditorEditorPlugins.attachEditorFeatures) {
@@ -245,8 +248,13 @@ var EditorPanel = function EditorPanel(_ref) {
       var model = monacoRef.current.getModel();
       if (model) {
         var monacoMarkers = markers.map(function (m) {
+          var sev = m.severity === 'error'
+            ? window.monaco.MarkerSeverity.Error
+            : window.monaco.MarkerSeverity.Warning;
           return {
-            severity: m.severity === 'error' ? window.monaco.MarkerSeverity.Error : window.monaco.MarkerSeverity.Warning,
+            severity: sev,
+            source: 'rubocop',
+            code: m.copName || '',
             message: m.message,
             startLineNumber: m.startLine,
             startColumn: m.startCol,
@@ -255,6 +263,11 @@ var EditorPanel = function EditorPanel(_ref) {
           };
         });
         window.monaco.editor.setModelMarkers(model, 'rubocop', monacoMarkers);
+        // Track which cops are autocorrectable so the quick-fix provider can
+        // skip lightbulbs for cops that can never be machine-fixed.
+        model._mbeditorCorrectableCops = new Set(
+          markers.filter(function(m) { return m.correctable && m.copName; }).map(function(m) { return m.copName; })
+        );
       }
     }
   }, [markers, tab.id]);

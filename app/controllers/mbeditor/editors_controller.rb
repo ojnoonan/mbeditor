@@ -362,9 +362,11 @@ module Mbeditor
       markers = offenses.map do |offense|
         {
           severity: cop_severity(offense["severity"]),
+          copName: offense["cop_name"],
+          correctable: offense["correctable"] == true,
           message: "[#{offense['cop_name']}] #{offense['message']}",
           startLine: offense.dig("location", "start_line") || offense.dig("location", "line"),
-          startCol: (offense.dig("location", "start_column") || offense.dig("location", "column") || 1) - 1,
+          startCol: offense.dig("location", "start_column") || offense.dig("location", "column") || 1,
           endLine: offense.dig("location", "last_line") || offense.dig("location", "line"),
           endCol: offense.dig("location", "last_column") || offense.dig("location", "column") || 1
         }
@@ -373,6 +375,54 @@ module Mbeditor
       render json: { markers: markers, summary: result["summary"] }
     rescue StandardError => e
       render json: { error: e.message, markers: [] }, status: :unprocessable_entity
+    end
+
+    # POST /mbeditor/quick_fix — autocorrect the buffer with rubocop -A and return the diff as a text edit
+    #
+    # Runs a full `rubocop -A` pass on the in-memory buffer content (not the file
+    # on disk). Using a full pass (rather than --only <cop>) means coupled cops
+    # like Layout/EmptyLineAfterMagicComment are also applied in the same round,
+    # so the result is always a clean, lint-passing state. The minimal line diff
+    # returned to Monaco keeps the edit tight.
+    #
+    # Params:
+    #   path     - workspace-relative file path (used to derive the filename for rubocop)
+    #   code     - current file content as a string
+    #   cop_name - the cop the user clicked on (used only for the action label; not passed to rubocop)
+    #
+    # Returns:
+    #   { fix: { startLine, startCol, endLine, endCol, replacement } }
+    #   or { fix: null } when rubocop produced no change
+    def quick_fix
+      path = resolve_path(params[:path])
+      return render json: { error: "Forbidden" }, status: :forbidden unless path
+
+      cop_name = params[:cop_name].to_s.strip
+      return render json: { error: "cop_name required" }, status: :unprocessable_entity if cop_name.empty?
+      return render json: { error: "Invalid cop name" }, status: :unprocessable_entity unless cop_name.match?(/\A[\w\/]+\z/)
+
+      code = params[:code].to_s
+      ext  = File.extname(File.basename(path))
+
+      Tempfile.create(["mbeditor_fix", ext]) do |tmp|
+        tmp.write(code)
+        tmp.flush
+
+        cmd = rubocop_command + ["--no-server", "--cache", "false", "-A", "--no-color", tmp.path]
+        env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
+        _out, _err, status = Open3.capture3(env, *cmd)
+
+        # exit 0 = no offenses, exit 1 = offenses corrected, exit 2 = error
+        unless status.success? || status.exitstatus == 1
+          return render json: { fix: nil }
+        end
+
+        corrected = File.read(tmp.path, encoding: "UTF-8", invalid: :replace, undef: :replace)
+        fix = compute_text_edit(code, corrected)
+        render json: { fix: fix }
+      end
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_entity
     end
 
     # POST /mbeditor/format — rubocop -A then return corrected content
@@ -475,6 +525,50 @@ module Mbeditor
       when "warning" then "warning"
       else "info"
       end
+    end
+
+    # Given the original source string and the autocorrected source string, find
+    # the smallest single edit that transforms original into corrected.  Returns a
+    # hash suitable for Monaco's SingleEditOperation, or nil when there is no diff.
+    #
+    # The strategy is line-level: find the first and last line that differ, then
+    # slice out that region from both versions and return it as one replacement.
+    def compute_text_edit(original, corrected)
+      return nil if original == corrected
+
+      orig_lines = original.split("\n", -1)
+      corr_lines = corrected.split("\n", -1)
+
+      max_len = [orig_lines.length, corr_lines.length].max
+
+      first_diff = (0...max_len).find { |i| orig_lines[i] != corr_lines[i] }
+      return nil if first_diff.nil?
+
+      # Walk from the end to find the last differing line (mirror-image of above)
+      last_diff_orig = orig_lines.length - 1
+      last_diff_corr = corr_lines.length - 1
+      # Use strict > so we never walk past first_diff (which would make last_diff_orig negative
+      # and cause Ruby's negative-index wraparound to silently return the wrong element).
+      while last_diff_orig > first_diff && last_diff_corr > first_diff &&
+            orig_lines[last_diff_orig] == corr_lines[last_diff_corr]
+        last_diff_orig -= 1
+        last_diff_corr -= 1
+      end
+
+      # Monaco ranges are 1-based; endColumn one past the last char covers the full line content.
+      start_line = first_diff + 1
+      end_line   = last_diff_orig + 1
+      end_col    = (orig_lines[last_diff_orig] || "").length + 1  # 1-based: one past last char
+
+      replacement = corr_lines[first_diff..last_diff_corr].join("\n")
+
+      {
+        startLine: start_line,
+        startCol:  1,
+        endLine:   end_line,
+        endCol:    end_col,
+        replacement: replacement
+      }
     end
 
     def rubocop_command

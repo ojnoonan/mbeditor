@@ -466,6 +466,7 @@ var MbeditorApp = function MbeditorApp() {
       }
       if (workspace && typeof workspace.rubocopAvailable === 'boolean') {
         setRubocopAvailable(workspace.rubocopAvailable);
+        window.MBEDITOR_RUBOCOP_AVAILABLE = workspace.rubocopAvailable;
       }
       if (workspace && typeof workspace.hamlLintAvailable === 'boolean') {
         setHamlLintAvailable(workspace.hamlLintAvailable);

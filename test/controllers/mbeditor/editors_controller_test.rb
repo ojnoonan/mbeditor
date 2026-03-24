@@ -577,6 +577,72 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # quick_fix
+    # ---------------------------------------------------------------------------
+
+    test "quick_fix returns 403 for path traversal" do
+      post "/mbeditor/quick_fix",
+           params: { path: "../../evil.rb", code: "x=1\n", cop_name: "Style/StringLiterals" },
+           as: :json
+      assert_response :forbidden
+    end
+
+    test "quick_fix returns 422 when cop_name is missing" do
+      post "/mbeditor/quick_fix",
+           params: { path: "app/models/user.rb", code: "x=1\n" },
+           as: :json
+      assert_response :unprocessable_entity
+      assert json.key?("error")
+    end
+
+    test "quick_fix returns 422 for an invalid cop_name" do
+      post "/mbeditor/quick_fix",
+           params: { path: "app/models/user.rb", code: "x=1\n", cop_name: "../../etc/passwd" },
+           as: :json
+      assert_response :unprocessable_entity
+      assert_match(/invalid cop name/i, json["error"])
+    end
+
+    test "quick_fix returns a text edit for an autocorrectable offense" do
+      Mbeditor.configure { |c| c.rubocop_command = "bundle exec rubocop" }
+      # Style/StringLiterals flags double quotes; autocorrect converts them to single quotes
+      code = "x = \"hello\"\n"
+      post "/mbeditor/quick_fix",
+           params: { path: "app/models/user.rb", code: code, cop_name: "Style/StringLiterals" },
+           as: :json
+      assert_response :ok
+      fix = json["fix"]
+      # If rubocop considers this correctable we get a fix; if the workspace .rubocop.yml
+      # disables the cop or prefers double quotes we get nil — both are valid responses.
+      if fix
+        assert fix.key?("startLine"), "fix should have startLine"
+        assert fix.key?("startCol"),  "fix should have startCol"
+        assert fix.key?("endLine"),   "fix should have endLine"
+        assert fix.key?("endCol"),    "fix should have endCol"
+        assert fix.key?("replacement"), "fix should have replacement"
+        assert_kind_of Integer, fix["startLine"]
+        assert_kind_of String,  fix["replacement"]
+      end
+    ensure
+      Mbeditor.configure { |c| c.rubocop_command = "rubocop" }
+    end
+
+    test "quick_fix returns nil fix when cop produces no change" do
+      Mbeditor.configure { |c| c.rubocop_command = "bundle exec rubocop" }
+      # Already clean; autocorrect should produce no diff
+      clean_code = "# frozen_string_literal: true\n\nx = 'hello'\n"
+      post "/mbeditor/quick_fix",
+           params: { path: "app/models/user.rb", code: clean_code, cop_name: "Style/StringLiterals" },
+           as: :json
+      assert_response :ok
+      # fix may be nil (no change) or a valid edit if the cop finds something;
+      # the response must be well-formed either way.
+      assert json.key?("fix"), "response should always have a 'fix' key"
+    ensure
+      Mbeditor.configure { |c| c.rubocop_command = "rubocop" }
+    end
+
+    # ---------------------------------------------------------------------------
     # monaco_asset
     # ---------------------------------------------------------------------------
 

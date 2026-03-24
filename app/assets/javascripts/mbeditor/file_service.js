@@ -43,6 +43,10 @@ var FileService = (function () {
     return axios.post(basePath() + '/lint', { path: path, code: code }).then(function(res) { return res.data; });
   }
 
+  function quickFixOffense(path, code, copName) {
+    return axios.post(basePath() + '/quick_fix', { path: path, code: code, cop_name: copName }).then(function(res) { return res.data; });
+  }
+
   function formatFile(path) {
     return axios.post(basePath() + '/format', { path: path }).then(function(res) { return res.data; });
   }
@@ -69,6 +73,7 @@ var FileService = (function () {
     renamePath: renamePath,
     deletePath: deletePath,
     lintFile: lintFile,
+    quickFixOffense: quickFixOffense,
     formatFile: formatFile,
     ping: ping,
     getState: getState,
