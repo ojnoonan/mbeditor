@@ -23,8 +23,9 @@ module Mbeditor
     end
 
     # GET /mbeditor/ping — heartbeat for the frontend connectivity check
+    # Silence the log line so development consoles are not spammed.
     def ping
-      render json: { ok: true }
+      Rails.logger.silence { render json: { ok: true } }
     end
 
     # GET /mbeditor/workspace — metadata about current workspace root

@@ -300,5 +300,21 @@ var FileTree = function FileTree(_ref) {
   );
 };
 
+// Wrap FileTree in React.memo with a custom comparator that only checks
+// the data props that affect what's rendered. Function prop references
+// (event handlers) are re-created on every parent render but do not
+// change the visual output, so we intentionally ignore them here.
+// This prevents O(n) tree traversal on every MbeditorApp re-render
+// caused by unrelated state changes (status messages, git polls, etc.).
+var FileTreeMemo = React.memo(FileTree, function(prev, next) {
+  return prev.items === next.items &&
+    prev.activePath === next.activePath &&
+    prev.selectedPath === next.selectedPath &&
+    prev.gitFiles === next.gitFiles &&
+    prev.expandedDirs === next.expandedDirs &&
+    prev.pendingCreate === next.pendingCreate &&
+    prev.pendingRename === next.pendingRename;
+});
+
 // Expose globally for sprockets require
-window.FileTree = FileTree;
+window.FileTree = FileTreeMemo;

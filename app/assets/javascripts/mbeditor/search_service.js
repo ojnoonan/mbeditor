@@ -9,22 +9,28 @@ var SearchService = (function () {
   });
 
   function buildIndex(treeData) {
-    var docs = [];
-    var idCounter = 1;
+    // Capture the tree data immediately so a subsequent refresh doesn't
+    // clobber us before the idle callback fires.
+    var snapshot = treeData;
+    var schedule = window.requestIdleCallback || function(cb) { setTimeout(cb, 50); };
+    schedule(function() {
+      var docs = [];
+      var idCounter = 1;
 
-    function traverse(nodes) {
-      nodes.forEach(function(n) {
-        if (n.type === 'file') {
-          docs.push({ id: idCounter++, path: n.path, name: n.name });
-        } else if (n.children) {
-          traverse(n.children);
-        }
-      });
-    }
+      function traverse(nodes) {
+        nodes.forEach(function(n) {
+          if (n.type === 'file') {
+            docs.push({ id: idCounter++, path: n.path, name: n.name });
+          } else if (n.children) {
+            traverse(n.children);
+          }
+        });
+      }
 
-    traverse(treeData);
-    _miniSearch.removeAll();
-    _miniSearch.addAll(docs);
+      traverse(snapshot);
+      _miniSearch.removeAll();
+      _miniSearch.addAll(docs);
+    });
   }
 
   function searchFiles(query) {

@@ -36,6 +36,21 @@ var EditorStore = (function () {
     emit();
   }
 
+  // Subscribe to changes in a specific subset of state keys.
+  // The listener is only called when at least one of the watched keys changes
+  // by reference (===), preventing unnecessary re-renders for unrelated updates.
+  function subscribeToSlice(keys, fn) {
+    var prev = {};
+    keys.forEach(function(k) { prev[k] = _state[k]; });
+    return subscribe(function(newState) {
+      var changed = keys.some(function(k) { return newState[k] !== prev[k]; });
+      if (changed) {
+        keys.forEach(function(k) { prev[k] = newState[k]; });
+        fn(newState);
+      }
+    });
+  }
+
   function setStatus(text, kind) {
     kind = kind || "info";
     setState({ statusMessage: { text: text, kind: kind } });
@@ -49,5 +64,5 @@ var EditorStore = (function () {
     }
   }
 
-  return { getState: getState, subscribe: subscribe, setState: setState, setStatus: setStatus };
+  return { getState: getState, subscribe: subscribe, subscribeToSlice: subscribeToSlice, setState: setState, setStatus: setStatus };
 })();

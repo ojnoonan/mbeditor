@@ -618,23 +618,41 @@ var MbeditorApp = function MbeditorApp() {
     };
   }, []);
 
-  // Heartbeat — poll /ping every 5s and reflect connectivity in the status bar
+  // Heartbeat — adaptive poll: 30s when connected, 5s when trying to reconnect.
+  // Skipped entirely while the tab is hidden (Page Visibility API).
   useEffect(function () {
     var wasOnline = true;
-    var interval = setInterval(function () {
+    var timeoutId = null;
+
+    function schedule() {
+      var delay = wasOnline ? 30000 : 5000;
+      timeoutId = setTimeout(tick, delay);
+    }
+
+    function tick() {
+      if (document.hidden) {
+        // Tab is backgrounded — skip this cycle and reschedule at the normal
+        // online interval so we resume quickly once the tab becomes visible again.
+        schedule();
+        return;
+      }
       FileService.ping().then(function () {
         if (!wasOnline) {
           wasOnline = true;
           setServerOnline(true);
         }
+        schedule();
       }).catch(function () {
         if (wasOnline) {
           wasOnline = false;
           setServerOnline(false);
         }
+        schedule();
       });
-    }, 5000);
-    return function () { clearInterval(interval); };
+    }
+
+    schedule();
+    return function () { clearTimeout(timeoutId); };
   }, []);
 
   var handleSelectFile = function handleSelectFile(path, name, line) {

@@ -280,7 +280,10 @@ var EditorPanel = function EditorPanel(_ref) {
     });
     
     blameDecorationsRef.current = editor.deltaDecorations(blameDecorationsRef.current, newDecorations);
-  }, [blameData, isBlameVisible, tab.id, tab.content]);
+  // tab.content is intentionally excluded: blame decorations come from
+  // blameData (fetched once on toggle), not from the live editor content.
+  // Re-applying on every keystroke would call deltaDecorations needlessly.
+  }, [blameData, isBlameVisible, tab.id]);
 
   var sourceTab = tab.isPreview ? findTabByPath(tab.previewFor) : null;
   var markdownContent = tab.isPreview ? sourceTab && sourceTab.content || tab.content || '' : tab.content || '';
