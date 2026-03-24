@@ -63,6 +63,18 @@ module Mbeditor
       assert line.key?("content"), "blame line should have 'content'"
     end
 
+    test "blame auto-detects git root when workspace_root is not configured" do
+      Mbeditor.configure { |c| c.workspace_root = nil }
+
+      get "/mbeditor/git/blame", params: { file: "README.md" }
+
+      assert_response :ok
+      assert_kind_of Array, json["lines"]
+      assert_operator json["lines"].length, :>, 0
+    ensure
+      Mbeditor.configure { |c| c.workspace_root = @workspace }
+    end
+
     test "blame returns 400 when file param is missing" do
       get "/mbeditor/git/blame"
       assert_response :bad_request

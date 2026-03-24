@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-03-24
+
+### Fixed
+- **Blame workspace root** — git blame now resolves paths through the shared workspace-root helper, which keeps dummy-app and auto-detected repo roots consistent.
+- **Heartbeat log noise** — `/ping` requests are silenced at the middleware layer before Rails request logging runs.
+- **Blame presentation** — blame is rendered as grouped headers showing author and commit message above contiguous code blocks.
+
 ## [0.1.3] - 2026-03-24
 
 ### Performance

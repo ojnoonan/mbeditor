@@ -137,7 +137,7 @@ module Mbeditor
       end
 
       render plain: out, content_type: "text/plain"
-    rescue StandardError => e
+    rescue StandardError
       render plain: "", content_type: "text/plain"
     end
 
@@ -159,11 +159,6 @@ module Mbeditor
 
     private
 
-    def workspace_root
-      configured = Mbeditor.configuration.workspace_root
-      configured.present? ? configured.to_s : Rails.root.to_s
-    end
-
     # Require & validate a `file` query param, responding 400/403 on bad input.
     # Returns the relative path string on success, or nil if already responded.
     def require_file_param
@@ -174,15 +169,13 @@ module Mbeditor
         return nil
       end
 
-      # Validate that the path stays within the workspace
-      root = workspace_root
-      full = File.expand_path(raw, root)
-      unless full.start_with?(root + "/") || full == root
+      full = resolve_path(raw)
+      unless full
         render json: { error: "Forbidden" }, status: :forbidden
         return nil
       end
 
-      raw
+      relative_path(full)
     end
   end
 end

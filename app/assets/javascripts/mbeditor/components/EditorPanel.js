@@ -40,6 +40,19 @@ var EditorPanel = function EditorPanel(_ref) {
   var setIsBlameLoading = _useState8[1];
 
   var blameDecorationsRef = useRef([]);
+  var blameZoneIdsRef = useRef([]);
+
+  var clearBlameZones = function clearBlameZones(editor) {
+    if (!editor) return;
+    if (blameZoneIdsRef.current.length === 0) return;
+
+    editor.changeViewZones(function(accessor) {
+      blameZoneIdsRef.current.forEach(function(zoneId) {
+        accessor.removeZone(zoneId);
+      });
+    });
+    blameZoneIdsRef.current = [];
+  };
 
   var findTabByPath = function findTabByPath(path) {
     if (!path) return null;
@@ -143,6 +156,8 @@ var EditorPanel = function EditorPanel(_ref) {
     });
 
     return function () {
+      blameDecorationsRef.current = editor.deltaDecorations(blameDecorationsRef.current, []);
+      clearBlameZones(editor);
       TabManager.saveTabViewState(tab.id, editor.saveViewState());
       if (window.__mbeditorActiveEditor === editor) {
         window.__mbeditorActiveEditor = null;
@@ -224,14 +239,20 @@ var EditorPanel = function EditorPanel(_ref) {
   // Reset blame state when file path changes
   useEffect(function () {
     setBlameData(null);
-    setIsBlameVisible(false);
     setIsBlameLoading(false);
+
+    // Clear stale blame render when switching files.
+    if (monacoRef.current && monacoRef.current.getModel()) {
+      clearBlameZones(monacoRef.current);
+      blameDecorationsRef.current = monacoRef.current.deltaDecorations(blameDecorationsRef.current, []);
+    }
   }, [tab.path]);
 
   // Handle Blame data fetching
   useEffect(function () {
     if (!isBlameVisible) {
       if (monacoRef.current && monacoRef.current.getModel()) {
+        clearBlameZones(monacoRef.current);
         blameDecorationsRef.current = monacoRef.current.deltaDecorations(blameDecorationsRef.current, []);
       }
       return;
@@ -240,7 +261,13 @@ var EditorPanel = function EditorPanel(_ref) {
     if (!blameData && !isBlameLoading) {
       setIsBlameLoading(true);
       GitService.fetchBlame(tab.path).then(function(data) {
-        setBlameData(data.lines || []);
+        var lines = data && Array.isArray(data.lines) ? data.lines : [];
+        setBlameData(lines);
+        if (lines.length === 0) {
+          EditorStore.setStatus('No blame data available for this file', 'warning');
+        } else {
+          EditorStore.setStatus('Loaded blame for ' + lines.length + ' lines', 'info');
+        }
         setIsBlameLoading(false);
       }).catch(function(err) {
         var status = err.response && err.response.status;
@@ -248,47 +275,90 @@ var EditorPanel = function EditorPanel(_ref) {
           ? "File is not tracked by git"
           : "Failed to load blame: " + ((err.response && err.response.data && err.response.data.error) || err.message);
         EditorStore.setStatus(msg, "error");
+        setBlameData([]);
         setIsBlameLoading(false);
-        setIsBlameVisible(false);
       });
     }
   }, [isBlameVisible, tab.path, blameData, isBlameLoading]);
 
-  // Render Blame decorations
+  // Render Blame block headers (author + summary) above contiguous commit regions.
   useEffect(function () {
     if (!monacoRef.current || !window.monaco || !isBlameVisible || !blameData) return;
+
     var editor = monacoRef.current;
     var model = editor.getModel();
     var lineCount = model ? model.getLineCount() : 0;
 
-    var newDecorations = blameData.map(function(lineData) {
-      var ln = lineData.line;
-      if (!model || ln < 1 || ln > lineCount) return null;
-      var hash = lineData.sha && lineData.sha.substring(0, 8) || '';
-      var author = lineData.author || '';
-      // Exclude uncommitted changes from noisy blame
-      var isUncommitted = hash === '00000000';
-      var text = isUncommitted ? 'Not Committed' : author + ' \xB7 ' + hash;
+    try {
+      // Clear previous render before rebuilding.
+      clearBlameZones(editor);
+      blameDecorationsRef.current = editor.deltaDecorations(blameDecorationsRef.current, []);
 
-      // Inject after the last character of each line so blame appears to the right of the code.
-      var endCol = model.getLineMaxColumn(ln);
-      return {
-        range: new window.monaco.Range(ln, endCol, ln, endCol),
-        options: {
-          isWholeLine: false,
-          after: {
-            content: '\xA0\xA0\xA0\xA0\xA0\xA0' + text,
-            inlineClassName: isUncommitted ? 'ide-blame-annotation-uncommitted' : 'ide-blame-annotation'
-          }
+      var normalized = blameData.map(function(lineData) {
+        var ln = Number(lineData && lineData.line);
+        if (!model || !ln || ln < 1 || ln > lineCount) return null;
+
+        var sha = lineData && lineData.sha || '';
+        var author = lineData && lineData.author || 'Unknown';
+        var summary = lineData && lineData.summary || 'No commit message';
+        var isUncommitted = sha.substring(0, 8) === '00000000';
+
+        return {
+          line: ln,
+          sha: sha,
+          author: isUncommitted ? 'Not Committed' : author,
+          summary: summary,
+          isUncommitted: isUncommitted
+        };
+      }).filter(Boolean);
+
+      normalized.sort(function(a, b) { return a.line - b.line; });
+
+      var blocks = [];
+      normalized.forEach(function(item) {
+        var current = blocks.length > 0 ? blocks[blocks.length - 1] : null;
+        if (!current || current.sha !== item.sha || item.line !== current.endLine + 1) {
+          blocks.push({
+            sha: item.sha,
+            author: item.author,
+            summary: item.summary,
+            isUncommitted: item.isUncommitted,
+            startLine: item.line,
+            endLine: item.line
+          });
+          return;
         }
-      };
-    }).filter(Boolean);
+        current.endLine = item.line;
+      });
 
-    blameDecorationsRef.current = editor.deltaDecorations(blameDecorationsRef.current, newDecorations);
-  // tab.content is intentionally excluded: blame decorations come from
-  // blameData (fetched once on toggle), not from the live editor content.
-  // Re-applying on every keystroke would call deltaDecorations needlessly.
-  }, [blameData, isBlameVisible, tab.id]);
+      var zoneIds = [];
+      editor.changeViewZones(function(accessor) {
+        blocks.forEach(function(block, idx) {
+          var header = document.createElement('div');
+          header.className = block.isUncommitted
+            ? 'ide-blame-block-header ide-blame-block-header-uncommitted'
+            : 'ide-blame-block-header';
+          header.textContent = block.author + ' - ' + block.summary;
+
+          var zoneId = accessor.addZone({
+            afterLineNumber: block.startLine > 1 ? block.startLine - 1 : 0,
+            heightInLines: 1,
+            domNode: header,
+            suppressMouseDown: true
+          });
+          zoneIds.push(zoneId);
+        });
+      });
+      blameZoneIdsRef.current = zoneIds;
+    } catch (err) {
+      var message = err && err.message ? err.message : 'Unknown decoration error';
+      EditorStore.setStatus('Failed to render blame annotations: ' + message, 'error');
+      clearBlameZones(editor);
+      blameDecorationsRef.current = editor.deltaDecorations(blameDecorationsRef.current, []);
+    }
+
+  // Include tab.content so blame re-renders once async file contents finish loading.
+  }, [blameData, isBlameVisible, tab.id, tab.content]);
 
   var sourceTab = tab.isPreview ? findTabByPath(tab.previewFor) : null;
   var markdownContent = tab.isPreview ? sourceTab && sourceTab.content || tab.content || '' : tab.content || '';
@@ -358,7 +428,9 @@ var EditorPanel = function EditorPanel(_ref) {
         'button',
         {
           className: 'ide-icon-btn ' + (isBlameVisible ? 'active' : ''),
-          onClick: function() { setIsBlameVisible(!isBlameVisible); },
+          onClick: function() {
+            setIsBlameVisible(function(prev) { return !prev; });
+          },
           title: 'Toggle Git Blame',
           style: { fontSize: '12px', padding: '2px 6px', opacity: isBlameVisible ? 1 : 0.6, background: isBlameVisible ? 'rgba(255,255,255,0.1)' : 'transparent', border: 'none', color: '#ccc', cursor: 'pointer', borderRadius: '3px' }
         },

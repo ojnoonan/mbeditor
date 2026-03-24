@@ -1,6 +1,12 @@
+require "mbeditor/rack/silence_ping_request"
+
 module Mbeditor
   class Engine < ::Rails::Engine
     isolate_namespace Mbeditor
+
+    initializer "mbeditor.silence_ping_request" do |app|
+      app.middleware.insert_before Rails::Rack::Logger, Mbeditor::Rack::SilencePingRequest
+    end
 
     initializer "mbeditor.assets.precompile" do |app|
       app.config.assets.precompile += %w[

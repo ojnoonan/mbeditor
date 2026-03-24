@@ -37,7 +37,7 @@ module Mbeditor
     test "clicking a file opens it in the editor" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
-      find(".tree-item-name", text: "README.md").click
+      all(".tree-item-name", text: "README.md").first.click
       assert_selector ".monaco-editor", wait: 10
     end
 
@@ -89,6 +89,36 @@ module Mbeditor
 
       wait_for_editor_value("<div></div>")
       assert_equal({ "lineNumber" => 1, "column" => 6 }, active_editor_position)
+    end
+
+    test "git blame toggle renders inline annotations" do
+      repo_root = File.expand_path("../../..", __dir__)
+      previous_workspace = @workspace
+
+      Mbeditor.configure do |c|
+        c.allowed_environments = %i[test development]
+        c.workspace_root = repo_root
+        c.excluded_paths = %w[.git tmp log node_modules vendor/bundle]
+      end
+
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      all(".tree-item-name", text: "README.md", minimum: 1).first.click
+      assert_selector ".monaco-editor", wait: 10
+
+      click_button "Blame"
+      assert_text "Loaded blame for", wait: 10
+
+      header_count = page.evaluate_script(<<~JS)
+        (function () {
+          return document.querySelectorAll('.ide-blame-block-header').length;
+        })()
+      JS
+      assert_operator header_count.to_i, :>, 0
+    ensure
+      Mbeditor.configure do |c|
+        c.workspace_root = previous_workspace
+      end
     end
 
     private
