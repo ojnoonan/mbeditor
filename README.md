@@ -76,6 +76,10 @@ Available options:
 |----------|--------|
 | `Ctrl+P` | Quick-open file by name |
 | `Ctrl+S` | Save the active file |
+| `Ctrl+Shift+S` | Save all dirty files |
+| `Alt+Shift+F` | Format the active file |
+| `Ctrl+Shift+G` | Toggle the git panel |
+| `Ctrl+Z` / `Ctrl+Y` | Undo / Redo (Monaco built-in) |
 
 ## Host Requirements (Optional)
 The gem keeps host/tooling responsibilities in the host app:

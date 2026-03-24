@@ -546,6 +546,18 @@ var MbeditorApp = function MbeditorApp() {
           }
         })();
       }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'S') {
+        e.preventDefault();
+        handleSaveAll();
+      }
+      if (e.altKey && e.shiftKey && e.key === 'F') {
+        e.preventDefault();
+        handleFormat();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'G') {
+        e.preventDefault();
+        toggleGitPanel();
+      }
       if (e.key === 'Escape') {
         setContextMenu(null);
         setShowHelp(false);
@@ -2068,6 +2080,18 @@ var MbeditorApp = function MbeditorApp() {
                           React.createElement("tr", null,
                             React.createElement("td", null, React.createElement("kbd", null, "Ctrl+S")),
                             React.createElement("td", null, "Save the active file")
+                          ),
+                          React.createElement("tr", null,
+                            React.createElement("td", null, React.createElement("kbd", null, "Ctrl+Shift+S")),
+                            React.createElement("td", null, "Save all dirty files")
+                          ),
+                          React.createElement("tr", null,
+                            React.createElement("td", null, React.createElement("kbd", null, "Alt+Shift+F")),
+                            React.createElement("td", null, "Format the active file")
+                          ),
+                          React.createElement("tr", null,
+                            React.createElement("td", null, React.createElement("kbd", null, "Ctrl+Shift+G")),
+                            React.createElement("td", null, "Toggle git panel")
                           ),
                           React.createElement("tr", null,
                             React.createElement("td", null, React.createElement("kbd", null, "Ctrl+Z\u00a0/\u00a0Ctrl+Y")),
