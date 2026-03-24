@@ -10,7 +10,7 @@
 ## Gem / packaging
 
 - [ ] Decide on initial version strategy — current `0.1.0` is fine for first release; bump to `1.0.0` when API is stable
-- [ ] Check gem size before publishing — `public/monaco-editor/` is included in `spec.files`; Monaco is 20–40 MB. Run `bundle exec rake build && ls -lh pkg/` and verify it is under RubyGems.org's 250 MB limit
+- [x] Check gem size before publishing — `public/monaco-editor/` is included in `spec.files`; Monaco is 20–40 MB. Run `bundle exec rake build && ls -lh pkg/` and verify it is under RubyGems.org's 250 MB limit (confirmed: 3.7 MB)
 
 ## Code quality
 
@@ -21,9 +21,9 @@
 
 ## CI / release workflow
 
-- [ ] `publish.yml` — run `bundle exec rake system_test` before publishing so UI regressions don't ship
-- [ ] `publish.yml` — add a `gem push` step with `GEM_HOST_API_KEY` if distributing via RubyGems.org (currently only creates a GitHub Release)
-- [ ] `publish.yml` — `workflow_dispatch` trigger creates spurious releases without a version tag; add a `tag_name` input to the manual trigger
+- [x] `publish.yml` — run `bundle exec rake system_test` before publishing so UI regressions don't ship
+- [x] `publish.yml` — add a `gem push` step with `GEM_HOST_API_KEY` if distributing via RubyGems.org (currently only creates a GitHub Release)
+- [x] `publish.yml` — `workflow_dispatch` trigger creates spurious releases without a version tag; add a `tag_name` input to the manual trigger
 - [ ] `test.yml` — add a Rails 8.x matrix entry; gemspec declares `< 9.0` but only Rails 7.1 and default (latest) are tested explicitly
 
 ## Documentation

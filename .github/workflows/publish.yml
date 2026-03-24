@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to publish (e.g. v0.1.0). Must match an existing tag.'
+        required: true
+        type: string
 
 jobs:
   publish:
@@ -14,6 +19,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - uses: ruby/setup-ruby@v1.292.0
         with:
@@ -23,11 +30,20 @@ jobs:
       - name: Run tests
         run: bundle exec rake test
 
+      - name: Run system tests
+        run: bundle exec rake system_test
+
       - name: Build gem
         run: bundle exec rake build
+
+      - name: Push gem to RubyGems.org
+        run: gem push pkg/mbeditor-*.gem
+        env:
+          GEM_HOST_API_KEY: ${{ secrets.GEM_HOST_API_KEY }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           files: pkg/mbeditor-*.gem
           generate_release_notes: true
