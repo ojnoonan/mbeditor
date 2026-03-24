@@ -9,8 +9,10 @@
 
 ## Security
 
-- [ ] **Symlink path traversal in `resolve_path`** — `File.expand_path` normalises `..` segments but does **not** resolve symlinks. A symlink inside the workspace pointing outside it (e.g. `workspace/evil -> /etc/passwd`) would pass the `start_with?(root)` check and expose or overwrite the target. Fix: use `File.realpath` for the existence check (rescue `Errno::ENOENT`/`Errno::EACCES` when the path doesn't yet exist, i.e. on create). `editors_controller.rb:419`
-- [ ] **Upstream branch name interpolated into git revision range strings** — `upstream_branch` / `upstream` (obtained from `git rev-parse @{u}`) is string-interpolated into arguments like `"HEAD...#{upstream_branch}"` before being passed to `Open3.capture2`. No shell injection is possible because the array form is used, but a pathological branch name (e.g. containing `..`, spaces, or git reflog syntax) could cause git to misinterpret the range or error unexpectedly. Validate that the value matches a safe pattern (`\A[\w./-]+\z`) before use. `editors_controller.rb:275`, `git_controller.rb:132`
+- [x] **Symlink path traversal in `resolve_path`** — `File.expand_path` normalises `..` segments but does **not** resolve symlinks. A symlink inside the workspace pointing outside it (e.g. `workspace/evil -> /etc/passwd`) would pass the `start_with?(root)` check and expose or overwrite the target. Fix: use `File.realpath` for the existence check (rescue `Errno::ENOENT`/`Errno::EACCES` when the path doesn't yet exist, i.e. on create). `editors_controller.rb:419`
+- [x] **Upstream branch name interpolated into git revision range strings** — `upstream_branch` / `upstream` (obtained from `git rev-parse @{u}`) is string-interpolated into arguments like `"HEAD...#{upstream_branch}"` before being passed to `Open3.capture2`. No shell injection is possible because the array form is used, but a pathological branch name (e.g. containing `..`, spaces, or git reflog syntax) could cause git to misinterpret the range or error unexpectedly. Validate that the value matches a safe pattern (`\A[\w./-]+\z`) before use. `editors_controller.rb:275`, `git_controller.rb:132`
+- [x] **`base_sha`/`head_sha` params in `GET /git/diff` are not validated** — `commit_detail` validates its SHA param with `/\A[0-9a-fA-F]{1,40}\z/` before use; the diff endpoint passes `params[:base]`/`params[:head]` directly to `GitDiffService`, which interpolates them into `"#{ref}:#{file_path}"` passed to `git show`. A crafted ref (e.g. containing `:`) could produce unexpected git output or trigger unintended ref lookups. Apply the same hex validation. `git_controller.rb:26-27`, `git_diff_service.rb:46-47`
+- [x] **Redmine `issue_id` not validated as integer before URL interpolation** — `params[:id]` is taken as-is and interpolated into the Redmine URL as `/issues/#{issue_id}.json`. A non-numeric value (e.g. `../projects`) could manipulate the path within the configured Redmine base URL. Validate with `/\A\d+\z/` before calling the service. `redmine_service.rb:51`
 
 ## Gem / packaging
 
@@ -19,8 +21,8 @@
 
 ## Reliability
 
-- [ ] **`run_with_timeout` only kills the RuboCop parent process** — the timeout thread calls `Process.kill('KILL', wait_thr.pid)` which kills the direct child but not any grandchildren (e.g. processes spawned by Bundler or RuboCop plugins). On a slow CI box these become orphans and can accumulate. Fix: use a process group kill (`Process.kill('-KILL', ...)`) after setting a new process group via `pgroup: true` in `popen3`. `editors_controller.rb:475`
-- [ ] **`state` endpoint silently swallows all errors** — the `rescue StandardError` at line 63 returns `{}` for both "no file yet" (expected) and real errors like `Errno::EACCES` or `JSON::ParserError` (unexpected). Split the rescue: only return `{}` for `Errno::ENOENT`; re-raise or log everything else. `editors_controller.rb:56`
+- [x] **`run_with_timeout` only kills the RuboCop parent process** — the timeout thread calls `Process.kill('KILL', wait_thr.pid)` which kills the direct child but not any grandchildren (e.g. processes spawned by Bundler or RuboCop plugins). On a slow CI box these become orphans and can accumulate. Fix: use a process group kill (`Process.kill('-KILL', ...)`) after setting a new process group via `pgroup: true` in `popen3`. `editors_controller.rb:475`
+- [x] **`state` endpoint silently swallows all errors** — the `rescue StandardError` at line 63 returns `{}` for both "no file yet" (expected) and real errors like `Errno::EACCES` or `JSON::ParserError` (unexpected). Split the rescue: only return `{}` for `Errno::ENOENT`; re-raise or log everything else. `editors_controller.rb:56`
 
 ## Code quality
 
@@ -28,7 +30,7 @@
 - [x] Remove dead code — `ALLOWED_EXTENSIONS` constant (defined but never used) and `rename_path`/`delete_path` methods (defined but never routed)
 - [x] `application.js` Sprockets load order — services are listed after components; should be before (works today only because all cross-references are inside function bodies, not at parse time)
 - [x] `showGitPanel` in main `useEffect` dependency array (`MbeditorApp.js`) — causes the full setup effect (EditorStore subscription, workspace/tree fetch, state load, event listeners) to re-run every time the Git panel is toggled. Read `showGitPanel` via a ref inside the resize handler instead
-- [ ] **`focusedPane.id` accessed in useEffect dependency array without empty-panes guard** — `focusedPane` falls back to `state.panes[0]`, which is `undefined` if the panes array is transiently empty (e.g. during a full store reset). Accessing `.id` on `undefined` throws before the effect body runs, bypassing the `activeTab` guard inside the effect. Add `focusedPane ? focusedPane.id : null` in the dep array. `MbeditorApp.js:834`
+- [x] **`focusedPane.id` accessed in useEffect dependency array without empty-panes guard** — `focusedPane` falls back to `state.panes[0]`, which is `undefined` if the panes array is transiently empty (e.g. during a full store reset). Accessing `.id` on `undefined` throws before the effect body runs, bypassing the `activeTab` guard inside the effect. Add `focusedPane ? focusedPane.id : null` in the dep array. `MbeditorApp.js:834`
 
 ## CI / release workflow
 
@@ -45,11 +47,11 @@
 
 ## Documentation
 
-- [ ] README: keyboard shortcut reference (`Ctrl+P` quick-open, `Ctrl+S` save)
-- [ ] README: document all `config` options with their defaults (partially done — verify completeness)
-- [ ] README: document that host apps using Propshaft are not supported (engine requires Sprockets)
-- [ ] README: document that the host app must mount `ActionCable.server => "/cable"` and add a `config/cable.yml` for collaborative editing to work
-- [ ] README: document `excluded_paths` pattern semantics (simple names vs path prefixes)
+- [x] README: keyboard shortcut reference (`Ctrl+P` quick-open, `Ctrl+S` save)
+- [x] README: document all `config` options with their defaults (verified complete)
+- [x] README: document that host apps using Propshaft are not supported (engine requires Sprockets)
+- [x] README: ActionCable note removed — no ActionCable usage exists in the engine
+- [x] README: document `excluded_paths` pattern semantics (simple names vs path prefixes)
 
 ## Nice to have (post-release)
 

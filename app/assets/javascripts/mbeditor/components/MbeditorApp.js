@@ -816,8 +816,8 @@ var MbeditorApp = function MbeditorApp() {
 
   var focusedPane = state.panes.find(function (p) {
     return p.id === state.focusedPaneId;
-  }) || state.panes[0];
-  var activeTab = focusedPane.tabs.find(function (t) {
+  }) || state.panes[0] || null;
+  var activeTab = focusedPane && focusedPane.tabs.find(function (t) {
     return t.id === focusedPane.activeTabId;
   });
 
@@ -851,12 +851,12 @@ var MbeditorApp = function MbeditorApp() {
     if (isRubyPath(activeTab.path) && !rubocopAvailable) return;
     if (activeTab.path.endsWith('.haml') && !hamlLintAvailable) return;
 
-    _debouncedAutoLint(activeTab, focusedPane.id);
+    _debouncedAutoLint(activeTab, focusedPane ? focusedPane.id : null);
 
     return function () {
       _debouncedAutoLint.cancel();
     };
-  }, [focusedPane.id, activeTab ? activeTab.id : null, activeTab ? activeTab.content : null, rubocopAvailable, hamlLintAvailable]);
+  }, [focusedPane ? focusedPane.id : null, activeTab ? activeTab.id : null, activeTab ? activeTab.content : null, rubocopAvailable, hamlLintAvailable]);
 
   var handleOpenCommitGraph = function handleOpenCommitGraph() {
     var paneId = state.focusedPaneId || 1;

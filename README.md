@@ -47,7 +47,7 @@ mount Mbeditor::Engine, at: "/mbeditor"
 Use a single initializer to set the engine options you need:
 
 ```ruby
-MBEditor.configure do |config|
+Mbeditor.configure do |config|
   config.allowed_environments = [:development]
   # config.workspace_root = Rails.root
   config.excluded_paths = %w[.git tmp log node_modules .bundle coverage vendor/bundle]
@@ -69,6 +69,13 @@ Available options:
 - `redmine_enabled` enables issue lookup integration. Default: `false`.
 - `redmine_url` sets the Redmine base URL. Required when `redmine_enabled` is `true`.
 - `redmine_api_key` sets the Redmine API key. Required when `redmine_enabled` is `true`.
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+P` | Quick-open file by name |
+| `Ctrl+S` | Save the active file |
 
 ## Host Requirements (Optional)
 The gem keeps host/tooling responsibilities in the host app:
@@ -98,6 +105,10 @@ The gem includes syntax highlighting for common Rails and React development file
 - **Markdown** (.md)
 
 These language modules are packaged locally with the gem for true offline operation. No network fallback is needed—all highlighting works without internet connectivity.
+
+## Asset Pipeline
+
+Mbeditor requires **Sprockets** (`sprockets-rails >= 3.4`). Host apps using **Propshaft** as their asset pipeline are not supported — the engine depends on Sprockets directives to load its JavaScript and CSS assets.
 
 ## Development
 

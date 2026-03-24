@@ -9,6 +9,11 @@ module Mbeditor
   module GitService
     module_function
 
+    # Safe pattern for git ref names (branch, remote/branch, tag).
+    # Rejects refs containing whitespace, NUL, shell metacharacters, or
+    # git reflog syntax (e.g. "@{" sequences beyond the trailing "@{u}").
+    SAFE_GIT_REF = %r{\A[\w./-]+\z}
+
     # Run an arbitrary git command inside +repo_path+.
     # Returns [stdout, Process::Status].
     def run_git(repo_path, *args)
@@ -23,14 +28,19 @@ module Mbeditor
     end
 
     # Upstream tracking branch for the current branch, e.g. "origin/main".
+    # Returns nil if the branch name contains characters outside SAFE_GIT_REF.
     def upstream_branch(repo_path)
       out, status = run_git(repo_path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
-      status.success? ? out.strip : nil
+      return nil unless status.success?
+
+      ref = out.strip
+      ref.match?(SAFE_GIT_REF) ? ref : nil
     end
 
     # Returns [ahead_count, behind_count] relative to upstream, or [0,0].
     def ahead_behind(repo_path, upstream)
       return [0, 0] if upstream.blank?
+      return [0, 0] unless upstream.match?(SAFE_GIT_REF)
 
       out, status = run_git(repo_path, "rev-list", "--left-right", "--count", "HEAD...#{upstream}")
       return [0, 0] unless status.success?

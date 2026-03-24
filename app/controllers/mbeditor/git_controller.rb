@@ -20,11 +20,18 @@ module Mbeditor
       file = require_file_param
       return unless file
 
+      base = params[:base].presence
+      head = params[:head].presence
+      valid_sha = /\A[0-9a-fA-F]{1,40}\z/
+      if [base, head].any? { |s| s && !s.match?(valid_sha) }
+        return render json: { error: 'Invalid sha' }, status: :bad_request
+      end
+
       result = GitDiffService.new(
         repo_path: workspace_root,
-        file_path:  file,
-        base_sha:   params[:base].presence,
-        head_sha:   params[:head].presence
+        file_path: file,
+        base_sha: base,
+        head_sha: head
       ).call
 
       render json: result
@@ -128,6 +135,7 @@ module Mbeditor
           "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"
         )
         upstream = upstream_status.success? ? upstream_out.strip : nil
+        upstream = nil unless upstream&.match?(%r{\A[\w./-]+\z})
         if upstream.present?
           out, status = Open3.capture2("git", "-C", workspace_root.to_s, "diff", "#{upstream}..HEAD")
           out = status.success? ? out : ""
@@ -144,8 +152,10 @@ module Mbeditor
     # GET /mbeditor/redmine/issue/:id
     def redmine_issue
       unless Mbeditor.configuration.redmine_enabled
-        return render json: { error: "Redmine integration is disabled." }, status: :service_unavailable
+        return render json: { error: 'Redmine integration is disabled.' }, status: :service_unavailable
       end
+
+      return render json: { error: 'Invalid issue id' }, status: :bad_request unless params[:id].to_s.match?(/\A\d+\z/)
 
       result = RedmineService.new(issue_id: params[:id]).call
       render json: result

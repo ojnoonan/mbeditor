@@ -54,8 +54,10 @@ module Mbeditor
       else
         render json: {}
       end
-    rescue StandardError
+    rescue Errno::ENOENT
       render json: {}
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_entity
     end
 
     # POST /mbeditor/state — save workspace state
@@ -266,6 +268,7 @@ module Mbeditor
 
       upstream_output, upstream_status = Open3.capture2("git", "-C", repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
       upstream_branch = upstream_status.success? ? upstream_output.strip : nil
+      upstream_branch = nil unless upstream_branch&.match?(%r{\A[\w./-]+\z})
 
       ahead_count = 0
       behind_count = 0
@@ -442,14 +445,14 @@ module Mbeditor
       output = +""
       timed_out = false
 
-      Open3.popen3(env, *cmd) do |stdin, stdout, _stderr, wait_thr|
+      Open3.popen3(env, *cmd, pgroup: true) do |stdin, stdout, _stderr, wait_thr|
         stdin.write(stdin_data)
         stdin.close
 
         timer = Thread.new do
           sleep RUBOCOP_TIMEOUT_SECONDS
           timed_out = true
-          Process.kill('KILL', wait_thr.pid)
+          Process.kill('-KILL', wait_thr.pid)
         rescue Errno::ESRCH
           nil
         end
