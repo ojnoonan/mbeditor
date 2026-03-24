@@ -292,7 +292,7 @@ module Mbeditor
         unpushed_commits = parse_git_log(unpushed_log_output) if unpushed_log_status.success?
       end
 
-      branch_log_output, branch_log_status = Open3.capture2("git", "-C", repo, "log", branch, "-n", "100", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
+      branch_log_output, branch_log_status = Open3.capture2("git", "-C", repo, "log", "--first-parent", branch, "-n", "100", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
       branch_commits = branch_log_status.success? ? parse_git_log(branch_log_output) : []
 
       render json: {

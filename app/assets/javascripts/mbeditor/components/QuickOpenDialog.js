@@ -34,6 +34,18 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
 
   var inputRef = useRef(null);
 
+  var clearQuery = function clearQuery() {
+    setQuery('');
+    setResults([]);
+    setSelectedIndex(0);
+    if (inputRef.current) inputRef.current.focus();
+  };
+
+  var getQuickOpenIcon = function getQuickOpenIcon(path, name) {
+    var iconClass = window.getFileIcon ? window.getFileIcon(path || name || '') : 'far fa-file-code';
+    return React.createElement('i', { className: iconClass + ' quick-open-result-icon', 'aria-hidden': 'true' });
+  };
+
   useEffect(function () {
     if (inputRef.current) inputRef.current.focus();
   }, []);
@@ -66,17 +78,32 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
       { className: "quick-open-box", onClick: function (e) {
           return e.stopPropagation();
         } },
-      React.createElement("input", {
-        ref: inputRef,
-        type: "text",
-        className: "quick-open-input",
-        placeholder: "Search files by name (Ctrl+P)...",
-        value: query,
-        onChange: function (e) {
-          return setQuery(e.target.value);
-        },
-        onKeyDown: handleKeyDown
-      }),
+      React.createElement(
+        "div",
+        { className: "quick-open-input-wrap" },
+        React.createElement("input", {
+          ref: inputRef,
+          type: "text",
+          className: "quick-open-input",
+          placeholder: "Search files by name (Ctrl+P)...",
+          value: query,
+          onChange: function (e) {
+            return setQuery(e.target.value);
+          },
+          onKeyDown: handleKeyDown
+        }),
+        query && React.createElement(
+          "button",
+          {
+            type: "button",
+            className: "quick-open-clear-btn",
+            onClick: clearQuery,
+            title: "Clear search",
+            "aria-label": "Clear search"
+          },
+          React.createElement("i", { className: "fas fa-times" })
+        )
+      ),
       React.createElement(
         "div",
         { className: "quick-open-results" },
@@ -93,15 +120,20 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
                 return setSelectedIndex(i);
               }
             },
+            getQuickOpenIcon(res.path, res.name),
             React.createElement(
               "div",
-              { className: "quick-open-result-name" },
-              res.name
-            ),
-            React.createElement(
-              "div",
-              { className: "quick-open-result-path" },
-              res.path
+              { className: "quick-open-result-body" },
+              React.createElement(
+                "div",
+                { className: "quick-open-result-name" },
+                res.name
+              ),
+              React.createElement(
+                "div",
+                { className: "quick-open-result-path" },
+                res.path
+              )
             )
           );
         }),

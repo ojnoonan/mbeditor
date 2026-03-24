@@ -16,6 +16,7 @@ var GitPanel = function GitPanel(_ref) {
   var _s4 = useState({});    var expandedCommits = _s4[0]; var setExpandedCommits = _s4[1];
   // { [hash]: { loading, files: [{status,path}], error } }
   var _s5 = useState({});    var commitFiles = _s5[0]; var setCommitFiles = _s5[1];
+  var _s6 = useState(false); var refreshing = _s6[0]; var setRefreshing = _s6[1];
 
   var workingTree     = gitInfo && gitInfo.workingTree     || [];
   var unpushedFiles   = gitInfo && gitInfo.unpushedFiles   || [];
@@ -46,36 +47,7 @@ var GitPanel = function GitPanel(_ref) {
   };
 
   var fileIcon = function fileIcon(filename) {
-    var ext = (filename || '').split('.').pop().toLowerCase();
-    var iconMap = {
-      'rb':      { cls: 'fas fa-gem',      color: '#cc342d' },
-      'gemspec': { cls: 'fas fa-gem',      color: '#cc342d' },
-      'js':      { cls: 'fab fa-js',       color: '#f0db4f' },
-      'ts':      { cls: 'fas fa-code',     color: '#3178c6' },
-      'jsx':     { cls: 'fab fa-js',       color: '#61dafb' },
-      'tsx':     { cls: 'fas fa-code',     color: '#61dafb' },
-      'html':    { cls: 'fab fa-html5',    color: '#e34f26' },
-      'htm':     { cls: 'fab fa-html5',    color: '#e34f26' },
-      'erb':     { cls: 'fab fa-html5',    color: '#cc342d' },
-      'css':     { cls: 'fab fa-css3-alt', color: '#1572b6' },
-      'scss':    { cls: 'fab fa-sass',     color: '#cc6699' },
-      'sass':    { cls: 'fab fa-sass',     color: '#cc6699' },
-      'md':      { cls: 'fab fa-markdown', color: '#7f8b97' },
-      'json':    { cls: 'fas fa-code',     color: '#ffe082' },
-      'yml':     { cls: 'fas fa-cog',      color: '#888' },
-      'yaml':    { cls: 'fas fa-cog',      color: '#888' },
-      'png':     { cls: 'fas fa-image',    color: '#aaa' },
-      'jpg':     { cls: 'fas fa-image',    color: '#aaa' },
-      'jpeg':    { cls: 'fas fa-image',    color: '#aaa' },
-      'gif':     { cls: 'fas fa-image',    color: '#aaa' },
-      'svg':     { cls: 'fas fa-image',    color: '#aaa' },
-      'txt':     { cls: 'fas fa-file-alt', color: '#888' },
-      'sh':      { cls: 'fas fa-terminal', color: '#89d185' },
-      'lock':    { cls: 'fas fa-lock',     color: '#888' },
-      'pdf':     { cls: 'fas fa-file-pdf', color: '#f48771' },
-    };
-    var icon = iconMap[ext] || { cls: 'fas fa-file-code', color: '#7f8b97' };
-    return React.createElement('i', { className: icon.cls + ' git-file-type-icon', style: { color: icon.color } });
+    return React.createElement('i', { className: (window.getFileIcon ? window.getFileIcon(filename) : 'far fa-file-code') + ' git-file-type-icon' });
   };
 
   // Renders a file row used in Local Changes and Changes in Branch sections
@@ -146,6 +118,23 @@ var GitPanel = function GitPanel(_ref) {
         });
       });
     }
+  };
+
+  var handleRefresh = function handleRefresh() {
+    if (!onRefresh || refreshing) return;
+
+    var result;
+    try {
+      setRefreshing(true);
+      result = onRefresh();
+    } catch (err) {
+      setRefreshing(false);
+      throw err;
+    }
+
+    return Promise.resolve(result).finally(function () {
+      setRefreshing(false);
+    });
   };
 
   var renderCommit = function renderCommit(commit, idx) {
@@ -305,8 +294,8 @@ var GitPanel = function GitPanel(_ref) {
         { className: 'ide-git-panel-actions' },
         onRefresh && React.createElement(
           'button',
-          { className: 'git-header-btn', onClick: onRefresh, title: 'Refresh' },
-          React.createElement('i', { className: 'fas fa-sync-alt' })
+          { className: 'git-header-btn', onClick: handleRefresh, title: 'Refresh', disabled: refreshing, 'aria-busy': refreshing },
+          React.createElement('i', { className: 'fas fa-sync-alt' + (refreshing ? ' fa-spin' : '') })
         ),
         onClose && React.createElement(
           'button',

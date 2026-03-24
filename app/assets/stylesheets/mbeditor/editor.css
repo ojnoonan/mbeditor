@@ -663,18 +663,46 @@ html, body, #mbeditor-root {
   gap: 6px;
 }
 
-.search-input {
+.search-input-shell {
+  position: relative;
   flex: 1;
+  min-width: 0;
+}
+
+.search-input {
+  width: 100%;
   background: #3c3c3c;
   border: 1px solid #555;
   border-radius: 4px;
   color: #ccc;
-  padding: 4px 8px;
+  padding: 4px 28px 4px 8px;
   font-size: 12px;
   outline: none;
 }
 
 .search-input:focus { border-color: #4ec9b0; }
+
+.search-clear-btn {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #aaa;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.search-clear-btn:hover {
+  background: #2a2d2e;
+  color: #ddd;
+}
 
 .search-btn {
   background: #094771;
@@ -689,6 +717,11 @@ html, body, #mbeditor-root {
 
 .search-btn:hover { background: #0e639c; }
 
+.search-btn:disabled {
+  cursor: progress;
+  opacity: 0.85;
+}
+
 .search-results {
   flex: 1;
   overflow-y: auto;
@@ -700,9 +733,25 @@ html, body, #mbeditor-root {
   border-radius: 3px;
   transition: background 0.1s;
   border-bottom: 1px solid #2d2d2d;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .search-result-item:hover { background: #2a2d2e; }
+
+.search-result-icon {
+  flex-shrink: 0;
+  width: 16px;
+  margin-top: 2px;
+  text-align: center;
+  color: #78b4e0;
+}
+
+.search-result-body {
+  min-width: 0;
+  flex: 1;
+}
 
 .search-result-file {
   font-size: 11px;
@@ -883,6 +932,7 @@ html, body, #mbeditor-root {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  min-height: 0;
 }
 
 /* Only stretch when the graph section is open */
@@ -893,6 +943,7 @@ html, body, #mbeditor-root {
 
 .ide-git-right-panel .git-history-graph-wrap {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -1211,15 +1262,41 @@ html, body, #mbeditor-root {
   overflow: hidden;
 }
 
+.quick-open-input-wrap {
+  position: relative;
+}
+
 .quick-open-input {
   background: transparent;
   border: none;
   border-bottom: 1px solid #3c3c3c;
   color: #ccc;
-  padding: 12px 16px;
+  padding: 12px 34px 12px 16px;
   font-size: 14px;
   outline: none;
   width: 100%;
+}
+
+.quick-open-clear-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #999;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quick-open-clear-btn:hover {
+  background: #2a2d2e;
+  color: #ddd;
 }
 
 .quick-open-results {
@@ -1237,11 +1314,27 @@ html, body, #mbeditor-root {
   transition: background 0.1s;
 }
 
+.quick-open-result-icon {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  color: #78b4e0;
+}
+
+.quick-open-result-body {
+  min-width: 0;
+  flex: 1;
+}
+
 .quick-open-result:hover,
 .quick-open-result.selected { background: #094771; }
 
-.quick-open-result-name { color: #ccc; flex: 1; }
-.quick-open-result-path { color: #666; font-size: 11px; }
+.quick-open-result-name { color: #ccc; }
+.quick-open-result-path { color: #666; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.typescript-icon { color: #3178c6 !important; }
+.shell-icon { color: #89d185 !important; }
+.pdf-icon { color: #f48771 !important; }
 
 /* ── Scrollbars ────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }

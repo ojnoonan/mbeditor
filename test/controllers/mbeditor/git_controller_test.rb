@@ -91,6 +91,55 @@ module Mbeditor
       assert json.key?("error")
     end
 
+    # ─── git_info ───────────────────────────────────────────────────────────
+
+    test "git_info branch history uses the current branch log" do
+      git_service_singleton = class << GitService; self; end
+      open3_singleton = class << Open3; self; end
+
+      git_service_singleton.alias_method :__original_current_branch_for_test, :current_branch
+      open3_singleton.alias_method :__original_capture2_for_test, :capture2
+
+      git_status_ok = Object.new
+      def git_status_ok.success?
+        true
+      end
+
+      GitService.define_singleton_method(:current_branch) do |_repo_path|
+        "feature/history-scope"
+      end
+
+      Open3.define_singleton_method(:capture2) do |*args|
+        command = args.map(&:to_s)
+
+        if command.include?("rev-parse") && command.include?("@{u}")
+          ["origin/main\n", git_status_ok]
+        elsif command.include?("rev-list")
+          ["2\t1\n", git_status_ok]
+        elsif command.include?("diff") && command.include?("--name-status")
+          ["M\tGemfile.lock\n", git_status_ok]
+        elsif command.include?("diff") && command.include?("--numstat")
+          ["3\t1\n", git_status_ok]
+        elsif command.include?("log") && command.include?("--first-parent")
+          raise "expected current branch log" unless command.include?("feature/history-scope")
+          ["aaa1111\x1fbranch commit\x1fAlice\x1f2026-03-24T10:00:00Z\x1e", git_status_ok]
+        else
+          ["", git_status_ok]
+        end
+      end
+
+      get "/mbeditor/git_info"
+      assert_response :ok
+      assert_equal "feature/history-scope", json["branch"]
+      assert_equal 1, json["branchCommits"].length
+      assert_equal "aaa1111", json["branchCommits"].first["hash"]
+    ensure
+      git_service_singleton.alias_method :current_branch, :__original_current_branch_for_test
+      git_service_singleton.remove_method :__original_current_branch_for_test
+      open3_singleton.alias_method :capture2, :__original_capture2_for_test
+      open3_singleton.remove_method :__original_capture2_for_test
+    end
+
     # ─── git/file_history ──────────────────────────────────────────────────────
 
     test "file_history returns commits array for a tracked file" do

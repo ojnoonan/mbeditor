@@ -61,6 +61,34 @@ module Mbeditor
       assert_selector ".file-tree", wait: 10
       find("body").send_keys([:control, "p"])
       assert_selector ".quick-open-overlay", wait: 5
+
+      find(".quick-open-input").set("README")
+      assert_selector ".quick-open-result-icon", wait: 5
+      assert_selector ".quick-open-clear-btn", wait: 5
+
+      find(".quick-open-clear-btn").click
+      assert_equal "", find(".quick-open-input").value
+    end
+
+    test "sidebar search shows loading and clear controls" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      find(".ide-sidebar-tab", text: "SEARCH").click
+
+      page.execute_script(<<~'JS')
+        window.SearchService.projectSearch = function () {
+          return new Promise(function () {});
+        };
+      JS
+
+      find(".search-input").set("README")
+      assert_selector ".search-btn i.fa-spin", wait: 5
+      assert_selector ".search-clear-btn", wait: 5
+
+      find(".search-clear-btn").click
+      assert_equal "", find(".search-input").value
+      assert_no_selector ".search-btn i.fa-spin", wait: 5
     end
 
     test "server-online heartbeat shows no offline indicator" do
@@ -130,6 +158,36 @@ module Mbeditor
         })()
       JS
       assert_operator header_count.to_i, :>, 0
+    ensure
+      Mbeditor.configure do |c|
+        c.workspace_root = previous_workspace
+      end
+    end
+
+    test "git panel refresh button spins while refreshing" do
+      repo_root = File.expand_path("../../..", __dir__)
+      previous_workspace = @workspace
+
+      Mbeditor.configure do |c|
+        c.allowed_environments = %i[test development]
+        c.workspace_root = repo_root
+        c.excluded_paths = %w[.git tmp log node_modules vendor/bundle]
+      end
+
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      find(".titlebar-git-btn").click
+      assert_selector ".ide-git-right-panel", wait: 5
+
+      page.execute_script(<<~'JS')
+        window.GitService.fetchInfo = function () {
+          return new Promise(function () {});
+        };
+      JS
+
+      find("button[title='Refresh']").click
+      assert_selector "button[title='Refresh'] i.fa-spin", wait: 5
     ensure
       Mbeditor.configure do |c|
         c.workspace_root = previous_workspace

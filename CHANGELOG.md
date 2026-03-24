@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-03-24
+
+### Added
+- **Shared file icons** — explorer, git panel, tabs, and quick-open now use the same icon mapping.
+- **Quick-open polish** — Ctrl+P shows file icons beside each result and includes a clear button.
+
+### Changed
+- **Search UX** — the sidebar search now shows a loading spinner while the backend search request is in flight, and it includes a clear button.
+- **Git refresh UX** — the git panel refresh button now spins while refresh data is loading.
+
 ## [0.1.4] - 2026-03-24
 
 ### Fixed

@@ -121,6 +121,13 @@ var MbeditorApp = function MbeditorApp() {
   var searchQuery = _useState72[0];
   var setSearchQuery = _useState72[1];
 
+  var _useState33 = useState(false);
+  var _useState332 = _slicedToArray(_useState33, 2);
+  var searchLoading = _useState332[0];
+  var setSearchLoading = _useState332[1];
+
+  var searchRequestIdRef = useRef(0);
+
   var _useState8 = useState("explorer");
 
   var _useState82 = _slicedToArray(_useState8, 2);
@@ -1067,12 +1074,22 @@ var MbeditorApp = function MbeditorApp() {
 
   var _debouncedSearch = useRef(window._.debounce(function (q) {
     if (!q.trim()) {
+      searchRequestIdRef.current += 1;
+      setSearchLoading(false);
       EditorStore.setState({ searchResults: [] });
       return;
     }
+    var requestId = ++searchRequestIdRef.current;
+    setSearchLoading(true);
     EditorStore.setStatus("Searching project...", "info");
     SearchService.projectSearch(q).then(function (res) {
-      EditorStore.setStatus("Found " + res.length + " results", "success");
+      if (searchRequestIdRef.current === requestId) {
+        EditorStore.setStatus("Found " + res.length + " results", "success");
+      }
+    }).finally(function () {
+      if (searchRequestIdRef.current === requestId) {
+        setSearchLoading(false);
+      }
     });
   }, 400)).current;
 
@@ -1080,6 +1097,14 @@ var MbeditorApp = function MbeditorApp() {
     var val = e.target.value;
     setSearchQuery(val);
     _debouncedSearch(val);
+  };
+
+  var clearSearch = function clearSearch() {
+    searchRequestIdRef.current += 1;
+    if (_debouncedSearch.cancel) _debouncedSearch.cancel();
+    setSearchQuery("");
+    setSearchLoading(false);
+    EditorStore.setState({ searchResults: [] });
   };
 
   var execSearch = function execSearch(e) {
@@ -1765,16 +1790,31 @@ var MbeditorApp = function MbeditorApp() {
           React.createElement(
             "div",
             { className: "search-input-wrap" },
-            React.createElement("input", {
-              className: "search-input",
-              placeholder: "Find in files...",
-              value: searchQuery,
-              onChange: handleSearchChange
-            }),
+            React.createElement(
+              "div",
+              { className: "search-input-shell" },
+              React.createElement("input", {
+                className: "search-input",
+                placeholder: "Find in files...",
+                value: searchQuery,
+                onChange: handleSearchChange
+              }),
+              searchQuery && React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className: "search-clear-btn",
+                  onClick: clearSearch,
+                  title: "Clear search",
+                  "aria-label": "Clear search"
+                },
+                React.createElement("i", { className: "fas fa-times" })
+              )
+            ),
             React.createElement(
               "button",
-              { type: "submit", className: "search-btn" },
-              React.createElement("i", { className: "fas fa-search" })
+              { type: "submit", className: "search-btn", disabled: searchLoading, title: searchLoading ? "Searching..." : "Search" },
+              React.createElement("i", { className: searchLoading ? "fas fa-spinner fa-spin" : "fas fa-search" })
             )
           ),
           React.createElement(
@@ -1797,28 +1837,35 @@ var MbeditorApp = function MbeditorApp() {
               "No results"
             ),
             state.searchResults.map(function (res, i) {
+              var fileName = res.file.split('/').pop();
               return React.createElement(
                 "div",
                 { key: i, className: "search-result-item", onClick: function () {
                     return handleSelectFile(res.file, res.file.split('/').pop(), res.line);
                   } },
+                React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
                 React.createElement(
                   "div",
-                  { className: "search-result-file" },
-                  res.file,
-                  " ",
+                  { className: "search-result-body" },
                   React.createElement(
-                    "span",
-                    { className: "search-result-line-num" },
-                    ":",
-                    res.line
+                    "div",
+                    { className: "search-result-file" },
+                    fileName,
+                    React.createElement(
+                      "span",
+                      { className: "search-result-line-num" },
+                      " ",
+                      res.file,
+                      ":",
+                      res.line
+                    )
+                  ),
+                  React.createElement(
+                    "div",
+                    { className: "search-result-text" },
+                    res.text
                   )
                 ),
-                React.createElement(
-                  "div",
-                  { className: "search-result-text" },
-                  res.text
-                )
               );
             })
           )
