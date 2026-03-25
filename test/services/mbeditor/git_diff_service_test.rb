@@ -5,7 +5,7 @@ require 'open3'
 
 module Mbeditor
   class GitDiffServiceTest < Minitest::Test
-    REPO_PATH = File.expand_path('../../../..', __dir__)
+    REPO_PATH = File.expand_path('../../..', __dir__)
 
     def test_working_tree_mode_returns_original_and_modified_strings
       result = GitDiffService.new(repo_path: REPO_PATH, file_path: 'Gemfile').call

@@ -7,3 +7,6 @@ require 'rails/test_help'
 
 require 'minitest/reporters'
 Minitest::Reporters.use! Minitest::Reporters::ProgressReporter.new
+
+require 'webmock/minitest'
+WebMock.disable_net_connect!

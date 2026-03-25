@@ -82,11 +82,11 @@ All third-party JS/CSS is vendored in `vendor/assets/` — React 16, Axios, Loda
 
 ### Test Structure
 
-Tests use Minitest via the dummy Rails app. Run with `bundle exec rake test` from the project root (currently 93 tests, 235 assertions).
+Tests use Minitest via the dummy Rails app. Run with `bundle exec rake test` from the project root (currently 132 tests, 580 assertions).
 
 ```
 test/
-  test_helper.rb
+  test_helper.rb               # loads WebMock (disable_net_connect! active globally)
   controllers/mbeditor/
     editors_controller_test.rb   # integration tests against a Dir.mktmpdir workspace
     git_controller_test.rb       # integration tests against the project repo itself
@@ -96,19 +96,25 @@ test/
     git_blame_service_test.rb
     git_file_history_service_test.rb
     git_commit_graph_service_test.rb
-    redmine_service_test.rb
+    redmine_service_test.rb      # config-guard tests via call; HTTP tests via fetch_issue + WebMock
 ```
 
-Controller tests for `editors_controller` use `Dir.mktmpdir` as a temporary workspace. Controller tests for `git_controller` and all service tests use the project repo root as the git repo (real git commands).
+Controller tests for `editors_controller` use `Dir.mktmpdir` as a temporary workspace. Controller tests for `git_controller` and all service tests use the project repo root as the git repo (real git commands). `REPO_PATH` in service tests resolves via `File.expand_path('../../..', __dir__)` (3 levels up from `test/services/mbeditor/`).
+
+**Redmine service tests:** The dummy app initializer (`test/dummy/config/initializers/mbeditor.rb`) prepends `RedmineService#call` with fixture data so the config-guard tests work through `call`. HTTP-level tests call the private `fetch_issue` method directly via `send` to bypass the prepend — WebMock stubs the network at the socket level.
+
+**WebMock:** `WebMock.disable_net_connect!` is active for all tests. Rails integration tests are unaffected (they use the Rack stack directly, not real sockets). Any test that needs HTTP must register a `stub_request`.
 
 ### CI / Workflows
 
-- **`.github/workflows/test.yml`** — runs `bundle exec rake test` on push/PR to main
+- **`.github/workflows/test.yml`** — runs `bundle exec rake test` on push/PR to main; matrix covers default `Gemfile` and `gemfiles/rails71.gemfile`
 - **`.github/workflows/publish.yml`** — runs tests, builds gem, creates GitHub Release and pushes to RubyGems.org on tag push or manual dispatch
+
+All matrix gemfiles (`Gemfile`, `gemfiles/rails71.gemfile`) include `webmock` so `test_helper.rb` loads correctly on every CI matrix entry.
 
 ### Dependencies
 
 - Ruby >= 3.0, Rails >= 7.1, < 9.0
 - `sprockets-rails >= 3.4`
-- Dev: `minitest-reporters`
+- Dev: `minitest-reporters`, `webmock`
 - Host app optional: `rubocop`, `rubocop-rails` (Ruby lint/format), `haml_lint` (HAML lint), `git` (git panel)

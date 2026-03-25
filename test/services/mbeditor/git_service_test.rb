@@ -4,7 +4,7 @@ require 'test_helper'
 
 module Mbeditor
   class GitServiceTest < Minitest::Test
-    REPO_PATH = File.expand_path('../../../..', __dir__)
+    REPO_PATH = File.expand_path('../../..', __dir__)
 
     # -------------------------------------------------------------------------
     # parse_git_log

@@ -4,7 +4,7 @@ require 'test_helper'
 
 module Mbeditor
   class GitFileHistoryServiceTest < Minitest::Test
-    REPO_PATH = File.expand_path('../../../..', __dir__)
+    REPO_PATH = File.expand_path('../../..', __dir__)
 
     def test_happy_path_with_gemfile_returns_array_of_commit_hashes
       result = GitFileHistoryService.new(repo_path: REPO_PATH, file_path: 'Gemfile').call
