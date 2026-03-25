@@ -22,8 +22,8 @@ var DEFAULT_EDITOR_PREFS = {
   theme: 'vs-dark',
   fontSize: 13,
   fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
-  tabSize: 1,
-  insertSpaces: true
+  tabSize: 4,
+  insertSpaces: false
 };
 
 var SidebarActionButton = function SidebarActionButton(_ref) {

@@ -23,6 +23,7 @@ module Mbeditor
     end
 
     def teardown
+      Capybara.reset_sessions!
       FileUtils.rm_rf(@workspace)
     end
 

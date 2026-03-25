@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-03-25
+
+### Added
+- **Editor preferences** — added a settings tab for theme, font size, font family, tab size, and insert-spaces preferences.
+
+### Changed
+- **Theme support** — Monaco now initializes with the saved editor theme and other user preferences.
+- **Language tooling** — JavaScript and TypeScript use the dedicated worker setup for better editor support.
+
+### Fixed
+- **Search results** — capped workspace search results now surface the cap state in the UI.
+- **File size validation** — the 5 MB file-size limit now applies on write as well as read.
+- **System test teardown** — Cuprite sessions now reset before deleting temporary workspaces, preventing background git requests from hitting removed paths in CI.
+
 ## [0.1.5] - 2026-03-24
 
 ### Added

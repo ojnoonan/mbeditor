@@ -212,6 +212,7 @@ html, body, #mbeditor-root {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-width: 0;
   background: #1e1e1e;
 }
 
