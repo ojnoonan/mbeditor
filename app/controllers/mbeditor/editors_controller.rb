@@ -113,7 +113,10 @@ module Mbeditor
       return render json: { error: "Forbidden" }, status: :forbidden unless path
       return render json: { error: "Cannot write to this path" }, status: :forbidden if path_blocked_for_operations?(path)
 
-      File.write(path, params[:code])
+      content = params[:code].to_s
+      return render_file_too_large(content.bytesize) if content.bytesize > MAX_OPEN_FILE_SIZE_BYTES
+
+      File.write(path, content)
       render json: { ok: true, path: relative_path(path) }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_entity
@@ -126,8 +129,11 @@ module Mbeditor
       return render json: { error: "Cannot create file in this path" }, status: :forbidden if path_blocked_for_operations?(path)
       return render json: { error: "File already exists" }, status: :unprocessable_entity if File.exist?(path)
 
+      content = params[:code].to_s
+      return render_file_too_large(content.bytesize) if content.bytesize > MAX_OPEN_FILE_SIZE_BYTES
+
       FileUtils.mkdir_p(File.dirname(path))
-      File.write(path, params[:code].to_s)
+      File.write(path, content)
 
       render json: { ok: true, type: "file", path: relative_path(path), name: File.basename(path) }
     rescue StandardError => e
@@ -209,6 +215,8 @@ module Mbeditor
       if RG_AVAILABLE
         output, = Open3.capture2(*cmd)
         output.lines.each do |line|
+          break if results.length > 30
+
           data = JSON.parse(line) rescue next
           next unless data["type"] == "match"
 
@@ -221,7 +229,9 @@ module Mbeditor
         end
       else
         output, = Open3.capture2(*cmd)
-        output.lines.first(50).each do |line|
+        output.lines.each do |line|
+          break if results.length > 30
+
           line.chomp!
           next unless line =~ /\A(.+?):(\d+):(.*)\z/
 
@@ -236,7 +246,8 @@ module Mbeditor
         end
       end
 
-      render json: results
+      capped = results.length > 30
+      render json: { results: results.first(30), capped: capped }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_entity
     end
@@ -747,7 +758,7 @@ module Mbeditor
     def render_file_too_large(size)
       render json: {
         error: "File is too large to open (#{human_size(size)}). Limit is #{human_size(MAX_OPEN_FILE_SIZE_BYTES)}."
-      }, status: :payload_too_large
+      }, status: :content_too_large
     end
 
     def human_size(bytes)

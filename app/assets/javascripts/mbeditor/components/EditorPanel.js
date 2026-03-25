@@ -16,9 +16,11 @@ var EditorPanel = function EditorPanel(_ref) {
   var markers = _ref.markers;
   var gitAvailable = _ref.gitAvailable === true;
   var onFormat = _ref.onFormat;
+  var editorPrefs = _ref.editorPrefs || {};
 
   var editorRef = useRef(null);
   var monacoRef = useRef(null);
+  var latestContentRef = useRef('');
 
   var _useState = useState('');
   var _useState2 = _slicedToArray(_useState, 2);
@@ -120,15 +122,15 @@ var EditorPanel = function EditorPanel(_ref) {
     var editor = window.monaco.editor.create(editorRef.current, {
       value: tab.content,
       language: language,
-      theme: 'vs-dark',
+      theme: editorPrefs.theme || 'vs-dark',
       automaticLayout: true,
       minimap: { enabled: false },
       renderLineHighlight: 'none',
       bracketPairColorization: { enabled: true },
-      fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
-      fontSize: 13,
-      tabSize: 4,
-      insertSpaces: false,
+      fontFamily: editorPrefs.fontFamily || "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
+      fontSize: editorPrefs.fontSize || 13,
+      tabSize: editorPrefs.tabSize || 4,
+      insertSpaces: typeof editorPrefs.insertSpaces === 'boolean' ? editorPrefs.insertSpaces : false,
       wordWrap: 'on',
       linkedEditing: true, // Enables Auto-Rename Tag natively!
       fixedOverflowWidgets: true,
@@ -170,7 +172,7 @@ var EditorPanel = function EditorPanel(_ref) {
     // Change listener
     var contentDisposable = modelObj.onDidChangeContent(function (e) {
       var val = editor.getValue();
-      var currentContent = monacoRef.current._latestContent || '';
+      var currentContent = latestContentRef.current;
 
       // Normalize before comparing to prevent false positive dirty edits
       var vNorm = val.replace(/\r\n/g, '\n');
@@ -197,7 +199,7 @@ var EditorPanel = function EditorPanel(_ref) {
   // Listen for external content changes (e.g. after Format/Save/Load)
   useEffect(function () {
     var editor = monacoRef.current;
-    if (editor) editor._latestContent = tab.content; // update ref for closure
+    if (editor) latestContentRef.current = tab.content; // keep ref in sync for closure
 
     if (editor && editor.getValue() !== tab.content) {
       if (typeof tab.content !== 'string') return;
@@ -224,6 +226,21 @@ var EditorPanel = function EditorPanel(_ref) {
       }
     }
   }, [tab.content]);
+
+  // Apply editorPrefs changes to a running editor without remounting
+  useEffect(function () {
+    if (!window.monaco) return;
+    var theme = editorPrefs.theme || 'vs-dark';
+    window.monaco.editor.setTheme(theme);
+    if (monacoRef.current) {
+      monacoRef.current.updateOptions({
+        fontSize: editorPrefs.fontSize || 13,
+        fontFamily: editorPrefs.fontFamily || "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
+        tabSize: editorPrefs.tabSize || 4,
+        insertSpaces: typeof editorPrefs.insertSpaces === 'boolean' ? editorPrefs.insertSpaces : false
+      });
+    }
+  }, [editorPrefs]);
 
   // Jump to line if specified
   useEffect(function () {
@@ -421,7 +438,7 @@ var EditorPanel = function EditorPanel(_ref) {
   }, [markdownContent, isMarkdown]);
 
   if (tab.isDiff) {
-    var isDiffDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches || true;
+    var isDiffDark = (editorPrefs.theme || 'vs-dark') !== 'vs' && (editorPrefs.theme || 'vs-dark') !== 'hc-light';
     return React.createElement(window.DiffViewer || DiffViewer, {
       path: tab.repoPath || tab.path,
       original: tab.diffOriginal || "",

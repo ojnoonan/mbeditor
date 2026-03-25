@@ -63,7 +63,7 @@ var TabBar = function TabBar(_ref) {
         }
       } },
     tabs.map(function (tab) {
-      var isSpecial = tab.isCommitGraph || tab.isDiff || tab.isPreview;
+      var isSpecial = tab.isCommitGraph || tab.isDiff || tab.isPreview || tab.isSettings;
       return React.createElement(
         'div',
         {
@@ -93,7 +93,7 @@ var TabBar = function TabBar(_ref) {
             if (onShowHistory) onShowHistory(tab.path);
           }
         },
-        React.createElement('i', { className: 'tab-item-icon ' + (window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code') }),
+        React.createElement('i', { className: 'tab-item-icon ' + (tab.isSettings ? 'fas fa-cog' : (window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code')) }),
         React.createElement(
           'div',
           { className: 'tab-item-name' },

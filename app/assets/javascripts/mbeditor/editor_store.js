@@ -13,6 +13,7 @@ var EditorStore = (function () {
     gitInfo:       null,
     gitInfoError:  null,
     searchResults: [],
+    searchCapped: false,
     statusMessage: { text: "", kind: "info" },
   };
 

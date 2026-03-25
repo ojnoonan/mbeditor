@@ -48,7 +48,11 @@
   <script>
     window.MonacoEnvironment = {
       getWorkerUrl: function(workerId, label) {
-        return (window.MBEDITOR_BASE_PATH || '') + '/monaco_worker.js';
+        var base = window.MBEDITOR_BASE_PATH || '';
+        if (label === 'typescript' || label === 'javascript') {
+          return base + '/ts_worker.js';
+        }
+        return base + '/monaco_worker.js';
       }
     };
 

@@ -39,15 +39,19 @@ var SearchService = (function () {
   }
 
   function projectSearch(query) {
-    if (!query) return Promise.resolve([]);
+    if (!query) return Promise.resolve({ results: [], capped: false });
     return axios.get(basePath() + '/search', { params: { q: query } })
       .then(function(res) {
-        EditorStore.setState({ searchResults: res.data });
-        return res.data;
+        var data = res.data;
+        // Handle both old array response and new {results, capped} shape
+        var results = Array.isArray(data) ? data : (data && data.results || []);
+        var capped = !Array.isArray(data) && !!(data && data.capped);
+        EditorStore.setState({ searchResults: results, searchCapped: capped });
+        return { results: results, capped: capped };
       })
       .catch(function(err) {
         EditorStore.setStatus("Search failed: " + err.message, "error");
-        return [];
+        return { results: [], capped: false };
       });
   }
 

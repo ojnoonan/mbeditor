@@ -18,6 +18,14 @@ var GIT_PANEL_MIN_WIDTH = 280;
 var PANE_MIN_WIDTH_PERCENT = 20;
 var PANE_MAX_WIDTH_PERCENT = 80;
 
+var DEFAULT_EDITOR_PREFS = {
+  theme: 'vs-dark',
+  fontSize: 13,
+  fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
+  tabSize: 1,
+  insertSpaces: true
+};
+
 var SidebarActionButton = function SidebarActionButton(_ref) {
   var title = _ref.title;
   var iconClass = _ref.iconClass;
@@ -251,6 +259,11 @@ var MbeditorApp = function MbeditorApp() {
   var _useState18f2 = _slicedToArray(_useState18f, 2);
   var redmineEnabled = _useState18f2[0];
   var setRedmineEnabled = _useState18f2[1];
+
+  var _useState18p = useState(DEFAULT_EDITOR_PREFS);
+  var _useState18p2 = _slicedToArray(_useState18p, 2);
+  var editorPrefs = _useState18p2[0];
+  var setEditorPrefs = _useState18p2[1];
 
   var _useState19 = useState({
     openEditors: false,
@@ -529,6 +542,9 @@ var MbeditorApp = function MbeditorApp() {
           }
           if (typeof savedState.gitPanelWidth === 'number') {
             setGitPanelWidth(savedState.gitPanelWidth);
+          }
+          if (savedState.editorPrefs && typeof savedState.editorPrefs === 'object') {
+            setEditorPrefs(Object.assign({}, DEFAULT_EDITOR_PREFS, savedState.editorPrefs));
           }
         });
       }
@@ -811,7 +827,7 @@ var MbeditorApp = function MbeditorApp() {
         return {
           id: p.id,
           activeTabId: p.activeTabId,
-          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff; }).map(function (t) {
+          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff && !t.isSettings; }).map(function (t) {
             return {
               id: t.id,
               path: t.path,
@@ -828,12 +844,16 @@ var MbeditorApp = function MbeditorApp() {
           })
         };
       });
-      FileService.saveState({ panes: lightweightPanes, focusedPaneId: st.focusedPaneId, collapsedSections: collapsedSections, expandedDirs: expandedDirs, showGitPanel: showGitPanel, gitPanelWidth: gitPanelWidth });
+      FileService.saveState({ panes: lightweightPanes, focusedPaneId: st.focusedPaneId, collapsedSections: collapsedSections, expandedDirs: expandedDirs, showGitPanel: showGitPanel, gitPanelWidth: gitPanelWidth, editorPrefs: editorPrefs });
     }, 1000);
     return function () {
       return clearTimeout(timeoutId);
     };
-  }, [state.panes, state.focusedPaneId, collapsedSections, expandedDirs, showGitPanel, gitPanelWidth]);
+  }, [state.panes, state.focusedPaneId, collapsedSections, expandedDirs, showGitPanel, gitPanelWidth, editorPrefs]);
+
+  useEffect(function() {
+    document.documentElement.setAttribute('data-theme', editorPrefs.theme || 'vs-dark');
+  }, [editorPrefs.theme]);
 
   var focusedPane = state.panes.find(function (p) {
     return p.id === state.focusedPaneId;
@@ -1108,7 +1128,8 @@ var MbeditorApp = function MbeditorApp() {
     EditorStore.setStatus("Searching project...", "info");
     SearchService.projectSearch(q).then(function (res) {
       if (searchRequestIdRef.current === requestId) {
-        EditorStore.setStatus("Found " + res.length + " results", "success");
+        var count = res && res.results ? res.results.length : (Array.isArray(res) ? res.length : 0);
+        EditorStore.setStatus("Found " + count + " result" + (count !== 1 ? "s" : ""), "success");
       }
     }).finally(function () {
       if (searchRequestIdRef.current === requestId) {
@@ -1538,6 +1559,36 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
+  function openSettingsTab() {
+    var st = EditorStore.getState();
+    var foundPaneId = null;
+    var foundTab = null;
+    st.panes.forEach(function(p) {
+      if (!foundTab) {
+        var t = p.tabs.find(function(tab) { return tab.path === '__settings__'; });
+        if (t) { foundTab = t; foundPaneId = p.id; }
+      }
+    });
+    if (foundTab) {
+      var newPanes = st.panes.map(function(p) {
+        if (p.id === foundPaneId) return Object.assign({}, p, { activeTabId: '__settings__' });
+        return p;
+      });
+      EditorStore.setState({ panes: newPanes, focusedPaneId: foundPaneId, activeTabId: '__settings__' });
+      return;
+    }
+    var paneId = st.focusedPaneId;
+    var pane = st.panes.find(function(p) { return p.id === paneId; }) || st.panes[0];
+    if (!pane) return;
+    paneId = pane.id;
+    var newTab = { id: '__settings__', path: '__settings__', name: 'Settings', dirty: false, content: '', isSettings: true };
+    var newPanes2 = st.panes.map(function(p) {
+      if (p.id === paneId) return Object.assign({}, p, { tabs: p.tabs.concat(newTab), activeTabId: '__settings__' });
+      return p;
+    });
+    EditorStore.setState({ panes: newPanes2, focusedPaneId: paneId, activeTabId: '__settings__' });
+  }
+
   return React.createElement(
     "div",
     { className: "ide-shell" },
@@ -1627,6 +1678,11 @@ var MbeditorApp = function MbeditorApp() {
                 return setActiveSidebarTab('search');
               } },
             "SEARCH"
+          ),
+          React.createElement(
+            "button",
+            { type: "button", className: "ide-sidebar-tab ide-sidebar-tab-icon", title: "Editor Preferences", onClick: openSettingsTab },
+            React.createElement("i", { className: "fas fa-cog" })
           )
         ),
         activeSidebarTab === 'explorer' && React.createElement(
@@ -1849,7 +1905,7 @@ var MbeditorApp = function MbeditorApp() {
               { className: "search-results-meta" },
               state.searchResults.length,
               " result" + (state.searchResults.length !== 1 ? "s" : ""),
-              state.searchResults.length >= 30 && React.createElement(
+              state.searchCapped && React.createElement(
                 "span",
                 { className: "search-results-capped" },
                 " — refine query to see more"
@@ -1968,13 +2024,94 @@ var MbeditorApp = function MbeditorApp() {
                   commits: pActiveTab.commits || [],
                   onSelectCommit: handleSelectCommit
                 });
+              } else if (pActiveTab.isSettings) {
+                content = React.createElement(
+                  'div',
+                  { className: 'ide-settings-tab-content' },
+                  React.createElement(
+                    'div',
+                    { className: 'ide-settings-body' },
+                    React.createElement(
+                      'label', { className: 'ide-settings-row' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Theme'),
+                      React.createElement(
+                        'select', {
+                          className: 'ide-settings-select',
+                          value: editorPrefs.theme || 'vs-dark',
+                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { theme: e.target.value }); }); }
+                        },
+                        React.createElement('option', { value: 'vs-dark' }, 'Dark (vs-dark)'),
+                        React.createElement('option', { value: 'vs' }, 'Light (vs)'),
+                        React.createElement('option', { value: 'hc-black' }, 'High Contrast Dark'),
+                        React.createElement('option', { value: 'hc-light' }, 'High Contrast Light')
+                      )
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Font size'),
+                      React.createElement('input', {
+                        type: 'number', min: '8', max: '32', step: '1',
+                        className: 'ide-settings-input',
+                        value: editorPrefs.fontSize || 13,
+                        onChange: function(e) {
+                          var v = parseInt(e.target.value, 10);
+                          if (v >= 8 && v <= 32) setEditorPrefs(function(p) { return Object.assign({}, p, { fontSize: v }); });
+                        }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Tab size'),
+                      React.createElement('input', {
+                        type: 'number', min: '1', max: '8', step: '1',
+                        className: 'ide-settings-input',
+                        value: editorPrefs.tabSize || 1,
+                        onChange: function(e) {
+                          var v = parseInt(e.target.value, 10);
+                          if (v >= 1 && v <= 8) setEditorPrefs(function(p) { return Object.assign({}, p, { tabSize: v }); });
+                        }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Use spaces'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: !!(editorPrefs.insertSpaces),
+                        onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { insertSpaces: e.target.checked }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Font family'),
+                      React.createElement('input', {
+                        type: 'text',
+                        className: 'ide-settings-input ide-settings-input-wide',
+                        value: editorPrefs.fontFamily || "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
+                        onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { fontFamily: e.target.value }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'button',
+                      {
+                        className: 'ide-settings-reset-btn',
+                        type: 'button',
+                        onClick: function() { setEditorPrefs(Object.assign({}, DEFAULT_EDITOR_PREFS)); }
+                      },
+                      React.createElement('i', { className: 'fas fa-undo', style: { marginRight: 6 } }),
+                      'Reset to defaults'
+                    )
+                  )
+                );
               } else if (pActiveTab.isDiff) {
+                var isDiffDark = (editorPrefs.theme || 'vs-dark') !== 'vs' && (editorPrefs.theme || 'vs-dark') !== 'hc-light';
                 content = React.createElement(window.DiffViewer || DiffViewer, {
                   key: pActiveTab.id,
                   path: pActiveTab.path,
                   original: pActiveTab.diffOriginal || '',
                   modified: pActiveTab.diffModified || '',
-                  isDark: true,
+                  isDark: isDiffDark,
                   onClose: function() { requestCloseTab(pane.id, pActiveTab.id); }
                 });
               } else {
@@ -1984,6 +2121,7 @@ var MbeditorApp = function MbeditorApp() {
                   paneId: pane.id,
                   markers: markers[pActiveTab.id] || [],
                   gitAvailable: gitAvailable,
+                  editorPrefs: editorPrefs,
                   onFormat: function() { onFormatRef.current(); },
                   onContentChange: function onContentChange(val) {
                     var st = EditorStore.getState();

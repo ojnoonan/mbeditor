@@ -10,10 +10,10 @@
 
 ## Nice to have (post-release)
 
-- [ ] Sanitize search results — indicate when results are capped at the 30-result limit
-- [ ] Apply `MAX_OPEN_FILE_SIZE_BYTES` on write too, not just read
-- [ ] Theme config option (currently hardcoded to `vs-dark`)
-- [ ] Monaco lazy-load — investigate worker splitting to improve initial load time
-- [ ] Memoize `rubocop_available?` and `haml_lint_available?` at the process level (currently spawn subprocesses on every `GET /workspace`)
-- [ ] `_latestContent` stored as property on the Monaco editor object (`EditorPanel.js`) — use a `useRef` instead
-- [ ] Add a settings page to allow users to configure editor preferences (tabs/spaces, font size, theme)
+- [x] Sanitize search results — indicate when results are capped at the 30-result limit
+- [x] Apply `MAX_OPEN_FILE_SIZE_BYTES` on write too, not just read
+- [x] Theme config option (currently hardcoded to `vs-dark`)
+- [x] Monaco lazy-load — worker splitting: TypeScript/JavaScript routed to dedicated `ts_worker.js`
+- [x] Memoize `rubocop_available?` and `haml_lint_available?` at the process level (currently spawn subprocesses on every `GET /workspace`)
+- [x] `_latestContent` stored as property on the Monaco editor object (`EditorPanel.js`) — use a `useRef` instead
+- [x] Add a settings page to allow users to configure editor preferences (tabs/spaces, font size, theme)

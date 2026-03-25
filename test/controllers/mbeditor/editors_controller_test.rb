@@ -224,6 +224,13 @@ module Mbeditor
       assert_response :forbidden
     end
 
+    test "save rejects content exceeding MAX_OPEN_FILE_SIZE_BYTES" do
+      oversized = "x" * (Mbeditor::EditorsController::MAX_OPEN_FILE_SIZE_BYTES + 1)
+      post "/mbeditor/file", params: { path: "README.md", code: oversized }, as: :json
+      assert_response 413
+      assert json.key?("error")
+    end
+
     # ---------------------------------------------------------------------------
     # create_file
     # ---------------------------------------------------------------------------
@@ -255,6 +262,13 @@ module Mbeditor
     test "create_file returns 403 for excluded path" do
       post "/mbeditor/create_file", params: { path: "tmp/new.txt", code: "" }, as: :json
       assert_response :forbidden
+    end
+
+    test "create_file rejects content exceeding MAX_OPEN_FILE_SIZE_BYTES" do
+      oversized = "x" * (Mbeditor::EditorsController::MAX_OPEN_FILE_SIZE_BYTES + 1)
+      post "/mbeditor/create_file", params: { path: "big_new.txt", code: oversized }, as: :json
+      assert_response 413
+      assert json.key?("error")
     end
 
     # ---------------------------------------------------------------------------
@@ -406,14 +420,26 @@ module Mbeditor
       File.write(File.join(@workspace, "app", "models", "user.rb"), "class User < ApplicationRecord\nend\n")
       get "/mbeditor/search", params: { q: "ApplicationRecord" }
       assert_response :ok
-      assert_kind_of Array, json
-      assert json.any? { |r| r["file"].include?("user.rb") }, "expected user.rb in results"
+      assert_kind_of Hash, json
+      assert_kind_of Array, json["results"]
+      assert json["results"].any? { |r| r["file"].include?("user.rb") }, "expected user.rb in results"
+      assert_includes [true, false], json["capped"]
     end
 
     test "search returns ok with empty array when query param is absent" do
       get "/mbeditor/search"
       assert_response :ok
       assert_equal [], json
+    end
+
+    test "search response includes results and capped keys" do
+      get "/mbeditor/search", params: { q: "class" }
+      assert_response :ok
+      assert_kind_of Hash, json
+      assert json.key?("results")
+      assert json.key?("capped")
+      assert_kind_of Array, json["results"]
+      assert_includes [true, false], json["capped"]
     end
 
     # ---------------------------------------------------------------------------

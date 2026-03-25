@@ -117,6 +117,12 @@ html, body, #mbeditor-root {
   transition: color 0.15s, background 0.15s;
 }
 
+.ide-sidebar-tab.ide-sidebar-tab-icon {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  font-size: 14px;
+}
+
 .ide-sidebar-tab:hover { color: #ccc; background: #2d2d2d; }
 .ide-sidebar-tab.active { color: #4ec9b0; border-bottom: 2px solid #4ec9b0; }
 
@@ -1362,3 +1368,277 @@ html, body, #mbeditor-root {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Settings panel ─────────────────────────────────────────── */
+.ide-settings-panel { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
+.ide-settings-body { padding: 8px 12px; display: flex; flex-direction: column; gap: 14px; }
+.ide-settings-row { display: flex; flex-direction: column; gap: 4px; }
+.ide-settings-row-check { flex-direction: row; align-items: center; justify-content: space-between; }
+.ide-settings-label { font-size: 11px; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px; }
+.ide-settings-select,
+.ide-settings-input { background: #2d2d2d; color: #ccc; border: 1px solid #444; border-radius: 3px; padding: 4px 6px; font-size: 12px; width: 100%; box-sizing: border-box; }
+.ide-settings-input-wide { font-family: monospace; }
+.ide-settings-checkbox { width: auto; cursor: pointer; }
+.ide-settings-reset-btn { margin-top: 8px; background: #333; color: #aaa; border: 1px solid #555; border-radius: 3px; padding: 5px 10px; font-size: 11px; cursor: pointer; align-self: flex-start; }
+.ide-settings-reset-btn:hover { background: #444; color: #ddd; }
+
+/* Settings tab (pane view) */
+.ide-settings-tab-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg-panel, #1e1e1e);
+  color: var(--text-main, #ccc);
+}
+
+/* ── CSS theme tokens (defaults = vs-dark) ───────────────── */
+:root {
+  --bg-base:   #1e1e1e;
+  --bg-panel:  #252526;
+  --bg-hover:  #2a2d2e;
+  --bg-active: #094771;
+  --bg-input:  #2d2d2d;
+  --border:    #3c3c3c;
+  --border-input: #444;
+  --text-main: #cccccc;
+  --text-dim:  #bbbbbb;
+  --text-muted:#888888;
+  --accent:    #007acc;
+  --accent-fg: #4ec9b0;
+}
+
+/* ── Light theme (vs) ────────────────────────────────────── */
+[data-theme="vs"] {
+  --bg-base:   #ffffff;
+  --bg-panel:  #f3f3f3;
+  --bg-hover:  #e8e8e8;
+  --bg-active: #d4e6f5;
+  --bg-input:  #ffffff;
+  --border:    #cecece;
+  --border-input: #c0c0c0;
+  --text-main: #333333;
+  --text-dim:  #616161;
+  --text-muted:#999999;
+  --accent:    #007acc;
+  --accent-fg: #0070c1;
+}
+[data-theme="vs"] html,
+[data-theme="vs"] body,
+[data-theme="vs"] #mbeditor-root { background: #ffffff; color: #333333; }
+[data-theme="vs"] .ide-shell { background: #ffffff; }
+[data-theme="vs"] .ide-titlebar { background: #f3f3f3; border-color: #cecece; color: #333; }
+[data-theme="vs"] .ide-titlebar-title { color: #333; }
+[data-theme="vs"] .ide-sidebar { background: #f3f3f3; border-color: #cecece; }
+[data-theme="vs"] .sidebar-divider { background: #e0e0e0; border-color: #cecece; }
+[data-theme="vs"] .sidebar-divider:hover,
+[data-theme="vs"] .sidebar-divider.active { background: #c0c0c0; }
+[data-theme="vs"] .ide-sidebar-header { color: #616161; border-color: #cecece; }
+[data-theme="vs"] .ide-sidebar-tabs { border-color: #cecece; }
+[data-theme="vs"] .ide-sidebar-tab { color: #616161; background: transparent; }
+[data-theme="vs"] .ide-sidebar-tab:hover { color: #333; background: #e8e8e8; }
+[data-theme="vs"] .ide-sidebar-tab.active { color: #0070c1; border-bottom-color: #0070c1; }
+[data-theme="vs"] .ide-sidebar-content::-webkit-scrollbar-thumb { background: #c0c0c0; }
+[data-theme="vs"] .tree-item { color: #333333; }
+[data-theme="vs"] .tree-item:hover { background: #e8e8e8; }
+[data-theme="vs"] .tree-item.active { background: #d4e6f5; }
+[data-theme="vs"] .tree-item.modified { color: #8c7000; }
+[data-theme="vs"] .ide-sidebar-content .ide-inline-input { background: #fff; border-color: #007acc; color: #333; }
+[data-theme="vs"] .ide-main { background: #ffffff; }
+[data-theme="vs"] .tab-bar { background: #ececec; border-color: #cecece; }
+[data-theme="vs"] .tab-item { background: transparent; color: #666; border-color: transparent; }
+[data-theme="vs"] .tab-item:hover { background: #e0e0e0; color: #333; }
+[data-theme="vs"] .tab-item.active { background: #ffffff; color: #333; border-bottom-color: #007acc; }
+[data-theme="vs"] .tab-item-name { color: inherit; }
+[data-theme="vs"] .tab-close { color: #999; }
+[data-theme="vs"] .tab-close:hover { color: #333; background: #d0d0d0; }
+[data-theme="vs"] .ide-pane.focused-pane { border-color: transparent; }
+[data-theme="vs"] .ide-statusbar { background: #007acc; }
+[data-theme="vs"] .ide-empty-pane { background: #ffffff; color: #999; }
+[data-theme="vs"] .panel-divider { background: #e0e0e0; }
+[data-theme="vs"] .panel-divider:hover,
+[data-theme="vs"] .panel-divider.active { background: #007acc; }
+[data-theme="vs"] .search-input { background: #fff; border-color: #c0c0c0; color: #333; }
+[data-theme="vs"] .search-input:focus { border-color: #007acc; }
+[data-theme="vs"] .search-result-item:hover,
+[data-theme="vs"] .search-result-item.selected { background: #e8e8e8; }
+[data-theme="vs"] .search-result-file { color: #0070c1; }
+[data-theme="vs"] .search-result-text { color: #333; }
+[data-theme="vs"] .search-result-match { color: #792800; }
+[data-theme="vs"] .ide-settings-tab-content { background: #ffffff; color: #333; }
+[data-theme="vs"] .ide-settings-label { color: #616161; }
+[data-theme="vs"] .ide-settings-select,
+[data-theme="vs"] .ide-settings-input { background: #fff; color: #333; border-color: #c0c0c0; }
+[data-theme="vs"] .ide-settings-reset-btn { background: #ececec; color: #333; border-color: #c0c0c0; }
+[data-theme="vs"] .ide-settings-reset-btn:hover { background: #ddd; color: #111; }
+[data-theme="vs"] .ide-toast { background: #f3f3f3; border-color: #c0c0c0; color: #333; }
+
+/* ── High Contrast Dark (hc-black) ───────────────────────── */
+[data-theme="hc-black"] {
+  --bg-base:   #000000;
+  --bg-panel:  #0c0c0c;
+  --bg-hover:  #1a1a1a;
+  --bg-active: #004c8c;
+  --border:    #6fc3df;
+  --text-main: #ffffff;
+  --text-dim:  #ffffff;
+  --text-muted:#aaaaaa;
+  --accent:    #1aebff;
+}
+[data-theme="hc-black"] html,
+[data-theme="hc-black"] body,
+[data-theme="hc-black"] #mbeditor-root { background: #000; color: #fff; }
+[data-theme="hc-black"] .ide-shell { background: #000; }
+[data-theme="hc-black"] .ide-titlebar { background: #000; border-color: #6fc3df; color: #fff; }
+[data-theme="hc-black"] .ide-titlebar-title { color: #fff; }
+[data-theme="hc-black"] .ide-sidebar { background: #000; border-color: #6fc3df; }
+[data-theme="hc-black"] .sidebar-divider { background: #3c3c3c; border-color: #6fc3df; }
+[data-theme="hc-black"] .ide-sidebar-header { color: #fff; border-color: #6fc3df; }
+[data-theme="hc-black"] .ide-sidebar-tabs { border-color: #6fc3df; }
+[data-theme="hc-black"] .ide-sidebar-tab { color: #ccc; }
+[data-theme="hc-black"] .ide-sidebar-tab:hover { color: #fff; background: #1a1a1a; }
+[data-theme="hc-black"] .ide-sidebar-tab.active { color: #1aebff; border-bottom-color: #1aebff; }
+[data-theme="hc-black"] .tree-item { color: #fff; }
+[data-theme="hc-black"] .tree-item:hover { background: #1a1a1a; outline: 1px solid #6fc3df; }
+[data-theme="hc-black"] .tree-item.active { background: #004c8c; outline: 1px solid #1aebff; }
+[data-theme="hc-black"] .ide-main { background: #000; }
+[data-theme="hc-black"] .tab-bar { background: #000; border-color: #6fc3df; }
+[data-theme="hc-black"] .tab-item { color: #ccc; }
+[data-theme="hc-black"] .tab-item:hover { background: #1a1a1a; outline: 1px solid #6fc3df; }
+[data-theme="hc-black"] .tab-item.active { background: #000; color: #1aebff; border-bottom-color: #1aebff; outline: 1px solid #1aebff; }
+[data-theme="hc-black"] .ide-statusbar { background: #000; border-top: 1px solid #6fc3df; }
+[data-theme="hc-black"] .ide-empty-pane { background: #000; color: #aaa; }
+[data-theme="hc-black"] .ide-settings-tab-content { background: #000; color: #fff; }
+[data-theme="hc-black"] .ide-settings-label { color: #aaa; }
+[data-theme="hc-black"] .ide-settings-select,
+[data-theme="hc-black"] .ide-settings-input { background: #000; color: #fff; border-color: #6fc3df; }
+[data-theme="hc-black"] .ide-settings-reset-btn { background: #000; color: #fff; border-color: #6fc3df; }
+[data-theme="hc-black"] .ide-toast { background: #000; border-color: #6fc3df; color: #fff; }
+
+/* ── High Contrast Light (hc-light) ─────────────────────── */
+[data-theme="hc-light"] {
+  --bg-base:   #ffffff;
+  --bg-panel:  #f8f8f8;
+  --bg-hover:  #ebebeb;
+  --bg-active: #0f4a85;
+  --border:    #000000;
+  --text-main: #000000;
+  --text-dim:  #000000;
+  --text-muted:#444444;
+  --accent:    #0000c5;
+}
+[data-theme="hc-light"] html,
+[data-theme="hc-light"] body,
+[data-theme="hc-light"] #mbeditor-root { background: #fff; color: #000; }
+[data-theme="hc-light"] .ide-shell { background: #fff; }
+[data-theme="hc-light"] .ide-titlebar { background: #f8f8f8; border-color: #000; color: #000; }
+[data-theme="hc-light"] .ide-titlebar-title { color: #000; }
+[data-theme="hc-light"] .ide-sidebar { background: #f8f8f8; border-color: #000; }
+[data-theme="hc-light"] .sidebar-divider { background: #e0e0e0; border-color: #000; }
+[data-theme="hc-light"] .ide-sidebar-header { color: #000; border-color: #000; font-weight: 700; }
+[data-theme="hc-light"] .ide-sidebar-tabs { border-color: #000; }
+[data-theme="hc-light"] .ide-sidebar-tab { color: #000; }
+[data-theme="hc-light"] .ide-sidebar-tab:hover { background: #ebebeb; outline: 1px solid #000; }
+[data-theme="hc-light"] .ide-sidebar-tab.active { color: #0000c5; border-bottom: 2px solid #0000c5; }
+[data-theme="hc-light"] .tree-item { color: #000; }
+[data-theme="hc-light"] .tree-item:hover { background: #ebebeb; outline: 1px solid #000; }
+[data-theme="hc-light"] .tree-item.active { background: #d0e4f7; outline: 1px solid #0000c5; color: #000; }
+[data-theme="hc-light"] .ide-main { background: #fff; }
+[data-theme="hc-light"] .tab-bar { background: #f8f8f8; border-color: #000; }
+[data-theme="hc-light"] .tab-item { color: #000; }
+[data-theme="hc-light"] .tab-item:hover { background: #ebebeb; outline: 1px solid #000; }
+[data-theme="hc-light"] .tab-item.active { background: #fff; color: #0000c5; border-bottom: 2px solid #0000c5; outline: 1px solid #0000c5; }
+[data-theme="hc-light"] .ide-statusbar { background: #0000c5; }
+[data-theme="hc-light"] .ide-empty-pane { background: #fff; color: #444; }
+[data-theme="hc-light"] .ide-settings-tab-content { background: #fff; color: #000; }
+[data-theme="hc-light"] .ide-settings-label { color: #444; }
+[data-theme="hc-light"] .ide-settings-select,
+[data-theme="hc-light"] .ide-settings-input { background: #fff; color: #000; border-color: #000; }
+[data-theme="hc-light"] .ide-settings-reset-btn { background: #f8f8f8; color: #000; border-color: #000; }
+[data-theme="hc-light"] .ide-toast { background: #f8f8f8; border-color: #000; color: #000; }
+
+/* ── Markdown preview — light theme ────────────────────── */
+[data-theme="vs"] .markdown-preview { background: #ffffff; color: #333; }
+[data-theme="vs"] .markdown-preview h1,
+[data-theme="vs"] .markdown-preview h2,
+[data-theme="vs"] .markdown-preview h3,
+[data-theme="vs"] .markdown-preview h4 { color: #000; }
+[data-theme="vs"] .markdown-preview a { color: #0070c1; }
+[data-theme="vs"] .markdown-preview code { background: #efefef; color: #333; }
+[data-theme="vs"] .markdown-preview pre code { background: #f5f5f5; }
+[data-theme="vs"] .markdown-preview blockquote { border-left: 3px solid #c0c0c0; color: #555; }
+[data-theme="vs"] .markdown-preview table td,
+[data-theme="vs"] .markdown-preview table th { border-color: #c0c0c0; }
+[data-theme="vs"] .markdown-preview hr { border-color: #c0c0c0; }
+
+/* ── Markdown preview — HC Dark ─────────────────────────── */
+[data-theme="hc-black"] .markdown-preview { background: #000; color: #fff; }
+[data-theme="hc-black"] .markdown-preview h1,
+[data-theme="hc-black"] .markdown-preview h2,
+[data-theme="hc-black"] .markdown-preview h3,
+[data-theme="hc-black"] .markdown-preview h4 { color: #fff; }
+[data-theme="hc-black"] .markdown-preview a { color: #1aebff; }
+[data-theme="hc-black"] .markdown-preview code { background: #1a1a1a; color: #fff; }
+[data-theme="hc-black"] .markdown-preview blockquote { border-left: 3px solid #6fc3df; }
+
+/* ── Markdown preview — HC Light ────────────────────────── */
+[data-theme="hc-light"] .markdown-preview { background: #fff; color: #000; }
+[data-theme="hc-light"] .markdown-preview h1,
+[data-theme="hc-light"] .markdown-preview h2,
+[data-theme="hc-light"] .markdown-preview h3,
+[data-theme="hc-light"] .markdown-preview h4 { color: #000; font-weight: 700; }
+[data-theme="hc-light"] .markdown-preview a { color: #0000c5; }
+[data-theme="hc-light"] .markdown-preview code { background: #f0f0f0; color: #000; border: 1px solid #000; }
+[data-theme="hc-light"] .markdown-preview blockquote { border-left: 3px solid #000; }
+
+/* ── Git panel — light theme ─────────────────────────────── */
+[data-theme="vs"] .ide-git-right-panel { background: #f3f3f3; border-color: #cecece; }
+[data-theme="vs"] .gitpanel-divider { background: #e0e0e0; border-color: #cecece; }
+[data-theme="vs"] .ide-git-panel { background: #f3f3f3; }
+[data-theme="vs"] .ide-git-panel-header { border-color: #cecece; }
+[data-theme="vs"] .ide-git-panel-title { color: #0070c1; }
+[data-theme="vs"] .ide-git-panel-branch { color: #333; }
+[data-theme="vs"] .git-header-btn { color: #555; }
+[data-theme="vs"] .git-header-btn:hover { background: rgba(0,0,0,0.06); color: #000; }
+[data-theme="vs"] .git-metadata { color: #444; border-color: #cecece; }
+[data-theme="vs"] .git-section { border-color: #ddd; }
+[data-theme="vs"] .git-section-title { background: #ececec; color: #555; }
+[data-theme="vs"] .git-file-item:hover { background: #e3e3e3; }
+[data-theme="vs"] .git-file-name { color: #333; }
+[data-theme="vs"] .git-file-dir { color: #888; }
+[data-theme="vs"] .git-hint { color: #666; }
+[data-theme="vs"] .git-list::-webkit-scrollbar-thumb { background: #c0c0c0; }
+
+/* ── Git panel — HC Dark ─────────────────────────────────── */
+[data-theme="hc-black"] .ide-git-right-panel { background: #000; border-color: #6fc3df; }
+[data-theme="hc-black"] .gitpanel-divider { background: #000; border-color: #6fc3df; }
+[data-theme="hc-black"] .ide-git-panel { background: #000; }
+[data-theme="hc-black"] .ide-git-panel-header { border-color: #6fc3df; }
+[data-theme="hc-black"] .ide-git-panel-title { color: #1aebff; }
+[data-theme="hc-black"] .ide-git-panel-branch { color: #fff; }
+[data-theme="hc-black"] .git-header-btn { color: #ccc; }
+[data-theme="hc-black"] .git-header-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+[data-theme="hc-black"] .git-metadata { color: #ccc; border-color: #6fc3df; }
+[data-theme="hc-black"] .git-section { border-color: #6fc3df; }
+[data-theme="hc-black"] .git-section-title { background: #0c0c0c; color: #ccc; }
+[data-theme="hc-black"] .git-file-item:hover { background: #1a1a1a; outline: 1px solid #6fc3df; }
+[data-theme="hc-black"] .git-file-name { color: #fff; }
+[data-theme="hc-black"] .git-file-dir { color: #aaa; }
+[data-theme="hc-black"] .git-hint { color: #aaa; }
+
+/* ── Git panel — HC Light ────────────────────────────────── */
+[data-theme="hc-light"] .ide-git-right-panel { background: #f8f8f8; border-color: #000; }
+[data-theme="hc-light"] .gitpanel-divider { background: #e0e0e0; border-color: #000; }
+[data-theme="hc-light"] .ide-git-panel { background: #f8f8f8; }
+[data-theme="hc-light"] .ide-git-panel-header { border-color: #000; }
+[data-theme="hc-light"] .ide-git-panel-title { color: #0000c5; font-weight: 700; }
+[data-theme="hc-light"] .ide-git-panel-branch { color: #000; font-weight: 700; }
+[data-theme="hc-light"] .git-header-btn { color: #000; }
+[data-theme="hc-light"] .git-header-btn:hover { background: rgba(0,0,0,0.08); outline: 1px solid #000; }
+[data-theme="hc-light"] .git-metadata { color: #000; border-color: #000; }
+[data-theme="hc-light"] .git-section { border-color: #000; }
+[data-theme="hc-light"] .git-section-title { background: #ebebeb; color: #000; font-weight: 700; }
+[data-theme="hc-light"] .git-file-item:hover { background: #ebebeb; outline: 1px solid #000; }
+[data-theme="hc-light"] .git-file-name { color: #000; }
+[data-theme="hc-light"] .git-file-dir { color: #444; }
+[data-theme="hc-light"] .git-hint { color: #444; }
