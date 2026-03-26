@@ -260,6 +260,36 @@ var MbeditorApp = function MbeditorApp() {
   var redmineEnabled = _useState18f2[0];
   var setRedmineEnabled = _useState18f2[1];
 
+  var _useState18t = useState(false);
+  var _useState18t2 = _slicedToArray(_useState18t, 2);
+  var testAvailable = _useState18t2[0];
+  var setTestAvailable = _useState18t2[1];
+
+  var _useState18u = useState(null);
+  var _useState18u2 = _slicedToArray(_useState18u, 2);
+  var testResult = _useState18u2[0];
+  var setTestResult = _useState18u2[1];
+
+  var _useState18v = useState(false);
+  var _useState18v2 = _slicedToArray(_useState18v, 2);
+  var testLoading = _useState18v2[0];
+  var setTestLoading = _useState18v2[1];
+
+  var _useState18w = useState(true);
+  var _useState18w2 = _slicedToArray(_useState18w, 2);
+  var testInlineVisible = _useState18w2[0];
+  var setTestInlineVisible = _useState18w2[1];
+
+  var _useState18x = useState(null);
+  var _useState18x2 = _slicedToArray(_useState18x, 2);
+  var testPanelFile = _useState18x2[0];
+  var setTestPanelFile = _useState18x2[1];
+
+  var _useState18y = useState(false);
+  var _useState18y2 = _slicedToArray(_useState18y, 2);
+  var testPanelOpen = _useState18y2[0];
+  var setTestPanelOpen = _useState18y2[1];
+
   var _useState18p = useState(DEFAULT_EDITOR_PREFS);
   var _useState18p2 = _slicedToArray(_useState18p, 2);
   var editorPrefs = _useState18p2[0];
@@ -489,6 +519,9 @@ var MbeditorApp = function MbeditorApp() {
       }
       if (workspace && typeof workspace.redmineEnabled === 'boolean') {
         setRedmineEnabled(workspace.redmineEnabled);
+      }
+      if (workspace && typeof workspace.testAvailable === 'boolean') {
+        setTestAvailable(workspace.testAvailable);
       }
     });
     GitService.fetchStatus();
@@ -1111,6 +1144,39 @@ var MbeditorApp = function MbeditorApp() {
         });
       });
     }
+  };
+
+  var handleRunTest = function handleRunTest() {
+    if (!activeTab || !activeTab.path) return;
+    if (testLoading) return;
+
+    setTestLoading(true);
+    EditorStore.setStatus('Running tests...', 'info');
+
+    FileService.runTests(activeTab.path).then(function (res) {
+      setTestResult(res);
+      setTestPanelFile(res.testFile || activeTab.path);
+      setTestPanelOpen(true);
+      if (res.ok) {
+        var s = res.summary || {};
+        var failCount = (s.failed || 0) + (s.errored || 0);
+        if (failCount === 0) {
+          EditorStore.setStatus('All ' + (s.total || 0) + ' tests passed', 'success');
+        } else {
+          EditorStore.setStatus(failCount + ' test' + (failCount === 1 ? '' : 's') + ' failed out of ' + (s.total || 0), 'warning');
+        }
+      } else {
+        EditorStore.setStatus('Test run failed: ' + (res.error || 'unknown error'), 'error');
+      }
+    })["catch"](function (err) {
+      var msg = err.response && err.response.data && err.response.data.error || err.message;
+      setTestResult({ ok: false, error: msg, tests: [], summary: null });
+      setTestPanelFile(activeTab.path);
+      setTestPanelOpen(true);
+      EditorStore.setStatus('Test run failed: ' + msg, 'error');
+    })["finally"](function () {
+      setTestLoading(false);
+    });
   };
 
   var onFormatRef = useRef(handleFormat);
@@ -2121,8 +2187,15 @@ var MbeditorApp = function MbeditorApp() {
                   paneId: pane.id,
                   markers: markers[pActiveTab.id] || [],
                   gitAvailable: gitAvailable,
+                  testAvailable: testAvailable,
+                  testResult: testResult,
+                  testPanelFile: testPanelFile,
+                  testLoading: testLoading,
+                  testInlineVisible: testInlineVisible,
                   editorPrefs: editorPrefs,
                   onFormat: function() { onFormatRef.current(); },
+                  onRunTest: handleRunTest,
+                  onShowHistory: function(path) { setHistoryPanelPath(path); },
                   onContentChange: function onContentChange(val) {
                     var st = EditorStore.getState();
                     var cp = st.panes.find(function(p) { return p.id === pane.id; });
@@ -2363,6 +2436,21 @@ var MbeditorApp = function MbeditorApp() {
       onSelectCommit: function (hash, path) {
         TabManager.openDiffTab(path, path.split('/').pop(), hash + '^', hash, null);
       }
+    }),
+
+    // Test Results Panel overlay — closing hides the dialog but keeps testResult for inline markers
+    (testPanelOpen || testLoading) && React.createElement(window.TestResultsPanel || TestResultsPanel, {
+      result: testResult,
+      testFile: testPanelFile,
+      isLoading: testLoading,
+      showInline: testInlineVisible,
+      onToggleInline: function () { setTestInlineVisible(function (prev) { return !prev; }); },
+      onClose: function () { setTestPanelOpen(false); },
+      onOpenTestFile: testPanelFile ? function () {
+        var fileName = testPanelFile.split('/').pop();
+        TabManager.openTab(testPanelFile, fileName);
+        setTestPanelOpen(false);
+      } : null
     }),
 
     // Commit Detail overlay (shown when a commit row is clicked in CommitGraph)

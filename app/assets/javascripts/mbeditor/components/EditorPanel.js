@@ -15,7 +15,14 @@ var EditorPanel = function EditorPanel(_ref) {
   var onContentChange = _ref.onContentChange;
   var markers = _ref.markers;
   var gitAvailable = _ref.gitAvailable === true;
+  var testAvailable = _ref.testAvailable === true;
   var onFormat = _ref.onFormat;
+  var onRunTest = _ref.onRunTest;
+  var onShowHistory = _ref.onShowHistory;
+  var testResult = _ref.testResult;
+  var testPanelFile = _ref.testPanelFile;
+  var testLoading = _ref.testLoading;
+  var testInlineVisible = _ref.testInlineVisible;
   var editorPrefs = _ref.editorPrefs || {};
 
   var editorRef = useRef(null);
@@ -44,9 +51,27 @@ var EditorPanel = function EditorPanel(_ref) {
 
   var blameDecorationsRef = useRef([]);
   var blameZoneIdsRef = useRef([]);
+  var testDecorationIdsRef = useRef([]);
+  var testZoneIdsRef = useRef([]);
+
+  var _useState9 = useState(false);
+  var _useState10 = _slicedToArray(_useState9, 2);
+  var editorReady = _useState10[0];
+  var setEditorReady = _useState10[1];
 
   var onFormatRef = useRef(onFormat);
   onFormatRef.current = onFormat;
+
+  var clearTestZones = function clearTestZones(editor) {
+    if (!editor) return;
+    if (testZoneIdsRef.current.length === 0) return;
+    editor.changeViewZones(function(accessor) {
+      testZoneIdsRef.current.forEach(function(zoneId) {
+        accessor.removeZone(zoneId);
+      });
+    });
+    testZoneIdsRef.current = [];
+  };
 
   var clearBlameZones = function clearBlameZones(editor) {
     if (!editor) return;
@@ -148,6 +173,7 @@ var EditorPanel = function EditorPanel(_ref) {
 
     monacoRef.current = editor;
     window.__mbeditorActiveEditor = editor;
+    setEditorReady(true);
 
     // Stash the workspace-relative path on the model so code-action providers
     // can identify which file they are operating on without needing React state.
@@ -184,7 +210,9 @@ var EditorPanel = function EditorPanel(_ref) {
 
     return function () {
       blameDecorationsRef.current = editor.deltaDecorations(blameDecorationsRef.current, []);
+      testDecorationIdsRef.current = editor.deltaDecorations(testDecorationIdsRef.current, []);
       clearBlameZones(editor);
+      clearTestZones(editor);
       TabManager.saveTabViewState(tab.id, editor.saveViewState());
       if (window.__mbeditorActiveEditor === editor) {
         window.__mbeditorActiveEditor = null;
@@ -289,15 +317,16 @@ var EditorPanel = function EditorPanel(_ref) {
     }
   }, [markers, tab.id]);
 
-  // Reset blame state when file path changes
+  // Reset blame + test decorations when file path changes
   useEffect(function () {
     setBlameData(null);
     setIsBlameLoading(false);
 
-    // Clear stale blame render when switching files.
     if (monacoRef.current && monacoRef.current.getModel()) {
       clearBlameZones(monacoRef.current);
+      clearTestZones(monacoRef.current);
       blameDecorationsRef.current = monacoRef.current.deltaDecorations(blameDecorationsRef.current, []);
+      testDecorationIdsRef.current = monacoRef.current.deltaDecorations(testDecorationIdsRef.current, []);
     }
   }, [tab.path]);
 
@@ -413,6 +442,144 @@ var EditorPanel = function EditorPanel(_ref) {
   // Include tab.content so blame re-renders once async file contents finish loading.
   }, [blameData, isBlameVisible, tab.id, tab.content]);
 
+  // Check whether the current tab is the source file for the test that was run.
+  // e.g. testPanelFile = "test/controllers/theme_controller_test.rb"
+  //      tab.path      = "app/controllers/theme_controller.rb"
+  var isSourceForTest = function(tabPath, testFilePath) {
+    if (!tabPath || !testFilePath) return false;
+    var norm = function(p) { return p.replace(/^\/+/, ''); };
+    // Direct match (viewing the test file itself)
+    if (norm(tabPath) === norm(testFilePath)) return true;
+    // Derive the expected source path from the test file path
+    var derived = norm(testFilePath)
+      .replace(/^test\//, '').replace(/^spec\//, '')
+      .replace(/_test\.rb$/, '.rb').replace(/_spec\.rb$/, '.rb');
+    var src = norm(tabPath).replace(/^app\//, '');
+    return src === derived;
+  };
+
+  // Map a test method name to the best-matching line in the source file.
+  // Extracts keywords from the test name and scores each source line.
+  var mapTestToSourceLine = function(testName, sourceContent) {
+    var name = (testName || '').replace(/^test_/, '').replace(/^(it |should )/, '');
+    var tokens = name.split('_').filter(function(t) { return t.length > 1; });
+    if (tokens.length === 0) return 1;
+
+    var lines = sourceContent.split('\n');
+    var bestLine = 1;
+    var bestScore = 0;
+
+    lines.forEach(function(line, idx) {
+      var lineNum = idx + 1;
+      var lower = line.toLowerCase();
+      var score = 0;
+      tokens.forEach(function(tok) {
+        if (lower.indexOf(tok.toLowerCase()) !== -1) score++;
+      });
+      // Prefer def/attr/constant lines
+      if (score > 0 && (/\bdef\b/.test(lower) || /\battr_/.test(lower) || /^  [A-Z]/.test(line))) {
+        score += 0.5;
+      }
+      if (score > bestScore) { bestScore = score; bestLine = lineNum; }
+    });
+
+    return bestLine;
+  };
+
+  // Render test result annotations above source lines (same pattern as blame zones).
+  useEffect(function () {
+    if (!monacoRef.current || !window.monaco) return;
+
+    var editor = monacoRef.current;
+    var model = editor.getModel();
+    var lineCount = model ? model.getLineCount() : 0;
+
+    var showHere = testPanelFile && tab.path && isSourceForTest(tab.path, testPanelFile);
+
+    if (!testResult || !testInlineVisible || !showHere) {
+      clearTestZones(editor);
+      testDecorationIdsRef.current = editor.deltaDecorations(testDecorationIdsRef.current, []);
+      return;
+    }
+
+    try {
+      clearTestZones(editor);
+      testDecorationIdsRef.current = editor.deltaDecorations(testDecorationIdsRef.current, []);
+
+      var normPath = function(p) { return p ? p.replace(/^\/+/, '') : ''; };
+      var viewingTestFile = normPath(tab.path) === normPath(testPanelFile);
+
+      var tests = testResult.tests || [];
+      var testsWithStatus = tests.filter(function (t) {
+        return t.status === 'pass' || t.status === 'fail' || t.status === 'error';
+      });
+
+      if (testsWithStatus.length === 0) return;
+
+      // Determine line number for each test
+      var sourceContent = tab.content || '';
+      var mapped = testsWithStatus.map(function(t) {
+        var line;
+        if (viewingTestFile && t.line && t.line >= 1 && t.line <= lineCount) {
+          line = t.line;
+        } else {
+          line = mapTestToSourceLine(t.name, sourceContent);
+        }
+        return { name: t.name, status: t.status, message: t.message, line: line };
+      });
+
+      // Sort by line so zones appear in order
+      mapped.sort(function(a, b) { return a.line - b.line; });
+
+      var zoneIds = [];
+      var decorations = [];
+
+      editor.changeViewZones(function(accessor) {
+        mapped.forEach(function(t) {
+          if (t.line < 1 || t.line > lineCount) return;
+
+          var isPassing = t.status === 'pass';
+          var icon = isPassing ? '\u2713' : '\u2717';
+          var label = icon + '  ' + (t.name || 'Test');
+          if (!isPassing && t.message) {
+            label += ' \u2014 ' + t.message.split('\n')[0];
+          }
+
+          var header = document.createElement('div');
+          header.className = isPassing
+            ? 'ide-test-zone-header ide-test-zone-pass'
+            : 'ide-test-zone-header ide-test-zone-fail';
+          header.textContent = label;
+
+          var zoneId = accessor.addZone({
+            afterLineNumber: t.line > 1 ? t.line - 1 : 0,
+            heightInLines: 1,
+            domNode: header,
+            suppressMouseDown: true
+          });
+          zoneIds.push(zoneId);
+
+          decorations.push({
+            range: new window.monaco.Range(t.line, 1, t.line, 1),
+            options: {
+              isWholeLine: true,
+              className: isPassing ? 'ide-test-line-pass' : 'ide-test-line-fail',
+              stickiness: 1
+            }
+          });
+        });
+      });
+
+      testZoneIdsRef.current = zoneIds;
+      testDecorationIdsRef.current = editor.deltaDecorations(testDecorationIdsRef.current, decorations);
+    } catch (err) {
+      clearTestZones(editor);
+      testDecorationIdsRef.current = editor.deltaDecorations(testDecorationIdsRef.current, []);
+    }
+
+  // Include tab.content so zones re-render once async file content loads (same as blame).
+  }, [testResult, testInlineVisible, testPanelFile, tab.id, tab.path, tab.content]);
+
   var sourceTab = tab.isPreview ? findTabByPath(tab.previewFor) : null;
   var markdownContent = tab.isPreview ? sourceTab && sourceTab.content || tab.content || '' : tab.content || '';
 
@@ -474,10 +641,21 @@ var EditorPanel = function EditorPanel(_ref) {
   return React.createElement(
     'div',
     { className: 'ide-editor-wrapper', style: { display: 'flex', flexDirection: 'column', height: '100%' } },
-    gitAvailable && React.createElement(
+    (gitAvailable || testAvailable) && React.createElement(
       'div',
-      { className: 'ide-editor-toolbar', style: { display: 'flex', justifyContent: 'flex-end', padding: '4px 8px', background: '#252526', borderBottom: '1px solid #3c3c3c' } },
-      React.createElement(
+      { className: 'ide-editor-toolbar', style: { display: 'flex', justifyContent: 'flex-end', padding: '4px 8px', background: '#252526', borderBottom: '1px solid #3c3c3c', gap: '4px' } },
+      gitAvailable && tab.path && React.createElement(
+        'button',
+        {
+          className: 'ide-icon-btn',
+          onClick: function() { if (onShowHistory) onShowHistory(tab.path); },
+          title: 'File History',
+          style: { fontSize: '12px', padding: '2px 6px', opacity: 0.6, background: 'transparent', border: 'none', color: '#ccc', cursor: 'pointer', borderRadius: '3px' }
+        },
+        React.createElement('i', { className: 'fas fa-history', style: { marginRight: '6px' } }),
+        'History'
+      ),
+      gitAvailable && React.createElement(
         'button',
         {
           className: 'ide-icon-btn ' + (isBlameVisible ? 'active' : ''),
@@ -489,6 +667,18 @@ var EditorPanel = function EditorPanel(_ref) {
         },
         React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: '6px' } }),
         isBlameLoading ? 'Loading...' : 'Blame'
+      ),
+      testAvailable && tab.path && tab.path.endsWith('.rb') && React.createElement(
+        'button',
+        {
+          className: 'ide-icon-btn',
+          onClick: function() { if (onRunTest) onRunTest(); },
+          disabled: testLoading,
+          title: 'Run Tests',
+          style: { fontSize: '12px', padding: '2px 6px', opacity: testLoading ? 1 : 0.6, background: 'transparent', border: 'none', color: '#ccc', cursor: testLoading ? 'wait' : 'pointer', borderRadius: '3px' }
+        },
+        React.createElement('i', { className: testLoading ? 'fas fa-spinner fa-spin' : 'fas fa-flask', style: { marginRight: '6px' } }),
+        testLoading ? 'Running...' : 'Test'
       )
     ),
     React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } })

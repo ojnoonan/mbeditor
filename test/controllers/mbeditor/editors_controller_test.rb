@@ -717,6 +717,76 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # run_test
+    # ---------------------------------------------------------------------------
+
+    test "run_test returns 403 for path traversal" do
+      post "/mbeditor/test", params: { path: "../../etc/passwd" }, as: :json
+      assert_response :forbidden
+    end
+
+    test "run_test returns 404 when no matching test file exists" do
+      post "/mbeditor/test", params: { path: "app/models/user.rb" }, as: :json
+      assert_response :not_found
+      assert_match(/no matching test file/i, json["error"])
+    end
+
+    test "run_test runs a test file when it exists" do
+      # Create a simple minitest file
+      FileUtils.mkdir_p(File.join(@workspace, "test", "models"))
+      test_content = <<~RUBY
+        require "minitest/autorun"
+
+        class UserTest < Minitest::Test
+          def test_truth
+            assert true
+          end
+        end
+      RUBY
+      File.write(File.join(@workspace, "test", "models", "user_test.rb"), test_content)
+
+      post "/mbeditor/test", params: { path: "app/models/user.rb" }, as: :json
+      assert_response :ok
+      assert json.key?("ok"), "response should have ok key"
+      assert json.key?("summary"), "response should have summary key"
+      assert json.key?("testFile"), "response should have testFile key"
+      assert_equal "test/models/user_test.rb", json["testFile"]
+    end
+
+    test "run_test runs a test file directly when opened" do
+      FileUtils.mkdir_p(File.join(@workspace, "test"))
+      test_content = <<~RUBY
+        require "minitest/autorun"
+
+        class DirectTest < Minitest::Test
+          def test_passes
+            assert_equal 1, 1
+          end
+        end
+      RUBY
+      File.write(File.join(@workspace, "test", "direct_test.rb"), test_content)
+
+      post "/mbeditor/test", params: { path: "test/direct_test.rb" }, as: :json
+      assert_response :ok
+      assert_equal true, json["ok"]
+      assert_equal "test/direct_test.rb", json["testFile"]
+    end
+
+    test "workspace includes testAvailable flag" do
+      get "/mbeditor/workspace"
+      assert_response :ok
+      assert json.key?("testAvailable"), "testAvailable missing from workspace response"
+      assert_includes [true, false], json["testAvailable"]
+    end
+
+    test "workspace testAvailable is true when test directory exists" do
+      FileUtils.mkdir_p(File.join(@workspace, "test"))
+      get "/mbeditor/workspace"
+      assert_response :ok
+      assert_equal true, json["testAvailable"]
+    end
+
+    # ---------------------------------------------------------------------------
     # Environment gating
     # ---------------------------------------------------------------------------
 

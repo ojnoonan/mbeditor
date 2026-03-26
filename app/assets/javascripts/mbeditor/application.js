@@ -11,6 +11,7 @@
 //= require mbeditor/components/CombinedDiffViewer
 //= require mbeditor/components/CommitGraph
 //= require mbeditor/components/FileHistoryPanel
+//= require mbeditor/components/TestResultsPanel
 //= require mbeditor/components/CodeReviewPanel
 //= require mbeditor/components/EditorPanel
 //= require mbeditor/components/FileTree

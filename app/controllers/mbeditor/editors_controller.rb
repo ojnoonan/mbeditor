@@ -37,7 +37,8 @@ module Mbeditor
         hamlLintAvailable: haml_lint_available?,
         gitAvailable: git_available?,
         blameAvailable: git_blame_available?,
-        redmineEnabled: Mbeditor.configuration.redmine_enabled == true
+        redmineEnabled: Mbeditor.configuration.redmine_enabled == true,
+        testAvailable: test_available?
       }
     end
 
@@ -436,6 +437,32 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_entity
     end
 
+    # POST /mbeditor/test — run tests for the given file
+    def run_test
+      path = resolve_path(params[:path])
+      return render json: { error: "Forbidden" }, status: :forbidden unless path
+
+      relative = relative_path(path)
+      test_file = TestRunnerService.resolve_test_file(workspace_root.to_s, relative)
+      return render json: { error: "No matching test file found for #{relative}" }, status: :not_found unless test_file
+
+      full_test = File.join(workspace_root.to_s, test_file)
+      return render json: { error: "Test file does not exist: #{test_file}" }, status: :not_found unless File.file?(full_test)
+
+      config = Mbeditor.configuration
+      result = TestRunnerService.run(
+        workspace_root.to_s,
+        test_file,
+        framework: config.test_framework&.to_sym,
+        command: config.test_command,
+        timeout: config.test_timeout || 60
+      )
+
+      render json: result.merge(testFile: test_file)
+    rescue StandardError => e
+      render json: { error: e.message, ok: false }, status: :unprocessable_entity
+    end
+
     # POST /mbeditor/format — rubocop -A then return corrected content
     def format_file
       path = resolve_path(params[:path])
@@ -641,6 +668,11 @@ module Mbeditor
     end
 
     alias git_blame_available? git_available?
+
+    def test_available?
+      root = workspace_root.to_s
+      File.directory?(File.join(root, "test")) || File.directory?(File.join(root, "spec"))
+    end
 
     def haml_lint_command
       workspace_bin = workspace_root.join("bin", "haml-lint")

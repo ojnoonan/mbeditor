@@ -2,6 +2,37 @@
  *= require mbeditor/editor
  */
 
+/* ── Theme-aware CSS variables ───────────────────────────────────────── */
+:root,
+[data-theme="vs-dark"] {
+  --panel-bg: #1e1e1e;
+  --header-bg: #252526;
+  --border-color: #3c3c3c;
+  --text-primary: #d4d4d4;
+  --status-hover-bg: rgba(255,255,255,0.08);
+}
+[data-theme="vs"] {
+  --panel-bg: #f3f3f3;
+  --header-bg: #e8e8e8;
+  --border-color: #c8c8c8;
+  --text-primary: #1e1e1e;
+  --status-hover-bg: rgba(0,0,0,0.06);
+}
+[data-theme="hc-black"] {
+  --panel-bg: #000000;
+  --header-bg: #0a0a0a;
+  --border-color: #6fc3df;
+  --text-primary: #ffffff;
+  --status-hover-bg: rgba(255,255,255,0.12);
+}
+[data-theme="hc-light"] {
+  --panel-bg: #ffffff;
+  --header-bg: #f8f8f8;
+  --border-color: #0f4a85;
+  --text-primary: #000000;
+  --status-hover-bg: rgba(0,0,0,0.06);
+}
+
 /* ── Git & Code Review Styles ───────────────────────────────────────── */
 
 /* Status Bar Git Sync */
@@ -369,22 +400,62 @@
   gap: 4px;
 }
 
-/* File History Panel */
-.ide-file-history {
-  position: absolute;
-  top: 40px;
-  right: 20px;
-  width: 400px;
-  max-width: calc(100% - 40px);
-  max-height: calc(100% - 80px);
+/* Shared modal backdrop + panel */
+.ide-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgba(0,0,0,0.55);
+}
+.ide-modal-panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 9001;
+  width: 560px;
+  max-width: 90vw;
+  max-height: 75vh;
   background-color: var(--panel-bg);
   border: 1px solid var(--border-color);
-  box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
   border-radius: 6px;
-  z-index: 1000;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Test inline annotations (view zones above tested lines) */
+.ide-test-zone-header {
+  font-size: 11px;
+  font-style: italic;
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 10px;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.ide-test-zone-pass {
+  color: #4ec9b0;
+  border-top: 1px dashed rgba(78, 201, 176, 0.25);
+}
+.ide-test-zone-fail {
+  color: #f14c4c;
+  border-top: 1px dashed rgba(241, 76, 76, 0.25);
+}
+/* Subtle background tint on the tested line itself */
+.ide-test-line-pass {
+  background: rgba(78, 201, 176, 0.06);
+}
+.ide-test-line-fail {
+  background: rgba(241, 76, 76, 0.08);
+}
+
+/* File History Panel — legacy name kept for header/content child classes */
+.ide-file-history {
+  /* kept for .ide-file-history-header / .ide-file-history-content children */
 }
 .ide-file-history-header {
   display: flex;
@@ -396,7 +467,7 @@
 }
 .ide-file-history-title {
   font-weight: 500;
-  color: #d4d4d4;
+  color: var(--text-primary, #d4d4d4);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -470,7 +541,7 @@
   font-size: 11px;
   font-style: italic;
   font-family: var(--font-mono);
-  color: #9aa0a6;
+  color: #d7ba7d;
   opacity: 0.85;
   white-space: nowrap;
   overflow: hidden;
