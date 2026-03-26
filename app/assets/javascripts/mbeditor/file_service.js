@@ -51,6 +51,10 @@ var FileService = (function () {
     return axios.post(basePath() + '/format', { path: path }).then(function(res) { return res.data; });
   }
 
+  function runTests(path) {
+    return axios.post(basePath() + '/test', { path: path }).then(function(res) { return res.data; });
+  }
+
   function ping() {
     return axios.get(basePath() + '/ping', { timeout: 4000 }).then(function(res) { return res.data; });
   }
@@ -75,6 +79,7 @@ var FileService = (function () {
     lintFile: lintFile,
     quickFixOffense: quickFixOffense,
     formatFile: formatFile,
+    runTests: runTests,
     ping: ping,
     getState: getState,
     saveState: saveState
