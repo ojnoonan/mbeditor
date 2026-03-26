@@ -5,7 +5,7 @@ require 'open3'
 
 module Mbeditor
   class GitDiffServiceTest < Minitest::Test
-    REPO_PATH = File.expand_path('../../../..', __dir__)
+    REPO_PATH = File.expand_path('../../..', __dir__)
 
     def test_working_tree_mode_returns_original_and_modified_strings
       result = GitDiffService.new(repo_path: REPO_PATH, file_path: 'Gemfile').call
@@ -37,6 +37,26 @@ module Mbeditor
 
       assert_kind_of String, result['original']
       assert_kind_of String, result['modified']
+    end
+
+    def test_base_sha_without_head_sha_diffs_ref_vs_working_tree
+      log_out, = Open3.capture2('git', '-C', REPO_PATH, 'log', '--format=%H', '-1')
+      sha = log_out.strip
+      skip 'Need at least one commit' if sha.empty?
+
+      result = GitDiffService.new(
+        repo_path: REPO_PATH,
+        file_path: 'Gemfile',
+        base_sha: sha
+      ).call
+
+      # Both keys must be present and be strings
+      assert result.key?('original'), "result should have 'original'"
+      assert result.key?('modified'), "result should have 'modified'"
+      assert_kind_of String, result['original']
+      assert_kind_of String, result['modified']
+      # original should be the content at the given SHA, not necessarily empty
+      refute_nil result['original']
     end
 
     def test_file_not_in_git_history_returns_empty_original_and_disk_content_for_modified

@@ -22,9 +22,13 @@ module Mbeditor
 
       base = params[:base].presence
       head = params[:head].presence
-      valid_sha = /\A[0-9a-fA-F]{1,40}\z/
-      if [base, head].any? { |s| s && !s.match?(valid_sha) }
-        return render json: { error: 'Invalid sha' }, status: :bad_request
+      # 'WORKING' is a frontend sentinel meaning current on-disk working tree
+      head = nil if head == 'WORKING'
+      # Allow full/short SHA hashes plus common git ref formats: branch names,
+      # HEAD, remote tracking refs, parent notation (sha^, sha~N) and tags.
+      valid_ref = /\A[a-zA-Z0-9._\-\/\^~@]+\z/
+      if [base, head].any? { |s| s && (s.length > 200 || !s.match?(valid_ref)) }
+        return render json: { error: 'Invalid ref' }, status: :bad_request
       end
 
       result = GitDiffService.new(
@@ -75,11 +79,11 @@ module Mbeditor
       return render json: { error: "sha required" }, status: :bad_request if sha.blank?
       return render json: { error: "Invalid sha" }, status: :bad_request unless sha.match?(/\A[0-9a-fA-F]{1,40}\z/)
 
-      files_output, files_status = Open3.capture2(
+      files_output, _err, files_status = Open3.capture3(
         "git", "-C", workspace_root.to_s,
         "diff-tree", "--no-commit-id", "-r", "--name-status", sha
       )
-      numstat_output, numstat_status = Open3.capture2(
+      numstat_output, _err, numstat_status = Open3.capture3(
         "git", "-C", workspace_root.to_s,
         "diff-tree", "--no-commit-id", "-r", "--numstat", sha
       )
@@ -104,7 +108,7 @@ module Mbeditor
         end.compact
       end
 
-      log_output, log_status = Open3.capture2(
+      log_output, _err, log_status = Open3.capture3(
         "git", "-C", workspace_root.to_s,
         "log", "-1", "--pretty=format:%s%x1f%an%x1f%aI", sha
       )
@@ -127,17 +131,17 @@ module Mbeditor
       scope = params[:scope] == 'branch' ? :branch : :local
 
       if scope == :local
-        out, status = Open3.capture2("git", "-C", workspace_root.to_s, "diff", "HEAD")
+        out, _err, status = Open3.capture3("git", "-C", workspace_root.to_s, "diff", "HEAD")
         out = status.success? ? out : ""
       else
-        upstream_out, upstream_status = Open3.capture2(
+        upstream_out, _err, upstream_status = Open3.capture3(
           "git", "-C", workspace_root.to_s,
           "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"
         )
         upstream = upstream_status.success? ? upstream_out.strip : nil
         upstream = nil unless upstream&.match?(%r{\A[\w./-]+\z})
         if upstream.present?
-          out, status = Open3.capture2("git", "-C", workspace_root.to_s, "diff", "#{upstream}..HEAD")
+          out, _err, status = Open3.capture3("git", "-C", workspace_root.to_s, "diff", "#{upstream}..HEAD")
           out = status.success? ? out : ""
         else
           out = ""

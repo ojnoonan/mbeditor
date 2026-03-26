@@ -16,6 +16,7 @@ var TabBar = function TabBar(_ref) {
   var onTabDragEnd = _ref.onTabDragEnd;
   var onHardenTab = _ref.onHardenTab;
   var onShowHistory = _ref.onShowHistory;
+  var onRevealInExplorer = _ref.onRevealInExplorer;
 
   var containerRef = useRef(null);
 
@@ -25,6 +26,13 @@ var TabBar = function TabBar(_ref) {
 
   var draggingTabId = _useState2[0];
   var setDraggingTabId = _useState2[1];
+
+  var _useState3 = useState(null);
+
+  var _useState4 = _slicedToArray(_useState3, 2);
+
+  var tabContextMenu = _useState4[0];
+  var setTabContextMenu = _useState4[1];
 
   var getTabMarkerClass = function getTabMarkerClass(tab) {
     var tabMarkers = tab.markers || [];
@@ -55,7 +63,18 @@ var TabBar = function TabBar(_ref) {
     }
   }, [activeId, tabs]);
 
+  // Close context menu on outside click (bubble phase so onMouseDown on the menu can stop it)
+  useEffect(function () {
+    if (!tabContextMenu) return;
+    var handler = function () { setTabContextMenu(null); };
+    document.addEventListener('mousedown', handler);
+    return function () { document.removeEventListener('mousedown', handler); };
+  }, [tabContextMenu]);
+
   return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
     'div',
     { className: 'tab-bar', ref: containerRef, onWheel: function (e) {
         if (containerRef.current) {
@@ -90,7 +109,7 @@ var TabBar = function TabBar(_ref) {
           onContextMenu: function (e) {
             if (isSpecial) return;
             e.preventDefault();
-            if (onShowHistory) onShowHistory(tab.path);
+            setTabContextMenu({ x: e.clientX, y: e.clientY, tab: tab });
           }
         },
         React.createElement('i', { className: 'tab-item-icon ' + (tab.isSettings ? 'fas fa-cog' : (window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code')) }),
@@ -117,6 +136,56 @@ var TabBar = function TabBar(_ref) {
         )
       );
     })
+  ),
+  tabContextMenu && React.createElement(
+    'div',
+    {
+      className: 'ide-tab-context-menu',
+      style: {
+        position: 'fixed',
+        top: tabContextMenu.y,
+        left: tabContextMenu.x,
+        zIndex: 9999,
+        background: '#252526',
+        border: '1px solid #454545',
+        borderRadius: '4px',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+        minWidth: '160px',
+        padding: '4px 0'
+      },
+      onMouseDown: function(e) { e.stopPropagation(); }
+    },
+    onShowHistory && React.createElement(
+      'div',
+      {
+        className: 'ide-tab-context-menu-item',
+        style: { padding: '6px 14px', cursor: 'pointer', color: '#ccc', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' },
+        onMouseEnter: function(e) { e.currentTarget.style.background = '#094771'; },
+        onMouseLeave: function(e) { e.currentTarget.style.background = 'transparent'; },
+        onClick: function() {
+          setTabContextMenu(null);
+          onShowHistory(tabContextMenu.tab.path);
+        }
+      },
+      React.createElement('i', { className: 'fas fa-history', style: { width: '14px', textAlign: 'center' } }),
+      'File History'
+    ),
+    onRevealInExplorer && React.createElement(
+      'div',
+      {
+        className: 'ide-tab-context-menu-item',
+        style: { padding: '6px 14px', cursor: 'pointer', color: '#ccc', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' },
+        onMouseEnter: function(e) { e.currentTarget.style.background = '#094771'; },
+        onMouseLeave: function(e) { e.currentTarget.style.background = 'transparent'; },
+        onClick: function() {
+          setTabContextMenu(null);
+          onRevealInExplorer(tabContextMenu.tab.path);
+        }
+      },
+      React.createElement('i', { className: 'fas fa-sitemap', style: { width: '14px', textAlign: 'center' } }),
+      'Find in Explorer'
+    )
+  )
   );
 };
 

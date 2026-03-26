@@ -62,6 +62,31 @@ module Mbeditor
       assert json.key?("error")
     end
 
+    test "diff accepts sha^ parent notation as base" do
+      log_out, = Open3.capture2("git", "-C", @workspace, "log", "--format=%H", "-1")
+      sha = log_out.strip
+      skip "need at least one commit" if sha.empty?
+
+      get "/mbeditor/git/diff", params: { file: "Gemfile", base: "#{sha}^", head: sha }
+      assert_response :ok
+      assert json.key?("original")
+      assert json.key?("modified")
+    end
+
+    test "diff accepts HEAD as base ref" do
+      get "/mbeditor/git/diff", params: { file: "Gemfile", base: "HEAD" }
+      assert_response :ok
+      assert json.key?("original")
+      assert json.key?("modified")
+    end
+
+    test "diff translates WORKING sentinel to nil and returns working tree diff" do
+      get "/mbeditor/git/diff", params: { file: "Gemfile", base: "HEAD", head: "WORKING" }
+      assert_response :ok
+      assert json.key?("original")
+      assert json.key?("modified")
+    end
+
     # ─── git/blame ─────────────────────────────────────────────────────────────
 
     test "blame returns lines array for a tracked file" do
@@ -113,7 +138,7 @@ module Mbeditor
       open3_singleton = class << Open3; self; end
 
       git_service_singleton.alias_method :__original_current_branch_for_test, :current_branch
-      open3_singleton.alias_method :__original_capture2_for_test, :capture2
+      open3_singleton.alias_method :__original_capture3_for_test, :capture3
 
       git_status_ok = Object.new
       def git_status_ok.success?
@@ -124,22 +149,22 @@ module Mbeditor
         "feature/history-scope"
       end
 
-      Open3.define_singleton_method(:capture2) do |*args|
+      Open3.define_singleton_method(:capture3) do |*args|
         command = args.map(&:to_s)
 
         if command.include?("rev-parse") && command.include?("@{u}")
-          ["origin/main\n", git_status_ok]
+          ["origin/main\n", "", git_status_ok]
         elsif command.include?("rev-list")
-          ["2\t1\n", git_status_ok]
+          ["2\t1\n", "", git_status_ok]
         elsif command.include?("diff") && command.include?("--name-status")
-          ["M\tGemfile.lock\n", git_status_ok]
+          ["M\tGemfile.lock\n", "", git_status_ok]
         elsif command.include?("diff") && command.include?("--numstat")
-          ["3\t1\n", git_status_ok]
+          ["3\t1\n", "", git_status_ok]
         elsif command.include?("log") && command.include?("--first-parent")
           raise "expected current branch log" unless command.include?("feature/history-scope")
-          ["aaa1111\x1fbranch commit\x1fAlice\x1f2026-03-24T10:00:00Z\x1e", git_status_ok]
+          ["aaa1111\x1fbranch commit\x1fAlice\x1f2026-03-24T10:00:00Z\x1e", "", git_status_ok]
         else
-          ["", git_status_ok]
+          ["", "", git_status_ok]
         end
       end
 
@@ -151,8 +176,8 @@ module Mbeditor
     ensure
       git_service_singleton.alias_method :current_branch, :__original_current_branch_for_test
       git_service_singleton.remove_method :__original_current_branch_for_test
-      open3_singleton.alias_method :capture2, :__original_capture2_for_test
-      open3_singleton.remove_method :__original_capture2_for_test
+      open3_singleton.alias_method :capture3, :__original_capture3_for_test
+      open3_singleton.remove_method :__original_capture3_for_test
     end
 
     # ─── git/file_history ──────────────────────────────────────────────────────

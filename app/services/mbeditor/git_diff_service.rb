@@ -28,6 +28,9 @@ module Mbeditor
     def call
       if base_sha && head_sha
         diff_between_commits
+      elsif base_sha
+        # base_sha provided but head_sha is nil: diff that ref vs the working tree
+        { "original" => file_at_ref(base_sha, file_path), "modified" => on_disk_content }
       else
         diff_working_tree_vs_head
       end

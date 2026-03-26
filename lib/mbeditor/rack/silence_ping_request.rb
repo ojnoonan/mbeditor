@@ -16,7 +16,7 @@ module Mbeditor
       def call(env)
         if root_request?(env)
           @app.call(env)
-        elsif mbeditor_request?(env)
+        elsif mbeditor_request?(env) || editor_asset_request?(env)
           Rails.logger.silence { @app.call(env) }
         else
           @app.call(env)
@@ -27,6 +27,18 @@ module Mbeditor
 
       def mbeditor_request?(env)
         normalized_request_path(env).start_with?("/mbeditor/")
+      end
+
+      # Silence asset pipeline requests that belong to the editor:
+      # - /assets/mbeditor/... is always an editor asset (CSS/JS bundle)
+      # - other /assets/... requests are silenced only when the browser is
+      #   currently on the editor page (Referer contains /mbeditor)
+      def editor_asset_request?(env)
+        path = normalized_request_path(env)
+        return true if path.start_with?("/assets/mbeditor/")
+        return false unless path.start_with?("/assets/")
+
+        env["HTTP_REFERER"].to_s.include?("/mbeditor")
       end
 
       def root_request?(env)

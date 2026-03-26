@@ -4,7 +4,7 @@ require 'test_helper'
 
 module Mbeditor
   class GitBlameServiceTest < Minitest::Test
-    REPO_PATH = File.expand_path('../../../..', __dir__)
+    REPO_PATH = File.expand_path('../../..', __dir__)
     FILE_PATH = 'Gemfile'.freeze
 
     def test_happy_path_returns_array_with_expected_keys

@@ -20,7 +20,7 @@ module Mbeditor
         self.class.instance_variable_get(:@workspace_root_cache) ||
           self.class.instance_variable_set(:@workspace_root_cache, begin
             rails_root = Rails.root.to_s
-            out, status = Open3.capture2("git", "-C", rails_root, "rev-parse", "--show-toplevel")
+            out, _err, status = Open3.capture3("git", "-C", rails_root, "rev-parse", "--show-toplevel")
             Pathname.new(status.success? && out.strip.present? ? out.strip : rails_root)
           rescue StandardError
             Rails.root

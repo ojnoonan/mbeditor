@@ -6,6 +6,7 @@ var DiffViewer = function DiffViewer(_ref) {
   var modified = _ref.modified;
   var isDark = _ref.isDark;
   var onClose = _ref.onClose;
+  var editorPrefs = _ref.editorPrefs || {};
   // If path is a diff:// URI (diff://baseSha..headSha/actual/file.rb), extract
   // just the file path portion for display so the title bar shows a clean name.
   var _rawDisplayPath = _ref.displayPath || path;
@@ -36,8 +37,9 @@ var DiffViewer = function DiffViewer(_ref) {
       ignoreTrimWhitespace: false,
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Menlo', 'Consolas', monospace",
-      fontSize: 13
+      fontFamily: editorPrefs.fontFamily || "'JetBrains Mono', 'Fira Code', 'Menlo', 'Consolas', monospace",
+      fontSize: editorPrefs.fontSize || 13,
+      wordWrap: editorPrefs.wordWrap || 'off'
     });
 
     diffEditor.setModel({
@@ -62,6 +64,16 @@ var DiffViewer = function DiffViewer(_ref) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [original, modified, displayPath, isDark]);
+
+  // Update font/wrap options live when editorPrefs changes, without recreating the editor
+  React.useEffect(function () {
+    if (!editorRef.current) return;
+    editorRef.current.updateOptions({
+      fontFamily: editorPrefs.fontFamily || "'JetBrains Mono', 'Fira Code', 'Menlo', 'Consolas', monospace",
+      fontSize: editorPrefs.fontSize || 13,
+      wordWrap: editorPrefs.wordWrap || 'off'
+    });
+  }, [editorPrefs]);
 
   var handleNextDiff = function handleNextDiff() {
     if (!editorRef.current) return;

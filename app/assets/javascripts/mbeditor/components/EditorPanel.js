@@ -16,6 +16,7 @@ var EditorPanel = function EditorPanel(_ref) {
   var markers = _ref.markers;
   var gitAvailable = _ref.gitAvailable === true;
   var onFormat = _ref.onFormat;
+  var onShowHistory = _ref.onShowHistory;
   var editorPrefs = _ref.editorPrefs || {};
 
   var editorRef = useRef(null);
@@ -124,14 +125,17 @@ var EditorPanel = function EditorPanel(_ref) {
       language: language,
       theme: editorPrefs.theme || 'vs-dark',
       automaticLayout: true,
-      minimap: { enabled: false },
+      minimap: { enabled: !!(editorPrefs.minimap) },
       renderLineHighlight: 'none',
-      bracketPairColorization: { enabled: true },
+      bracketPairColorization: { enabled: editorPrefs.bracketPairColorization !== false },
       fontFamily: editorPrefs.fontFamily || "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
       fontSize: editorPrefs.fontSize || 13,
       tabSize: editorPrefs.tabSize || 4,
       insertSpaces: typeof editorPrefs.insertSpaces === 'boolean' ? editorPrefs.insertSpaces : false,
-      wordWrap: 'on',
+      wordWrap: editorPrefs.wordWrap || 'off',
+      lineNumbers: editorPrefs.lineNumbers || 'on',
+      renderWhitespace: editorPrefs.renderWhitespace || 'none',
+      scrollBeyondLastLine: !!(editorPrefs.scrollBeyondLastLine),
       linkedEditing: true, // Enables Auto-Rename Tag natively!
       fixedOverflowWidgets: true,
       hover: { above: false },
@@ -237,10 +241,34 @@ var EditorPanel = function EditorPanel(_ref) {
         fontSize: editorPrefs.fontSize || 13,
         fontFamily: editorPrefs.fontFamily || "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
         tabSize: editorPrefs.tabSize || 4,
-        insertSpaces: typeof editorPrefs.insertSpaces === 'boolean' ? editorPrefs.insertSpaces : false
+        insertSpaces: typeof editorPrefs.insertSpaces === 'boolean' ? editorPrefs.insertSpaces : false,
+        wordWrap: editorPrefs.wordWrap || 'off',
+        lineNumbers: editorPrefs.lineNumbers || 'on',
+        renderWhitespace: editorPrefs.renderWhitespace || 'none',
+        minimap: { enabled: !!(editorPrefs.minimap) },
+        scrollBeyondLastLine: !!(editorPrefs.scrollBeyondLastLine),
+        bracketPairColorization: { enabled: editorPrefs.bracketPairColorization !== false }
       });
     }
   }, [editorPrefs]);
+
+  // Ctrl-hold → column selection mode (like Notepad++)
+  useEffect(function () {
+    var editor = monacoRef.current;
+    if (!editor) return;
+    var onKeyDown = function(e) {
+      if (e.ctrlKey || e.metaKey) editor.updateOptions({ columnSelection: true });
+    };
+    var onKeyUp = function(e) {
+      if (!e.ctrlKey && !e.metaKey) editor.updateOptions({ columnSelection: false });
+    };
+    var onBlur = editor.onDidBlurEditorText(function() {
+      editor.updateOptions({ columnSelection: false });
+    });
+    var kdDisposable = editor.onKeyDown(onKeyDown);
+    var kuDisposable = editor.onKeyUp(onKeyUp);
+    return function() { kdDisposable.dispose(); kuDisposable.dispose(); onBlur.dispose(); };
+  }, [tab.id]);
 
   // Jump to line if specified
   useEffect(function () {
@@ -443,7 +471,8 @@ var EditorPanel = function EditorPanel(_ref) {
       path: tab.repoPath || tab.path,
       original: tab.diffOriginal || "",
       modified: tab.diffModified || "",
-      isDark: isDiffDark
+      isDark: isDiffDark,
+      editorPrefs: editorPrefs
     });
   }
 
@@ -489,6 +518,17 @@ var EditorPanel = function EditorPanel(_ref) {
         },
         React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: '6px' } }),
         isBlameLoading ? 'Loading...' : 'Blame'
+      ),
+      onShowHistory && React.createElement(
+        'button',
+        {
+          className: 'ide-icon-btn',
+          onClick: function() { onShowHistory(tab.path); },
+          title: 'File History',
+          style: { fontSize: '12px', padding: '2px 6px', marginLeft: '4px', background: 'transparent', border: 'none', color: '#ccc', cursor: 'pointer', borderRadius: '3px', opacity: 0.6 }
+        },
+        React.createElement('i', { className: 'fas fa-history', style: { marginRight: '6px' } }),
+        'History'
       )
     ),
     React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } })
