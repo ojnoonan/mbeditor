@@ -4,7 +4,6 @@ Mbeditor.configure do |config|
   # Allow developers to provide a custom RuboCop command for the dummy app.
   custom_rubocop_command = ENV["MBEDITOR_RUBOCOP_COMMAND"].to_s.strip
 
-  # this is a test
   config.rubocop_command = custom_rubocop_command unless custom_rubocop_command.empty?
 
   # Fake Redmine integration for the dummy app — no real server required.
@@ -15,6 +14,14 @@ Mbeditor.configure do |config|
   # Point the editor at a local sample workspace so branch commits contain
   # #ticket_id references that will be picked up by the Redmine panel.
   config.workspace_root = Rails.root.join("tmp", "sample_workspace").to_s
+
+  # Test runner — uses Minitest.  The sample workspace test files require only
+  # the standard library and minitest, so `bundle exec ruby -Itest` resolves
+  # minitest via the gem project's own Gemfile (Bundler walks up from the
+  # workspace directory until it finds the Gemfile at the repo root).
+  config.test_framework = :minitest
+  config.test_command   = "bundle exec ruby -Itest"
+  config.test_timeout   = 30
 end
 
 # Override RedmineService#call in the dummy app to return fixture data so that
@@ -78,6 +85,111 @@ Rails.application.config.after_initialize do
     system(git_env, "git", "-C", ws, "commit", "-m", "Implement dark-mode toggle for navigation - refs #42",
            out: File::NULL, err: File::NULL)
   end
+
+  # ── Ensure test files always exist ──────────────────────────────────────────
+  # Written on every boot so existing workspaces get the test suite even when
+  # the git repo was already initialised.  Tests deliberately include a mix of
+  # passing and failing cases so the Test button shows meaningful results.
+  require "fileutils"
+  FileUtils.mkdir_p(sample_workspace.join("test", "models"))
+  FileUtils.mkdir_p(sample_workspace.join("test", "controllers"))
+
+  File.write(sample_workspace.join("test", "models", "user_test.rb"), <<~RUBY)
+    require "minitest/autorun"
+    require_relative "../../app/models/user"
+
+    class UserTest < Minitest::Test
+      def test_has_name_attribute
+        user = User.new
+        user.name = "Alice"
+        assert_equal "Alice", user.name
+      end
+
+      def test_has_email_attribute
+        user = User.new
+        user.email = "alice@example.com"
+        assert_equal "alice@example.com", user.email
+      end
+
+      def test_name_starts_nil
+        assert_nil User.new.name
+      end
+
+      # Intentional failure — email validation is not implemented yet
+      def test_validates_email_format
+        user = User.new
+        user.email = "not-an-email"
+        assert user.email.include?("@"), "Expected email to contain @, got: \#{user.email}"
+      end
+
+      # Intentional failure — name blank guard is not implemented yet
+      def test_name_cannot_be_blank
+        user = User.new
+        user.name = ""
+        refute user.name.empty?, "name should not be blank"
+      end
+    end
+  RUBY
+
+  File.write(sample_workspace.join("test", "models", "pagination_test.rb"), <<~RUBY)
+    require "minitest/autorun"
+    require_relative "../../app/models/pagination"
+
+    class PaginationTest < Minitest::Test
+      ITEMS = (1..20).to_a
+
+      def test_first_page
+        assert_equal [1, 2, 3, 4, 5], Pagination.paginate(ITEMS, 1, 5)
+      end
+
+      def test_second_page
+        assert_equal [6, 7, 8, 9, 10], Pagination.paginate(ITEMS, 2, 5)
+      end
+
+      def test_last_page
+        assert_equal [16, 17, 18, 19, 20], Pagination.paginate(ITEMS, 4, 5)
+      end
+
+      def test_page_beyond_end_is_empty
+        assert_empty Pagination.paginate(ITEMS, 10, 5)
+      end
+
+      # Intentional failure — Pagination doesn't validate per_page > 0
+      def test_raises_on_zero_per_page
+        assert_raises(ArgumentError) { Pagination.paginate(ITEMS, 1, 0) }
+      end
+
+      # Intentional failure — Pagination doesn't validate negative page numbers
+      def test_raises_on_negative_page
+        assert_raises(ArgumentError) { Pagination.paginate(ITEMS, -1, 5) }
+      end
+    end
+  RUBY
+
+  File.write(sample_workspace.join("test", "controllers", "theme_controller_test.rb"), <<~RUBY)
+    require "minitest/autorun"
+    require_relative "../../app/controllers/theme_controller"
+
+    class ThemeControllerTest < Minitest::Test
+      def test_themes_includes_light
+        assert_includes ThemeController::THEMES, :light
+      end
+
+      def test_themes_includes_dark
+        assert_includes ThemeController::THEMES, :dark
+      end
+
+      def test_themes_is_frozen
+        assert ThemeController::THEMES.frozen?
+      end
+
+      # Intentional failure — system theme is not implemented yet
+      def test_themes_includes_system
+        assert_includes ThemeController::THEMES, :system,
+          "Expected THEMES to include :system for OS-level dark mode sync"
+      end
+    end
+  RUBY
 
   # ── Fake RedmineService ──────────────────────────────────────────────────────
   Mbeditor::RedmineService.prepend(Module.new do
