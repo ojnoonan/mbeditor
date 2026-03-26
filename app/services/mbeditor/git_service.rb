@@ -15,9 +15,11 @@ module Mbeditor
     SAFE_GIT_REF = %r{\A[\w./-]+\z}
 
     # Run an arbitrary git command inside +repo_path+.
-    # Returns [stdout, Process::Status].
+    # Returns [stdout, Process::Status]. stderr is captured and discarded to
+    # prevent git diagnostic messages from leaking into the Rails server log.
     def run_git(repo_path, *args)
-      Open3.capture2("git", "-C", repo_path, *args)
+      out, _err, status = Open3.capture3("git", "-C", repo_path, *args)
+      [out, status]
     end
 
     # Current branch name, or nil if not in a git repo.

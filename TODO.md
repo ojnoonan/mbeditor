@@ -2,7 +2,7 @@
 
 ## Gem / packaging
 
-- [ ] Decide on initial version strategy — current `0.1.0` is fine for first release; bump to `1.0.0` when API is stable
+- [x] Decide on initial version strategy — current `0.1.0` is fine for first release; bump to `1.0.0` when API is stable
 
 ## CI / release workflow
 

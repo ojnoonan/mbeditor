@@ -213,7 +213,7 @@ module Mbeditor
       end
 
       if RG_AVAILABLE
-        output, = Open3.capture2(*cmd)
+        output, = Open3.capture3(*cmd)
         output.lines.each do |line|
           break if results.length > 30
 
@@ -228,7 +228,7 @@ module Mbeditor
           }
         end
       else
-        output, = Open3.capture2(*cmd)
+        output, = Open3.capture3(*cmd)
         output.lines.each do |line|
           break if results.length > 30
 
@@ -254,7 +254,7 @@ module Mbeditor
 
     # GET /mbeditor/git_status
     def git_status
-      output, status = Open3.capture2("git", "-C", workspace_root.to_s, "status", "--porcelain")
+      output, _err, status = Open3.capture3("git", "-C", workspace_root.to_s, "status", "--porcelain")
       branch = GitService.current_branch(workspace_root.to_s) || ""
       files = output.lines.map do |line|
         { status: line[0..1].strip, path: line[3..].strip }
@@ -271,15 +271,15 @@ module Mbeditor
       unless branch
         return render json: { ok: false, error: "Unable to determine current branch" }, status: :unprocessable_entity
       end
-      working_output, working_status = Open3.capture2("git", "-C", repo, "status", "--porcelain")
+      working_output, _err, working_status = Open3.capture3("git", "-C", repo, "status", "--porcelain")
       working_tree = working_status.success? ? parse_porcelain_status(working_output) : []
 
       # Annotate each working-tree file with added/removed line counts
-      numstat_out, = Open3.capture2("git", "-C", repo, "diff", "--numstat", "HEAD")
+      numstat_out, = Open3.capture3("git", "-C", repo, "diff", "--numstat", "HEAD")
       numstat_map  = parse_numstat(numstat_out)
       working_tree = working_tree.map { |f| f.merge(numstat_map.fetch(f[:path], {})) }
 
-      upstream_output, upstream_status = Open3.capture2("git", "-C", repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+      upstream_output, _err, upstream_status = Open3.capture3("git", "-C", repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
       upstream_branch = upstream_status.success? ? upstream_output.strip : nil
       upstream_branch = nil unless upstream_branch&.match?(%r{\A[\w./-]+\z})
 
@@ -289,26 +289,26 @@ module Mbeditor
       unpushed_commits = []
 
       if upstream_branch.present?
-        counts_output, counts_status = Open3.capture2("git", "-C", repo, "rev-list", "--left-right", "--count", "HEAD...#{upstream_branch}")
+        counts_output, _err, counts_status = Open3.capture3("git", "-C", repo, "rev-list", "--left-right", "--count", "HEAD...#{upstream_branch}")
         if counts_status.success?
           ahead_str, behind_str = counts_output.strip.split("\t", 2)
           ahead_count = ahead_str.to_i
           behind_count = behind_str.to_i
         end
 
-        unpushed_output, unpushed_status = Open3.capture2("git", "-C", repo, "diff", "--name-status", "#{upstream_branch}..HEAD")
+        unpushed_output, _err, unpushed_status = Open3.capture3("git", "-C", repo, "diff", "--name-status", "#{upstream_branch}..HEAD")
         if unpushed_status.success?
           unpushed_files   = parse_name_status(unpushed_output)
-          unp_numstat_out, = Open3.capture2("git", "-C", repo, "diff", "--numstat", "#{upstream_branch}..HEAD")
+          unp_numstat_out, = Open3.capture3("git", "-C", repo, "diff", "--numstat", "#{upstream_branch}..HEAD")
           unp_numstat_map  = parse_numstat(unp_numstat_out)
           unpushed_files   = unpushed_files.map { |f| f.merge(unp_numstat_map.fetch(f[:path], {})) }
         end
 
-        unpushed_log_output, unpushed_log_status = Open3.capture2("git", "-C", repo, "log", "#{upstream_branch}..HEAD", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
+        unpushed_log_output, _err, unpushed_log_status = Open3.capture3("git", "-C", repo, "log", "#{upstream_branch}..HEAD", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
         unpushed_commits = parse_git_log(unpushed_log_output) if unpushed_log_status.success?
       end
 
-      branch_log_output, branch_log_status = Open3.capture2("git", "-C", repo, "log", "--first-parent", branch, "-n", "100", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
+      branch_log_output, _err, branch_log_status = Open3.capture3("git", "-C", repo, "log", "--first-parent", branch, "-n", "100", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
       branch_commits = branch_log_status.success? ? parse_git_log(branch_log_output) : []
 
       render json: {
@@ -633,7 +633,7 @@ module Mbeditor
               self.class.instance_variable_set(:@git_available_cache, {})
       return cache[key] if cache.key?(key)
       cache[key] = begin
-        _out, status = Open3.capture2("git", "-C", key, "rev-parse", "--is-inside-work-tree")
+        _out, _err, status = Open3.capture3("git", "-C", key, "rev-parse", "--is-inside-work-tree")
         status.success?
       rescue StandardError
         false

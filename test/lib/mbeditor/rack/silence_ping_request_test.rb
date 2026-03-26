@@ -12,73 +12,92 @@ module Mbeditor
         end
       end
 
+      setup do
+        @original_logger = Rails.logger
+      end
+
+      teardown do
+        Rails.logger = @original_logger
+      end
+
       def build_middleware
         Mbeditor::Rack::SilencePingRequest.new(->(_env) { [200, {}, ["ok"]] })
       end
 
       test "keeps the engine root GET visible" do
         logger = FakeLogger.new(false)
+        Rails.logger = logger
 
-        Rails.stub(:logger, logger) do
-          status, _headers, body = build_middleware.call(
-            "REQUEST_METHOD" => "GET",
-            "SCRIPT_NAME" => "",
-            "PATH_INFO" => "/mbeditor"
-          )
+        status, _headers, body = build_middleware.call(
+          "REQUEST_METHOD" => "GET",
+          "SCRIPT_NAME" => "",
+          "PATH_INFO" => "/mbeditor"
+        )
 
-          assert_equal 200, status
-          assert_equal ["ok"], body
-          assert_equal false, logger.silenced
-        end
+        assert_equal 200, status
+        assert_equal ["ok"], body
+        assert_equal false, logger.silenced
       end
 
       test "silences editor asset requests" do
         logger = FakeLogger.new(false)
+        Rails.logger = logger
 
-        Rails.stub(:logger, logger) do
-          status, _headers, body = build_middleware.call(
-            "REQUEST_METHOD" => "GET",
-            "SCRIPT_NAME" => "",
-            "PATH_INFO" => "/assets/react.min.js",
-            "HTTP_REFERER" => "http://example.test/mbeditor"
-          )
+        status, _headers, body = build_middleware.call(
+          "REQUEST_METHOD" => "GET",
+          "SCRIPT_NAME" => "",
+          "PATH_INFO" => "/assets/react.min.js",
+          "HTTP_REFERER" => "http://example.test/mbeditor"
+        )
 
-          assert_equal 200, status
-          assert_equal ["ok"], body
-          assert_equal true, logger.silenced
-        end
+        assert_equal 200, status
+        assert_equal ["ok"], body
+        assert_equal true, logger.silenced
       end
 
       test "silences editor state requests" do
         logger = FakeLogger.new(false)
+        Rails.logger = logger
 
-        Rails.stub(:logger, logger) do
-          status, _headers, body = build_middleware.call(
-            "REQUEST_METHOD" => "GET",
-            "SCRIPT_NAME" => "",
-            "PATH_INFO" => "/mbeditor/state"
-          )
+        status, _headers, body = build_middleware.call(
+          "REQUEST_METHOD" => "GET",
+          "SCRIPT_NAME" => "",
+          "PATH_INFO" => "/mbeditor/state"
+        )
 
-          assert_equal 200, status
-          assert_equal ["ok"], body
-          assert_equal true, logger.silenced
-        end
+        assert_equal 200, status
+        assert_equal ["ok"], body
+        assert_equal true, logger.silenced
+      end
+
+      test "silences /assets/mbeditor/ requests unconditionally" do
+        logger = FakeLogger.new(false)
+        Rails.logger = logger
+
+        status, _headers, body = build_middleware.call(
+          "REQUEST_METHOD" => "GET",
+          "SCRIPT_NAME" => "",
+          "PATH_INFO" => "/assets/mbeditor/application-abc123.css"
+        )
+
+        assert_equal 200, status
+        assert_equal ["ok"], body
+        assert_equal true, logger.silenced
       end
 
       test "does not silence unrelated direct asset requests" do
         logger = FakeLogger.new(false)
+        Rails.logger = logger
 
-        Rails.stub(:logger, logger) do
-          status, _headers, body = build_middleware.call(
-            "REQUEST_METHOD" => "GET",
-            "SCRIPT_NAME" => "",
-            "PATH_INFO" => "/assets/react.min.js"
-          )
+        status, _headers, body = build_middleware.call(
+          "REQUEST_METHOD" => "GET",
+          "SCRIPT_NAME" => "",
+          "PATH_INFO" => "/assets/react.min.js"
+        )
 
-          assert_equal 200, status
-          assert_equal ["ok"], body
-          assert_equal false, logger.silenced
-        end
+        assert_equal 200, status
+        assert_equal ["ok"], body
+        assert_equal false, logger.silenced
       end
     end
   end

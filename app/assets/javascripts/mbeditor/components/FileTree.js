@@ -39,6 +39,17 @@ var FileTree = function FileTree(_ref) {
 
   var inlineRef = useRef(null);
   var committedRef = useRef(false);
+  var containerRef = useRef(null);
+
+  // Scroll the highlighted node into view when selectedPath changes (e.g. Find in Explorer)
+  useEffect(function () {
+    if (!selectedPath || !containerRef.current) return;
+    var timer = setTimeout(function () {
+      var el = containerRef.current && containerRef.current.querySelector('.tree-item.selected');
+      if (el) el.scrollIntoView({ block: 'nearest' });
+    }, 60);
+    return function () { clearTimeout(timer); };
+  }, [selectedPath]);
 
   var renameSelectionEnd = function renameSelectionEnd(name) {
     var value = String(name || '');
@@ -278,7 +289,7 @@ var FileTree = function FileTree(_ref) {
 
   return React.createElement(
     'div',
-    { className: 'file-tree-root' },
+    { className: 'file-tree-root', ref: containerRef },
     renderTree(items, '')
   );
 };
