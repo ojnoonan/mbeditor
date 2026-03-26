@@ -93,15 +93,23 @@ module Mbeditor
 
         fake_response = Net::HTTPSuccess.new('1.1', '200', 'OK')
         fake_response.define_singleton_method(:body) { issue_body }
+        fake_http = Object.new
+        fake_http.define_singleton_method(:use_ssl=) { |_value| }
+        fake_http.define_singleton_method(:open_timeout=) { |_value| }
+        fake_http.define_singleton_method(:read_timeout=) { |_value| }
+        fake_http.define_singleton_method(:request) do |request|
+          raise 'expected Net::HTTP::Get' unless request.is_a?(Net::HTTP::Get)
+
+          fake_response
+        end
         with_http_new_stub(->(_host, _port) {
-          mock_http = Minitest::Mock.new
-          mock_http.expect(:use_ssl=, nil, [true])
-          mock_http.expect(:open_timeout=, nil, [RedmineService::TIMEOUT_SECONDS])
-          mock_http.expect(:read_timeout=, nil, [RedmineService::TIMEOUT_SECONDS])
-          mock_http.expect(:request, fake_response, [Net::HTTP::Get])
-          mock_http
+          fake_http
         }) do
-          result = RedmineService.new(issue_id: '42').call
+          result = RedmineService.new(issue_id: '42').send(
+            :fetch_issue,
+            Mbeditor.configuration.redmine_url,
+            Mbeditor.configuration.redmine_api_key
+          )
 
           assert_equal 42, result['id']
           assert_equal 'Fix the bug', result['title']
@@ -117,16 +125,24 @@ module Mbeditor
       with_redmine_configured do
         fake_response = Net::HTTPNotFound.new('1.1', '404', 'Not Found')
         fake_response.define_singleton_method(:body) { '' }
+        fake_http = Object.new
+        fake_http.define_singleton_method(:use_ssl=) { |_value| }
+        fake_http.define_singleton_method(:open_timeout=) { |_value| }
+        fake_http.define_singleton_method(:read_timeout=) { |_value| }
+        fake_http.define_singleton_method(:request) do |request|
+          raise 'expected Net::HTTP::Get' unless request.is_a?(Net::HTTP::Get)
+
+          fake_response
+        end
         with_http_new_stub(->(_host, _port) {
-          mock_http = Minitest::Mock.new
-          mock_http.expect(:use_ssl=, nil, [true])
-          mock_http.expect(:open_timeout=, nil, [RedmineService::TIMEOUT_SECONDS])
-          mock_http.expect(:read_timeout=, nil, [RedmineService::TIMEOUT_SECONDS])
-          mock_http.expect(:request, fake_response, [Net::HTTP::Get])
-          mock_http
+          fake_http
         }) do
           assert_raises(RuntimeError) do
-            RedmineService.new(issue_id: '999').call
+            RedmineService.new(issue_id: '999').send(
+              :fetch_issue,
+              Mbeditor.configuration.redmine_url,
+              Mbeditor.configuration.redmine_api_key
+            )
           end
         end
       end
