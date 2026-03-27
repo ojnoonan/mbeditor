@@ -202,16 +202,16 @@ module Mbeditor
 
       results = []
       cmd = if RG_AVAILABLE
-              ["rg", "--json", "--max-count", "30", "--", query, workspace_root.to_s]
+              args = ["rg", "--json", "--max-count", "30"]
+              excluded_paths.each { |p| args << "--glob=!#{p}" }
+              args + ["--", query, workspace_root.to_s]
             else
-              ["grep", "-rn", "-F", "-m", "30", query, workspace_root.to_s]
+              args = ["grep", "-rn", "-F", "-m", "30"]
+              excluded_paths.each do |path|
+                args << "--exclude-dir=#{path.include?('/') ? File.basename(path) : path}"
+              end
+              args + [query, workspace_root.to_s]
             end
-
-      unless RG_AVAILABLE
-        excluded_dirnames.each do |dir_name|
-          cmd.insert(2, "--exclude-dir=#{dir_name}")
-        end
-      end
 
       if RG_AVAILABLE
         output, = Open3.capture3(*cmd)

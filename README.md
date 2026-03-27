@@ -66,6 +66,7 @@ Mbeditor.configure do |config|
   # config.redmine_enabled = true
   # config.redmine_url = "https://redmine.example.com/"
   # config.redmine_api_key = "optional_api_key_override"
+  # config.redmine_ticket_source = :commit  # :commit (scan recent commit messages for #123) or :branch (leading digits of branch name)
 end
 ```
 
@@ -82,6 +83,7 @@ Available options:
 - `redmine_enabled` enables issue lookup integration. Default: `false`.
 - `redmine_url` sets the Redmine base URL. Required when `redmine_enabled` is `true`.
 - `redmine_api_key` sets the Redmine API key. Required when `redmine_enabled` is `true`.
+- `redmine_ticket_source` controls how the current Redmine ticket is identified. `:commit` scans the 100 most recent branch commits for a `#123` reference in the commit message. `:branch` reads the leading digits from the branch name (e.g. `123-my-feature` → ticket 123). Default: `:commit`.
 
 ## Test Runner
 
