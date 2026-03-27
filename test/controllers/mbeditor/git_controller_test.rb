@@ -14,6 +14,7 @@ module Mbeditor
         c.allowed_environments = %i[test development]
         c.workspace_root       = @workspace
         c.redmine_enabled      = false
+        c.authenticate_with    = nil
       end
     end
 

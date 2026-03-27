@@ -12,9 +12,10 @@ module Mbeditor
       File.write(File.join(@workspace, "README.md"), "# Hello\n")
 
       Mbeditor.configure do |c|
-        c.allowed_environments = %i[test development]
-        c.workspace_root = @workspace
-        c.excluded_paths = %w[.git tmp log]
+        c.allowed_environments  = %i[test development]
+        c.workspace_root        = @workspace
+        c.excluded_paths        = %w[.git tmp log]
+        c.authenticate_with     = nil
       end
 
     end
