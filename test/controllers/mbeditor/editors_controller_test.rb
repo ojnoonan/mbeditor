@@ -31,6 +31,28 @@ module Mbeditor
 
     def teardown
       FileUtils.rm_rf(@workspace)
+      Mbeditor.configure { |c| c.authenticate_with = nil }
+    end
+
+    # ---------------------------------------------------------------------------
+    # authenticate_with
+    # ---------------------------------------------------------------------------
+
+    test "authenticate_with nil allows requests through" do
+      get "/mbeditor/ping"
+      assert_response :ok
+    end
+
+    test "authenticate_with proc that halts blocks request" do
+      Mbeditor.configure { |c| c.authenticate_with = proc { render plain: "Unauthorized", status: :unauthorized } }
+      get "/mbeditor/ping"
+      assert_response :unauthorized
+    end
+
+    test "authenticate_with proc that allows passes request through" do
+      Mbeditor.configure { |c| c.authenticate_with = proc { } }
+      get "/mbeditor/ping"
+      assert_response :ok
     end
 
     # ---------------------------------------------------------------------------

@@ -54,6 +54,9 @@ Mbeditor.configure do |config|
   config.excluded_paths = %w[.git tmp log node_modules .bundle coverage vendor/bundle]
   config.rubocop_command = "bundle exec rubocop"
 
+  # Optional authentication (runs as a before_action in the engine controllers)
+  # config.authenticate_with = proc { redirect_to login_path unless UserSession.find }
+
   # Optional test runner (Minitest or RSpec)
   # config.test_framework = :minitest   # :minitest or :rspec — auto-detected when nil
   # config.test_command   = "bundle exec rails test"  # defaults to bin/rails test or bundle exec ruby -Itest
@@ -69,6 +72,7 @@ end
 Available options:
 
 - `allowed_environments` controls which Rails environments can access the engine. Default: `[:development]`.
+- `authenticate_with` accepts a proc that runs as a `before_action` in all engine controllers. Use it to plug in the host app's authentication. The proc executes via `instance_exec` inside the engine controller, so it has access to `session`, `cookies`, `redirect_to`, and auth library class methods (e.g. Authlogic's `UserSession.find`), but not helper methods defined in the host app's `ApplicationController`. Default: `nil` (no authentication).
 - `workspace_root` sets the root directory exposed by Mbeditor. Default: `Rails.root` from the host app.
 - `excluded_paths` hides files and directories from the tree and path-based operations. Entries without `/` match names anywhere in the workspace path; entries with `/` match relative paths and their descendants. Default: `%w[.git tmp log node_modules .bundle coverage vendor/bundle]`.
 - `rubocop_command` sets the command used for inline Ruby linting and formatting. Default: `"rubocop"`.

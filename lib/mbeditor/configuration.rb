@@ -2,7 +2,8 @@ module Mbeditor
   class Configuration
     attr_accessor :allowed_environments, :workspace_root, :excluded_paths, :rubocop_command,
                   :redmine_enabled, :redmine_url, :redmine_api_key, :redmine_ticket_source,
-                  :test_framework, :test_command, :test_timeout
+                  :test_framework, :test_command, :test_timeout,
+                  :authenticate_with
 
     def initialize
       @allowed_environments = [:development]

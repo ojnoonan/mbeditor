@@ -19,10 +19,19 @@ module Mbeditor
 
     def teardown
       Mbeditor.configure do |c|
-        c.redmine_enabled = false
-        c.redmine_url     = nil
-        c.redmine_api_key = nil
+        c.redmine_enabled    = false
+        c.redmine_url        = nil
+        c.redmine_api_key    = nil
+        c.authenticate_with  = nil
       end
+    end
+
+    # ─── authenticate_with ─────────────────────────────────────────────────────
+
+    test "authenticate_with proc that halts blocks git requests" do
+      Mbeditor.configure { |c| c.authenticate_with = proc { render plain: "Unauthorized", status: :unauthorized } }
+      get "/mbeditor/git/commit_graph"
+      assert_response :unauthorized
     end
 
     # ─── git/diff ──────────────────────────────────────────────────────────────

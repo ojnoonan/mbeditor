@@ -5,7 +5,14 @@ require "pathname"
 
 module Mbeditor
   class ApplicationController < ActionController::Base
+    before_action :run_authentication
+
     private
+
+    def run_authentication
+      auth = Mbeditor.configuration.authenticate_with
+      instance_exec(&auth) if auth
+    end
 
     def ensure_allowed_environment!
       allowed = Array(Mbeditor.configuration.allowed_environments).map(&:to_sym)
