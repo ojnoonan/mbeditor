@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-03-27
+
+### Added
+- **Authentication hook** — new `authenticate_with` configuration option accepts a proc/lambda that runs as a `before_action` in all engine controllers. Use it to plug in the host app's auth system (e.g. Authlogic's `UserSession.find`, Devise's `authenticate_user!`). The proc executes via `instance_exec` so `session`, `cookies`, `redirect_to`, and auth library class methods are all accessible. Default: `nil` (no auth, existing behaviour preserved).
+
+### Fixed
+- **HTTP status code** — all 422 responses now use `:unprocessable_content` (the correct Rails symbol for HTTP 422 since RFC 9110) instead of the deprecated `:unprocessable_entity`.
+- **Search exclusion** — search command construction refactored for clearer exclusion handling.
+
+## [0.1.8] - 2026-03-27
+
+### Fixed
+- **Stray engine config** — removed `config/environments/development.rb` from the engine root; environment configs belong only in the dummy app.
+- **CI workflow** — corrected ref format in the GitHub Actions checkout step.
+- **Test reliability** — refactored HTTP stubbing in `RedmineServiceTest` for improved clarity.
+
+## [0.1.7] - 2026-03-26
+
+### Added
+- **Test results panel** — a dedicated panel shows pass/fail counts, per-test status icons, and error messages after a test run. Inline failure markers overlay the Monaco editor and can be toggled independently of RuboCop markers.
+- **File history context menu** — the tab bar context menu now includes a file history option that opens the per-file commit log.
+
 ## [0.1.6] - 2026-03-25
 
 ### Added
