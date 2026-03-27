@@ -19,6 +19,7 @@ var EditorPanel = function EditorPanel(_ref) {
   var onFormat = _ref.onFormat;
   var onRunTest = _ref.onRunTest;
   var onShowHistory = _ref.onShowHistory;
+  var treeData = _ref.treeData || [];
   var testResult = _ref.testResult;
   var testPanelFile = _ref.testPanelFile;
   var testLoading = _ref.testLoading;
@@ -485,6 +486,66 @@ var EditorPanel = function EditorPanel(_ref) {
     return src === derived;
   };
 
+  var testFileCandidates = function(relativePath) {
+    if (!relativePath || !relativePath.endsWith('.rb')) return [];
+
+    var basename = relativePath.slice(0, -3);
+    var dirParts = relativePath.split('/');
+    var leafName = basename.split('/').pop();
+    var candidates = [];
+
+    if (dirParts[0] === 'app' && dirParts.length > 1) {
+      var subPath = dirParts.slice(1).join('/');
+      var subDir = subPath.indexOf('/') !== -1 ? subPath.slice(0, subPath.lastIndexOf('/')) : '';
+      candidates.push('test/' + (subDir ? subDir + '/' : '') + leafName + '_test.rb');
+      candidates.push('spec/' + (subDir ? subDir + '/' : '') + leafName + '_spec.rb');
+    }
+
+    if (dirParts[0] === 'lib') {
+      var libSubPath = dirParts.slice(1).join('/');
+      var libSubDir = libSubPath.indexOf('/') !== -1 ? libSubPath.slice(0, libSubPath.lastIndexOf('/')) : '';
+      candidates.push('test/lib/' + (libSubDir ? libSubDir + '/' : '') + leafName + '_test.rb');
+      candidates.push('test/' + (libSubDir ? libSubDir + '/' : '') + leafName + '_test.rb');
+      candidates.push('spec/lib/' + (libSubDir ? libSubDir + '/' : '') + leafName + '_spec.rb');
+    }
+
+    candidates.push('test/' + leafName + '_test.rb');
+    candidates.push('spec/' + leafName + '_spec.rb');
+
+    return candidates.filter(function(candidate, index, list) {
+      return list.indexOf(candidate) === index;
+    });
+  };
+
+  var treeHasPath = function(nodes, targetPath) {
+    if (!targetPath) return false;
+    var stack = (nodes || []).slice();
+
+    while (stack.length) {
+      var node = stack.pop();
+      if (!node) continue;
+      if (node.path === targetPath) return true;
+      if (node.children && node.children.length) {
+        stack.push.apply(stack, node.children);
+      }
+    }
+
+    return false;
+  };
+
+  var matchingTestFilePath = function(sourcePath) {
+    var normalized = (sourcePath || '').replace(/^\/+/, '');
+    if (!normalized || !normalized.endsWith('.rb')) return null;
+    if (/^(test|spec)\//.test(normalized) && /_(test|spec)\.rb$/.test(normalized)) return normalized;
+
+    var candidates = testFileCandidates(normalized);
+    for (var i = 0; i < candidates.length; i += 1) {
+      if (treeHasPath(treeData, candidates[i])) return candidates[i];
+    }
+
+    return null;
+  };
+
   // Map a test method name to the best-matching line in the source file.
   // Extracts keywords from the test name and scores each source line.
   var mapTestToSourceLine = function(testName, sourceContent) {
@@ -671,42 +732,38 @@ var EditorPanel = function EditorPanel(_ref) {
     { className: 'ide-editor-wrapper', style: { display: 'flex', flexDirection: 'column', height: '100%' } },
     (gitAvailable || testAvailable) && React.createElement(
       'div',
-      { className: 'ide-editor-toolbar', style: { display: 'flex', justifyContent: 'flex-end', padding: '4px 8px', background: '#252526', borderBottom: '1px solid #3c3c3c', gap: '4px' } },
+      { className: 'ide-editor-toolbar' },
       gitAvailable && tab.path && React.createElement(
         'button',
         {
           className: 'ide-icon-btn',
           onClick: function() { if (onShowHistory) onShowHistory(tab.path); },
-          title: 'File History',
-          style: { fontSize: '12px', padding: '2px 6px', opacity: 0.6, background: 'transparent', border: 'none', color: '#ccc', cursor: 'pointer', borderRadius: '3px' }
+          title: 'File History'
         },
-        React.createElement('i', { className: 'fas fa-history', style: { marginRight: '6px' } }),
-        'History'
+        React.createElement('i', { className: 'fas fa-history', style: { marginRight: '5px', flexShrink: 0 } }),
+        React.createElement('span', { className: 'ide-toolbar-label' }, 'History')
       ),
       gitAvailable && React.createElement(
         'button',
         {
           className: 'ide-icon-btn ' + (isBlameVisible ? 'active' : ''),
-          onClick: function() {
-            setIsBlameVisible(function(prev) { return !prev; });
-          },
-          title: 'Toggle Git Blame',
-          style: { fontSize: '12px', padding: '2px 6px', opacity: isBlameVisible ? 1 : 0.6, background: isBlameVisible ? 'rgba(255,255,255,0.1)' : 'transparent', border: 'none', color: '#ccc', cursor: 'pointer', borderRadius: '3px' }
+          onClick: function() { setIsBlameVisible(function(prev) { return !prev; }); },
+          title: 'Toggle Git Blame'
         },
-        React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: '6px' } }),
-        isBlameLoading ? 'Loading...' : 'Blame'
+        React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: '5px', flexShrink: 0 } }),
+        React.createElement('span', { className: 'ide-toolbar-label' }, isBlameLoading ? 'Loading...' : 'Blame')
       ),
-      testAvailable && tab.path && tab.path.endsWith('.rb') && React.createElement(
+      testAvailable && matchingTestFilePath(tab.path) && React.createElement(
         'button',
         {
           className: 'ide-icon-btn',
           onClick: function() { if (onRunTest) onRunTest(); },
           disabled: testLoading,
           title: 'Run Tests',
-          style: { fontSize: '12px', padding: '2px 6px', opacity: testLoading ? 1 : 0.6, background: 'transparent', border: 'none', color: '#ccc', cursor: testLoading ? 'wait' : 'pointer', borderRadius: '3px' }
+          style: { cursor: testLoading ? 'wait' : 'pointer' }
         },
-        React.createElement('i', { className: testLoading ? 'fas fa-spinner fa-spin' : 'fas fa-flask', style: { marginRight: '6px' } }),
-        testLoading ? 'Running...' : 'Test'
+        React.createElement('i', { className: testLoading ? 'fas fa-spinner fa-spin' : 'fas fa-flask', style: { marginRight: '5px', flexShrink: 0 } }),
+        React.createElement('span', { className: 'ide-toolbar-label' }, testLoading ? 'Running...' : 'Test')
       )
     ),
     React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } })

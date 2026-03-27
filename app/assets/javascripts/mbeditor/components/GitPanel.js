@@ -40,14 +40,8 @@ var GitPanel = function GitPanel(_ref) {
     return Object.assign({}, c, { isLocal: !!localHashes[c.hash] });
   });
 
-  // Extract the first Redmine ticket ID (#123) from recent branch commit messages
-  var redmineTicketId = null;
-  if (redmineEnabled) {
-    for (var ci = 0; ci < branchCommits.length; ci++) {
-      var titleMatch = branchCommits[ci] && branchCommits[ci].title && branchCommits[ci].title.match(/#(\d+)/);
-      if (titleMatch) { redmineTicketId = titleMatch[1]; break; }
-    }
-  }
+  // Redmine ticket ID is resolved server-side based on redmine_ticket_source config
+  var redmineTicketId = (redmineEnabled && gitInfo && gitInfo.redmineTicketId) || null;
 
   // Fetch Redmine issue whenever the ticket ID changes
   useEffect(function () {

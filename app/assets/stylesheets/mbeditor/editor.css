@@ -51,8 +51,8 @@ html, body, #mbeditor-root {
 
 /* ── Sidebar ─────────────────────────────────────────────── */
 .ide-sidebar {
-  width: 240px;
-  min-width: 240px;
+  width: 280px;
+  min-width: 280px;
   max-width: 560px;
   background: #252526;
   border-right: 1px solid #3c3c3c;
@@ -60,6 +60,63 @@ html, body, #mbeditor-root {
   flex-direction: column;
   overflow: hidden;
   flex-shrink: 0;
+  transition: width 0.15s ease;
+}
+
+.ide-sidebar.ide-sidebar-collapsed {
+  min-width: 0;
+  max-width: none;
+}
+
+/* ── Collapsed sidebar icon strip ──────────────────────────── */
+.sidebar-icon-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  padding: 4px 0;
+}
+
+.sidebar-strip-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+}
+
+.sidebar-strip-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-bottom: 4px;
+}
+
+.sidebar-strip-btn {
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: #858585;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 15px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.sidebar-strip-btn:hover {
+  background: #2a2d2e;
+  color: #cccccc;
+}
+
+.sidebar-strip-btn.active {
+  color: #4ec9b0;
+  border-left: 2px solid #4ec9b0;
+  border-radius: 0 6px 6px 0;
 }
 
 .panel-divider {
@@ -72,6 +129,14 @@ html, body, #mbeditor-root {
   width: 6px;
   background: #2a2a2a;
   border-right: 1px solid #3c3c3c;
+}
+
+.ide-sidebar-collapsed + .sidebar-divider {
+  cursor: default;
+}
+
+.ide-sidebar-collapsed + .sidebar-divider:hover {
+  background: #2a2a2a;
 }
 
 .pane-divider {
@@ -1114,12 +1179,17 @@ html, body, #mbeditor-root {
 
 .collapsible-title {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .collapsible-actions {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
   margin-left: auto;
 }
 
@@ -1150,6 +1220,69 @@ html, body, #mbeditor-root {
 .open-editors-group:focus-within .open-editors-group-actions {
   opacity: 1;
   pointer-events: auto;
+}
+
+.ide-icon-btn {
+  min-width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #858585;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.12s ease, color 0.12s ease;
+  flex-shrink: 0;
+}
+
+.ide-icon-btn:hover {
+  background: #2a2d2e;
+  color: #cccccc;
+}
+
+.ide-icon-btn.active {
+  color: #4ec9b0;
+}
+
+.ide-editor-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 4px 8px;
+  background: #252526;
+  border-bottom: 1px solid #3c3c3c;
+  gap: 4px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.ide-editor-toolbar .ide-icon-btn {
+  flex-shrink: 1;
+  min-width: 24px;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 2px 6px;
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.ide-editor-toolbar .ide-icon-btn:hover {
+  opacity: 1;
+}
+
+.ide-editor-toolbar .ide-icon-btn.active {
+  opacity: 1;
+}
+
+.ide-toolbar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .project-action-btn {
@@ -1431,6 +1564,9 @@ html, body, #mbeditor-root {
 [data-theme="vs"] .ide-titlebar { background: #f3f3f3; border-color: #cecece; color: #333; }
 [data-theme="vs"] .ide-titlebar-title { color: #333; }
 [data-theme="vs"] .ide-sidebar { background: #f3f3f3; border-color: #cecece; }
+[data-theme="vs"] .sidebar-strip-btn { color: #616161; }
+[data-theme="vs"] .sidebar-strip-btn:hover { background: #e8e8e8; color: #333; }
+[data-theme="vs"] .sidebar-strip-btn.active { color: #0070c1; border-left-color: #0070c1; }
 [data-theme="vs"] .sidebar-divider { background: #e0e0e0; border-color: #cecece; }
 [data-theme="vs"] .sidebar-divider:hover,
 [data-theme="vs"] .sidebar-divider.active { background: #c0c0c0; }

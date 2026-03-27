@@ -11,12 +11,14 @@ var useState = _React.useState;
 var useEffect = _React.useEffect;
 var useRef = _React.useRef;
 
-var SIDEBAR_MIN_WIDTH = 240;
+var SIDEBAR_MIN_WIDTH = 280;
 var SIDEBAR_MAX_WIDTH = 560;
 var EDITOR_MIN_WIDTH = 320;
 var GIT_PANEL_MIN_WIDTH = 280;
 var PANE_MIN_WIDTH_PERCENT = 20;
 var PANE_MAX_WIDTH_PERCENT = 80;
+var SIDEBAR_COLLAPSED_WIDTH = 48;
+var SUPPORTED_PRETTIER_EXTS = ['js', 'jsx', 'json', 'css', 'scss', 'html', 'md'];
 
 var DEFAULT_EDITOR_PREFS = {
   theme: 'vs-dark',
@@ -149,6 +151,11 @@ var MbeditorApp = function MbeditorApp() {
 
   var activeSidebarTab = _useState82[0];
   var setActiveSidebarTab = _useState82[1];
+
+  var _useStateSC = useState(false);
+  var _useStateSC2 = _slicedToArray(_useStateSC, 2);
+  var sidebarCollapsed = _useStateSC2[0];
+  var setSidebarCollapsed = _useStateSC2[1];
 
   var _useState9 = useState({});
 
@@ -457,7 +464,7 @@ var MbeditorApp = function MbeditorApp() {
         plugins: Object.values(window.prettierPlugins),
         tabWidth: 4,
         useTabs: false
-      }).then(function () {}).then(function () {
+      }).then(function () {
         var currentPane = EditorStore.getState().panes.find(function (p) {
           return p.id === paneId;
         });
@@ -544,6 +551,9 @@ var MbeditorApp = function MbeditorApp() {
       }
       if (savedState && savedState.activeSidebarTab) {
         setActiveSidebarTab(savedState.activeSidebarTab);
+      }
+      if (savedState && savedState.sidebarCollapsed) {
+        setSidebarCollapsed(true);
       }
       if (panesToLoad && panesToLoad.length > 0) {
         var allTabs = panesToLoad.flatMap(function (p) {
@@ -891,12 +901,12 @@ var MbeditorApp = function MbeditorApp() {
           })
         };
       });
-      FileService.saveState({ panes: lightweightPanes, focusedPaneId: st.focusedPaneId, collapsedSections: collapsedSections, expandedDirs: expandedDirs, showGitPanel: showGitPanel, gitPanelWidth: gitPanelWidth, editorPrefs: editorPrefs, activeSidebarTab: activeSidebarTab });
+      FileService.saveState({ panes: lightweightPanes, focusedPaneId: st.focusedPaneId, collapsedSections: collapsedSections, expandedDirs: expandedDirs, showGitPanel: showGitPanel, gitPanelWidth: gitPanelWidth, editorPrefs: editorPrefs, activeSidebarTab: activeSidebarTab, sidebarCollapsed: sidebarCollapsed });
     }, 1000);
     return function () {
       return clearTimeout(timeoutId);
     };
-  }, [state.panes, state.focusedPaneId, collapsedSections, expandedDirs, showGitPanel, gitPanelWidth, editorPrefs, activeSidebarTab]);
+  }, [state.panes, state.focusedPaneId, collapsedSections, expandedDirs, showGitPanel, gitPanelWidth, editorPrefs, activeSidebarTab, sidebarCollapsed]);
 
   useEffect(function() {
     document.documentElement.setAttribute('data-theme', editorPrefs.theme || 'vs-dark');
@@ -1135,12 +1145,23 @@ var MbeditorApp = function MbeditorApp() {
         return _extends({}, prev, { format: true });
       });
       EditorStore.setStatus("Formatting with Prettier...", "info");
-      window.prettier.format(activeTab.content, {
-        parser: parserName,
-        plugins: Object.values(window.prettierPlugins),
-        tabWidth: 4,
-        useTabs: false
-      }).then(function (formatted) {
+      var formattedResult;
+      try {
+        formattedResult = window.prettier.format(activeTab.content, {
+          parser: parserName,
+          plugins: Object.values(window.prettierPlugins),
+          tabWidth: 4,
+          useTabs: false
+        });
+      } catch (err) {
+        EditorStore.setStatus("Prettier Formatter failed: " + err.message, "error");
+        setLoading(function (prev) {
+          return _extends({}, prev, { format: false });
+        });
+        return;
+      }
+
+      Promise.resolve(formattedResult).then(function (formatted) {
         var newPanes = EditorStore.getState().panes.map(function (p) {
           if (p.id === focusedPane.id) return _extends({}, p, { tabs: p.tabs.map(function (t) {
               return t.id === activeTab.id ? _extends({}, t, { content: formatted, dirty: true }) : t;
@@ -1316,11 +1337,21 @@ var MbeditorApp = function MbeditorApp() {
   };
 
   var startSidebarResize = function startSidebarResize(e) {
+    if (sidebarCollapsed) return;
     e.preventDefault();
     resizeSessionRef.current = { mode: 'sidebar' };
     setActiveResizeMode('sidebar');
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
+  };
+
+  var toggleSidebarCollapsed = function toggleSidebarCollapsed() {
+    setSidebarCollapsed(function (prev) { return !prev; });
+  };
+
+  var expandSidebarTo = function expandSidebarTo(tab) {
+    setActiveSidebarTab(tab);
+    setSidebarCollapsed(false);
   };
 
   var openFileFromGitPanel = function openFileFromGitPanel(path, name) {
@@ -1611,8 +1642,7 @@ var MbeditorApp = function MbeditorApp() {
   var selectedTreePath = selectedTreeNode ? selectedTreeNode.path : null;
   var isRuby = activeTab && isRubyPath(activeTab.path);
   var isHaml = activeTab && activeTab.path.endsWith('.haml');
-  var supportedPrettierExts = ['js', 'jsx', 'json', 'css', 'scss', 'html', 'md'];
-  var isPrettierable = activeTab && supportedPrettierExts.includes(activeTab.path.split('.').pop().toLowerCase());
+  var isPrettierable = activeTab && SUPPORTED_PRETTIER_EXTS.includes(activeTab.path.split('.').pop().toLowerCase());
   var canLintAndFormat = activeTab && (isPrettierable || isRuby && rubocopAvailable || isHaml && hamlLintAvailable);
   var hasGitBranch = !!(state.gitBranch && state.gitBranch.trim());
 
@@ -1753,31 +1783,68 @@ var MbeditorApp = function MbeditorApp() {
       { className: "ide-body", id: "ide-body-container" },
       React.createElement(
         "div",
-        { className: "ide-sidebar", style: { width: sidebarWidth + "px" } },
-        React.createElement(
-          "div",
-          { className: "ide-sidebar-tabs" },
-          React.createElement(
-            "button",
-            { type: "button", className: "ide-sidebar-tab " + (activeSidebarTab === 'explorer' ? 'active' : ''), onClick: function () {
-                return setActiveSidebarTab('explorer');
-              } },
-            "EXPLORER"
-          ),
-          React.createElement(
-            "button",
-            { type: "button", className: "ide-sidebar-tab " + (activeSidebarTab === 'search' ? 'active' : ''), onClick: function () {
-                return setActiveSidebarTab('search');
-              } },
-            "SEARCH"
-          ),
-          React.createElement(
-            "button",
-            { type: "button", className: "ide-sidebar-tab ide-sidebar-tab-icon", title: "Editor Preferences", onClick: openSettingsTab },
-            React.createElement("i", { className: "fas fa-cog" })
-          )
-        ),
-        activeSidebarTab === 'explorer' && React.createElement(
+        { className: "ide-sidebar" + (sidebarCollapsed ? " ide-sidebar-collapsed" : ""), style: { width: (sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth) + "px" } },
+        sidebarCollapsed
+          ? React.createElement(
+              "div",
+              { className: "sidebar-icon-strip" },
+              React.createElement(
+                "div",
+                { className: "sidebar-strip-top" },
+                React.createElement(
+                  "button",
+                  { type: "button", className: "sidebar-strip-btn " + (activeSidebarTab === 'explorer' ? 'active' : ''), title: "Explorer", onClick: function () { return expandSidebarTo('explorer'); } },
+                  React.createElement("i", { className: "far fa-folder" })
+                ),
+                React.createElement(
+                  "button",
+                  { type: "button", className: "sidebar-strip-btn " + (activeSidebarTab === 'search' ? 'active' : ''), title: "Search", onClick: function () { return expandSidebarTo('search'); } },
+                  React.createElement("i", { className: "fas fa-search" })
+                )
+              ),
+              React.createElement(
+                "div",
+                { className: "sidebar-strip-bottom" },
+                React.createElement(
+                  "button",
+                  { type: "button", className: "sidebar-strip-btn", title: "Editor Preferences", onClick: openSettingsTab },
+                  React.createElement("i", { className: "fas fa-cog" })
+                ),
+                React.createElement(
+                  "button",
+                  { type: "button", className: "sidebar-strip-btn", title: "Expand sidebar", onClick: toggleSidebarCollapsed },
+                  React.createElement("i", { className: "fas fa-chevron-right" })
+                )
+              )
+            )
+          : React.createElement(
+              React.Fragment,
+              null,
+              React.createElement(
+                "div",
+                { className: "ide-sidebar-tabs" },
+                React.createElement(
+                  "button",
+                  { type: "button", className: "ide-sidebar-tab " + (activeSidebarTab === 'explorer' ? 'active' : ''), onClick: function () { return setActiveSidebarTab('explorer'); } },
+                  "EXPLORER"
+                ),
+                React.createElement(
+                  "button",
+                  { type: "button", className: "ide-sidebar-tab " + (activeSidebarTab === 'search' ? 'active' : ''), onClick: function () { return setActiveSidebarTab('search'); } },
+                  "SEARCH"
+                ),
+                React.createElement(
+                  "button",
+                  { type: "button", className: "ide-sidebar-tab ide-sidebar-tab-icon", title: "Editor Preferences", onClick: openSettingsTab },
+                  React.createElement("i", { className: "fas fa-cog" })
+                ),
+                React.createElement(
+                  "button",
+                  { type: "button", className: "sidebar-strip-btn", title: "Collapse sidebar", onClick: toggleSidebarCollapsed },
+                  React.createElement("i", { className: "fas fa-chevron-left" })
+                )
+              ),
+              activeSidebarTab === 'explorer' && React.createElement(
           "div",
           { className: "ide-sidebar-content" },
           state.panes.flatMap(function (p) {
@@ -2042,7 +2109,8 @@ var MbeditorApp = function MbeditorApp() {
             })
           )
         )
-      ),
+      )
+    ),
       React.createElement("div", {
         className: "panel-divider sidebar-divider " + (activeResizeMode === 'sidebar' ? 'active' : ''),
         onMouseDown: startSidebarResize,
@@ -2298,6 +2366,7 @@ var MbeditorApp = function MbeditorApp() {
                   markers: markers[pActiveTab.id] || [],
                   gitAvailable: gitAvailable,
                   testAvailable: testAvailable,
+                  treeData: treeData,
                   testResult: testResult,
                   testPanelFile: testPanelFile,
                   testLoading: testLoading,

@@ -312,6 +312,22 @@ module Mbeditor
       branch_log_output, _err, branch_log_status = Open3.capture3("git", "-C", repo, "log", "--first-parent", branch, "-n", "100", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
       branch_commits = branch_log_status.success? ? parse_git_log(branch_log_output) : []
 
+      redmine_ticket_id = nil
+      if Mbeditor.configuration.redmine_enabled
+        if Mbeditor.configuration.redmine_ticket_source == :branch
+          m = branch.match(/\A(\d+)/)
+          redmine_ticket_id = m[1] if m
+        else
+          branch_commits.each do |commit|
+            m = commit[:title]&.match(/#(\d+)/)
+            if m
+              redmine_ticket_id = m[1]
+              break
+            end
+          end
+        end
+      end
+
       render json: {
         ok: true,
         branch: branch,
@@ -321,7 +337,8 @@ module Mbeditor
         workingTree: working_tree,
         unpushedFiles: unpushed_files,
         unpushedCommits: unpushed_commits,
-        branchCommits: branch_commits
+        branchCommits: branch_commits,
+        redmineTicketId: redmine_ticket_id
       }
     rescue StandardError => e
       render json: { ok: false, error: e.message }, status: :unprocessable_entity
