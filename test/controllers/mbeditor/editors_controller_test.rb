@@ -250,7 +250,7 @@ module Mbeditor
 
     test "create_file returns 422 if file already exists" do
       post "/mbeditor/create_file", params: { path: "README.md", code: "" }, as: :json
-      assert_response :unprocessable_entity
+      assert_response :unprocessable_content
       assert_match(/already exists/i, json["error"])
     end
 
@@ -284,7 +284,7 @@ module Mbeditor
 
     test "create_dir returns 422 if path already exists" do
       post "/mbeditor/create_dir", params: { path: "app" }, as: :json
-      assert_response :unprocessable_entity
+      assert_response :unprocessable_content
       assert_match(/already exists/i, json["error"])
     end
 
@@ -313,7 +313,7 @@ module Mbeditor
     test "rename returns 422 when target already exists" do
       File.write(File.join(@workspace, "target.rb"), "")
       patch "/mbeditor/rename", params: { path: "README.md", new_path: "target.rb" }, as: :json
-      assert_response :unprocessable_entity
+      assert_response :unprocessable_content
     end
 
     test "rename returns 403 for path traversal on source" do
@@ -402,7 +402,7 @@ module Mbeditor
       File.write(state_path, "this is not valid json {{{{")
 
       get "/mbeditor/state"
-      assert_response :unprocessable_entity
+      assert_response :unprocessable_content
       assert json.key?("error")
     end
 
@@ -473,7 +473,7 @@ module Mbeditor
     test "git_info returns error JSON in a non-git workspace" do
       get "/mbeditor/git_info"
       # temp workspace is not a git repo — controller returns 422
-      assert_response :unprocessable_entity
+      assert_response :unprocessable_content
       assert json.key?("error")
     end
 
@@ -526,7 +526,7 @@ module Mbeditor
            params: { path: 'app/models/user.rb', code: 'class User; end' },
            as: :json
 
-      assert_response :unprocessable_entity
+      assert_response :unprocessable_content
       assert_match(/timed out/i, json['error'])
     ensure
       $VERBOSE = nil
@@ -578,7 +578,7 @@ module Mbeditor
       post "/mbeditor/lint",
            params: { path: "app/views/index.haml", code: "%p Hello\n" },
            as: :json
-      assert_response :unprocessable_entity
+      assert_response :unprocessable_content
       assert json.key?("error")
     end
 
@@ -617,7 +617,7 @@ module Mbeditor
       post "/mbeditor/quick_fix",
            params: { path: "app/models/user.rb", code: "x=1\n" },
            as: :json
-      assert_response :unprocessable_entity
+      assert_response :unprocessable_content
       assert json.key?("error")
     end
 
@@ -625,7 +625,7 @@ module Mbeditor
       post "/mbeditor/quick_fix",
            params: { path: "app/models/user.rb", code: "x=1\n", cop_name: "../../etc/passwd" },
            as: :json
-      assert_response :unprocessable_entity
+      assert_response :unprocessable_content
       assert_match(/invalid cop name/i, json["error"])
     end
 

@@ -127,7 +127,7 @@ module Mbeditor
 
     test "blame returns error for a non-existent file" do
       get "/mbeditor/git/blame", params: { file: "this_file_does_not_exist_at_all.rb" }
-      assert_response :unprocessable_entity
+      assert_response :unprocessable_content
       assert json.key?("error")
     end
 
@@ -287,7 +287,7 @@ module Mbeditor
       end
 
       get "/mbeditor/redmine/issue/1"
-      assert_response :unprocessable_entity
+      assert_response :unprocessable_content
       assert json.key?("error")
     end
 
@@ -299,7 +299,7 @@ module Mbeditor
       end
 
       get "/mbeditor/redmine/issue/1"
-      assert_response :unprocessable_entity
+      assert_response :unprocessable_content
       assert json.key?("error")
     end
 

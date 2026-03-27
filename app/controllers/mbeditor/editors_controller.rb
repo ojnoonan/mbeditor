@@ -59,7 +59,7 @@ module Mbeditor
     rescue Errno::ENOENT
       render json: {}
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # POST /mbeditor/state — save workspace state
@@ -68,7 +68,7 @@ module Mbeditor
       File.write(path, params[:state].to_json)
       render json: { ok: true }
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # GET /mbeditor/file?path=...
@@ -93,7 +93,7 @@ module Mbeditor
       content = File.read(path, encoding: "UTF-8", invalid: :replace, undef: :replace)
       render json: { path: relative_path(path), content: content }
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # GET /mbeditor/raw?path=... — send raw file directly (for images)
@@ -120,7 +120,7 @@ module Mbeditor
       File.write(path, content)
       render json: { ok: true, path: relative_path(path) }
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # POST /mbeditor/create_file — create file and parent directories if needed
@@ -128,7 +128,7 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
       return render json: { error: "Cannot create file in this path" }, status: :forbidden if path_blocked_for_operations?(path)
-      return render json: { error: "File already exists" }, status: :unprocessable_entity if File.exist?(path)
+      return render json: { error: "File already exists" }, status: :unprocessable_content if File.exist?(path)
 
       content = params[:code].to_s
       return render_file_too_large(content.bytesize) if content.bytesize > MAX_OPEN_FILE_SIZE_BYTES
@@ -138,7 +138,7 @@ module Mbeditor
 
       render json: { ok: true, type: "file", path: relative_path(path), name: File.basename(path) }
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # POST /mbeditor/create_dir — create directory recursively
@@ -146,12 +146,12 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
       return render json: { error: "Cannot create directory in this path" }, status: :forbidden if path_blocked_for_operations?(path)
-      return render json: { error: "Path already exists" }, status: :unprocessable_entity if File.exist?(path)
+      return render json: { error: "Path already exists" }, status: :unprocessable_content if File.exist?(path)
 
       FileUtils.mkdir_p(path)
       render json: { ok: true, type: "folder", path: relative_path(path), name: File.basename(path) }
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # PATCH /mbeditor/rename — rename file or directory
@@ -160,7 +160,7 @@ module Mbeditor
       new_path = resolve_path(params[:new_path])
       return render json: { error: "Forbidden" }, status: :forbidden unless old_path && new_path
       return render json: { error: "Path not found" }, status: :not_found unless File.exist?(old_path)
-      return render json: { error: "Target path already exists" }, status: :unprocessable_entity if File.exist?(new_path)
+      return render json: { error: "Target path already exists" }, status: :unprocessable_content if File.exist?(new_path)
       return render json: { error: "Cannot rename this path" }, status: :forbidden if path_blocked_for_operations?(old_path) || path_blocked_for_operations?(new_path)
 
       FileUtils.mkdir_p(File.dirname(new_path))
@@ -173,7 +173,7 @@ module Mbeditor
         name: File.basename(new_path)
       }
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # DELETE /mbeditor/delete — remove file or directory
@@ -191,7 +191,7 @@ module Mbeditor
         render json: { ok: true, type: "file", path: relative_path(path) }
       end
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # GET /mbeditor/search?q=...
@@ -250,7 +250,7 @@ module Mbeditor
       capped = results.length > 30
       render json: { results: results.first(30), capped: capped }
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # GET /mbeditor/git_status
@@ -262,7 +262,7 @@ module Mbeditor
       end
       render json: { ok: status.success?, files: files, branch: branch }
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # GET /mbeditor/git_info
@@ -270,7 +270,7 @@ module Mbeditor
       repo = workspace_root.to_s
       branch = GitService.current_branch(repo)
       unless branch
-        return render json: { ok: false, error: "Unable to determine current branch" }, status: :unprocessable_entity
+        return render json: { ok: false, error: "Unable to determine current branch" }, status: :unprocessable_content
       end
       working_output, _err, working_status = Open3.capture3("git", "-C", repo, "status", "--porcelain")
       working_tree = working_status.success? ? parse_porcelain_status(working_output) : []
@@ -341,7 +341,7 @@ module Mbeditor
         redmineTicketId: redmine_ticket_id
       }
     rescue StandardError => e
-      render json: { ok: false, error: e.message }, status: :unprocessable_entity
+      render json: { ok: false, error: e.message }, status: :unprocessable_content
     end
 
     # GET /mbeditor/monaco-editor/*asset_path — serve packaged Monaco files
@@ -372,7 +372,7 @@ module Mbeditor
 
       if filename.end_with?('.haml')
         unless haml_lint_available?
-          return render json: { error: "haml-lint not available", markers: [] }, status: :unprocessable_entity
+          return render json: { error: "haml-lint not available", markers: [] }, status: :unprocessable_content
         end
 
         markers = run_haml_lint(code)
@@ -403,7 +403,7 @@ module Mbeditor
 
       render json: { markers: markers, summary: result["summary"] }
     rescue StandardError => e
-      render json: { error: e.message, markers: [] }, status: :unprocessable_entity
+      render json: { error: e.message, markers: [] }, status: :unprocessable_content
     end
 
     # POST /mbeditor/quick_fix — autocorrect the buffer with rubocop -A and return the diff as a text edit
@@ -427,8 +427,8 @@ module Mbeditor
       return render json: { error: "Forbidden" }, status: :forbidden unless path
 
       cop_name = params[:cop_name].to_s.strip
-      return render json: { error: "cop_name required" }, status: :unprocessable_entity if cop_name.empty?
-      return render json: { error: "Invalid cop name" }, status: :unprocessable_entity unless cop_name.match?(/\A[\w\/]+\z/)
+      return render json: { error: "cop_name required" }, status: :unprocessable_content if cop_name.empty?
+      return render json: { error: "Invalid cop name" }, status: :unprocessable_content unless cop_name.match?(/\A[\w\/]+\z/)
 
       code = params[:code].to_s
       ext  = File.extname(File.basename(path))
@@ -451,7 +451,7 @@ module Mbeditor
         render json: { fix: fix }
       end
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # POST /mbeditor/test — run tests for the given file
@@ -477,7 +477,7 @@ module Mbeditor
 
       render json: result.merge(testFile: test_file)
     rescue StandardError => e
-      render json: { error: e.message, ok: false }, status: :unprocessable_entity
+      render json: { error: e.message, ok: false }, status: :unprocessable_content
     end
 
     # POST /mbeditor/format — rubocop -A then return corrected content
@@ -492,7 +492,7 @@ module Mbeditor
       content = File.read(path, encoding: "UTF-8", invalid: :replace, undef: :replace)
       render json: { ok: status.success? || status.exitstatus == 1, content: content }
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     private

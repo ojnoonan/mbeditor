@@ -40,7 +40,7 @@ module Mbeditor
 
       render json: result
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # GET /mbeditor/git/blame?file=<path>
@@ -51,7 +51,7 @@ module Mbeditor
       lines = GitBlameService.new(repo_path: workspace_root, file_path: file).call
       render json: { lines: lines }
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # GET /mbeditor/git/file_history?file=<path>
@@ -62,7 +62,7 @@ module Mbeditor
       commits = GitFileHistoryService.new(repo_path: workspace_root, file_path: file).call
       render json: { commits: commits }
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # GET /mbeditor/git/commit_graph
@@ -70,7 +70,7 @@ module Mbeditor
       commits = GitCommitGraphService.new(repo_path: workspace_root).call
       render json: { commits: commits }
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # GET /mbeditor/git/commit_detail?sha=<hash>
@@ -120,7 +120,7 @@ module Mbeditor
 
       render json: { sha: sha, title: meta["title"] || "", author: meta["author"] || "", date: meta["date"] || "", files: files }
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # GET /mbeditor/git/combined_diff?scope=local|branch
@@ -166,9 +166,9 @@ module Mbeditor
     rescue RedmineDisabledError => e
       render json: { error: e.message }, status: :service_unavailable
     rescue RedmineConfigError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_entity
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     private
