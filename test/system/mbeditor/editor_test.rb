@@ -17,14 +17,16 @@ module Mbeditor
       File.write(File.join(@workspace, "component.jsx"), "<div")
       Mbeditor.configure do |c|
         c.allowed_environments = %i[test development]
-        c.workspace_root = @workspace
-        c.excluded_paths = %w[.git tmp log]
+        c.workspace_root       = @workspace
+        c.excluded_paths       = %w[.git tmp log]
+        c.authenticate_with    = nil
       end
     end
 
     def teardown
       Capybara.reset_sessions!
       FileUtils.rm_rf(@workspace)
+      Mbeditor.configure { |c| c.authenticate_with = nil }
     end
 
     test "page loads and React mounts" do
