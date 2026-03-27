@@ -17,3 +17,4 @@
 
 - [ ] Markdown preview — `dangerouslySetInnerHTML` with `marked.parse()` blocks raw HTML via custom renderer but does not block `javascript:` scheme in links/images (`EditorPanel.js` line 468); low practical risk since only local files are rendered, but worth hardening
 - [ ] `Configuration` — validate `workspace_root` is not nil/blank at startup with a clear `ArgumentError` rather than crashing on first file access
+- [ ] `TestRunnerService` — no test file exists; at minimum cover `detect_framework`, `test_file?`, and `test_file_candidates` which are pure/side-effect-free

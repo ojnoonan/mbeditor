@@ -39,6 +39,7 @@ cd test/dummy && rails server
 - **`git_file_history_service.rb`** — Per-file commit history via `git log --follow`
 - **`git_commit_graph_service.rb`** — Full commit graph (max 150 commits) with `isLocal` flag
 - **`redmine_service.rb`** — Fetches a Redmine issue via the REST API (optional integration)
+- **`test_runner_service.rb`** — Runs a Ruby test file (Minitest or RSpec) inside the workspace with a configurable timeout; returns structured pass/fail results and a raw output string for the editor UI
 
 **Path security:** `resolve_path()` in `EditorsController` validates all file paths stay within `workspace_root`. For existing paths it calls `File.realpath` on both the path and the root to resolve symlinks, preventing symlink escape. New paths (create, save) use `File.expand_path` only. File size capped at 5 MB on read. Environment gating via `ensure_allowed_environment!`. All non-GET/HEAD requests require the `X-Mbeditor-Client: 1` header (`verify_mbeditor_client`).
 
