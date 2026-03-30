@@ -13,7 +13,7 @@ Gem::Specification.new do |spec|
 
   spec.files = Dir.chdir(File.expand_path(__dir__)) do
     Dir["app/**/*", "config/**/*", "lib/**/*", "public/**/*",
-        "vendor/assets/**/*", "README.md", "mbeditor.gemspec"]
+        "vendor/assets/**/*", "README.md", "CHANGELOG.md", "mbeditor.gemspec"]
   end
 
   spec.require_paths = ["lib"]
@@ -21,7 +21,8 @@ Gem::Specification.new do |spec|
   spec.metadata = {
     "homepage_uri" => "https://github.com/ojnoonan/mbeditor",
     "source_code_uri" => "https://github.com/ojnoonan/mbeditor",
-    "bug_tracker_uri" => "https://github.com/ojnoonan/mbeditor/issues"
+    "bug_tracker_uri" => "https://github.com/ojnoonan/mbeditor/issues",
+    "changelog_uri" => "https://github.com/ojnoonan/mbeditor/blob/main/CHANGELOG.md"
   }
 
   spec.add_dependency "rails", ">= 7.1", "< 9.0"
