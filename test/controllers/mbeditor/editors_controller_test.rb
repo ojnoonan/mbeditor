@@ -619,10 +619,17 @@ module Mbeditor
       unformatted = "x=1\n"
       File.write(File.join(@workspace, "app", "models", "user.rb"), unformatted)
 
-      post "/mbeditor/format", params: { path: "app/models/user.rb" }, as: :json
+      post "/mbeditor/format", params: { path: "app/models/user.rb", code: unformatted }, as: :json
       assert_response :ok
       assert json.key?("content"), "response should have content key"
       assert_kind_of String, json["content"]
+      # Verify the original file on disk is NOT modified (format is buffer-only)
+      assert_equal unformatted, File.read(File.join(@workspace, "app", "models", "user.rb"))
+    end
+
+    test "format_file returns 422 when code param is missing" do
+      post "/mbeditor/format", params: { path: "app/models/user.rb" }, as: :json
+      assert_response :unprocessable_content
     end
 
     # ---------------------------------------------------------------------------

@@ -289,6 +289,10 @@ module Mbeditor
       unpushed_files = []
       unpushed_commits = []
 
+      # Determine the branch's fork point relative to a base branch (develop/main/master).
+      # This ensures History and Changes only show work unique to this branch.
+      base_sha, base_ref = find_branch_base(repo, branch)
+
       if upstream_branch.present?
         counts_output, _err, counts_status = Open3.capture3("git", "-C", repo, "rev-list", "--left-right", "--count", "HEAD...#{upstream_branch}")
         if counts_status.success?
@@ -297,19 +301,30 @@ module Mbeditor
           behind_count = behind_str.to_i
         end
 
-        unpushed_output, _err, unpushed_status = Open3.capture3("git", "-C", repo, "diff", "--name-status", "#{upstream_branch}..HEAD")
-        if unpushed_status.success?
-          unpushed_files   = parse_name_status(unpushed_output)
-          unp_numstat_out, = Open3.capture3("git", "-C", repo, "diff", "--numstat", "#{upstream_branch}..HEAD")
-          unp_numstat_map  = parse_numstat(unp_numstat_out)
-          unpushed_files   = unpushed_files.map { |f| f.merge(unp_numstat_map.fetch(f[:path], {})) }
-        end
-
         unpushed_log_output, _err, unpushed_log_status = Open3.capture3("git", "-C", repo, "log", "#{upstream_branch}..HEAD", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
         unpushed_commits = parse_git_log(unpushed_log_output) if unpushed_log_status.success?
       end
 
-      branch_log_output, _err, branch_log_status = Open3.capture3("git", "-C", repo, "log", "--first-parent", branch, "-n", "100", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
+      # "Changes in Branch" — use the merge-base against the base branch when available
+      # so that files changed in develop (and merged into this branch) are excluded.
+      diff_base = base_sha || upstream_branch
+      if diff_base.present?
+        unpushed_output, _err, unpushed_status = Open3.capture3("git", "-C", repo, "diff", "--name-status", "#{diff_base}..HEAD")
+        if unpushed_status.success?
+          unpushed_files   = parse_name_status(unpushed_output)
+          unp_numstat_out, = Open3.capture3("git", "-C", repo, "diff", "--numstat", "#{diff_base}..HEAD")
+          unp_numstat_map  = parse_numstat(unp_numstat_out)
+          unpushed_files   = unpushed_files.map { |f| f.merge(unp_numstat_map.fetch(f[:path], {})) }
+        end
+      end
+
+      branch_log_output, _err, branch_log_status = if base_sha
+        Open3.capture3("git", "-C", repo, "log", "--first-parent", "#{base_sha}..HEAD",
+                       "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
+      else
+        Open3.capture3("git", "-C", repo, "log", "--first-parent", branch, "-n", "100",
+                       "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
+      end
       branch_commits = branch_log_status.success? ? parse_git_log(branch_log_output) : []
 
       redmine_ticket_id = nil
@@ -338,6 +353,7 @@ module Mbeditor
         unpushedFiles: unpushed_files,
         unpushedCommits: unpushed_commits,
         branchCommits: branch_commits,
+        branchBaseRef: base_ref,
         redmineTicketId: redmine_ticket_id
       }
     rescue StandardError => e
@@ -357,6 +373,17 @@ module Mbeditor
     # GET /mbeditor/monaco_worker.js — serve packaged Monaco worker entrypoint
     def monaco_worker
       path = monaco_worker_file.to_s
+      return render plain: "Not found", status: :not_found unless File.file?(path)
+
+      send_file path, disposition: "inline", type: "application/javascript"
+    end
+
+    # GET /mbeditor/ts_worker.js — serve TypeScript/JavaScript Monaco worker
+    def ts_worker
+      path = [
+        Mbeditor::Engine.root.join("public", "ts_worker.js"),
+        Rails.root.join("public", "ts_worker.js")
+      ].find { |p| p.file? }.to_s
       return render plain: "Not found", status: :not_found unless File.file?(path)
 
       send_file path, disposition: "inline", type: "application/javascript"
@@ -433,11 +460,13 @@ module Mbeditor
       code = params[:code].to_s
       ext  = File.extname(File.basename(path))
 
-      Tempfile.create(["mbeditor_fix", ext]) do |tmp|
-        tmp.write(code)
-        tmp.flush
+      # Use a workspace-local tempfile so RuboCop's config discovery walks up
+      # from the source file's directory and finds the host app's .rubocop.yml.
+      tmpfile = File.join(File.dirname(path), ".mbeditor_fix_#{SecureRandom.hex(8)}#{ext}")
+      begin
+        File.write(tmpfile, code)
 
-        cmd = rubocop_command + ["--no-server", "--cache", "false", "-A", "--no-color", tmp.path]
+        cmd = rubocop_command + ["--no-server", "--cache", "false", "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
         _out, _err, status = Open3.capture3(env, *cmd)
 
@@ -446,9 +475,11 @@ module Mbeditor
           return render json: { fix: nil }
         end
 
-        corrected = File.read(tmp.path, encoding: "UTF-8", invalid: :replace, undef: :replace)
+        corrected = File.read(tmpfile, encoding: "UTF-8", invalid: :replace, undef: :replace)
         fix = compute_text_edit(code, corrected)
         render json: { fix: fix }
+      ensure
+        File.delete(tmpfile) if tmpfile && File.exist?(tmpfile)
       end
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -480,17 +511,36 @@ module Mbeditor
       render json: { error: e.message, ok: false }, status: :unprocessable_content
     end
 
-    # POST /mbeditor/format — rubocop -A then return corrected content
+    # POST /mbeditor/format — rubocop -A on buffer content; returns corrected content WITHOUT saving to disk
+    #
+    # Accepts the current buffer content as `code` and formats it using a
+    # workspace-local tempfile so that RuboCop's config discovery walks up from
+    # the source file's own directory (finds the host app's .rubocop.yml).
+    # Does NOT write the result back to the original file — the frontend marks
+    # the tab dirty and lets the user decide when to save.
     def format_file
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
 
-      cmd = rubocop_command + ["--no-server", "--cache", "false", "-A", "--no-color", path]
-      env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
-      _out, _err, status = Open3.capture3(env, *cmd)
+      code = params[:code].to_s
+      return render json: { error: "code required" }, status: :unprocessable_content if code.empty?
 
-      content = File.read(path, encoding: "UTF-8", invalid: :replace, undef: :replace)
-      render json: { ok: status.success? || status.exitstatus == 1, content: content }
+      ext     = File.extname(File.basename(path))
+      tmpfile = File.join(File.dirname(path), ".mbeditor_fmt_#{SecureRandom.hex(8)}#{ext}")
+      begin
+        File.write(tmpfile, code)
+        cmd = rubocop_command + ["--no-server", "--cache", "false", "-A", "--no-color", tmpfile]
+        env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
+        _out, _err, status = Open3.capture3(env, *cmd)
+        unless status.success? || status.exitstatus == 1
+          return render json: { ok: false, content: code }
+        end
+
+        corrected = File.read(tmpfile, encoding: "UTF-8", invalid: :replace, undef: :replace)
+        render json: { ok: true, content: corrected }
+      ensure
+        File.delete(tmpfile) if tmpfile && File.exist?(tmpfile)
+      end
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -715,7 +765,7 @@ module Mbeditor
         markers = offenses.map do |offense|
           {
             severity: haml_lint_severity(offense["severity"]),
-            message: "[#{offense['linter_name']}] #{offense['text']}",
+            message: "[#{offense['linter_name']}] #{offense['message']}",
             startLine: offense.dig("location", "line"),
             startCol: (offense.dig("location", "column") || 1) - 1,
             endLine: offense.dig("location", "line"),
@@ -781,6 +831,38 @@ module Mbeditor
       return engine_path if engine_path.file?
 
       Rails.root.join("public", "monaco_worker.js")
+    end
+
+    # Returns [merge_base_sha, ref_name] of the first candidate base branch found,
+    # or [nil, nil] if none can be determined. Candidates are tried in preference order:
+    # origin/develop → origin/main → origin/master → develop → main → master.
+    # Skips refs that ARE the current branch and refs where the merge-base equals HEAD
+    # (meaning the current branch is behind or at the same point as that ref).
+    def find_branch_base(repo, current_branch)
+      candidates = %w[origin/develop origin/main origin/master develop main master]
+      head_sha_out, = Open3.capture3("git", "-C", repo, "rev-parse", "HEAD")
+      head_sha = head_sha_out.strip
+
+      candidates.each do |ref|
+        short = ref.delete_prefix("origin/")
+        next if short == current_branch || ref == current_branch
+
+        _o, _e, st = Open3.capture3("git", "-C", repo, "rev-parse", "--verify", "--quiet", ref)
+        next unless st.success?
+
+        base_out, _e, base_st = Open3.capture3("git", "-C", repo, "merge-base", "HEAD", ref)
+        next unless base_st.success?
+
+        sha = base_out.strip
+        next unless sha.match?(/\A[0-9a-f]{40}\z/)
+        next if sha == head_sha # branch is at/behind this ref — no unique commits
+
+        return [sha, ref]
+      end
+
+      [nil, nil]
+    rescue StandardError
+      [nil, nil]
     end
 
     def resolve_monaco_asset_path(asset_path)

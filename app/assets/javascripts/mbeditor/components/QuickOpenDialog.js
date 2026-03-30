@@ -1,38 +1,71 @@
 "use strict";
 
-var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; })();
-
 var _React = React;
 var useState = _React.useState;
 var useEffect = _React.useEffect;
 var useRef = _React.useRef;
 
+// ── localStorage helpers ───────────────────────────────────────────────────
+
+var RECENT_KEY = 'mbeditor_recent_searches';
+var FAVS_KEY   = 'mbeditor_favourites';
+
+function loadRecentSearches() {
+  try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; } catch (e) { return []; }
+}
+function saveRecentSearches(list) {
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch (e) {}
+}
+function loadFavourites() {
+  try { return JSON.parse(localStorage.getItem(FAVS_KEY)) || []; } catch (e) { return []; }
+}
+function saveFavourites(list) {
+  try { localStorage.setItem(FAVS_KEY, JSON.stringify(list)); } catch (e) {}
+}
+
+// ── Component ──────────────────────────────────────────────────────────────
+
 var QuickOpenDialog = function QuickOpenDialog(_ref) {
   var onSelect = _ref.onSelect;
-  var onClose = _ref.onClose;
+  var onClose  = _ref.onClose;
 
-  var _useState = useState("");
-
-  var _useState2 = _slicedToArray(_useState, 2);
-
-  var query = _useState2[0];
-  var setQuery = _useState2[1];
-
-  var _useState3 = useState([]);
-
-  var _useState32 = _slicedToArray(_useState3, 2);
-
-  var results = _useState32[0];
-  var setResults = _useState32[1];
-
-  var _useState4 = useState(0);
-
-  var _useState42 = _slicedToArray(_useState4, 2);
-
-  var selectedIndex = _useState42[0];
-  var setSelectedIndex = _useState42[1];
+  var _q = useState('');               var query = _q[0];         var setQuery = _q[1];
+  var _r = useState([]);               var results = _r[0];       var setResults = _r[1];
+  var _i = useState(0);                var selectedIndex = _i[0]; var setSelectedIndex = _i[1];
+  var _rs = useState(loadRecentSearches); var recentSearches = _rs[0]; var setRecentSearches = _rs[1];
+  var _fv = useState(loadFavourites);  var favourites = _fv[0];   var setFavourites = _fv[1];
 
   var inputRef = useRef(null);
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  function addToRecent(q) {
+    if (!q || !q.trim()) return;
+    var next = [q].concat(recentSearches.filter(function (s) { return s !== q; })).slice(0, 5);
+    setRecentSearches(next);
+    saveRecentSearches(next);
+  }
+
+  function toggleFavourite(path, e) {
+    e && e.stopPropagation();
+    var next;
+    if (favourites.indexOf(path) >= 0) {
+      next = favourites.filter(function (p) { return p !== path; });
+    } else {
+      next = [path].concat(favourites);
+    }
+    setFavourites(next);
+    saveFavourites(next);
+  }
+
+  function isFavourite(path) {
+    return favourites.indexOf(path) >= 0;
+  }
+
+  function handleSelect(path, name) {
+    addToRecent(query);
+    onSelect(path, name);
+  }
 
   var clearQuery = function clearQuery() {
     setQuery('');
@@ -46,102 +79,191 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     return React.createElement('i', { className: iconClass + ' quick-open-result-icon', 'aria-hidden': 'true' });
   };
 
+  // ── Effects ──────────────────────────────────────────────────────────────
+
   useEffect(function () {
     if (inputRef.current) inputRef.current.focus();
   }, []);
 
   useEffect(function () {
+    if (!query) {
+      setResults([]);
+      setSelectedIndex(0);
+      return;
+    }
     var res = SearchService.searchFiles(query);
-    setResults(res.slice(0, 20)); // cap at 20
+    setResults(res.slice(0, 20));
     setSelectedIndex(0);
   }, [query]);
 
+  // ── Keyboard ─────────────────────────────────────────────────────────────
+
   var handleKeyDown = function handleKeyDown(e) {
-    if (e.key === "Escape") onClose();
-    if (e.key === "ArrowDown") setSelectedIndex(function (i) {
-      return Math.min(i + 1, results.length - 1);
-    });
-    if (e.key === "ArrowUp") setSelectedIndex(function (i) {
-      return Math.max(i - 1, 0);
-    });
-    if (e.key === "Enter" && results[selectedIndex]) {
-      var res = results[selectedIndex];
-      onSelect(res.path, res.name);
+    if (e.key === 'Escape') { onClose(); return; }
+    if (query) {
+      if (e.key === 'ArrowDown') { setSelectedIndex(function (i) { return Math.min(i + 1, results.length - 1); }); return; }
+      if (e.key === 'ArrowUp')   { setSelectedIndex(function (i) { return Math.max(i - 1, 0); }); return; }
+      if (e.key === 'Enter' && results[selectedIndex]) {
+        var res = results[selectedIndex];
+        handleSelect(res.path, res.name);
+      }
     }
   };
 
+  // ── Render helpers ────────────────────────────────────────────────────────
+
+  function renderStarBtn(path) {
+    var starred = isFavourite(path);
+    return React.createElement(
+      'button',
+      {
+        type: 'button',
+        className: 'quick-open-star-btn' + (starred ? ' starred' : ''),
+        title: starred ? 'Remove from favourites' : 'Add to favourites',
+        onClick: function (e) { toggleFavourite(path, e); }
+      },
+      React.createElement('i', { className: starred ? 'fas fa-star' : 'far fa-star' })
+    );
+  }
+
+  function renderFavouritesSection() {
+    if (favourites.length === 0) return null;
+    var rows = favourites.map(function (path) {
+      var parts = path.split('/');
+      var name = parts[parts.length - 1] || path;
+      return React.createElement(
+        'div',
+        {
+          key: 'fav-' + path,
+          className: 'quick-open-result',
+          onClick: function () { onSelect(path, name); }
+        },
+        getQuickOpenIcon(path, name),
+        React.createElement(
+          'div',
+          { className: 'quick-open-result-body' },
+          React.createElement('div', { className: 'quick-open-result-name' }, name),
+          React.createElement('div', { className: 'quick-open-result-path' }, path)
+        ),
+        renderStarBtn(path)
+      );
+    });
+    return React.createElement(
+      'div',
+      { className: 'quick-open-section' },
+      React.createElement('div', { className: 'quick-open-section-header' },
+        React.createElement('i', { className: 'fas fa-star', style: { marginRight: '6px', fontSize: '10px' } }),
+        'Favourites'
+      ),
+      rows
+    );
+  }
+
+  function renderRecentSection() {
+    if (recentSearches.length === 0) return null;
+    var rows = recentSearches.map(function (q) {
+      return React.createElement(
+        'div',
+        {
+          key: 'recent-' + q,
+          className: 'quick-open-result quick-open-recent-row',
+          onClick: function () { setQuery(q); if (inputRef.current) inputRef.current.focus(); }
+        },
+        React.createElement('i', { className: 'fas fa-history quick-open-result-icon', 'aria-hidden': 'true' }),
+        React.createElement(
+          'div',
+          { className: 'quick-open-result-body' },
+          React.createElement('div', { className: 'quick-open-result-name' }, q)
+        )
+      );
+    });
+    return React.createElement(
+      'div',
+      { className: 'quick-open-section' },
+      React.createElement('div', { className: 'quick-open-section-header' },
+        React.createElement('i', { className: 'fas fa-history', style: { marginRight: '6px', fontSize: '10px' } }),
+        'Recent Searches'
+      ),
+      rows
+    );
+  }
+
+  // ── Main render ───────────────────────────────────────────────────────────
+
   return React.createElement(
-    "div",
-    { className: "quick-open-overlay", onClick: onClose },
+    'div',
+    { className: 'quick-open-overlay', onClick: onClose },
     React.createElement(
-      "div",
-      { className: "quick-open-box", onClick: function (e) {
-          return e.stopPropagation();
-        } },
+      'div',
+      { className: 'quick-open-box', onClick: function (e) { e.stopPropagation(); } },
       React.createElement(
-        "div",
-        { className: "quick-open-input-wrap" },
-        React.createElement("input", {
+        'div',
+        { className: 'quick-open-input-wrap' },
+        React.createElement('input', {
           ref: inputRef,
-          type: "text",
-          className: "quick-open-input",
-          placeholder: "Search files by name (Ctrl+P)...",
+          type: 'text',
+          className: 'quick-open-input',
+          placeholder: 'Search files by name (Ctrl+P)...',
           value: query,
-          onChange: function (e) {
-            return setQuery(e.target.value);
-          },
+          onChange: function (e) { setQuery(e.target.value); },
           onKeyDown: handleKeyDown
         }),
         query && React.createElement(
-          "button",
+          'button',
           {
-            type: "button",
-            className: "quick-open-clear-btn",
+            type: 'button',
+            className: 'quick-open-clear-btn',
             onClick: clearQuery,
-            title: "Clear search",
-            "aria-label": "Clear search"
+            title: 'Clear search',
+            'aria-label': 'Clear search'
           },
-          React.createElement("i", { className: "fas fa-times" })
+          React.createElement('i', { className: 'fas fa-times' })
         )
       ),
       React.createElement(
-        "div",
-        { className: "quick-open-results" },
-        results.map(function (res, i) {
-          return React.createElement(
-            "div",
-            {
-              key: res.id,
-              className: "quick-open-result " + (i === selectedIndex ? "selected" : ""),
-              onClick: function () {
-                return onSelect(res.path, res.name);
-              },
-              onMouseEnter: function () {
-                return setSelectedIndex(i);
-              }
-            },
-            getQuickOpenIcon(res.path, res.name),
-            React.createElement(
-              "div",
-              { className: "quick-open-result-body" },
-              React.createElement(
-                "div",
-                { className: "quick-open-result-name" },
-                res.name
-              ),
-              React.createElement(
-                "div",
-                { className: "quick-open-result-path" },
-                res.path
+        'div',
+        { className: 'quick-open-results' },
+        !query
+          ? React.createElement(
+              React.Fragment,
+              null,
+              renderFavouritesSection(),
+              renderRecentSection(),
+              favourites.length === 0 && recentSearches.length === 0 && React.createElement(
+                'div',
+                { className: 'quick-open-empty-hint' },
+                React.createElement('i', { className: 'far fa-star', style: { marginRight: '6px' } }),
+                'Star files to add favourites. Recent searches will appear here too.'
               )
             )
-          );
-        }),
-        query && results.length === 0 && React.createElement(
-          "div",
-          { style: { padding: "12px 16px", color: "#666", fontSize: "12px" } },
-          "No matching files."
-        )
+          : React.createElement(
+              React.Fragment,
+              null,
+              results.map(function (res, i) {
+                return React.createElement(
+                  'div',
+                  {
+                    key: res.id,
+                    className: 'quick-open-result ' + (i === selectedIndex ? 'selected' : ''),
+                    onClick: function () { handleSelect(res.path, res.name); },
+                    onMouseEnter: function () { setSelectedIndex(i); }
+                  },
+                  getQuickOpenIcon(res.path, res.name),
+                  React.createElement(
+                    'div',
+                    { className: 'quick-open-result-body' },
+                    React.createElement('div', { className: 'quick-open-result-name' }, res.name),
+                    React.createElement('div', { className: 'quick-open-result-path' }, res.path)
+                  ),
+                  renderStarBtn(res.path)
+                );
+              }),
+              results.length === 0 && React.createElement(
+                'div',
+                { style: { padding: '12px 16px', color: '#666', fontSize: '12px' } },
+                'No matching files.'
+              )
+            )
       )
     )
   );

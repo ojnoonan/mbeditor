@@ -395,6 +395,27 @@ var TabManager = (function () {
     _updateTab(paneId, path, { viewState: viewState });
   }
 
+  function reorderTabInPane(paneId, tabId, insertBeforeTabId) {
+    var state = EditorStore.getState();
+    var newPanes = state.panes.map(function(p) {
+      if (p.id !== paneId) return p;
+      var tab = p.tabs.find(function(t) { return t.id === tabId; });
+      if (!tab) return p;
+      var without = p.tabs.filter(function(t) { return t.id !== tabId; });
+      var insertIdx = insertBeforeTabId
+        ? without.findIndex(function(t) { return t.id === insertBeforeTabId; })
+        : -1;
+      var reordered;
+      if (insertIdx === -1) {
+        reordered = without.concat(tab);
+      } else {
+        reordered = without.slice(0, insertIdx).concat(tab).concat(without.slice(insertIdx));
+      }
+      return Object.assign({}, p, { tabs: reordered });
+    });
+    EditorStore.setState({ panes: newPanes });
+  }
+
   function moveTabToPane(sourcePaneId, targetPaneId, path) {
     if (sourcePaneId === targetPaneId) return;
 
@@ -453,6 +474,7 @@ var TabManager = (function () {
     markClean: markClean,
     hardenTab: hardenTab,
     saveTabViewState: saveTabViewState,
+    reorderTabInPane: reorderTabInPane,
     moveTabToPane: moveTabToPane,
     clearGotoLine: clearGotoLine,
     closeAllTabsInPane: closeAllTabsInPane,

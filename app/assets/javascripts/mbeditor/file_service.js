@@ -47,8 +47,8 @@ var FileService = (function () {
     return axios.post(basePath() + '/quick_fix', { path: path, code: code, cop_name: copName }).then(function(res) { return res.data; });
   }
 
-  function formatFile(path) {
-    return axios.post(basePath() + '/format', { path: path }).then(function(res) { return res.data; });
+  function formatFile(path, code) {
+    return axios.post(basePath() + '/format', { path: path, code: code }).then(function(res) { return res.data; });
   }
 
   function runTests(path) {

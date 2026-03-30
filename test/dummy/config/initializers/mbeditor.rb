@@ -23,13 +23,7 @@ Mbeditor.configure do |config|
   config.test_command   = "bundle exec ruby -Itest"
   config.test_timeout   = 30
 
-  # Session-based authentication example.
-  # The dummy app's SessionsController sets session[:authenticated] via POST /login.
-  config.authenticate_with = proc {
-    unless session[:authenticated]
-      render plain: "Unauthorized", status: :unauthorized
-    end
-  }
+  # No authentication required for the dummy development server.
 end
 
 # Override RedmineService#call in the dummy app to return fixture data so that

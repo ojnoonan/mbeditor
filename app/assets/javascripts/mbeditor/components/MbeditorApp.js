@@ -32,7 +32,8 @@ var DEFAULT_EDITOR_PREFS = {
   scrollBeyondLastLine: false,
   minimap: false,
   bracketPairColorization: true,
-  autoRevealInExplorer: true
+  autoRevealInExplorer: true,
+  rubocopLintEnabled: true
 };
 
 var SidebarActionButton = function SidebarActionButton(_ref) {
@@ -200,6 +201,8 @@ var MbeditorApp = function MbeditorApp() {
   var pane1Width = _useState142[0];
   var setPane1Width = _useState142[1];
   // percentage
+
+  var dragSplitWidthRef = useRef(pane1Width);
 
   var _useState15 = useState(null);
 
@@ -572,8 +575,9 @@ var MbeditorApp = function MbeditorApp() {
             return Promise.resolve({ content: '' });
           }
           var sourcePath = t.isPreview || /::preview$/.test(t.path || '') ? t.previewFor || (t.path || '').replace(/::preview$/, '') : t.path;
-          return FileService.getFile(sourcePath)["catch"](function () {
-            return { content: '' };
+          return FileService.getFile(sourcePath)["catch"](function (err) {
+            var status = err && err.response && err.response.status;
+            return { content: '', fileNotFound: status === 404 };
           });
         })).then(function (results) {
           var resIdx = 0;
@@ -581,7 +585,7 @@ var MbeditorApp = function MbeditorApp() {
             return _extends({}, p, {
               tabs: p.tabs.map(function (t) {
                 var res = results[resIdx++];
-                return _extends({}, t, { content: res.content }, res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {});
+                return _extends({}, t, { content: res.content }, res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {}, res.fileNotFound ? { fileNotFound: true, dirty: false } : {});
               })
             });
           });
@@ -949,12 +953,18 @@ var MbeditorApp = function MbeditorApp() {
     if (isRubyPath(activeTab.path) && !rubocopAvailable) return;
     if (activeTab.path.endsWith('.haml') && !hamlLintAvailable) return;
 
+    // Clear markers and skip auto-lint when RuboCop linting is disabled
+    if (isRubyPath(activeTab.path) && editorPrefs.rubocopLintEnabled === false) {
+      setMarkers(function(prev) { return _extends({}, prev, _defineProperty({}, activeTab.id, [])); });
+      return;
+    }
+
     _debouncedAutoLint(activeTab, focusedPane ? focusedPane.id : null);
 
     return function () {
       _debouncedAutoLint.cancel();
     };
-  }, [focusedPane ? focusedPane.id : null, activeTab ? activeTab.id : null, activeTab ? activeTab.content : null, rubocopAvailable, hamlLintAvailable]);
+  }, [focusedPane ? focusedPane.id : null, activeTab ? activeTab.id : null, activeTab ? activeTab.content : null, rubocopAvailable, hamlLintAvailable, editorPrefs.rubocopLintEnabled]);
 
   var handleOpenCommitGraph = function handleOpenCommitGraph() {
     var paneId = state.focusedPaneId || 1;
@@ -1071,7 +1081,10 @@ var MbeditorApp = function MbeditorApp() {
       return p.id === 2;
     });
     if (!pane2 || pane2.tabs.length === 0) {
+      dragSplitWidthRef.current = 50;
       setPane1Width(50);
+    } else {
+      dragSplitWidthRef.current = pane1Width;
     }
     setDraggedTab({ sourcePaneId: sourcePaneId, tabId: tabId });
   };
@@ -1097,28 +1110,24 @@ var MbeditorApp = function MbeditorApp() {
       return;
     }
 
-    if (activeTab.dirty) handleSave(focusedPane.id, activeTab); // save first
-
     if (isRubyLang) {
       setLoading(function (prev) {
         return _extends({}, prev, { format: true });
       });
       EditorStore.setStatus("Formatting...", "info");
-      FileService.formatFile(activeTab.path).then(function (res) {
+      FileService.formatFile(activeTab.path, activeTab.content).then(function (res) {
         if (res.content) {
-          // Update content without marking dirty
+          // Update content and mark dirty — user decides when to save.
+          // The executeEdits path in EditorPanel preserves the undo stack.
           var newPanes = EditorStore.getState().panes.map(function (p) {
             if (p.id === focusedPane.id) return _extends({}, p, { tabs: p.tabs.map(function (t) {
-                return t.id === activeTab.id ? _extends({}, t, { content: res.content, dirty: false }) : t;
+                return t.id === activeTab.id ? _extends({}, t, { content: res.content, dirty: true }) : t;
               }) });
             return p;
           });
           EditorStore.setState({ panes: newPanes });
         }
-        EditorStore.setStatus("Formatted successfully", "success");
-        setMarkers(function (prev) {
-          return _extends({}, prev, _defineProperty({}, activeTab.id, []));
-        }); // clear lint markers
+        EditorStore.setStatus("Formatted (Unsaved)", "success");
         GitService.fetchStatus();
       })["catch"](function (err) {
         return EditorStore.setStatus("Format failed: " + err.message, "error");
@@ -1643,13 +1652,15 @@ var MbeditorApp = function MbeditorApp() {
   var isRuby = activeTab && isRubyPath(activeTab.path);
   var isHaml = activeTab && activeTab.path.endsWith('.haml');
   var isPrettierable = activeTab && SUPPORTED_PRETTIER_EXTS.includes(activeTab.path.split('.').pop().toLowerCase());
-  var canLintAndFormat = activeTab && (isPrettierable || isRuby && rubocopAvailable || isHaml && hamlLintAvailable);
+  var rubocopLintOn = editorPrefs.rubocopLintEnabled !== false;
+  var canLintAndFormat = activeTab && (isPrettierable || isRuby && rubocopAvailable && rubocopLintOn || isHaml && hamlLintAvailable);
   var hasGitBranch = !!(state.gitBranch && state.gitBranch.trim());
 
   var renderTabBar = function renderTabBar(paneId, tabs, activeId) {
     return React.createElement(TabBar, {
       tabs: tabs,
       activeId: activeId,
+      paneId: paneId,
       onSelect: function (id) {
         return TabManager.switchTab(paneId, id);
       },
@@ -2129,7 +2140,7 @@ var MbeditorApp = function MbeditorApp() {
             e.preventDefault();
 
             var rect = e.currentTarget.getBoundingClientRect();
-            var splitAtX = rect.left + rect.width * (pane1Width / 100);
+            var splitAtX = rect.left + rect.width * (dragSplitWidthRef.current / 100);
             var hoverPaneId = e.clientX >= splitAtX ? 2 : 1;
             var nextDropPane = hoverPaneId === draggedTab.sourcePaneId ? null : hoverPaneId;
 
@@ -2141,7 +2152,7 @@ var MbeditorApp = function MbeditorApp() {
             e.preventDefault();
 
             var rect = e.currentTarget.getBoundingClientRect();
-            var splitAtX = rect.left + rect.width * (pane1Width / 100);
+            var splitAtX = rect.left + rect.width * (dragSplitWidthRef.current / 100);
             var targetPaneId = e.clientX >= splitAtX ? 2 : 1;
 
             if (targetPaneId !== draggedTab.sourcePaneId) {
@@ -2333,6 +2344,16 @@ var MbeditorApp = function MbeditorApp() {
                         className: 'ide-settings-checkbox',
                         checked: !!(editorPrefs.autoRevealInExplorer),
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { autoRevealInExplorer: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Enable RuboCop linting'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: editorPrefs.rubocopLintEnabled !== false,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { rubocopLintEnabled: v }); }); }
                       })
                     ),
                     React.createElement(

@@ -19,6 +19,7 @@ Mbeditor::Engine.routes.draw do
   get    'git_info',        to: 'editors#git_info'
   get    'git_status',      to: 'editors#git_status'
   get    'monaco_worker.js',                to: 'editors#monaco_worker'
+  get    'ts_worker.js',                    to: 'editors#ts_worker'
   get    'monaco-editor/*asset_path',       to: 'editors#monaco_asset', format: false
   get    'min-maps/*asset_path',            to: 'editors#monaco_asset', format: false
   post   'lint',            to: 'editors#lint'

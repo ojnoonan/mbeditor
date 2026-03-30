@@ -9,6 +9,10 @@ var useRef = _React.useRef;
 
 var IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp', 'bmp', 'avif'];
 
+var _hamlLangRegistered = false;
+var _erbLangRegistered = false;
+var _jsErbLangRegistered = false;
+
 var EditorPanel = function EditorPanel(_ref) {
   var tab = _ref.tab;
   var paneId = _ref.paneId;
@@ -107,10 +111,296 @@ var EditorPanel = function EditorPanel(_ref) {
       window.MbeditorEditorPlugins.registerGlobalExtensions(window.monaco);
     }
 
+    // Register HAML Monarch grammar once
+    if (!_hamlLangRegistered) {
+      _hamlLangRegistered = true;
+      window.monaco.languages.register({ id: 'haml', extensions: ['.haml'], aliases: ['HAML', 'haml'] });
+      window.monaco.languages.setMonarchTokensProvider('haml', {
+        // Monarch does not support ^ line anchors — use `@sol` state transitions instead.
+        // Strategy: tokenize each line character-by-character from the root state,
+        // which resets at the start of each line.
+        defaultToken: 'text',
+        tokenizer: {
+          root: [
+            // Doctype: !!! or !!!5 etc
+            [/!!!.*$/, 'keyword.doctype'],
+            // HAML comment: -#
+            [/-#.*$/, 'comment'],
+            // HTML comment: /
+            [/\/.*$/, 'comment'],
+            // Leading whitespace — consume so tag/class/id patterns match at current pos
+            [/^(\s*)/, 'white'],
+            // Ruby output line: = expr
+            [/(=)(\s*)/, [{ token: 'keyword.operator' }, { token: '', next: '@rubyLine' }]],
+            // Ruby statement line: - stmt (but not -#)
+            [/(-)(\s+)/, [{ token: 'keyword.operator' }, { token: '', next: '@rubyLine' }]],
+            // Tag: %tag with optional .class/#id/{ attrs }/ text
+            [/%[\w:-]+/, { token: 'tag', next: '@afterTag' }],
+            // Class shorthand: .foo
+            [/\.[\w-]+/, { token: 'type.class', next: '@afterTag' }],
+            // ID shorthand: #foo (only at line start region — before any inline text)
+            [/#[\w-]+/, { token: 'type.id', next: '@afterTag' }],
+            // Inline Ruby interpolation: #{...}
+            [/#\{/, { token: 'delimiter.bracket', next: '@rubyInterp' }],
+            // Strings
+            [/"/, { token: 'string.quote', next: '@dqString' }],
+            [/'/, { token: 'string.quote', next: '@sqString' }],
+            // Symbol keys in attribute hashes
+            [/:\w+/, 'attribute.name'],
+            // Numbers
+            [/\d+/, 'number'],
+            // Rest of line text
+            [/[^\s#"'%.\-={}]+/, 'text'],
+          ],
+          afterTag: [
+            // Chained .class
+            [/\.[\w-]+/, 'type.class'],
+            // Chained #id
+            [/#[\w-]+/, 'type.id'],
+            // Attribute hash open
+            [/\{/, { token: 'delimiter.bracket', next: '@attrHash' }],
+            // Attribute paren open (HTML-style)
+            [/\(/, { token: 'delimiter.paren', next: '@attrParen' }],
+            // Inline = output — switchTo so rubyLine pops back to root, not afterTag
+            [/=/, { token: 'keyword.operator', switchTo: '@rubyLine' }],
+            // Rest of inline text
+            [/#\{/, { token: 'delimiter.bracket', next: '@rubyInterp' }],
+            [/"/, { token: 'string.quote', next: '@dqString' }],
+            [/'/, { token: 'string.quote', next: '@sqString' }],
+            [/[^\s{(\\.#="']+/, 'text'],
+            [/$/, '', '@pop'],
+            [/\s+/, 'white'],
+          ],
+          attrHash: [
+            [/\}/, { token: 'delimiter.bracket', next: '@pop' }],
+            [/:\w+/, 'attribute.name'],
+            [/\w+:/, 'attribute.name'],
+            [/"/, { token: 'string.quote', next: '@dqString' }],
+            [/'/, { token: 'string.quote', next: '@sqString' }],
+            [/=>/, 'keyword.operator'],
+            [/[,\s]+/, 'white'],
+            [/[^}:"',\s=>]+/, 'variable'],
+          ],
+          attrParen: [
+            [/\)/, { token: 'delimiter.paren', next: '@pop' }],
+            [/[\w-]+=?/, 'attribute.name'],
+            [/"/, { token: 'string.quote', next: '@dqString' }],
+            [/'/, { token: 'string.quote', next: '@sqString' }],
+            [/\s+/, 'white'],
+          ],
+          rubyLine: [
+            [/$/, '', '@pop'],
+            [/#\{/, { token: 'delimiter.bracket', next: '@rubyInterp' }],
+            [/"/, { token: 'string.quote', next: '@dqString' }],
+            [/'/, { token: 'string.quote', next: '@sqString' }],
+            [/\d+(\.\d+)?/, 'number'],
+            [/\b(do|end|if|unless|else|elsif|case|when|then|while|until|for|in|return|yield|def|class|module|nil|true|false|self|super|and|or|not|begin|rescue|ensure|raise)\b/, 'keyword'],
+            [/[A-Z][\w]*/, 'type.identifier'],
+            [/[\w]+[?!]?/, 'identifier'],
+            [/[+\-*\/=<>!&|^~%]+/, 'keyword.operator'],
+            [/[,;.()\[\]{}]/, 'delimiter'],
+          ],
+          rubyInterp: [
+            [/\}/, { token: 'delimiter.bracket', next: '@pop' }],
+            [/"/, { token: 'string.quote', next: '@dqString' }],
+            [/'/, { token: 'string.quote', next: '@sqString' }],
+            [/\d+/, 'number'],
+            [/[A-Z][\w]*/, 'type.identifier'],
+            [/[\w]+[?!]?/, 'identifier'],
+            [/[+\-*\/=<>!&|^~%,.:()\[\]]+/, 'keyword.operator'],
+          ],
+          dqString: [
+            [/[^\\"#]+/, 'string'],
+            [/#\{/, { token: 'delimiter.bracket', next: '@rubyInterp' }],
+            [/\\./, 'string.escape'],
+            [/"/, { token: 'string.quote', next: '@pop' }],
+          ],
+          sqString: [
+            [/[^\\']/, 'string'],
+            [/\\./, 'string.escape'],
+            [/'/, { token: 'string.quote', next: '@pop' }],
+          ],
+        }
+      });
+    }
+
+    // Register ERB (html.erb) Monarch grammar once
+    if (!_erbLangRegistered) {
+      _erbLangRegistered = true;
+      window.monaco.languages.register({ id: 'erb', aliases: ['ERB', 'erb', 'HTML+ERB'] });
+      window.monaco.languages.setMonarchTokensProvider('erb', {
+        defaultToken: 'text',
+        tokenizer: {
+          root: [
+            // ERB comment: <%#
+            [/<%#/, { token: 'comment.erb', next: '@erbComment' }],
+            // ERB output: <%= or <%==
+            [/<%==?/, { token: 'delimiter.erb', next: '@erbCode' }],
+            // ERB statement: <%
+            [/<%/, { token: 'delimiter.erb', next: '@erbCode' }],
+            // HTML tags
+            [/(<)([\w-]+)/, [{ token: 'delimiter.html' }, { token: 'tag.html', next: '@htmlTag' }]],
+            [/(<\/)([\w-]+)(>)/, [{ token: 'delimiter.html' }, { token: 'tag.html' }, { token: 'delimiter.html' }]],
+            [/<!--/, { token: 'comment.html', next: '@htmlComment' }],
+            [/<!DOCTYPE[^>]*>/, 'keyword.html'],
+            [/&\w+;/, 'string.html.entity'],
+            [/[^<&%]+/, 'text'],
+          ],
+          erbCode: [
+            [/-%>|%>/, { token: 'delimiter.erb', next: '@pop' }],
+            [/"/, { token: 'string.quote', next: '@dqString' }],
+            [/'/, { token: 'string.quote', next: '@sqString' }],
+            [/\d+(\.\d+)?/, 'number'],
+            [/\b(do|end|if|unless|else|elsif|case|when|then|while|until|for|in|return|yield|def|class|module|nil|true|false|self|super|and|or|not|begin|rescue|ensure|raise)\b/, 'keyword'],
+            [/[A-Z][\w]*/, 'type.identifier'],
+            [/[\w]+[?!]?/, 'identifier'],
+            [/[+\-*\/=<>!&|^~%]+/, 'keyword.operator'],
+            [/[,;.()\[\]{}]/, 'delimiter'],
+            [/#[^{].*$/, 'comment'],
+            [/#\{/, { token: 'delimiter.bracket', next: '@rubyInterp' }],
+          ],
+          erbComment: [
+            [/%>/, { token: 'comment.erb', next: '@pop' }],
+            [/./, 'comment'],
+          ],
+          htmlTag: [
+            [/>/, { token: 'delimiter.html', next: '@pop' }],
+            [/\/?>/, { token: 'delimiter.html', next: '@pop' }],
+            [/<%#/, { token: 'comment.erb', next: '@erbComment' }],
+            [/<%==?/, { token: 'delimiter.erb', next: '@erbCode' }],
+            [/<%/, { token: 'delimiter.erb', next: '@erbCode' }],
+            [/[\w-]+=?/, 'attribute.name'],
+            [/"/, { token: 'string.quote', next: '@dqString' }],
+            [/'/, { token: 'string.quote', next: '@sqString' }],
+            [/\s+/, 'white'],
+          ],
+          htmlComment: [
+            [/-->/, { token: 'comment.html', next: '@pop' }],
+            [/./, 'comment'],
+          ],
+          rubyInterp: [
+            [/\}/, { token: 'delimiter.bracket', next: '@pop' }],
+            [/"/, { token: 'string.quote', next: '@dqString' }],
+            [/'/, { token: 'string.quote', next: '@sqString' }],
+            [/[\w]+[?!]?/, 'identifier'],
+            [/[+\-*\/=<>!&|^~%,.:()\[\]]+/, 'keyword.operator'],
+          ],
+          dqString: [
+            [/[^\\"#]+/, 'string'],
+            [/#\{/, { token: 'delimiter.bracket', next: '@rubyInterp' }],
+            [/\\./, 'string.escape'],
+            [/"/, { token: 'string.quote', next: '@pop' }],
+          ],
+          sqString: [
+            [/[^\\']/, 'string'],
+            [/\\./, 'string.escape'],
+            [/'/, { token: 'string.quote', next: '@pop' }],
+          ],
+        }
+      });
+    }
+
+    // Register JS+ERB Monarch grammar once
+    if (!_jsErbLangRegistered) {
+      _jsErbLangRegistered = true;
+      window.monaco.languages.register({ id: 'js-erb', aliases: ['JS+ERB', 'JavaScript+ERB'] });
+      window.monaco.languages.setMonarchTokensProvider('js-erb', {
+        defaultToken: 'text',
+        tokenizer: {
+          root: [
+            // ERB comment
+            [/<%#/, { token: 'comment.erb', next: '@erbComment' }],
+            // ERB output
+            [/<%==?/, { token: 'delimiter.erb', next: '@erbCode' }],
+            // ERB statement
+            [/<%/, { token: 'delimiter.erb', next: '@erbCode' }],
+            // JS line comments
+            [/\/\/.*$/, 'comment'],
+            // JS block comments
+            [/\/\*/, { token: 'comment', next: '@jsBlockComment' }],
+            // JS strings
+            [/"/, { token: 'string.quote', next: '@dqString' }],
+            [/'/, { token: 'string.quote', next: '@sqString' }],
+            [/`/, { token: 'string.quote', next: '@templateString' }],
+            // JS numbers
+            [/\d+(\.\d+)?([eE][+-]?\d+)?/, 'number'],
+            [/0x[0-9a-fA-F]+/, 'number.hex'],
+            // JS keywords
+            [/\b(var|let|const|function|return|if|else|for|while|do|switch|case|break|continue|new|delete|typeof|instanceof|in|of|this|class|extends|import|export|default|async|await|try|catch|finally|throw|null|undefined|true|false)\b/, 'keyword'],
+            // Identifiers
+            [/[A-Z][\w]*/, 'type.identifier'],
+            [/[\w$]+/, 'identifier'],
+            // Operators and punctuation
+            [/[+\-*\/=<>!&|^~%?:]+/, 'keyword.operator'],
+            [/[{}()\[\],;.]/, 'delimiter'],
+            [/\s+/, 'white'],
+          ],
+          erbCode: [
+            [/-%>|%>/, { token: 'delimiter.erb', next: '@pop' }],
+            [/"/, { token: 'string.quote', next: '@dqString' }],
+            [/'/, { token: 'string.quote', next: '@sqString' }],
+            [/\d+(\.\d+)?/, 'number'],
+            [/\b(do|end|if|unless|else|elsif|case|when|then|while|until|for|in|return|yield|def|class|module|nil|true|false|self|super|and|or|not|begin|rescue|ensure|raise)\b/, 'keyword'],
+            [/[A-Z][\w]*/, 'type.identifier'],
+            [/[\w]+[?!]?/, 'identifier'],
+            [/[+\-*\/=<>!&|^~%]+/, 'keyword.operator'],
+            [/[,;.()\[\]{}]/, 'delimiter'],
+            [/#[^{].*$/, 'comment'],
+          ],
+          erbComment: [
+            [/%>/, { token: 'comment.erb', next: '@pop' }],
+            [/./, 'comment'],
+          ],
+          jsBlockComment: [
+            [/\*\//, { token: 'comment', next: '@pop' }],
+            [/./, 'comment'],
+          ],
+          dqString: [
+            [/[^\\"]+/, 'string'],
+            [/\\./, 'string.escape'],
+            [/"/, { token: 'string.quote', next: '@pop' }],
+          ],
+          sqString: [
+            [/[^\\']/, 'string'],
+            [/\\./, 'string.escape'],
+            [/'/, { token: 'string.quote', next: '@pop' }],
+          ],
+          templateString: [
+            [/[^`\\$]+/, 'string'],
+            [/\\./, 'string.escape'],
+            [/\$\{/, { token: 'delimiter.bracket', next: '@jsExpr' }],
+            [/`/, { token: 'string.quote', next: '@pop' }],
+          ],
+          jsExpr: [
+            [/\}/, { token: 'delimiter.bracket', next: '@pop' }],
+            [/[\w$]+/, 'identifier'],
+            [/[+\-*\/=<>!&|^~%?:.,]+/, 'keyword.operator'],
+          ],
+        }
+      });
+    }
+
     var fileName = tab.path.split('/').pop() || '';
+    var fileNameLower = fileName.toLowerCase();
+    var language = 'plaintext';
+
+    // Compound extensions (must check before single-extension switch)
+    if (/\.js\.erb$/.test(fileNameLower)) {
+      language = 'js-erb';
+    } else if (/\.ts\.erb$/.test(fileNameLower)) {
+      language = 'typescript';
+    } else if (/\.js\.haml$/.test(fileNameLower)) {
+      language = 'javascript';
+    } else if (/\.css\.erb$/.test(fileNameLower)) {
+      language = 'css';
+    } else if (/\.html\.erb$/.test(fileNameLower)) {
+      language = 'erb';
+    } else if (/\.html\.haml$/.test(fileNameLower)) {
+      language = 'haml';
+    } else {
+
     var parts = fileName.split('.');
     var extension = parts.length > 1 ? parts.pop().toLowerCase() : '';
-    var language = 'plaintext';
     switch (fileName.toLowerCase()) {
       case 'gemfile':
       case 'gemfile.lock':
@@ -126,10 +416,12 @@ var EditorPanel = function EditorPanel(_ref) {
         language = 'typescript';break;
       case 'css':case 'scss':case 'sass':
         language = 'css';break;
-      case 'html':case 'erb':
+      case 'html':
         language = 'html';break;
+      case 'erb':
+        language = 'erb';break;
       case 'haml':
-        language = 'plaintext';break;
+        language = 'haml';break;
       case 'json':
         language = 'json';break;
       case 'yaml':case 'yml':
@@ -142,6 +434,8 @@ var EditorPanel = function EditorPanel(_ref) {
         language = 'image';break;
         }
     }
+
+    } // end compound-extension else
 
     if (language === 'image') return;
 
@@ -691,6 +985,16 @@ var EditorPanel = function EditorPanel(_ref) {
       })();
     }
   }, [markdownContent, isMarkdown]);
+
+  if (tab.fileNotFound) {
+    return React.createElement(
+      'div',
+      { className: 'monaco-container file-not-found-overlay' },
+      React.createElement('i', { className: 'fas fa-exclamation-circle file-not-found-icon' }),
+      React.createElement('p', { className: 'file-not-found-title' }, 'File not available on this branch'),
+      React.createElement('p', { className: 'file-not-found-path' }, tab.path)
+    );
+  }
 
   if (tab.isDiff) {
     var isDiffDark = (editorPrefs.theme || 'vs-dark') !== 'vs' && (editorPrefs.theme || 'vs-dark') !== 'hc-light';

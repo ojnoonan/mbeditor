@@ -97,13 +97,23 @@ var DiffViewer = function DiffViewer(_ref) {
     if (!filePath) return 'plaintext';
     var fileName = filePath.split('/').pop().toLowerCase();
     if (fileName === 'gemfile' || fileName === 'gemfile.lock' || fileName === 'rakefile') return 'ruby';
-    var ext = filePath.split('.').pop().toLowerCase();
+    // Compound extensions — check before single-extension lookup
+    if (/\.js\.erb$/.test(fileName)) return 'js-erb';
+    if (/\.ts\.erb$/.test(fileName)) return 'typescript';
+    if (/\.html\.erb$/.test(fileName)) return 'erb';
+    if (/\.html\.haml$/.test(fileName)) return 'haml';
+    if (/\.js\.haml$/.test(fileName)) return 'javascript';
+    if (/\.css\.erb$/.test(fileName)) return 'css';
+    var ext = fileName.split('.').pop();
     var map = {
-      'rb': 'ruby', 'js': 'javascript', 'jsx': 'javascript',
+      'rb': 'ruby', 'gemspec': 'ruby',
+      'js': 'javascript', 'jsx': 'javascript',
       'ts': 'typescript', 'tsx': 'typescript',
       'json': 'json', 'yml': 'yaml', 'yaml': 'yaml',
-      'css': 'css', 'scss': 'scss', 'html': 'html',
-      'xml': 'xml', 'md': 'markdown', 'sh': 'shell'
+      'css': 'css', 'scss': 'css', 'sass': 'css',
+      'html': 'html', 'erb': 'erb', 'haml': 'haml',
+      'xml': 'xml', 'md': 'markdown', 'markdown': 'markdown',
+      'sh': 'shell', 'bash': 'shell', 'zsh': 'shell'
     };
     return map[ext] || 'plaintext';
   }

@@ -10,6 +10,7 @@ var useRef = _React.useRef;
 var TabBar = function TabBar(_ref) {
   var tabs = _ref.tabs;
   var activeId = _ref.activeId;
+  var paneId = _ref.paneId;
   var onSelect = _ref.onSelect;
   var onClose = _ref.onClose;
   var onTabDragStart = _ref.onTabDragStart;
@@ -33,6 +34,16 @@ var TabBar = function TabBar(_ref) {
 
   var tabContextMenu = _useState4[0];
   var setTabContextMenu = _useState4[1];
+
+  var _useState5 = useState(null);
+  var _useState6 = _slicedToArray(_useState5, 2);
+  var dropTargetTabId = _useState6[0];
+  var setDropTargetTabId = _useState6[1];
+
+  var _useState7 = useState(null);
+  var _useState8 = _slicedToArray(_useState7, 2);
+  var dropTargetSide = _useState8[0];
+  var setDropTargetSide = _useState8[1];
 
   var getTabMarkerClass = function getTabMarkerClass(tab) {
     var tabMarkers = tab.markers || [];
@@ -87,7 +98,7 @@ var TabBar = function TabBar(_ref) {
         'div',
         {
           key: tab.id,
-          className: 'tab-item ' + (activeId === tab.id ? 'active' : '') + ' ' + (tab.isSoftOpen ? 'tab-soft' : '') + ' ' + getTabMarkerClass(tab) + ' ' + (draggingTabId === tab.id ? 'dragging' : ''),
+          className: 'tab-item ' + (activeId === tab.id ? 'active' : '') + ' ' + (tab.isSoftOpen ? 'tab-soft' : '') + ' ' + getTabMarkerClass(tab) + ' ' + (draggingTabId === tab.id ? 'dragging' : '') + ' ' + (dropTargetTabId === tab.id && dropTargetSide === 'left' ? 'drop-before' : '') + ' ' + (dropTargetTabId === tab.id && dropTargetSide === 'right' ? 'drop-after' : ''),
           onClick: function () {
             return onSelect(tab.id);
           },
@@ -104,7 +115,42 @@ var TabBar = function TabBar(_ref) {
           },
           onDragEnd: function () {
             setDraggingTabId(null);
+            setDropTargetTabId(null);
+            setDropTargetSide(null);
             if (onTabDragEnd) onTabDragEnd();
+          },
+          onDragOver: function (e) {
+            if (!draggingTabId || draggingTabId === tab.id) return;
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'move';
+            var rect = e.currentTarget.getBoundingClientRect();
+            var side = e.clientX < rect.left + rect.width / 2 ? 'left' : 'right';
+            if (dropTargetTabId !== tab.id || dropTargetSide !== side) {
+              setDropTargetTabId(tab.id);
+              setDropTargetSide(side);
+            }
+          },
+          onDragLeave: function (e) {
+            if (e.currentTarget.contains(e.relatedTarget)) return;
+            setDropTargetTabId(null);
+            setDropTargetSide(null);
+          },
+          onDrop: function (e) {
+            if (!draggingTabId || draggingTabId === tab.id || !paneId) return;
+            e.stopPropagation();
+            var rect = e.currentTarget.getBoundingClientRect();
+            var side = e.clientX < rect.left + rect.width / 2 ? 'left' : 'right';
+            var tabIndex = tabs.findIndex(function (t) { return t.id === tab.id; });
+            var insertBeforeTabId;
+            if (side === 'left') {
+              insertBeforeTabId = tab.id;
+            } else {
+              insertBeforeTabId = tabIndex + 1 < tabs.length ? tabs[tabIndex + 1].id : null;
+            }
+            TabManager.reorderTabInPane(paneId, draggingTabId, insertBeforeTabId);
+            setDropTargetTabId(null);
+            setDropTargetSide(null);
           },
           onContextMenu: function (e) {
             if (isSpecial) return;

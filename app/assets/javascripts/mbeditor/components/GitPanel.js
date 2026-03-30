@@ -35,6 +35,7 @@ var GitPanel = function GitPanel(_ref) {
   var localHashes = {};
   unpushedCommits.forEach(function (c) { if (c && c.hash) localHashes[c.hash] = true; });
 
+  var branchBaseRef    = gitInfo && gitInfo.branchBaseRef;
   var rawBranchCommits = gitInfo && gitInfo.branchCommits || [];
   var branchCommits = rawBranchCommits.map(function (c) {
     return Object.assign({}, c, { isLocal: !!localHashes[c.hash] });
@@ -455,9 +456,11 @@ var GitPanel = function GitPanel(_ref) {
       branchExpanded && React.createElement(
         React.Fragment,
         null,
-        upstreamBranch
-          ? React.createElement('div', { className: 'git-hint' }, 'All files changed vs ', React.createElement('code', null, upstreamBranch))
-          : React.createElement('div', { className: 'git-hint' }, 'No upstream branch tracked.'),
+        branchBaseRef
+          ? React.createElement('div', { className: 'git-hint' }, 'Compared to ', React.createElement('code', null, branchBaseRef))
+          : upstreamBranch
+            ? React.createElement('div', { className: 'git-hint' }, 'All files changed vs ', React.createElement('code', null, upstreamBranch))
+            : React.createElement('div', { className: 'git-hint' }, 'No upstream branch tracked.'),
         React.createElement(
           'div',
           { className: 'git-list' },
@@ -480,11 +483,16 @@ var GitPanel = function GitPanel(_ref) {
         React.createElement('span', { className: 'git-section-count' }, branchCommits.length)
       ),
       historyExpanded && React.createElement(
-        'div',
-        { className: 'git-history-graph-wrap' },
-        branchCommits.length === 0
-          ? React.createElement('div', { className: 'git-empty' }, 'No commit history.')
-          : historyRows
+        React.Fragment,
+        null,
+        branchBaseRef && React.createElement('div', { className: 'git-hint' }, 'Commits since fork from ', React.createElement('code', null, branchBaseRef)),
+        React.createElement(
+          'div',
+          { className: 'git-history-graph-wrap' },
+          branchCommits.length === 0
+            ? React.createElement('div', { className: 'git-empty' }, 'No commit history.')
+            : historyRows
+        )
       )
     )
   );
