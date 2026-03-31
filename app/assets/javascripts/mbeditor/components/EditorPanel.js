@@ -33,6 +33,7 @@ var EditorPanel = function EditorPanel(_ref) {
   var editorRef = useRef(null);
   var monacoRef = useRef(null);
   var latestContentRef = useRef('');
+  var lastAppliedExternalVersionRef = useRef(-1);
 
   var _useState = useState('');
   var _useState2 = _slicedToArray(_useState, 2);
@@ -439,6 +440,7 @@ var EditorPanel = function EditorPanel(_ref) {
 
     if (language === 'image') return;
 
+    lastAppliedExternalVersionRef.current = -1;
     var editor = window.monaco.editor.create(editorRef.current, {
       value: tab.content,
       language: language,
@@ -522,36 +524,41 @@ var EditorPanel = function EditorPanel(_ref) {
     };
   }, [tab.id, tab.isPreview]); // re-run ONLY on tab switch, not on content change (Monaco handles its own content state)
 
-  // Listen for external content changes (e.g. after Format/Save/Load)
+  // Listen for external content changes (e.g. after Format/Load)
+  // Only applies when externalContentVersion advances — prevents stale typing-originated
+  // React renders from rolling back content the user just typed.
   useEffect(function () {
     var editor = monacoRef.current;
-    if (editor) latestContentRef.current = tab.content; // keep ref in sync for closure
+    if (!editor || typeof tab.content !== 'string') return;
 
-    if (editor && editor.getValue() !== tab.content) {
-      if (typeof tab.content !== 'string') return;
-      // Normalize before comparing to prevent false positive dirty edits
-      var vNorm = editor.getValue().replace(/\r\n/g, '\n');
-      var cNorm = tab.content.replace(/\r\n/g, '\n');
-      if (vNorm === cNorm) return;
+    var extVersion = tab.externalContentVersion || 0;
+    if (extVersion <= lastAppliedExternalVersionRef.current) return;
 
-      var model = editor.getModel();
-      if (model) {
-        if (!vNorm) {
-          // If the editor is currently completely empty, treat it as an initial load.
-          // setValue clears the undo stack which is correct for initial load.
-          editor.setValue(tab.content);
-        } else {
-          // Keep undo stack for formats or replaces by using executeEdits
-          editor.pushUndoStop();
-          editor.executeEdits("external", [{
-            range: model.getFullModelRange(),
-            text: tab.content
-          }]);
-          editor.pushUndoStop();
-        }
-      }
+    lastAppliedExternalVersionRef.current = extVersion;
+    latestContentRef.current = tab.content; // keep ref in sync for onDidChangeContent closure
+
+    var model = editor.getModel();
+    if (!model) return;
+
+    // Normalize before comparing to prevent false positive dirty edits
+    var vNorm = editor.getValue().replace(/\r\n/g, '\n');
+    var cNorm = tab.content.replace(/\r\n/g, '\n');
+    if (vNorm === cNorm) return;
+
+    if (!vNorm) {
+      // If the editor is currently completely empty, treat it as an initial load.
+      // setValue clears the undo stack which is correct for initial load.
+      editor.setValue(tab.content);
+    } else {
+      // Keep undo stack for formats or replaces by using executeEdits
+      editor.pushUndoStop();
+      editor.executeEdits("external", [{
+        range: model.getFullModelRange(),
+        text: tab.content
+      }]);
+      editor.pushUndoStop();
     }
-  }, [tab.content]);
+  }, [tab.content, tab.externalContentVersion]);
 
   // Apply editorPrefs changes to a running editor without remounting
   useEffect(function () {

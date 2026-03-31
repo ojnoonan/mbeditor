@@ -145,6 +145,7 @@ var TabManager = (function () {
       _updateTab(paneId, path, {
         content: loadedContent,
         cleanContent: loadedContent,
+        externalContentVersion: 1,
         isImage: data.image === true ? true : _isImagePath(path)
       });
       if (_isMarkdownPath(path)) {

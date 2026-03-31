@@ -585,7 +585,7 @@ var MbeditorApp = function MbeditorApp() {
             return _extends({}, p, {
               tabs: p.tabs.map(function (t) {
                 var res = results[resIdx++];
-                return _extends({}, t, { content: res.content }, res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {}, res.fileNotFound ? { fileNotFound: true, dirty: false } : {});
+                return _extends({}, t, { content: res.content, externalContentVersion: (t.externalContentVersion || 0) + 1 }, res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {}, res.fileNotFound ? { fileNotFound: true, dirty: false } : {});
               })
             });
           });
@@ -1121,7 +1121,7 @@ var MbeditorApp = function MbeditorApp() {
           // The executeEdits path in EditorPanel preserves the undo stack.
           var newPanes = EditorStore.getState().panes.map(function (p) {
             if (p.id === focusedPane.id) return _extends({}, p, { tabs: p.tabs.map(function (t) {
-                return t.id === activeTab.id ? _extends({}, t, { content: res.content, dirty: true }) : t;
+                return t.id === activeTab.id ? _extends({}, t, { content: res.content, dirty: true, externalContentVersion: (t.externalContentVersion || 0) + 1 }) : t;
               }) });
             return p;
           });
@@ -1173,7 +1173,7 @@ var MbeditorApp = function MbeditorApp() {
       Promise.resolve(formattedResult).then(function (formatted) {
         var newPanes = EditorStore.getState().panes.map(function (p) {
           if (p.id === focusedPane.id) return _extends({}, p, { tabs: p.tabs.map(function (t) {
-              return t.id === activeTab.id ? _extends({}, t, { content: formatted, dirty: true }) : t;
+              return t.id === activeTab.id ? _extends({}, t, { content: formatted, dirty: true, externalContentVersion: (t.externalContentVersion || 0) + 1 }) : t;
             }) });
           return p;
         });
