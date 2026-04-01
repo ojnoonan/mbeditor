@@ -227,6 +227,26 @@ module Mbeditor
       assert_response :forbidden
     end
 
+    test 'raw returns 413 for file exceeding size limit' do
+      big = File.join(@workspace, 'big.bin')
+      File.binwrite(big, 'x' * (Mbeditor::EditorsController::MAX_OPEN_FILE_SIZE_BYTES + 1))
+      get '/mbeditor/raw', params: { path: 'big.bin' }
+      assert_response 413
+    end
+
+    test 'raw returns 403 for symlink pointing outside workspace' do
+      outside = Tempfile.new('mbeditor_outside_')
+      outside.write('secret content')
+      outside.flush
+      link = File.join(@workspace, 'evil_link.txt')
+      File.symlink(outside.path, link)
+      get '/mbeditor/raw', params: { path: 'evil_link.txt' }
+      assert_response :forbidden
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      outside&.close!
+    end
+
     # ---------------------------------------------------------------------------
     # save (POST /file)
     # ---------------------------------------------------------------------------
@@ -294,6 +314,28 @@ module Mbeditor
       assert json.key?("error")
     end
 
+    test 'create_file returns 403 when parent directory is a symlink pointing outside workspace' do
+      outside_dir = Dir.mktmpdir('mbeditor_outside_dir_')
+      link = File.join(@workspace, 'escaped_dir')
+      File.symlink(outside_dir, link)
+      post '/mbeditor/create_file', params: { path: 'escaped_dir/secret.rb', code: '' }, as: :json
+      assert_response :forbidden
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_rf(outside_dir) if outside_dir && File.directory?(outside_dir)
+    end
+
+    test 'save returns 403 when parent directory is a symlink pointing outside workspace' do
+      outside_dir = Dir.mktmpdir('mbeditor_outside_dir_')
+      link = File.join(@workspace, 'escaped_dir')
+      File.symlink(outside_dir, link)
+      post '/mbeditor/file', params: { path: 'escaped_dir/secret.rb', code: 'bad' }, as: :json
+      assert_response :forbidden
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_rf(outside_dir) if outside_dir && File.directory?(outside_dir)
+    end
+
     # ---------------------------------------------------------------------------
     # create_dir
     # ---------------------------------------------------------------------------
@@ -347,6 +389,17 @@ module Mbeditor
     test "rename returns 403 for path traversal on target" do
       patch "/mbeditor/rename", params: { path: "README.md", new_path: "../../evil.md" }, as: :json
       assert_response :forbidden
+    end
+
+    test 'rename returns 403 when target parent directory is a symlink pointing outside workspace' do
+      outside_dir = Dir.mktmpdir('mbeditor_outside_dir_')
+      link = File.join(@workspace, 'escaped_dir')
+      File.symlink(outside_dir, link)
+      patch '/mbeditor/rename', params: { path: 'README.md', new_path: 'escaped_dir/stolen.md' }, as: :json
+      assert_response :forbidden
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_rf(outside_dir) if outside_dir && File.directory?(outside_dir)
     end
 
     # ---------------------------------------------------------------------------
@@ -463,6 +516,21 @@ module Mbeditor
       assert json.key?("capped")
       assert_kind_of Array, json["results"]
       assert_includes [true, false], json["capped"]
+    end
+
+    test 'search accepts query of exactly 500 characters' do
+      get '/mbeditor/search', params: { q: 'a' * 500 }
+      assert_response :ok
+    end
+
+    test 'search accepts query of 499 characters' do
+      get '/mbeditor/search', params: { q: 'a' * 499 }
+      assert_response :ok
+    end
+
+    test 'search rejects query of 501 characters with 400' do
+      get '/mbeditor/search', params: { q: 'a' * 501 }
+      assert_response :bad_request
     end
 
     # ---------------------------------------------------------------------------

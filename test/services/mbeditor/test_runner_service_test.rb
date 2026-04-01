@@ -3,7 +3,7 @@
 require "test_helper"
 
 module Mbeditor
-  class TestRunnerServiceTest < ActiveSupport::TestCase
+  class TestRunnerServiceTest < ActiveSupport::TestCase # rubocop:disable Metrics/ClassLength
     # -------------------------------------------------------------------------
     # resolve_test_file
     # -------------------------------------------------------------------------
@@ -100,6 +100,64 @@ module Mbeditor
       end
     end
 
+    test 'detect_framework detects rspec from spec directory' do
+      Dir.mktmpdir do |dir|
+        FileUtils.mkdir_p(File.join(dir, 'spec'))
+        assert_equal :rspec, TestRunnerService.detect_framework(dir, 'app/models/user.rb')
+      end
+    end
+
+    test 'detect_framework returns nil when no hints found' do
+      Dir.mktmpdir do |dir|
+        assert_nil TestRunnerService.detect_framework(dir, 'app/models/user.rb')
+      end
+    end
+
+    # -------------------------------------------------------------------------
+    # test_file_candidates
+    # -------------------------------------------------------------------------
+
+    test 'test_file_candidates for app/models produces expected paths' do
+      candidates = TestRunnerService.test_file_candidates('app/models/user.rb')
+      assert_includes candidates, 'test/models/user_test.rb'
+      assert_includes candidates, 'spec/models/user_spec.rb'
+    end
+
+    test 'test_file_candidates for lib file produces test/lib path' do
+      candidates = TestRunnerService.test_file_candidates('lib/mbeditor/configuration.rb')
+      assert_includes candidates, 'test/lib/mbeditor/configuration_test.rb'
+      assert_includes candidates, 'spec/lib/mbeditor/configuration_spec.rb'
+    end
+
+    test 'test_file_candidates includes fallback basename entry' do
+      candidates = TestRunnerService.test_file_candidates('some/nested/thing.rb')
+      assert_includes candidates, 'test/thing_test.rb'
+      assert_includes candidates, 'spec/thing_spec.rb'
+    end
+
+    test 'test_file_candidates returns empty for non-rb file' do
+      assert_equal [], TestRunnerService.test_file_candidates('README.md')
+    end
+
+    test 'test_file_candidates returns unique entries' do
+      candidates = TestRunnerService.test_file_candidates('app/models/user.rb')
+      assert_equal candidates, candidates.uniq
+    end
+
+    # -------------------------------------------------------------------------
+    # empty_summary
+    # -------------------------------------------------------------------------
+
+    test 'empty_summary returns zero counts with nil duration' do
+      s = TestRunnerService.empty_summary
+      assert_equal 0, s[:total]
+      assert_equal 0, s[:passed]
+      assert_equal 0, s[:failed]
+      assert_equal 0, s[:errored]
+      assert_equal 0, s[:skipped]
+      assert_nil s[:duration]
+    end
+
     # -------------------------------------------------------------------------
     # parse_minitest_output
     # -------------------------------------------------------------------------
@@ -155,6 +213,96 @@ module Mbeditor
       assert_equal 3, summary[:passed]
       assert_equal 0, summary[:failed]
       assert_empty tests
+    end
+
+    test 'parse_minitest_output handles error output' do
+      output = <<~OUTPUT
+        Run options: --seed 9999
+
+        # Running:
+
+        E
+
+        Finished in 0.003s, 333.3 runs/s, 333.3 assertions/s.
+
+          1) Error:
+        UserTest#test_raises_error:
+        NoMethodError: undefined method `foo' for nil:NilClass
+            test/models/user_test.rb:10:in `test_raises_error'
+
+        1 runs, 1 assertions, 0 failures, 1 errors, 0 skips
+      OUTPUT
+
+      tests, summary = TestRunnerService.parse_minitest_output(output)
+
+      assert_equal 1, summary[:total]
+      assert_equal 0, summary[:passed]
+      assert_equal 0, summary[:failed]
+      assert_equal 1, summary[:errored]
+      assert_equal 1, tests.length
+      assert_equal 'error', tests[0][:status]
+      assert_match 'UserTest#test_raises_error', tests[0][:name]
+    end
+
+    test 'parse_minitest_output returns empty defaults for empty input' do
+      tests, summary = TestRunnerService.parse_minitest_output('')
+      assert_equal [], tests
+      assert_equal 0, summary[:total]
+      assert_nil summary[:duration]
+    end
+
+    test 'parse_minitest_output accepts tests keyword variant in summary line' do
+      output = "3 tests, 3 assertions, 0 failures, 0 errors, 0 skips\n"
+      _tests, summary = TestRunnerService.parse_minitest_output(output)
+      assert_equal 3, summary[:total]
+    end
+
+    # -------------------------------------------------------------------------
+    # parse_rspec_output
+    # -------------------------------------------------------------------------
+
+    RSPEC_JSON = '{"examples":[' \
+      '{"full_description":"User is valid","status":"passed","line_number":4},' \
+      '{"full_description":"User fails","status":"failed","line_number":8,' \
+      '"exception":{"class":"RSpec::Expectations::ExpectationNotMetError","message":"expected true got false"}},' \
+      '{"full_description":"User pending","status":"pending","line_number":12}],' \
+      '"summary":{"duration":0.1234,"example_count":3,"failure_count":1,"pending_count":1},' \
+      '"summary_line":"3 examples, 1 failure, 1 pending"}'
+
+    test 'parse_rspec_output extracts summary from json' do
+      _tests, summary = TestRunnerService.parse_rspec_output(RSPEC_JSON)
+      assert_equal 3, summary[:total]
+      assert_equal 1, summary[:passed]
+      assert_equal 1, summary[:failed]
+      assert_equal 1, summary[:skipped]
+      assert_in_delta 0.123, summary[:duration], 0.001
+    end
+
+    test 'parse_rspec_output maps example statuses correctly' do
+      tests, _summary = TestRunnerService.parse_rspec_output(RSPEC_JSON)
+      assert_equal 3, tests.length
+      assert_equal 'pass', tests[0][:status]
+      assert_equal 'fail', tests[1][:status]
+      assert_equal 'skip', tests[2][:status]
+    end
+
+    test 'parse_rspec_output includes failure message and line number' do
+      tests, _summary = TestRunnerService.parse_rspec_output(RSPEC_JSON)
+      assert_equal 'expected true got false', tests[1][:message]
+      assert_equal 8, tests[1][:line]
+    end
+
+    test 'parse_rspec_output falls back to minitest parser when no json present' do
+      raw = "3 runs, 3 assertions, 0 failures, 0 errors, 0 skips\nFinished in 0.005s\n"
+      _tests, summary = TestRunnerService.parse_rspec_output(raw)
+      assert_equal 3, summary[:total]
+    end
+
+    test 'parse_rspec_output falls back gracefully on invalid json' do
+      raw = '{"summary_line":"broken'
+      tests, summary = TestRunnerService.parse_rspec_output(raw)
+      assert_kind_of Array, tests
+      assert_kind_of Hash, summary
     end
 
     # -------------------------------------------------------------------------
