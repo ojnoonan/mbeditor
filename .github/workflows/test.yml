@@ -50,7 +50,7 @@ jobs:
           bundler-cache: true
 
       - name: Brakeman static analysis
-        run: bundle exec brakeman --no-pager -q -w 2
+        run: bundle exec brakeman --no-pager -q -w 2 -i brakeman.ignore
 
       - name: bundler-audit CVE check
         run: |
