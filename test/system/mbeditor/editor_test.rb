@@ -180,7 +180,7 @@ module Mbeditor
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
 
-      find(".titlebar-git-btn").click
+      find("button", text: "Git").click
       assert_selector ".ide-git-right-panel", wait: 5
 
       page.execute_script(<<~'JS')
