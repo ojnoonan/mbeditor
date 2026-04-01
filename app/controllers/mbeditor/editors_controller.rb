@@ -77,7 +77,11 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
 
-      return render json: { error: "Not found" }, status: :not_found unless File.file?(path)
+      unless File.file?(path)
+        return render json: missing_file_payload(params[:path]) if allow_missing_file?
+
+        return render json: { error: "Not found" }, status: :not_found
+      end
 
       size = File.size(path)
       return render_file_too_large(size) if size > MAX_OPEN_FILE_SIZE_BYTES
@@ -208,8 +212,8 @@ module Mbeditor
               args + ["--", query, workspace_root.to_s]
             else
               args = ["grep", "-rn", "-F", "-m", "30"]
-              excluded_paths.each do |path|
-                args << "--exclude-dir=#{path.include?('/') ? File.basename(path) : path}"
+              excluded_dirnames.each do |dirname|
+                args << "--exclude-dir=#{dirname}"
               end
               args + [query, workspace_root.to_s]
             end
@@ -240,8 +244,11 @@ module Mbeditor
           file_path = Regexp.last_match(1)
           next unless file_path.start_with?(workspace_root.to_s)
 
+          relative_file_path = relative_path(file_path)
+          next if excluded_path?(relative_file_path, File.basename(file_path))
+
           results << {
-            file: relative_path(file_path),
+            file: relative_file_path,
             line: Regexp.last_match(2).to_i,
             text: Regexp.last_match(3).strip
           }
@@ -395,7 +402,7 @@ module Mbeditor
           { src: "#{base}/mbeditor-icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any maskable" }
         ]
       }
-      render json: manifest, content_type: "application/manifest+json"
+      render plain: JSON.generate(manifest), content_type: "application/manifest+json"
     end
 
     # GET /mbeditor/sw.js — minimal PWA service worker
@@ -582,6 +589,18 @@ module Mbeditor
     end
 
     private
+
+    def allow_missing_file?
+      %w[1 true yes on].include?(params[:allow_missing].to_s.downcase)
+    end
+
+    def missing_file_payload(raw_path)
+      {
+        path: raw_path.to_s.sub(%r{\A/+}, ""),
+        content: "",
+        missing: true
+      }
+    end
 
     def verify_mbeditor_client
       return if request.headers['X-Mbeditor-Client'] == '1'

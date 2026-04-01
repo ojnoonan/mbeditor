@@ -131,24 +131,24 @@ var TabManager = (function () {
 
     EditorStore.setState({ panes: newPanes, focusedPaneId: paneId, activeTabId: path });
 
-    if (_isMarkdownPath(path)) {
-      _ensureMarkdownPreview(paneId, path, name, "");
-    }
-
     // Virtual paths (diff://, combined-diff://) should never hit the file endpoint
     if (path.indexOf('diff://') === 0 || path.indexOf('combined-diff://') === 0) {
       return;
     }
 
-    FileService.getFile(path).then(function(data) {
+    FileService.getFile(path, { allowMissing: true }).then(function(data) {
       var loadedContent = typeof data.content === 'string' ? data.content : "";
+      var fileNotFound = data && data.missing === true;
       _updateTab(paneId, path, {
         content: loadedContent,
         cleanContent: loadedContent,
         externalContentVersion: 1,
-        isImage: data.image === true ? true : _isImagePath(path)
+        isImage: data.image === true ? true : _isImagePath(path),
+        fileNotFound: fileNotFound,
+        dirty: false
       });
-      if (_isMarkdownPath(path)) {
+      if (!fileNotFound && _isMarkdownPath(path)) {
+        _ensureMarkdownPreview(paneId, path, name, loadedContent);
         _syncMarkdownPreviewContent(path, typeof data.content === 'string' ? data.content : "");
       }
     }).catch(function(err) {

@@ -126,7 +126,7 @@ module Mbeditor
     # GET /mbeditor/git/combined_diff?scope=local|branch
     # Returns the raw unified diff text for all files in the given scope.
     # scope=local  → git diff HEAD  (working tree vs HEAD)
-    # scope=branch → git diff <upstream>..HEAD  (branch vs upstream)
+    # scope=branch → git diff <branch-base>..HEAD (same baseline as git_info)
     def combined_diff
       scope = params[:scope] == 'branch' ? :branch : :local
 
@@ -134,17 +134,27 @@ module Mbeditor
         out, _err, status = Open3.capture3("git", "-C", workspace_root.to_s, "diff", "HEAD")
         out = status.success? ? out : ""
       else
-        upstream_out, _err, upstream_status = Open3.capture3(
-          "git", "-C", workspace_root.to_s,
-          "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"
-        )
-        upstream = upstream_status.success? ? upstream_out.strip : nil
-        upstream = nil unless upstream&.match?(%r{\A[\w./-]+\z})
-        if upstream.present?
-          out, _err, status = Open3.capture3("git", "-C", workspace_root.to_s, "diff", "#{upstream}..HEAD")
+        repo = workspace_root.to_s
+        branch = GitService.current_branch(repo)
+        base_sha, = find_branch_base(repo, branch)
+
+        if base_sha.present?
+          out, _err, status = Open3.capture3("git", "-C", repo, "diff", "#{base_sha}..HEAD")
           out = status.success? ? out : ""
         else
-          out = ""
+          upstream_out, _err, upstream_status = Open3.capture3(
+            "git", "-C", repo,
+            "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"
+          )
+          upstream = upstream_status.success? ? upstream_out.strip : nil
+          upstream = nil unless upstream&.match?(%r{\A[\w./-]+\z})
+
+          if upstream.present?
+            out, _err, status = Open3.capture3("git", "-C", repo, "diff", "#{upstream}..HEAD")
+            out = status.success? ? out : ""
+          else
+            out = ""
+          end
         end
       end
 
@@ -190,6 +200,35 @@ module Mbeditor
       end
 
       relative_path(full)
+    end
+
+    # Returns [merge_base_sha, ref_name] of the first candidate base branch found,
+    # or [nil, nil] if none can be determined.
+    def find_branch_base(repo, current_branch)
+      candidates = %w[origin/develop origin/main origin/master develop main master]
+      head_sha_out, = Open3.capture3("git", "-C", repo, "rev-parse", "HEAD")
+      head_sha = head_sha_out.strip
+
+      candidates.each do |ref|
+        short = ref.delete_prefix("origin/")
+        next if short == current_branch || ref == current_branch
+
+        _o, _e, st = Open3.capture3("git", "-C", repo, "rev-parse", "--verify", "--quiet", ref)
+        next unless st.success?
+
+        base_out, _e, base_st = Open3.capture3("git", "-C", repo, "merge-base", "HEAD", ref)
+        next unless base_st.success?
+
+        sha = base_out.strip
+        next unless sha.match?(/\A[0-9a-f]{40}\z/)
+        next if sha == head_sha
+
+        return [sha, ref]
+      end
+
+      [nil, nil]
+    rescue StandardError
+      [nil, nil]
     end
   end
 end

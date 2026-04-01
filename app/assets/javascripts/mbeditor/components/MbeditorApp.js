@@ -606,9 +606,14 @@ var MbeditorApp = function MbeditorApp() {
             return Promise.resolve({ content: '' });
           }
           var sourcePath = t.isPreview || /::preview$/.test(t.path || '') ? t.previewFor || (t.path || '').replace(/::preview$/, '') : t.path;
-          return FileService.getFile(sourcePath)["catch"](function (err) {
-            var status = err && err.response && err.response.status;
-            return { content: '', fileNotFound: status === 404 };
+          return FileService.getFile(sourcePath, { allowMissing: true }).then(function (data) {
+            return {
+              content: typeof data.content === 'string' ? data.content : '',
+              fileNotFound: data && data.missing === true,
+              image: data && data.image === true
+            };
+          })["catch"](function () {
+            return { content: '', fileNotFound: false };
           });
         })).then(function (results) {
           var resIdx = 0;
@@ -616,7 +621,16 @@ var MbeditorApp = function MbeditorApp() {
             return _extends({}, p, {
               tabs: p.tabs.map(function (t) {
                 var res = results[resIdx++];
-                return _extends({}, t, { content: res.content, externalContentVersion: (t.externalContentVersion || 0) + 1 }, res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {}, res.fileNotFound ? { fileNotFound: true, dirty: false } : {});
+                return _extends({}, t, {
+                  content: res.content,
+                  externalContentVersion: (t.externalContentVersion || 0) + 1
+                }, res._isDiffResult ? {
+                  diffOriginal: res.diffOriginal,
+                  diffModified: res.diffModified
+                } : {}, typeof res.fileNotFound === 'boolean' ? {
+                  fileNotFound: res.fileNotFound,
+                  dirty: res.fileNotFound ? false : t.dirty
+                } : {}, res.image === true ? { isImage: true } : {});
               })
             });
           });

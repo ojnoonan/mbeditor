@@ -178,6 +178,15 @@ module Mbeditor
       assert_response :not_found
     end
 
+    test "show returns missing payload when allow_missing is set" do
+      get "/mbeditor/file", params: { path: "does_not_exist.rb", allow_missing: "1" }
+
+      assert_response :ok
+      assert_equal "does_not_exist.rb", json["path"]
+      assert_equal "", json["content"]
+      assert_equal true, json["missing"]
+    end
+
     test "show returns 403 for path traversal attempt" do
       get "/mbeditor/file", params: { path: "../../etc/passwd" }
       assert_response :forbidden
@@ -518,6 +527,34 @@ module Mbeditor
       assert_includes [true, false], json["capped"]
     end
 
+    test "search fallback excludes nested path without excluding similarly named directories" do
+      FileUtils.mkdir_p(File.join(@workspace, "app", "assets"))
+      FileUtils.mkdir_p(File.join(@workspace, "public", "assets"))
+
+      File.write(File.join(@workspace, "app", "assets", "site.css"), "/* NEEDLE_TOKEN */\n")
+      File.write(File.join(@workspace, "public", "assets", "bundle.css"), "/* NEEDLE_TOKEN */\n")
+
+      Mbeditor.configure { |c| c.excluded_paths = %w[.git tmp log public/assets] }
+
+      original_rg_available = Mbeditor::EditorsController::RG_AVAILABLE
+      $VERBOSE = nil
+      Mbeditor::EditorsController.send(:remove_const, :RG_AVAILABLE)
+      Mbeditor::EditorsController.const_set(:RG_AVAILABLE, false)
+      $VERBOSE = true
+
+      get "/mbeditor/search", params: { q: "NEEDLE_TOKEN" }
+      assert_response :ok
+
+      files = json.fetch("results", []).map { |row| row["file"] }
+      assert_includes files, "app/assets/site.css"
+      assert_not_includes files, "public/assets/bundle.css"
+    ensure
+      $VERBOSE = nil
+      Mbeditor::EditorsController.send(:remove_const, :RG_AVAILABLE)
+      Mbeditor::EditorsController.const_set(:RG_AVAILABLE, original_rg_available)
+      $VERBOSE = true
+    end
+
     test 'search accepts query of exactly 500 characters' do
       get '/mbeditor/search', params: { q: 'a' * 500 }
       assert_response :ok
@@ -542,6 +579,28 @@ module Mbeditor
       assert_response :ok
       assert_includes response.content_type, "text/html"
       assert_match "mbeditor", response.body
+    end
+
+    test "manifest endpoint returns valid manifest json" do
+      get "/mbeditor/manifest.webmanifest"
+
+      assert_response :ok
+      assert_equal "application/manifest+json; charset=utf-8", response.content_type
+
+      manifest = JSON.parse(response.body)
+      assert_equal "/mbeditor/", manifest.fetch("start_url")
+      assert_equal "/mbeditor/", manifest.fetch("scope")
+      assert_equal "/mbeditor/mbeditor-icon.svg", manifest.fetch("icons").first.fetch("src")
+    end
+
+    test "service worker avoids no-op fetch handler" do
+      get "/mbeditor/sw.js"
+
+      assert_response :ok
+      assert_includes response.content_type, "application/javascript"
+      refute_includes response.body, "addEventListener('fetch'"
+      assert_includes response.body, "addEventListener('install'"
+      assert_includes response.body, "addEventListener('activate'"
     end
 
     # ---------------------------------------------------------------------------

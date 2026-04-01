@@ -15,8 +15,12 @@ var FileService = (function () {
     return axios.get(basePath() + '/files').then(function(res) { return res.data; });
   }
 
-  function getFile(path) {
-    return axios.get(basePath() + '/file', { params: { path: path } }).then(function(res) { return res.data; });
+  function getFile(path, options) {
+    var params = { path: path };
+    if (options && options.allowMissing) {
+      params.allow_missing = '1';
+    }
+    return axios.get(basePath() + '/file', { params: params }).then(function(res) { return res.data; });
   }
 
   function saveFile(path, code) {
