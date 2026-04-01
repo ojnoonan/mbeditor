@@ -34,3 +34,25 @@ jobs:
 
       - name: Run system tests
         run: bundle exec rake system_test
+
+  security:
+    runs-on: ubuntu-latest
+    env:
+      BUNDLE_GEMFILE: Gemfile
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1.292.0
+        with:
+          ruby-version: "3.0"
+          bundler-cache: true
+
+      - name: Brakeman static analysis
+        run: bundle exec brakeman --no-pager -q -w 2
+
+      - name: bundler-audit CVE check
+        run: |
+          bundle exec bundler-audit update
+          bundle exec bundler-audit check
