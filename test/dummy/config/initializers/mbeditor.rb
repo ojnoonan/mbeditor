@@ -60,6 +60,7 @@ Rails.application.config.after_initialize do
     # Seed a few source files so the file tree is not empty
     FileUtils.mkdir_p(sample_workspace.join("app", "models"))
     FileUtils.mkdir_p(sample_workspace.join("app", "controllers"))
+    FileUtils.mkdir_p(sample_workspace.join("app", "assets", "javascripts"))
     FileUtils.mkdir_p(sample_workspace.join("tmp"))
 
     File.write(sample_workspace.join("README.md"),
@@ -68,6 +69,38 @@ Rails.application.config.after_initialize do
                "class User\n  attr_accessor :name, :email\nend\n")
     File.write(sample_workspace.join("app", "controllers", "application_controller.rb"),
                "class ApplicationController\n  def index\n    render plain: 'Hello'\n  end\nend\n")
+    File.write(sample_workspace.join("app", "assets", "javascripts", "users.js.erb"), <<~JS)
+      // Generated at: <%= Time.current.iso8601 %>
+      // Asset pipeline ERB example — values injected at precompile time
+
+      var APP_CONFIG = {
+        apiBase:     "<%= Rails.application.config.api_base_url rescue '/api/v1' %>",
+        environment: "<%= Rails.env %>",
+        csrfParam:   "<%= Rails.application.config.action_controller.request_forgery_protection_token || 'authenticity_token' %>",
+        maxUploadMb: <%= defined?(MAX_UPLOAD_MB) ? MAX_UPLOAD_MB : 10 %>
+      };
+
+      // Route helpers baked in at compile time
+      var ROUTES = {
+        users:    "<%= users_path rescue '/users' %>",
+        newUser:  "<%= new_user_path rescue '/users/new' %>"
+      };
+
+      (function() {
+        "use strict";
+
+        function initUserList() {
+          var rows = document.querySelectorAll("tr[data-user-id]");
+          rows.forEach(function(row) {
+            row.addEventListener("click", function() {
+              window.location = APP_CONFIG.apiBase + "/users/" + row.dataset.userId;
+            });
+          });
+        }
+
+        document.addEventListener("DOMContentLoaded", initUserList);
+      })();
+    JS
 
     system(git_env, "git", "-C", ws, "add", ".", out: File::NULL, err: File::NULL)
     system(git_env, "git", "-C", ws, "commit", "-m", "Initial project setup",
@@ -87,6 +120,27 @@ Rails.application.config.after_initialize do
     system(git_env, "git", "-C", ws, "commit", "-m", "Implement dark-mode toggle for navigation - refs #42",
            out: File::NULL, err: File::NULL)
   end
+
+  # ── Ensure .rubocop.yml exists ──────────────────────────────────────────────
+  # Written on every boot so the Settings panel can show the config link.
+  File.write(sample_workspace.join(".rubocop.yml"), <<~YAML) unless sample_workspace.join(".rubocop.yml").exist?
+    AllCops:
+      NewCops: enable
+      TargetRubyVersion: 3.2
+
+    Style/StringLiterals:
+      Enabled: true
+      EnforcedStyle: double_quotes
+
+    Style/FrozenStringLiteralComment:
+      Enabled: false
+
+    Metrics/MethodLength:
+      Max: 20
+
+    Layout/LineLength:
+      Max: 120
+  YAML
 
   # ── Ensure test files always exist ──────────────────────────────────────────
   # Written on every boot so existing workspaces get the test suite even when
@@ -192,6 +246,46 @@ Rails.application.config.after_initialize do
       end
     end
   RUBY
+
+  # ── JSX lint test files ─────────────────────────────────────────────────────
+  # Written on every boot so they survive a tmp/ wipe.  Each file contains a
+  # deliberate syntax error to verify that JS/JSX linting catches it.
+  FileUtils.mkdir_p(sample_workspace.join("app", "assets", "javascripts"))
+
+  File.write(sample_workspace.join("app", "assets", "javascripts", "missing_closing_tag.jsx"), <<~JSX)
+    // Error: JSX element is never closed
+    function Greeting({ name }) {
+      return (
+        <div className="greeting">
+          <h1>Hello, {name}!</h1>
+          <p>Welcome back.
+        </div>
+      );
+    }
+  JSX
+
+  File.write(sample_workspace.join("app", "assets", "javascripts", "unexpected_token.jsx"), <<~JSX)
+    // Error: unexpected token — stray equals sign in JSX attribute
+    function Button({ label }) {
+      return (
+        <button class="btn" onClick={= handleClick}>
+          {label}
+        </button>
+      );
+    }
+  JSX
+
+  File.write(sample_workspace.join("app", "assets", "javascripts", "invalid_expression.jsx"), <<~JSX)
+    // Error: invalid JS expression inside JSX braces
+    function Counter({ count }) {
+      return (
+        <div>
+          <span>Count: {count +}</span>
+          <button>Increment</button>
+        </div>
+      );
+    }
+  JSX
 
   # ── Fake RedmineService ──────────────────────────────────────────────────────
   Mbeditor::RedmineService.prepend(Module.new do

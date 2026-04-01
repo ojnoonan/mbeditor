@@ -493,7 +493,29 @@ var EditorPanel = function EditorPanel(_ref) {
       editorPluginDisposable = window.MbeditorEditorPlugins.attachEditorFeatures(editor, language);
     }
 
-    // Change listener
+    // Column selection only when Ctrl/Cmd is held during drag.
+    // We toggle Monaco's columnSelection option on Ctrl/Cmd+mousedown and reset on mouseup.
+    // Alt+mousedown without Ctrl/Cmd is suppressed (preventDefault stops Monaco's built-in Alt+drag).
+    var onColumnMouseDown = function(ev) {
+      if (ev.ctrlKey || ev.metaKey) {
+        editor.updateOptions({ columnSelection: true });
+      } else if (ev.altKey) {
+        ev.preventDefault();
+      }
+    };
+    var onColumnMouseUp = function() {
+      editor.updateOptions({ columnSelection: false });
+    };
+    var editorDomNode = editor.getDomNode();
+    editorDomNode.addEventListener('mousedown', onColumnMouseDown, true);
+    document.addEventListener('mouseup', onColumnMouseUp, true);
+    var columnSelectDisposable = {
+      dispose: function() {
+        editorDomNode.removeEventListener('mousedown', onColumnMouseDown, true);
+        document.removeEventListener('mouseup', onColumnMouseUp, true);
+      }
+    };
+
     var contentDisposable = modelObj.onDidChangeContent(function (e) {
       var val = editor.getValue();
       var currentContent = latestContentRef.current;
@@ -502,6 +524,9 @@ var EditorPanel = function EditorPanel(_ref) {
       var vNorm = val.replace(/\r\n/g, '\n');
       var cNorm = currentContent.replace(/\r\n/g, '\n');
       if (vNorm !== cNorm) {
+        // Update the ref immediately so rapid undo/redo events compare against the
+        // latest content rather than a stale snapshot from a previous React render.
+        latestContentRef.current = val;
         onContentChange(val);
       }
     });
@@ -517,6 +542,7 @@ var EditorPanel = function EditorPanel(_ref) {
       }
       if (editorPluginDisposable) editorPluginDisposable.dispose();
       formatActionDisposable.dispose();
+      columnSelectDisposable.dispose();
       contentDisposable.dispose();
       editor.dispose();
     };
@@ -573,24 +599,6 @@ var EditorPanel = function EditorPanel(_ref) {
       });
     }
   }, [editorPrefs]);
-
-  // Ctrl-hold → column selection mode (like Notepad++)
-  useEffect(function () {
-    var editor = monacoRef.current;
-    if (!editor) return;
-    var onKeyDown = function(e) {
-      if (e.ctrlKey || e.metaKey) editor.updateOptions({ columnSelection: true });
-    };
-    var onKeyUp = function(e) {
-      if (!e.ctrlKey && !e.metaKey) editor.updateOptions({ columnSelection: false });
-    };
-    var onBlur = editor.onDidBlurEditorText(function() {
-      editor.updateOptions({ columnSelection: false });
-    });
-    var kdDisposable = editor.onKeyDown(onKeyDown);
-    var kuDisposable = editor.onKeyUp(onKeyUp);
-    return function() { kdDisposable.dispose(); kuDisposable.dispose(); onBlur.dispose(); };
-  }, [tab.id]);
 
   // Jump to line if specified
   useEffect(function () {
@@ -1044,8 +1052,8 @@ var EditorPanel = function EditorPanel(_ref) {
           onClick: function() { if (onShowHistory) onShowHistory(tab.path); },
           title: 'File History'
         },
-        React.createElement('i', { className: 'fas fa-history', style: { marginRight: '5px', flexShrink: 0 } }),
-        React.createElement('span', { className: 'ide-toolbar-label' }, 'History')
+        React.createElement('i', { className: 'fas fa-history', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
+        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, 'History')
       ),
       gitAvailable && React.createElement(
         'button',
@@ -1054,8 +1062,8 @@ var EditorPanel = function EditorPanel(_ref) {
           onClick: function() { setIsBlameVisible(function(prev) { return !prev; }); },
           title: 'Toggle Git Blame'
         },
-        React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: '5px', flexShrink: 0 } }),
-        React.createElement('span', { className: 'ide-toolbar-label' }, isBlameLoading ? 'Loading...' : 'Blame')
+        React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
+        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, isBlameLoading ? 'Loading...' : 'Blame')
       ),
       testAvailable && matchingTestFilePath(tab.path) && React.createElement(
         'button',
@@ -1066,8 +1074,8 @@ var EditorPanel = function EditorPanel(_ref) {
           title: 'Run Tests',
           style: { cursor: testLoading ? 'wait' : 'pointer' }
         },
-        React.createElement('i', { className: testLoading ? 'fas fa-spinner fa-spin' : 'fas fa-flask', style: { marginRight: '5px', flexShrink: 0 } }),
-        React.createElement('span', { className: 'ide-toolbar-label' }, testLoading ? 'Running...' : 'Test')
+        React.createElement('i', { className: testLoading ? 'fas fa-spinner fa-spin' : 'fas fa-flask', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
+        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, testLoading ? 'Running...' : 'Test')
       )
     ),
     React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } })

@@ -33,7 +33,15 @@ var DEFAULT_EDITOR_PREFS = {
   minimap: false,
   bracketPairColorization: true,
   autoRevealInExplorer: true,
-  rubocopLintEnabled: true
+  toolbarIconOnly: false,
+  rubocopLintEnabled: true,
+  prettierPrintWidth: 80,
+  prettierTabWidth: 2,
+  prettierUseTabs: false,
+  prettierSemi: true,
+  prettierSingleQuote: false,
+  prettierTrailingComma: 'all',
+  prettierBracketSpacing: true
 };
 
 var SidebarActionButton = function SidebarActionButton(_ref) {
@@ -246,6 +254,11 @@ var MbeditorApp = function MbeditorApp() {
   var showHelp = _useState18h2[0];
   var setShowHelp = _useState18h2[1];
 
+  var _useStatePwa = useState(null);
+  var _useStatePwa2 = _slicedToArray(_useStatePwa, 2);
+  var pwaInstallPrompt = _useStatePwa2[0];
+  var setPwaInstallPrompt = _useStatePwa2[1];
+
   var _useState18b = useState(true);
 
   var _useState18b2 = _slicedToArray(_useState18b, 2);
@@ -276,6 +289,11 @@ var MbeditorApp = function MbeditorApp() {
   var _useState18f2 = _slicedToArray(_useState18f, 2);
   var redmineEnabled = _useState18f2[0];
   var setRedmineEnabled = _useState18f2[1];
+
+  var _useState18rc = useState(null);
+  var _useState18rc2 = _slicedToArray(_useState18rc, 2);
+  var rubocopConfigPath = _useState18rc2[0];
+  var setRubocopConfigPath = _useState18rc2[1];
 
   var _useState18t = useState(false);
   var _useState18t2 = _slicedToArray(_useState18t, 2);
@@ -462,11 +480,17 @@ var MbeditorApp = function MbeditorApp() {
     var parserName = formatMap[ext];
 
     if (parserName && window.prettier && window.prettierPlugins) {
+      var prefs = EditorStore.getState().editorPrefs || DEFAULT_EDITOR_PREFS;
       window.prettier.format(tab.content, {
         parser: parserName,
         plugins: Object.values(window.prettierPlugins),
-        tabWidth: 4,
-        useTabs: false
+        printWidth: prefs.prettierPrintWidth != null ? prefs.prettierPrintWidth : 80,
+        tabWidth: prefs.prettierTabWidth != null ? prefs.prettierTabWidth : 2,
+        useTabs: !!prefs.prettierUseTabs,
+        semi: prefs.prettierSemi !== false,
+        singleQuote: !!prefs.prettierSingleQuote,
+        trailingComma: prefs.prettierTrailingComma || 'all',
+        bracketSpacing: prefs.prettierBracketSpacing !== false
       }).then(function () {
         var currentPane = EditorStore.getState().panes.find(function (p) {
           return p.id === paneId;
@@ -480,14 +504,18 @@ var MbeditorApp = function MbeditorApp() {
         });
       })["catch"](function (err) {
         var newMarkers = [];
-        if (err && err.loc && err.loc.start) {
+        if (err && err.loc) {
+          // Prettier 3 (Babel parser) raises errors with err.loc = { line, column }
+          // Older Prettier used err.loc = { start: { line, column }, end: {...} }
+          var loc = err.loc.start ? err.loc.start : err.loc;
+          var endLoc = err.loc.end || null;
           newMarkers.push({
             severity: "error",
             message: err.message.split("\n")[0] || "Syntax error",
-            startLine: err.loc.start.line,
-            startCol: err.loc.start.column,
-            endLine: err.loc.end ? err.loc.end.line : err.loc.start.line,
-            endCol: err.loc.end ? err.loc.end.column : err.loc.start.column + 1
+            startLine: loc.line,
+            startCol: loc.column,
+            endLine: endLoc ? endLoc.line : loc.line,
+            endCol: endLoc ? endLoc.column : loc.column + 1
           });
         }
         var currentPane = EditorStore.getState().panes.find(function (p) {
@@ -527,6 +555,9 @@ var MbeditorApp = function MbeditorApp() {
       if (workspace && typeof workspace.rubocopAvailable === 'boolean') {
         setRubocopAvailable(workspace.rubocopAvailable);
         window.MBEDITOR_RUBOCOP_AVAILABLE = workspace.rubocopAvailable;
+      }
+      if (workspace && workspace.rubocopConfigPath) {
+        setRubocopConfigPath(workspace.rubocopConfigPath);
       }
       if (workspace && typeof workspace.hamlLintAvailable === 'boolean') {
         setHamlLintAvailable(workspace.hamlLintAvailable);
@@ -916,6 +947,19 @@ var MbeditorApp = function MbeditorApp() {
     document.documentElement.setAttribute('data-theme', editorPrefs.theme || 'vs-dark');
   }, [editorPrefs.theme]);
 
+  useEffect(function() {
+    EditorStore.setState({ editorPrefs: editorPrefs });
+  }, [editorPrefs]);
+
+  useEffect(function() {
+    var handler = function(e) {
+      e.preventDefault();
+      setPwaInstallPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return function() { window.removeEventListener('beforeinstallprompt', handler); };
+  }, []);
+
   var focusedPane = state.panes.find(function (p) {
     return p.id === state.focusedPaneId;
   }) || state.panes[0] || null;
@@ -1032,6 +1076,12 @@ var MbeditorApp = function MbeditorApp() {
       });
       EditorStore.setState({ panes: newPanes });
       EditorStore.setStatus("Saved", "success");
+      
+      // Hot reload for Markdown: sync preview tab after save
+      if (/\.(md|markdown)$/i.test(tab.path)) {
+        TabManager.syncMarkdownPreview(tab.path, tab.content);
+      }
+      
       GitService.fetchStatus();
     })["catch"](function (err) {
       EditorStore.setStatus("Save failed: " + err.message, "error");
@@ -1154,23 +1204,17 @@ var MbeditorApp = function MbeditorApp() {
         return _extends({}, prev, { format: true });
       });
       EditorStore.setStatus("Formatting with Prettier...", "info");
-      var formattedResult;
-      try {
-        formattedResult = window.prettier.format(activeTab.content, {
-          parser: parserName,
-          plugins: Object.values(window.prettierPlugins),
-          tabWidth: 4,
-          useTabs: false
-        });
-      } catch (err) {
-        EditorStore.setStatus("Prettier Formatter failed: " + err.message, "error");
-        setLoading(function (prev) {
-          return _extends({}, prev, { format: false });
-        });
-        return;
-      }
-
-      Promise.resolve(formattedResult).then(function (formatted) {
+      window.prettier.format(activeTab.content, {
+        parser: parserName,
+        plugins: Object.values(window.prettierPlugins),
+        printWidth: editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80,
+        tabWidth: editorPrefs.prettierTabWidth != null ? editorPrefs.prettierTabWidth : 2,
+        useTabs: !!editorPrefs.prettierUseTabs,
+        semi: editorPrefs.prettierSemi !== false,
+        singleQuote: !!editorPrefs.prettierSingleQuote,
+        trailingComma: editorPrefs.prettierTrailingComma || 'all',
+        bracketSpacing: editorPrefs.prettierBracketSpacing !== false
+      }).then(function (formatted) {
         var newPanes = EditorStore.getState().panes.map(function (p) {
           if (p.id === focusedPane.id) return _extends({}, p, { tabs: p.tabs.map(function (t) {
               return t.id === activeTab.id ? _extends({}, t, { content: formatted, dirty: true }) : t;
@@ -1187,6 +1231,18 @@ var MbeditorApp = function MbeditorApp() {
           return _extends({}, prev, { format: false });
         });
       });
+      return;
+    }
+
+    // Fallback: Monaco re-indent using the editor's configured tabSize/insertSpaces
+    var monacoEditor = window.__mbeditorActiveEditor;
+    if (monacoEditor) {
+      var reindentAction = monacoEditor.getAction('editor.action.reindentLines');
+      if (reindentAction) {
+        reindentAction.run().then(function () {
+          EditorStore.setStatus("Formatted (Unsaved)", "success");
+        });
+      }
     }
   };
 
@@ -1653,7 +1709,7 @@ var MbeditorApp = function MbeditorApp() {
   var isHaml = activeTab && activeTab.path.endsWith('.haml');
   var isPrettierable = activeTab && SUPPORTED_PRETTIER_EXTS.includes(activeTab.path.split('.').pop().toLowerCase());
   var rubocopLintOn = editorPrefs.rubocopLintEnabled !== false;
-  var canLintAndFormat = activeTab && (isPrettierable || isRuby && rubocopAvailable && rubocopLintOn || isHaml && hamlLintAvailable);
+  var canLintAndFormat = !!activeTab;
   var hasGitBranch = !!(state.gitBranch && state.gitBranch.trim());
 
   var renderTabBar = function renderTabBar(paneId, tabs, activeId) {
@@ -1744,8 +1800,8 @@ var MbeditorApp = function MbeditorApp() {
               return activeTab && handleSave(focusedPane.id, activeTab);
             }, disabled: loading.save || !activeTab || !activeTab.dirty },
           React.createElement("i", { className: loading.save ? "fas fa-spinner fa-spin" : "fas fa-save" }),
-          " Save ",
-          activeTab && activeTab.dirty ? "●" : ""
+          !editorPrefs.toolbarIconOnly && " Save",
+          activeTab && activeTab.dirty ? " ●" : ""
         ),
         React.createElement(
           "button",
@@ -1759,14 +1815,14 @@ var MbeditorApp = function MbeditorApp() {
             { className: loading.saveAll ? "fas fa-spinner fa-spin" : "fas fa-save", style: loading.saveAll ? {} : { position: 'relative' } },
             !loading.saveAll && React.createElement("i", { className: "fas fa-save", style: { position: 'absolute', top: '-2px', left: '3px', fontSize: '9px', opacity: 0.8 } })
           ),
-          " Save All"
+          !editorPrefs.toolbarIconOnly && " Save All"
         ),
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
           "button",
           { className: "statusbar-btn", onClick: handleFormat, disabled: loading.format || !canLintAndFormat },
           React.createElement("i", { className: loading.format ? "fas fa-spinner fa-spin" : "fas fa-magic" }),
-          " Format"
+          !editorPrefs.toolbarIconOnly && " Format"
         ),
         hasGitBranch && React.createElement(
           React.Fragment,
@@ -1774,9 +1830,9 @@ var MbeditorApp = function MbeditorApp() {
           React.createElement("div", { className: "statusbar-sep" }),
           React.createElement(
             "button",
-            { type: "button", className: "statusbar-btn titlebar-git-btn", onClick: toggleGitPanel },
+            { type: "button", className: "statusbar-btn", onClick: toggleGitPanel },
             React.createElement("i", { className: "fas fa-code-branch" }),
-            " Git"
+            !editorPrefs.toolbarIconOnly && " Git"
           )
         ),
         React.createElement("div", { className: "statusbar-sep" }),
@@ -1784,7 +1840,26 @@ var MbeditorApp = function MbeditorApp() {
           "button",
           { type: "button", className: "statusbar-btn", onClick: function () { return setShowHelp(true); }, title: "Keyboard shortcuts & help" },
           React.createElement("i", { className: "fas fa-keyboard" }),
-          " Help"
+          !editorPrefs.toolbarIconOnly && " Help"
+        ),
+        pwaInstallPrompt && React.createElement(
+          React.Fragment,
+          null,
+          React.createElement("div", { className: "statusbar-sep" }),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "statusbar-btn",
+              title: "Install as app",
+              onClick: function() {
+                pwaInstallPrompt.prompt();
+                pwaInstallPrompt.userChoice.then(function() { setPwaInstallPrompt(null); });
+              }
+            },
+            React.createElement("i", { className: "fas fa-download" }),
+            !editorPrefs.toolbarIconOnly && " Install"
+          )
         )
       )
     ),
@@ -1858,12 +1933,15 @@ var MbeditorApp = function MbeditorApp() {
               activeSidebarTab === 'explorer' && React.createElement(
           "div",
           { className: "ide-sidebar-content" },
-          state.panes.flatMap(function (p) {
-            return p.tabs;
-          }).length > 0 && React.createElement(
-            CollapsibleSection,
-            {
-              title: "OPEN EDITORS",
+          React.createElement(
+            "div",
+            { className: "ide-sidebar-fixed" },
+            state.panes.flatMap(function (p) {
+              return p.tabs;
+            }).length > 0 && React.createElement(
+              CollapsibleSection,
+              {
+                title: "OPEN EDITORS",
               isCollapsed: collapsedSections.openEditors,
               onToggle: function (isCollapsed) {
                 return handleToggleSection('openEditors', isCollapsed);
@@ -1962,14 +2040,18 @@ var MbeditorApp = function MbeditorApp() {
                 );
               })
             )
+          )
           ),
           React.createElement(
-            CollapsibleSection,
-            {
-              title: projectSectionTitle,
-              isCollapsed: collapsedSections.projects,
-              onToggle: function (isCollapsed) {
-                return handleToggleSection('projects', isCollapsed);
+            "div",
+            { className: "ide-sidebar-scrollable" },
+            React.createElement(
+              CollapsibleSection,
+              {
+                title: projectSectionTitle,
+                isCollapsed: collapsedSections.projects,
+                onToggle: function (isCollapsed) {
+                  return handleToggleSection('projects', isCollapsed);
               },
               actions: React.createElement(
                 SectionActionGroup,
@@ -2032,6 +2114,7 @@ var MbeditorApp = function MbeditorApp() {
               onRenameConfirm: handleRenameConfirm,
               onRenameCancel: handleRenameCancel
             })
+          )
           )
         ),
         activeSidebarTab === 'search' && React.createElement(
@@ -2348,6 +2431,98 @@ var MbeditorApp = function MbeditorApp() {
                     ),
                     React.createElement(
                       'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Toolbar: icons only'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: !!(editorPrefs.toolbarIconOnly),
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { toolbarIconOnly: v }); }); }
+                      })
+                    ),
+                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Prettier'),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Print width'),
+                      React.createElement('input', {
+                        type: 'number', min: '40', max: '200', step: '1',
+                        className: 'ide-settings-input',
+                        value: editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80,
+                        onChange: function(e) {
+                          var v = parseInt(e.target.value, 10);
+                          if (v >= 40 && v <= 200) setEditorPrefs(function(p) { return Object.assign({}, p, { prettierPrintWidth: v }); });
+                        }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Tab width'),
+                      React.createElement('input', {
+                        type: 'number', min: '1', max: '8', step: '1',
+                        className: 'ide-settings-input',
+                        value: editorPrefs.prettierTabWidth != null ? editorPrefs.prettierTabWidth : 2,
+                        onChange: function(e) {
+                          var v = parseInt(e.target.value, 10);
+                          if (v >= 1 && v <= 8) setEditorPrefs(function(p) { return Object.assign({}, p, { prettierTabWidth: v }); });
+                        }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Use tabs'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: !!editorPrefs.prettierUseTabs,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { prettierUseTabs: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Semicolons'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: editorPrefs.prettierSemi !== false,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { prettierSemi: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Single quotes'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: !!editorPrefs.prettierSingleQuote,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { prettierSingleQuote: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Trailing commas'),
+                      React.createElement(
+                        'select', {
+                          className: 'ide-settings-select',
+                          value: editorPrefs.prettierTrailingComma || 'all',
+                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { prettierTrailingComma: e.target.value }); }); }
+                        },
+                        React.createElement('option', { value: 'all' }, 'All'),
+                        React.createElement('option', { value: 'es5' }, 'ES5'),
+                        React.createElement('option', { value: 'none' }, 'None')
+                      )
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Bracket spacing'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: editorPrefs.prettierBracketSpacing !== false,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { prettierBracketSpacing: v }); }); }
+                      })
+                    ),
+                    React.createElement('div', { className: 'ide-settings-section-header' }, 'RuboCop'),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Enable RuboCop linting'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -2356,6 +2531,20 @@ var MbeditorApp = function MbeditorApp() {
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { rubocopLintEnabled: v }); }); }
                       })
                     ),
+                    rubocopAvailable && rubocopConfigPath ? React.createElement(
+                      'div', { className: 'ide-settings-row ide-settings-row-link' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Config file'),
+                      React.createElement(
+                        'button', {
+                          type: 'button',
+                          className: 'ide-settings-config-link',
+                          title: 'Open ' + rubocopConfigPath,
+                          onClick: function() { handleSelectFile(rubocopConfigPath, rubocopConfigPath.split('/').pop()); }
+                        },
+                        React.createElement('i', { className: 'fas fa-file-alt', style: { marginRight: 5 } }),
+                        rubocopConfigPath
+                      )
+                    ) : null,
                     React.createElement(
                       'button',
                       {

@@ -34,6 +34,7 @@ module Mbeditor
         rootName: workspace_root.basename.to_s,
         rootPath: workspace_root.to_s,
         rubocopAvailable: rubocop_available?,
+        rubocopConfigPath: rubocop_config_path,
         hamlLintAvailable: haml_lint_available?,
         gitAvailable: git_available?,
         blameAvailable: git_blame_available?,
@@ -202,7 +203,7 @@ module Mbeditor
 
       results = []
       cmd = if RG_AVAILABLE
-              args = ["rg", "--json", "--max-count", "30"]
+              args = ["rg", "--json", "--max-count", "30", "--no-ignore"]
               excluded_paths.each { |p| args << "--glob=!#{p}" }
               args + ["--", query, workspace_root.to_s]
             else
@@ -376,6 +377,41 @@ module Mbeditor
       return render plain: "Not found", status: :not_found unless File.file?(path)
 
       send_file path, disposition: "inline", type: "application/javascript"
+    end
+
+    # GET /mbeditor/manifest.webmanifest — PWA manifest
+    def pwa_manifest
+      base = request.script_name.to_s.sub(%r{/$}, "")
+      manifest = {
+        name: "Mbeditor — #{Rails.root.basename}",
+        short_name: "Mbeditor",
+        description: "Mini Browser Editor",
+        start_url: "#{base}/",
+        scope: "#{base}/",
+        display: "standalone",
+        background_color: "#1e1e2e",
+        theme_color: "#1e1e2e",
+        icons: [
+          { src: "#{base}/mbeditor-icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any maskable" }
+        ]
+      }
+      render json: manifest, content_type: "application/manifest+json"
+    end
+
+    # GET /mbeditor/sw.js — minimal PWA service worker
+    def pwa_sw
+      path = Mbeditor::Engine.root.join("public", "sw.js").to_s
+      return render plain: "Not found", status: :not_found unless File.file?(path)
+
+      send_file path, disposition: "inline", type: "application/javascript"
+    end
+
+    # GET /mbeditor/mbeditor-icon.svg — PWA icon
+    def pwa_icon
+      path = Mbeditor::Engine.root.join("public", "mbeditor-icon.svg").to_s
+      return render plain: "Not found", status: :not_found unless File.file?(path)
+
+      send_file path, disposition: "inline", type: "image/svg+xml"
     end
 
     # GET /mbeditor/ts_worker.js — serve TypeScript/JavaScript Monaco worker
@@ -687,6 +723,11 @@ module Mbeditor
       tokens
     rescue ArgumentError
       ["rubocop"]
+    end
+
+    def rubocop_config_path
+      candidate = workspace_root.join(".rubocop.yml")
+      candidate.exist? ? ".rubocop.yml" : nil
     end
 
     def rubocop_available?

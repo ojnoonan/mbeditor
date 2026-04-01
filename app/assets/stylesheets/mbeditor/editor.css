@@ -193,13 +193,24 @@ html, body, #mbeditor-root {
 
 .ide-sidebar-content {
   flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.ide-sidebar-fixed {
+  flex-shrink: 0;
+}
+
+.ide-sidebar-scrollable {
+  flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
 }
 
-.ide-sidebar-content::-webkit-scrollbar { width: 6px; }
-.ide-sidebar-content::-webkit-scrollbar-track { background: transparent; }
-.ide-sidebar-content::-webkit-scrollbar-thumb { background: #424242; border-radius: 3px; }
+.ide-sidebar-scrollable::-webkit-scrollbar { width: 6px; }
+.ide-sidebar-scrollable::-webkit-scrollbar-track { background: transparent; }
+.ide-sidebar-scrollable::-webkit-scrollbar-thumb { background: #424242; border-radius: 3px; }
 
 /* ── File Tree ────────────────────────────────────────────── */
 .file-tree-root { padding: 4px 0; }
@@ -1191,9 +1202,17 @@ html, body, #mbeditor-root {
   transition: background 0.1s ease;
 }
 
+.ide-sidebar-scrollable .collapsible-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #252526;
+}
+
 .collapsible-header:hover {
   background: #2a2d2e;
 }
+
 
 .collapsible-toggle {
   font-size: 8px;
@@ -1576,6 +1595,10 @@ html, body, #mbeditor-root {
 .ide-settings-checkbox { width: auto; cursor: pointer; }
 .ide-settings-reset-btn { margin-top: 8px; background: #333; color: #aaa; border: 1px solid #555; border-radius: 3px; padding: 5px 10px; font-size: 11px; cursor: pointer; align-self: flex-start; }
 .ide-settings-reset-btn:hover { background: #444; color: #ddd; }
+.ide-settings-section-header { font-size: 10px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 1px; padding: 6px 0 2px; border-bottom: 1px solid #3a3a3a; margin-top: 4px; }
+.ide-settings-row-link { flex-direction: row; align-items: center; justify-content: space-between; }
+.ide-settings-config-link { background: none; border: none; color: #7db9f5; font-size: 11px; cursor: pointer; padding: 0; display: flex; align-items: center; gap: 3px; text-decoration: underline; text-underline-offset: 2px; }
+.ide-settings-config-link:hover { color: #a8cfff; }
 
 /* Settings tab (pane view) */
 .ide-settings-tab-content {
@@ -1625,6 +1648,7 @@ html, body, #mbeditor-root {
 [data-theme="vs"] .ide-titlebar { background: #f3f3f3; border-color: #cecece; color: #333; }
 [data-theme="vs"] .ide-titlebar-title { color: #333; }
 [data-theme="vs"] .ide-sidebar { background: #f3f3f3; border-color: #cecece; }
+[data-theme="vs"] .ide-sidebar-scrollable .collapsible-header { background: #f3f3f3; }
 [data-theme="vs"] .sidebar-strip-btn { color: #616161; }
 [data-theme="vs"] .sidebar-strip-btn:hover { background: #e8e8e8; color: #333; }
 [data-theme="vs"] .sidebar-strip-btn.active { color: #0070c1; border-left-color: #0070c1; }
@@ -1636,7 +1660,7 @@ html, body, #mbeditor-root {
 [data-theme="vs"] .ide-sidebar-tab { color: #616161; background: transparent; }
 [data-theme="vs"] .ide-sidebar-tab:hover { color: #333; background: #e8e8e8; }
 [data-theme="vs"] .ide-sidebar-tab.active { color: #0070c1; border-bottom-color: #0070c1; }
-[data-theme="vs"] .ide-sidebar-content::-webkit-scrollbar-thumb { background: #c0c0c0; }
+[data-theme="vs"] .ide-sidebar-scrollable::-webkit-scrollbar-thumb { background: #c0c0c0; }
 [data-theme="vs"] .tree-item { color: #333333; }
 [data-theme="vs"] .tree-item:hover { background: #e8e8e8; }
 [data-theme="vs"] .tree-item.active { background: #d4e6f5; }
@@ -1669,6 +1693,9 @@ html, body, #mbeditor-root {
 [data-theme="vs"] .ide-settings-input { background: #fff; color: #333; border-color: #c0c0c0; }
 [data-theme="vs"] .ide-settings-reset-btn { background: #ececec; color: #333; border-color: #c0c0c0; }
 [data-theme="vs"] .ide-settings-reset-btn:hover { background: #ddd; color: #111; }
+[data-theme="vs"] .ide-settings-section-header { color: #555; border-bottom-color: #d0d0d0; }
+[data-theme="vs"] .ide-settings-config-link { color: #0060b8; }
+[data-theme="vs"] .ide-settings-config-link:hover { color: #004080; }
 [data-theme="vs"] .ide-toast { background: #f3f3f3; border-color: #c0c0c0; color: #333; }
 
 /* ── High Contrast Dark (hc-black) ───────────────────────── */
@@ -1690,6 +1717,7 @@ html, body, #mbeditor-root {
 [data-theme="hc-black"] .ide-titlebar { background: #000; border-color: #6fc3df; color: #fff; }
 [data-theme="hc-black"] .ide-titlebar-title { color: #fff; }
 [data-theme="hc-black"] .ide-sidebar { background: #000; border-color: #6fc3df; }
+[data-theme="hc-black"] .ide-sidebar-scrollable .collapsible-header { background: #000; }
 [data-theme="hc-black"] .sidebar-divider { background: #3c3c3c; border-color: #6fc3df; }
 [data-theme="hc-black"] .ide-sidebar-header { color: #fff; border-color: #6fc3df; }
 [data-theme="hc-black"] .ide-sidebar-tabs { border-color: #6fc3df; }
@@ -1732,6 +1760,7 @@ html, body, #mbeditor-root {
 [data-theme="hc-light"] .ide-titlebar { background: #f8f8f8; border-color: #000; color: #000; }
 [data-theme="hc-light"] .ide-titlebar-title { color: #000; }
 [data-theme="hc-light"] .ide-sidebar { background: #f8f8f8; border-color: #000; }
+[data-theme="hc-light"] .ide-sidebar-scrollable .collapsible-header { background: #f8f8f8; }
 [data-theme="hc-light"] .sidebar-divider { background: #e0e0e0; border-color: #000; }
 [data-theme="hc-light"] .ide-sidebar-header { color: #000; border-color: #000; font-weight: 700; }
 [data-theme="hc-light"] .ide-sidebar-tabs { border-color: #000; }

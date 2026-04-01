@@ -51,6 +51,31 @@ var FileTree = function FileTree(_ref) {
     return function () { clearTimeout(timer); };
   }, [selectedPath]);
 
+  // Auto-reveal: when activePath changes, expand all ancestor dirs and scroll into view
+  useEffect(function () {
+    if (!activePath) return;
+
+    // Expand every ancestor directory of the active file
+    var parts = activePath.split('/');
+    if (parts.length > 1) {
+      var ancestors = {};
+      for (var i = 1; i < parts.length; i++) {
+        ancestors[parts.slice(0, i).join('/')] = true;
+      }
+      if (onExpandedDirsChange) {
+        onExpandedDirsChange(Object.assign({}, expandedDirs || {}, ancestors));
+      }
+    }
+
+    // After the DOM updates, scroll the active item into view
+    var timer = setTimeout(function () {
+      if (!containerRef.current) return;
+      var el = containerRef.current.querySelector('.tree-item.active');
+      if (el) el.scrollIntoView({ block: 'nearest' });
+    }, 80);
+    return function () { clearTimeout(timer); };
+  }, [activePath]);
+
   var renameSelectionEnd = function renameSelectionEnd(name) {
     var value = String(name || '');
     var dotIndex = value.indexOf('.');

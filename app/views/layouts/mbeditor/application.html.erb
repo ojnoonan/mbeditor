@@ -4,6 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="turbo-visit-control" content="reload" />
+  <meta name="theme-color" content="#1e1e2e" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <% pwa_base = request.script_name.to_s.sub(%r{/$}, '') %>
+  <link rel="manifest" href="<%= "#{pwa_base}/manifest.webmanifest" %>" />
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('<%= json_escape("#{pwa_base}/sw.js") %>', { scope: '<%= json_escape("#{pwa_base}/") %>' });
+    }
+  </script>
   <title>Mbeditor — <%= Rails.root.basename %></title>
 
   <!-- ── Fonts and Styles ──────────────────────────────── -->
@@ -17,13 +27,6 @@
   <script src="<%= asset_path('lodash.min.js') %>"></script>
   <script src="<%= asset_path('minisearch.min.js') %>"></script>
   <script src="<%= asset_path('marked.min.js') %>"></script>
-  <script src="<%= asset_path('prettier-standalone.js') %>"></script>
-  <script src="<%= asset_path('prettier-plugin-babel.js') %>"></script>
-  <script src="<%= asset_path('prettier-plugin-estree.js') %>"></script>
-  <script src="<%= asset_path('prettier-plugin-html.js') %>"></script>
-  <script src="<%= asset_path('prettier-plugin-postcss.js') %>"></script>
-  <script src="<%= asset_path('prettier-plugin-markdown.js') %>"></script>
-
   <!-- ── Monaco loader ─────────────────────────────────── -->
   <% base_path = request.script_name.to_s.sub(%r{/$}, '') %>
   <script>var require = { paths: { vs: '<%= json_escape("#{base_path}/monaco-editor/vs") %>' } };</script>
@@ -32,13 +35,6 @@
 <body data-rails-root="<%= Rails.root.to_s %>" data-mbeditor-version="<%= Mbeditor::VERSION %>">
   <script>
     window.MBEDITOR_BASE_PATH = "<%= json_escape(base_path) %>";
-    window.prettierPlugins = {
-      babel: window.prettierPluginsBabel,
-      estree: window.prettierPluginsEstree,
-      html: window.prettierPluginsHtml,
-      postcss: window.prettierPluginsPostcss,
-      markdown: window.prettierPluginsMarkdown
-    };
   </script>
 
   <div id="mbeditor-root">
@@ -56,20 +52,50 @@
       }
     };
 
-    // Wait for Monaco to load before initializing application scripts
-    require(['vs/editor/editor.main'], function() {
-      var appScript = document.createElement('script');
-      appScript.src = '<%= asset_path("mbeditor/application.js") %>';
-      appScript.onload = function() {
-        var root = document.getElementById('mbeditor-root');
-        if (window.MbeditorApp && window.ReactDOM) {
-          window.ReactDOM.render(React.createElement(window.MbeditorApp), root);
-        } else {
-          console.error("Failed to mount: MbeditorApp or ReactDOM is undefined.");
-        }
-      };
-      document.body.appendChild(appScript);
-    });
+    // Load Prettier scripts sequentially with define temporarily hidden so their
+    // UMD wrapper sets window.prettier / window.prettierPlugins instead of
+    // registering as AMD modules via Monaco's loader.  Then load Monaco and the
+    // app once all Prettier scripts are ready.
+    (function() {
+      var prettierScripts = [
+        '<%= asset_path("prettier-standalone.js") %>',
+        '<%= asset_path("prettier-plugin-babel.js") %>',
+        '<%= asset_path("prettier-plugin-estree.js") %>',
+        '<%= asset_path("prettier-plugin-html.js") %>',
+        '<%= asset_path("prettier-plugin-postcss.js") %>',
+        '<%= asset_path("prettier-plugin-markdown.js") %>'
+      ];
+
+      function loadSequential(srcs, done) {
+        if (!srcs.length) return done();
+        var s = document.createElement('script');
+        s.src = srcs[0];
+        s.onload = function() { loadSequential(srcs.slice(1), done); };
+        document.head.appendChild(s);
+      }
+
+      var _define = window.define;
+      window.define = undefined;
+
+      loadSequential(prettierScripts, function() {
+        window.define = _define;
+
+        // Wait for Monaco to load before initializing application scripts
+        require(['vs/editor/editor.main'], function() {
+          var appScript = document.createElement('script');
+          appScript.src = '<%= asset_path("mbeditor/application.js") %>';
+          appScript.onload = function() {
+            var root = document.getElementById('mbeditor-root');
+            if (window.MbeditorApp && window.ReactDOM) {
+              window.ReactDOM.render(React.createElement(window.MbeditorApp), root);
+            } else {
+              console.error("Failed to mount: MbeditorApp or ReactDOM is undefined.");
+            }
+          };
+          document.body.appendChild(appScript);
+        });
+      });
+    })();
   </script>
 </body>
 </html>

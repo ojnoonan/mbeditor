@@ -18,8 +18,11 @@ Mbeditor::Engine.routes.draw do
   get    'search',          to: 'editors#search'
   get    'git_info',        to: 'editors#git_info'
   get    'git_status',      to: 'editors#git_status'
-  get    'monaco_worker.js',                to: 'editors#monaco_worker'
-  get    'ts_worker.js',                    to: 'editors#ts_worker'
+  get    'manifest.webmanifest',            to: 'editors#pwa_manifest',   format: false
+  get    'sw.js',                           to: 'editors#pwa_sw',         format: false
+  get    'mbeditor-icon.svg',               to: 'editors#pwa_icon',       format: false
+  get    'monaco_worker.js',                to: 'editors#monaco_worker',  format: false
+  get    'ts_worker.js',                    to: 'editors#ts_worker',      format: false
   get    'monaco-editor/*asset_path',       to: 'editors#monaco_asset', format: false
   get    'min-maps/*asset_path',            to: 'editors#monaco_asset', format: false
   post   'lint',            to: 'editors#lint'

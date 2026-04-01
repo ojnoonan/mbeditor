@@ -478,6 +478,7 @@ var TabManager = (function () {
     moveTabToPane: moveTabToPane,
     clearGotoLine: clearGotoLine,
     closeAllTabsInPane: closeAllTabsInPane,
-    closeAllTabs: closeAllTabs
+    closeAllTabs: closeAllTabs,
+    syncMarkdownPreview: _syncMarkdownPreviewContent
   };
 })();
