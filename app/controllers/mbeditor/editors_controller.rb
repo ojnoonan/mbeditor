@@ -16,6 +16,7 @@ module Mbeditor
     MAX_OPEN_FILE_SIZE_BYTES = 5 * 1024 * 1024
     RG_AVAILABLE = system("which rg > /dev/null 2>&1")
     RUBOCOP_TIMEOUT_SECONDS = 15
+    PROBE_MUTEX = Mutex.new
 
     # GET /mbeditor — renders the IDE shell
     def index
@@ -66,7 +67,12 @@ module Mbeditor
     # POST /mbeditor/state — save workspace state
     def save_state
       path = workspace_root.join("tmp", "mbeditor_workspace.json")
-      File.write(path, params[:state].to_json)
+      json = params[:state].to_json
+      if json.bytesize > 1.megabyte
+        return render json: { error: "Payload too large" }, status: :content_too_large
+      end
+      FileUtils.mkdir_p(path.dirname)
+      File.write(path, json)
       render json: { ok: true }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -240,6 +246,7 @@ module Mbeditor
             else
               args = ["grep", "-rn", "-F", "-m", "30"]
               excluded_dirnames.each do |dirname|
+                next unless dirname.match?(/\A[\w.\/-]+\z/)
                 args << "--exclude-dir=#{dirname}"
               end
               args + [query, workspace_root.to_s]
@@ -250,7 +257,12 @@ module Mbeditor
         output.lines.each do |line|
           break if results.length > 30
 
-          data = JSON.parse(line) rescue next
+          begin
+            data = JSON.parse(line)
+          rescue JSON::ParserError => e
+            Rails.logger.warn("Search: malformed JSON line from rg: #{e.message}")
+            next
+          end
           next unless data["type"] == "match"
 
           match_data = data["data"]
@@ -780,14 +792,16 @@ module Mbeditor
       # Key on the configured rubocop command so the cache is invalidated if the
       # command changes (e.g., between test cases or after reconfiguration).
       key   = Mbeditor.configuration.rubocop_command.to_s
-      cache = self.class.instance_variable_get(:@rubocop_available_cache) ||
-              self.class.instance_variable_set(:@rubocop_available_cache, {})
-      return cache[key] if cache.key?(key)
-      cache[key] = begin
-        _out, _err, status = Open3.capture3(*rubocop_command, "--version")
-        status.success?
-      rescue StandardError
-        false
+      PROBE_MUTEX.synchronize do
+        cache = self.class.instance_variable_get(:@rubocop_available_cache) ||
+                self.class.instance_variable_set(:@rubocop_available_cache, {})
+        return cache[key] if cache.key?(key)
+        cache[key] = begin
+          _out, _err, status = Open3.capture3(*rubocop_command, "--version")
+          status.success?
+        rescue StandardError
+          false
+        end
       end
     end
 
@@ -796,28 +810,32 @@ module Mbeditor
       # respected without re-running the probe on every request.
       cmd   = haml_lint_command
       key   = cmd.join(" ")
-      cache = self.class.instance_variable_get(:@haml_lint_available_cache) ||
-              self.class.instance_variable_set(:@haml_lint_available_cache, {})
-      return cache[key] if cache.key?(key)
-      cache[key] = begin
-        _out, _err, status = Open3.capture3(*cmd, "--version")
-        status.success?
-      rescue StandardError
-        false
+      PROBE_MUTEX.synchronize do
+        cache = self.class.instance_variable_get(:@haml_lint_available_cache) ||
+                self.class.instance_variable_set(:@haml_lint_available_cache, {})
+        return cache[key] if cache.key?(key)
+        cache[key] = begin
+          _out, _err, status = Open3.capture3(*cmd, "--version")
+          status.success?
+        rescue StandardError
+          false
+        end
       end
     end
 
     def git_available?
       # Key on workspace path so different directories get their own probe result.
       key   = workspace_root.to_s
-      cache = self.class.instance_variable_get(:@git_available_cache) ||
-              self.class.instance_variable_set(:@git_available_cache, {})
-      return cache[key] if cache.key?(key)
-      cache[key] = begin
-        _out, _err, status = Open3.capture3("git", "-C", key, "rev-parse", "--is-inside-work-tree")
-        status.success?
-      rescue StandardError
-        false
+      PROBE_MUTEX.synchronize do
+        cache = self.class.instance_variable_get(:@git_available_cache) ||
+                self.class.instance_variable_set(:@git_available_cache, {})
+        return cache[key] if cache.key?(key)
+        cache[key] = begin
+          _out, _err, status = Open3.capture3("git", "-C", key, "rev-parse", "--is-inside-work-tree")
+          status.success?
+        rescue StandardError
+          false
+        end
       end
     end
 
@@ -872,7 +890,9 @@ module Mbeditor
     end
 
     def parse_porcelain_status(output)
-      output.lines.map do |line|
+      output.lines.filter_map do |line|
+        next if line.strip.empty? || line.length < 4
+
         { status: line[0..1].strip, path: line[3..].to_s.strip }
       end
     end

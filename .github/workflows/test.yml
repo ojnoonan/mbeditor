@@ -12,8 +12,14 @@ jobs:
     strategy:
       matrix:
         include:
-          - gemfile: Gemfile
-          - gemfile: gemfiles/rails71.gemfile
+          - ruby: "3.0"
+            gemfile: gemfiles/rails71.gemfile
+          - ruby: "3.1"
+            gemfile: gemfiles/rails71.gemfile
+          - ruby: "3.2"
+            gemfile: gemfiles/rails71.gemfile
+          - ruby: "3.3"
+            gemfile: Gemfile
     env:
       BUNDLE_GEMFILE: ${{ matrix.gemfile }}
 
@@ -25,7 +31,7 @@ jobs:
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1.292.0
         with:
-          ruby-version: "3.0"
+          ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
 
       - name: Run tests

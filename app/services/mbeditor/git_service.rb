@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "open3"
+require "timeout"
 
 module Mbeditor
   # Shared helpers for running git CLI commands read-only inside a repo.
@@ -8,6 +9,9 @@ module Mbeditor
   # stay stateless and composable.
   module GitService
     module_function
+
+    # Returned by run_git when the git subprocess times out.
+    NULL_STATUS = Struct.new(:exitstatus) { def success? = false }.new(nil)
 
     # Safe pattern for git ref names (branch, remote/branch, tag).
     # Rejects refs containing whitespace, NUL, shell metacharacters, or
@@ -18,8 +22,12 @@ module Mbeditor
     # Returns [stdout, Process::Status]. stderr is captured and discarded to
     # prevent git diagnostic messages from leaking into the Rails server log.
     def run_git(repo_path, *args)
-      out, _err, status = Open3.capture3("git", "-C", repo_path, *args)
-      [out, status]
+      Timeout.timeout(Mbeditor.configuration.git_timeout) do
+        out, _err, status = Open3.capture3("git", "-C", repo_path, *args)
+        [out, status]
+      end
+    rescue Timeout::Error
+      ["", NULL_STATUS]
     end
 
     # Current branch name, or nil if not in a git repo.

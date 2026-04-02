@@ -61,6 +61,7 @@ Mbeditor.configure do |config|
   # config.test_framework = :minitest   # :minitest or :rspec — auto-detected when nil
   # config.test_command   = "bundle exec rails test"  # defaults to bin/rails test or bundle exec ruby -Itest
   # config.test_timeout   = 60
+  # config.git_timeout    = 10
 
   # Optional Redmine integration
   # config.redmine_enabled = true
@@ -80,6 +81,7 @@ Available options:
 - `test_framework` sets the test framework. `:minitest` or `:rspec`. Auto-detected from file suffix, `.rspec`, or `test`/`spec` directory when `nil`. Default: `nil`.
 - `test_command` overrides the full command used to run a test file. When `nil`, the engine picks `bin/rails test` (Minitest) or `bin/rspec` / `bundle exec rspec` (RSpec). Default: `nil`.
 - `test_timeout` sets the maximum seconds a test run may take before being killed. Default: `60`.
+- `git_timeout` sets the timeout in seconds for git subprocess calls (prevents hanging on slow remotes or missing git). Default: `10`.
 - `redmine_enabled` enables issue lookup integration. Default: `false`.
 - `redmine_url` sets the Redmine base URL. Required when `redmine_enabled` is `true`.
 - `redmine_api_key` sets the Redmine API key. Required when `redmine_enabled` is `true`.

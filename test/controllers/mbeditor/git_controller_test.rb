@@ -72,6 +72,12 @@ module Mbeditor
       assert json.key?("error")
     end
 
+    test "diff rejects reflog syntax containing @" do
+      get "/mbeditor/git/diff", params: { file: "Gemfile", base: "@{-1}" }
+      assert_response :bad_request
+      assert json.key?("error")
+    end
+
     test "diff accepts sha^ parent notation as base" do
       log_out, = Open3.capture2("git", "-C", @workspace, "log", "--format=%H", "-1")
       sha = log_out.strip

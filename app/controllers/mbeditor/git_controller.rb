@@ -26,7 +26,8 @@ module Mbeditor
       head = nil if head == 'WORKING'
       # Allow full/short SHA hashes plus common git ref formats: branch names,
       # HEAD, remote tracking refs, parent notation (sha^, sha~N) and tags.
-      valid_ref = /\A[a-zA-Z0-9._\-\/\^~@]+\z/
+      # Explicitly exclude @ to block reflog syntax such as @{-1}.
+      valid_ref = /\A[a-zA-Z0-9._\-\/\^~]+\z/
       if [base, head].any? { |s| s && (s.length > 200 || !s.match?(valid_ref)) }
         return render json: { error: 'Invalid ref' }, status: :bad_request
       end

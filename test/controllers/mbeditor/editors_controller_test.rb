@@ -162,6 +162,13 @@ module Mbeditor
       assert_equal ["foo.rb"], json["openTabs"]
     end
 
+    test "save_state returns 413 for oversized payload" do
+      large_state = { "data" => "x" * 1_100_000 }
+      post "/mbeditor/state", params: { state: large_state }, as: :json
+      assert_response 413
+      assert json.key?("error")
+    end
+
     # ---------------------------------------------------------------------------
     # show (GET /file)
     # ---------------------------------------------------------------------------

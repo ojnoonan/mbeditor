@@ -3,6 +3,7 @@
 require "net/http"
 require "uri"
 require "json"
+require "openssl"
 
 module Mbeditor
   class RedmineDisabledError < StandardError
@@ -52,6 +53,7 @@ module Mbeditor
 
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.scheme == "https"
+      http.verify_mode = OpenSSL::SSL::VERIFY_PEER if http.use_ssl?
       http.open_timeout = TIMEOUT_SECONDS
       http.read_timeout = TIMEOUT_SECONDS
 

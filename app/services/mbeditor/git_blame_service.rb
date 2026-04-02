@@ -56,7 +56,11 @@ module Mbeditor
         if line.start_with?("\t")
           current["content"] = line[1..-1] # strip leading tab
           commits[current["sha"]] = current.slice("author", "email", "date", "summary") if current["author"]
-          results << current.dup
+          # completeness guard before appending to handle files without trailing newline
+          # or incomplete final blocks from git porcelain output
+          if current["sha"] && current["content"]
+            results << current.dup
+          end
           current = {}
           next
         end

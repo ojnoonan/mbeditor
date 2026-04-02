@@ -33,5 +33,9 @@ module Mbeditor
         fa-solid-900.woff2
       ]
     end
+
+    initializer "mbeditor.validate_configuration" do |_app|
+      Mbeditor.configuration.validate_workspace_root!
+    end
   end
 end
