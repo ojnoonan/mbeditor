@@ -385,7 +385,8 @@
       indentationRules: {
         increaseIndentPattern: /^\s*(def|class|module|if|unless|case|while|until|for|begin|elsif|else|rescue|ensure|when)\b/,
         decreaseIndentPattern: /^\s*(end|elsif|else|rescue|ensure|when)\b/
-      }
+      },
+      wordPattern: /[a-zA-Z_]\w*[!?]?/
     });
 
     // Override Monaco's built-in Ruby tokenizer with a comprehensive Monarch grammar
@@ -695,7 +696,7 @@
     // Calls the backend /definition endpoint (Ripper-based) and renders
     // the method signature and any preceding # comments as hover markdown.
     monaco.languages.registerHoverProvider('ruby', {
-      provideHover: function provideHover(model, position) {
+      provideHover: function provideHover(model, position, token) {
         var wordInfo = model.getWordAtPosition(position);
         if (!wordInfo) return null;
 
@@ -707,6 +708,11 @@
         var currentFile = model._mbeditorPath || null;
 
         return FileService.getDefinition(word, 'ruby').then(function(data) {
+          // If the hover was cancelled while the request was in flight (e.g. the
+          // user moved the mouse away), return null so Monaco's CancelablePromise
+          // wrapper resolves cleanly instead of throwing "Canceled".
+          if (token && token.isCancellationRequested) return null;
+
           var results = data && Array.isArray(data.results) ? data.results : [];
           // Filter out results that are in the file currently being edited —
           // showing a hover for a method you can already see adds no value.

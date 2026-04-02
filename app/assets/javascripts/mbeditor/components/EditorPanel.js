@@ -475,13 +475,13 @@ var EditorPanel = function EditorPanel(_ref) {
       formatOnType: true
     });
 
-    monacoRef.current = editor;
-    window.__mbeditorActiveEditor = editor;
-    setEditorReady(true);
-
     if (tab.viewState) {
       editor.restoreViewState(tab.viewState);
     }
+
+    monacoRef.current = editor;
+    window.__mbeditorActiveEditor = editor;
+    setEditorReady(true);
 
     // Stash the workspace-relative path on the model so code-action providers
     // can identify which file they are operating on without needing React state.
@@ -503,11 +503,14 @@ var EditorPanel = function EditorPanel(_ref) {
       editorPluginDisposable = window.MbeditorEditorPlugins.attachEditorFeatures(editor, language);
     }
 
-    // Column selection only when Alt is held during drag.
-    // We toggle Monaco's columnSelection option on Alt+mousedown and reset on mouseup.
+    // Column selection only when Ctrl/Cmd is held during drag.
+    // We toggle Monaco's columnSelection option on Ctrl/Cmd+mousedown and reset on mouseup.
+    // Alt+mousedown without Ctrl/Cmd is suppressed (preventDefault stops Monaco's built-in Alt+drag).
     var onColumnMouseDown = function(ev) {
-      if (ev.altKey && !ev.ctrlKey && !ev.metaKey) {
+      if (ev.ctrlKey || ev.metaKey) {
         editor.updateOptions({ columnSelection: true });
+      } else if (ev.altKey) {
+        ev.preventDefault();
       }
     };
     var onColumnMouseUp = function() {
@@ -903,8 +906,7 @@ var EditorPanel = function EditorPanel(_ref) {
   // Map a test method name to the best-matching line in the source file.
   // Extracts keywords from the test name and scores each source line.
   var mapTestToSourceLine = function(testName, sourceContent) {
-    // Strip Minitest-style "ClassName#" prefix before the usual transformations
-    var name = (testName || '').replace(/^\w+#/, '').replace(/^test_/, '').replace(/^(it |should )/, '');
+    var name = (testName || '').replace(/^test_/, '').replace(/^(it |should )/, '');
     var tokens = name.split('_').filter(function(t) { return t.length > 1; });
     if (tokens.length === 0) return 1;
 

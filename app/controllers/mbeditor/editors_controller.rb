@@ -207,7 +207,7 @@ module Mbeditor
       language = params[:language].to_s.strip
 
       return render json: { results: [] } if symbol.blank?
-      return render json: { error: "Invalid symbol" }, status: :bad_request unless symbol.match?(/\A[a-zA-Z0-9_]{1,60}\z/)
+      return render json: { error: "Invalid symbol" }, status: :bad_request unless symbol.match?(/\A[a-zA-Z_]\w{0,59}[!?]?\z/)
 
       results = case language
                 when "ruby"

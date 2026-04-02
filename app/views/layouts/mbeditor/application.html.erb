@@ -29,7 +29,7 @@
   <script src="<%= asset_path('marked.min.js') %>"></script>
   <!-- ── Monaco loader ─────────────────────────────────── -->
   <% base_path = request.script_name.to_s.sub(%r{/$}, '') %>
-  <script>var require = { paths: { vs: '<%= json_escape("#{base_path}/monaco-editor/vs") %>', 'monaco-vim': '<%= json_escape(asset_path("monaco-vim.js").sub(/\.js$/, "")) %>', 'monaco-editor/esm/vs': '<%= json_escape("#{base_path}/monaco-editor/vs") %>' } };</script>
+  <script>var require = { paths: { vs: '<%= json_escape("#{base_path}/monaco-editor/vs") %>', 'monaco-vim': '<%= json_escape(asset_path("monaco-vim.js").sub(/\.js$/, "")) %>' } };</script>
   <script src="<%= "#{base_path}/monaco-editor/vs/loader.js" %>"></script>
   <!-- ── Emmet + Extra themes (non-AMD, load before app) ── -->
   <script src="<%= asset_path('emmet.js') %>"></script>
@@ -38,16 +38,6 @@
 <body data-rails-root="<%= Rails.root.to_s %>" data-mbeditor-version="<%= Mbeditor::VERSION %>">
   <script>
     window.MBEDITOR_BASE_PATH = "<%= json_escape(base_path) %>";
-
-    // Monaco's restoreViewState cancels its own internal rendering promises and
-    // those cancellations surface as "Canceled: Canceled" unhandled rejections.
-    // This is a known Monaco quirk — the cancellation is intentional and benign.
-    // Suppress it here so it doesn't pollute the console.
-    window.addEventListener('unhandledrejection', function(event) {
-      if (event.reason && event.reason.name === 'Canceled' && event.reason.message === 'Canceled') {
-        event.preventDefault();
-      }
-    });
   </script>
 
   <div id="mbeditor-root">
