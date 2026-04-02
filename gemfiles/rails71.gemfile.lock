@@ -317,7 +317,6 @@ DEPENDENCIES
   haml_lint
   mbeditor!
   minitest-reporters
-  nokogiri (>= 1.19.1)
   puma
   rails (~> 7.1)
   rubocop
@@ -431,4 +430,4 @@ CHECKSUMS
   zeitwerk (2.7.5) sha256=d8da92128c09ea6ec62c949011b00ed4a20242b255293dd66bf41545398f73dd
 
 BUNDLED WITH
-  2.7.2
+   2.7.2

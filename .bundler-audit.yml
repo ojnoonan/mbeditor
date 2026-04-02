@@ -4,3 +4,7 @@ ignore:
   # matrix entry since mbeditor is a dev-only engine, proxy mode is not used, and
   # the engine does not serve user-uploaded content via Active Storage in production.
   - GHSA-p9fm-f462-ggrg
+  # nokogiri xmlC14NExecute return value not checked — fix requires nokogiri >= 1.19.1
+  # which in turn requires Ruby >= 3.2; accepted since mbeditor targets Ruby >= 3.0 and
+  # does not expose XML canonicalization to untrusted input.
+  - GHSA-wx95-c6cv-8532
