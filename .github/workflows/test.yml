@@ -56,3 +56,11 @@ jobs:
         run: |
           bundle exec bundler-audit update
           bundle exec bundler-audit check
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: npm audit
+        run: npm audit --audit-level=high
