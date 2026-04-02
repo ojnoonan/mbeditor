@@ -21,6 +21,16 @@
     wbr: true
   };
 
+  var RUBY_KEYWORDS = {
+    def: true, end: true, 'if': true, 'else': true, elsif: true,
+    unless: true, 'while': true, until: true, 'for': true, 'do': true,
+    'return': true, 'class': true, 'module': true, begin: true,
+    rescue: true, ensure: true, 'raise': true, yield: true,
+    'self': true, 'super': true, 'true': true, 'false': true, 'nil': true,
+    then: true, when: true, 'case': true, 'in': true, 'and': true,
+    'or': true, not: true, require: true, include: true, extend: true
+  };
+
   var globalsRegistered = false;
 
   function leadingWhitespace(line) {
@@ -171,6 +181,89 @@
 
     var suppressInternalEdit = false;
     var keydownDisposable = null;
+    var emmetTabDisposable = null;
+    var gotoMouseDisposable = null;
+    var gotoActionDisposable = null;
+
+    // Emmet Tab expansion — active for markup and stylesheet languages
+    var EMMET_MARKUP_LANGS = { html: true, xml: true, erb: true, 'html.erb': true, haml: true };
+    var EMMET_STYLE_LANGS = { css: true, scss: true, less: true };
+    var isEmmetLang = EMMET_MARKUP_LANGS[language] || EMMET_STYLE_LANGS[language];
+
+    if (isEmmetLang && window.emmet && window.emmet.extract && window.emmet.default) {
+      var emmetType = EMMET_STYLE_LANGS[language] ? 'stylesheet' : 'markup';
+      // editor.addAction() returns a real IDisposable; addCommand() only returns a string.
+      emmetTabDisposable = editor.addAction({
+        id: 'mbeditor.emmet.expandAbbreviation',
+        label: 'Emmet: Expand Abbreviation',
+        keybindings: [window.monaco.KeyCode.Tab],
+        precondition: '!suggestWidgetVisible && !parameterHintsVisible',
+        run: function(editor) {
+          var selection = editor.getSelection();
+          // Only expand when the selection is collapsed (no range selected)
+          if (!selection.isEmpty()) {
+            editor.trigger('keyboard', 'type', { text: '\t' });
+            return;
+          }
+          var pos = editor.getPosition();
+          var lineText = model.getLineContent(pos.lineNumber);
+          var textBeforeCursor = lineText.substring(0, pos.column - 1);
+
+          var extracted = null;
+          try {
+            extracted = window.emmet.extract(textBeforeCursor, { type: emmetType });
+          } catch (e) { /* not a valid context */ }
+
+          if (!extracted || !extracted.abbreviation) {
+            editor.trigger('keyboard', 'type', { text: '\t' });
+            return;
+          }
+
+          var abbr = extracted.abbreviation;
+          var expanded = null;
+          try {
+            expanded = window.emmet.default(abbr, { type: emmetType });
+          } catch (e) { /* not a valid abbreviation */ }
+
+          if (!expanded) {
+            editor.trigger('keyboard', 'type', { text: '\t' });
+            return;
+          }
+
+          // Place the first tab stop ($1 or ${1}) at cursor; strip remaining markers
+          var withTabStop = expanded.replace(/\$\{[0-9]+:[^}]*\}|\$\{[0-9]+\}|\$[0-9]+/g, function(m, offset, str) {
+            // Keep first occurrence as cursor position marker (replaced below), remove rest
+            return m;
+          });
+          var firstTabStop = null;
+          var expandedClean = withTabStop.replace(/\$\{1:[^}]*\}|\$\{1\}|\$1/g, function(m) {
+            if (firstTabStop === null) { firstTabStop = true; return '\x00'; }
+            return '';
+          }).replace(/\$\{[0-9]+:[^}]*\}|\$\{[0-9]+\}|\$[0-9]+/g, '');
+
+          var cursorMarkerIdx = expandedClean.indexOf('\x00');
+          var finalText = expandedClean.replace('\x00', '');
+
+          // Replace the abbreviation text with the expanded result
+          var abbrStart = extracted.location + 1; // 1-based column
+          var abbrEnd = pos.column; // exclusive
+
+          var range = new window.monaco.Range(pos.lineNumber, abbrStart, pos.lineNumber, abbrEnd);
+          editor.executeEdits('emmet', [{ range: range, text: finalText }]);
+
+          // Position cursor at first tab stop if we found one
+          if (cursorMarkerIdx >= 0) {
+            var textBefore = finalText.substring(0, cursorMarkerIdx);
+            var newlines = textBefore.split('\n');
+            var newLine = pos.lineNumber + newlines.length - 1;
+            var newCol = newlines.length === 1
+              ? abbrStart + textBefore.length
+              : newlines[newlines.length - 1].length + 1;
+            editor.setPosition({ lineNumber: newLine, column: newCol });
+          }
+        }
+      });
+    }
 
     if (language === 'ruby') {
       keydownDisposable = editor.onKeyDown(function (event) {
@@ -179,6 +272,61 @@
 
         event.preventDefault();
         event.stopPropagation();
+      });
+
+      // Ctrl/Cmd+click — navigate to definition
+      gotoMouseDisposable = editor.onMouseDown(function(event) {
+        var ctrlOrCmd = event.event.ctrlKey || event.event.metaKey;
+        if (!ctrlOrCmd) return;
+        // Target type 6 = CONTENT_TEXT in Monaco's MouseTargetType enum
+        if (!event.target || event.target.type !== 6) return;
+
+        var position = event.target.position;
+        if (!position) return;
+
+        var wordInfo = model.getWordAtPosition(position);
+        if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
+        if (RUBY_KEYWORDS[wordInfo.word]) return;
+        if (typeof FileService === 'undefined' || !FileService.getDefinition) return;
+
+        event.event.preventDefault();
+
+        FileService.getDefinition(wordInfo.word, 'ruby').then(function(data) {
+          var results = data && Array.isArray(data.results) ? data.results : [];
+          if (results.length === 0) return;
+          var r = results[0];
+          var filename = r.file.split('/').pop();
+          if (typeof TabManager !== 'undefined' && TabManager.openTab) {
+            TabManager.openTab(r.file, filename, r.line);
+          }
+        }).catch(function() {});
+      });
+
+      // F12 — go to definition from keyboard
+      gotoActionDisposable = editor.addAction({
+        id: 'mbeditor.gotoRubyDefinition',
+        label: 'Go to Ruby Definition',
+        keybindings: [window.monaco.KeyCode.F12],
+        contextMenuGroupId: 'navigation',
+        contextMenuOrder: 1.5,
+        run: function(ed) {
+          var pos = ed.getPosition();
+          if (!pos) return;
+          var wordInfo = model.getWordAtPosition(pos);
+          if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
+          if (RUBY_KEYWORDS[wordInfo.word]) return;
+          if (typeof FileService === 'undefined' || !FileService.getDefinition) return;
+
+          FileService.getDefinition(wordInfo.word, 'ruby').then(function(data) {
+            var results = data && Array.isArray(data.results) ? data.results : [];
+            if (results.length === 0) return;
+            var r = results[0];
+            var filename = r.file.split('/').pop();
+            if (typeof TabManager !== 'undefined' && TabManager.openTab) {
+              TabManager.openTab(r.file, filename, r.line);
+            }
+          }).catch(function() {});
+        }
       });
     }
 
@@ -209,6 +357,9 @@
     return {
       dispose: function dispose() {
         if (keydownDisposable) keydownDisposable.dispose();
+        if (emmetTabDisposable) emmetTabDisposable.dispose();
+        if (gotoMouseDisposable) gotoMouseDisposable.dispose();
+        if (gotoActionDisposable) gotoActionDisposable.dispose();
         contentDisposable.dispose();
       }
     };
@@ -221,9 +372,230 @@
     globalsRegistered = true;
 
     monaco.languages.setLanguageConfiguration('ruby', {
+      comments: { lineComment: '#', blockComment: ['=begin', '=end'] },
+      brackets: [['(', ')'], ['{', '}'], ['[', ']']],
+      autoClosingPairs: [
+        { open: '{', close: '}' }, { open: '[', close: ']' }, { open: '(', close: ')' },
+        { open: '"', close: '"' }, { open: "'", close: "'" }
+      ],
+      surroundingPairs: [
+        { open: '{', close: '}' }, { open: '[', close: ']' }, { open: '(', close: ')' },
+        { open: '"', close: '"' }, { open: "'", close: "'" }
+      ],
       indentationRules: {
         increaseIndentPattern: /^\s*(def|class|module|if|unless|case|while|until|for|begin|elsif|else|rescue|ensure|when)\b/,
         decreaseIndentPattern: /^\s*(end|elsif|else|rescue|ensure|when)\b/
+      }
+    });
+
+    // Override Monaco's built-in Ruby tokenizer with a comprehensive Monarch grammar
+    // that uses TextMate-standard scope names so all bundled themes colour them correctly.
+    monaco.languages.setMonarchTokensProvider('ruby', {
+      defaultToken: '',
+      tokenPostfix: '.ruby',
+
+      tokenizer: {
+        root: [
+          // =begin / =end block comments
+          [/^=begin\b/, { token: 'comment', next: '@blockComment' }],
+
+          // Single-line comments
+          [/#.*$/, 'comment'],
+
+          // Heredoc start — capture the terminator word into state arg
+          [/<<[-~]?(['"]?)(\w+)\1/, { token: 'string.heredoc.delimiter', next: '@heredoc.$2' }],
+
+          // def + method name (handles self. prefix and operator method names)
+          [/(\bdef\b)(\s+)(self)(\.)([\w]+[!?=]?|[+\-*\/%<>=!\[\]&|^~]+)/,
+            ['keyword.control.def', '', 'variable.language', 'delimiter', 'entity.name.function']],
+          [/(\bdef\b)(\s+)([\w]+[!?=]?|[+\-*\/%<>=!\[\]&|^~]+)/,
+            ['keyword.control.def', '', 'entity.name.function']],
+          [/\bdef\b/, 'keyword.control.def'],
+
+          // class + name (including singleton class << self)
+          [/(\bclass\b)(\s+)([A-Z][\w:]*)/, ['keyword.control.class', '', 'entity.name.class']],
+          [/\bclass\b/, 'keyword.control.class'],
+
+          // module + name
+          [/(\bmodule\b)(\s+)([A-Z][\w:]*)/, ['keyword.control.module', '', 'entity.name.class']],
+          [/\bmodule\b/, 'keyword.control.module'],
+
+          // Language literals
+          [/\b(nil|true|false)\b/, 'constant.language'],
+          [/\b(self|super)\b/, 'variable.language'],
+
+          // Class variables (@@) — must precede instance variable rule
+          [/@@[a-zA-Z_]\w*/, 'variable.other'],
+          // Instance variables (@)
+          [/@[a-zA-Z_]\w*/, 'variable.other.readwrite.instance'],
+          // Global variables ($)
+          [/\$[a-zA-Z_]\w*|\$\d+|\$[!@&*()\-.,;<>\/\\~`+?=:#]/, 'variable.other.constant'],
+
+          // Symbols  :foo  :"foo"  :'foo'
+          [/:[a-zA-Z_]\w*[!?]?/, 'constant.other.symbol'],
+          [/:"/, { token: 'constant.other.symbol', next: '@symDqString' }],
+          [/:'/, { token: 'constant.other.symbol', next: '@symSqString' }],
+
+          // Numbers
+          [/0[xX][0-9a-fA-F][0-9a-fA-F_]*/, 'constant.numeric'],
+          [/0[bB][01][01_]*/, 'constant.numeric'],
+          [/0[oO][0-7][0-7_]*/, 'constant.numeric'],
+          [/\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d[\d_]*)?/, 'constant.numeric'],
+
+          // Strings
+          [/"/, { token: 'string.quoted.double', next: '@dqString' }],
+          [/'/, { token: 'string.quoted.single', next: '@sqString' }],
+
+          // Percent literals — %w[] %i[] %(string)
+          [/%[wW]\[/, { token: 'string', next: '@percentWordBracket' }],
+          [/%[wW]\(/, { token: 'string', next: '@percentWordParen' }],
+          [/%[wW]\{/, { token: 'string', next: '@percentWordCurly' }],
+          [/%[iI]\[/, { token: 'constant.other.symbol', next: '@percentSymBracket' }],
+          [/%[iI]\(/, { token: 'constant.other.symbol', next: '@percentSymParen' }],
+          [/%[qQ]?\(/, { token: 'string.quoted.double', next: '@percentDqParen' }],
+          [/%[qQ]?\[/, { token: 'string.quoted.double', next: '@percentDqBracket' }],
+          [/%[qQ]?\{/, { token: 'string.quoted.double', next: '@percentDqCurly' }],
+
+          // Regexp literals — simplified: /pat/imxo not preceded by a word boundary that looks like division
+          [/\/(?!\s)(?:[^\/\\\n]|\\.)+\/[imxo]*/, 'string.regexp'],
+
+          // Control-flow and other keywords
+          [/\b(if|unless|while|until|for|do|case|when|then|else|elsif|end|return|yield|begin|rescue|ensure|raise|break|next|retry|and|or|not|in|__LINE__|__FILE__|__ENCODING__|__method__|__callee__|__dir__|alias|undef|defined\?)\b/, 'keyword.control'],
+
+          // Built-in kernel / module methods (support.function so themes highlight them distinctly)
+          [/\b(require|require_relative|load|autoload|include|extend|prepend|attr_reader|attr_writer|attr_accessor|attr|public|private|protected|module_function|puts|print|p|pp|gets|printf|sprintf|format|abort|exit|sleep|rand|srand|lambda|proc|block_given\?|respond_to\?|fail|warn|at_exit|freeze|frozen\?|nil\?|is_a\?|kind_of\?|instance_of\?|tap|itself|raise)\b/, 'support.function'],
+
+          // CamelCase constants and class references
+          [/[A-Z][a-zA-Z0-9_]*[?!]?/, 'entity.name.type.class'],
+
+          // Regular identifiers
+          [/[a-z_]\w*[!?]?/, 'identifier'],
+
+          // Operators
+          [/::/, 'keyword.operator'],
+          [/\.\.\.|\.\./, 'keyword.operator'],
+          [/<<=|>>=|\*\*=|&&=|\|\|=|[+\-*\/%&|^]=/, 'keyword.operator'],
+          [/<=>|===|==|!=|=~|!~|>=|<=|<<|>>|\*\*/, 'keyword.operator'],
+          [/[+\-*\/%&|^~<>=!?]/, 'keyword.operator'],
+
+          // Brackets and punctuation
+          [/[{}()\[\]]/, '@brackets'],
+          [/[;,.]/, 'delimiter'],
+          [/\s+/, '']
+        ],
+
+        dqString: [
+          [/[^\\"\#]+/, 'string.quoted.double'],
+          [/#\{/, { token: 'string.interpolated', next: '@interpolated' }],
+          [/#[^{]?/, 'string.quoted.double'],
+          [/\\./, 'string.quoted.double.escape'],
+          [/"/, { token: 'string.quoted.double', next: '@pop' }]
+        ],
+
+        sqString: [
+          [/[^\\']+/, 'string.quoted.single'],
+          [/\\./, 'string.quoted.single.escape'],
+          [/'/, { token: 'string.quoted.single', next: '@pop' }]
+        ],
+
+        symDqString: [
+          [/[^\\"\#]+/, 'constant.other.symbol'],
+          [/#\{/, { token: 'string.interpolated', next: '@interpolated' }],
+          [/\\./, 'constant.other.symbol'],
+          [/"/, { token: 'constant.other.symbol', next: '@pop' }]
+        ],
+        symSqString: [
+          [/[^\\']+/, 'constant.other.symbol'],
+          [/\\./, 'constant.other.symbol'],
+          [/'/, { token: 'constant.other.symbol', next: '@pop' }]
+        ],
+
+        interpolated: [
+          [/\}/, { token: 'string.interpolated', next: '@pop' }],
+          [/"/, { token: 'string.quoted.double', next: '@dqString' }],
+          [/'/, { token: 'string.quoted.single', next: '@sqString' }],
+          [/@@[a-zA-Z_]\w*/, 'variable.other'],
+          [/@[a-zA-Z_]\w*/, 'variable.other.readwrite.instance'],
+          [/\$[a-zA-Z_]\w*/, 'variable.other.constant'],
+          [/\b(nil|true|false)\b/, 'constant.language'],
+          [/\b(self)\b/, 'variable.language'],
+          [/[A-Z][a-zA-Z0-9_]*/, 'entity.name.type.class'],
+          [/\d[\d_]*(?:\.\d[\d_]*)?/, 'constant.numeric'],
+          [/:[a-zA-Z_]\w*[!?]?/, 'constant.other.symbol'],
+          [/[a-z_]\w*[!?]?/, 'identifier'],
+          [/::|\.\.\.|\.\./, 'keyword.operator'],
+          [/[+\-*\/%&|^~<>=!?.,:()\[\]]+/, 'keyword.operator'],
+          [/\s+/, '']
+        ],
+
+        heredoc: [
+          [/^(\w+)\s*$/, {
+            cases: {
+              '$1==$S2': { token: 'string.heredoc.delimiter', next: '@pop' },
+              '@default': 'string.heredoc'
+            }
+          }],
+          [/.+/, 'string.heredoc']
+        ],
+
+        // %w[] %W[] word arrays
+        percentWordBracket: [
+          [/\]/, { token: 'string', next: '@pop' }],
+          [/[^\]\s\\]+/, 'string'],
+          [/\s+/, 'string'],
+          [/\\./, 'string.escape']
+        ],
+        percentWordParen: [
+          [/\)/, { token: 'string', next: '@pop' }],
+          [/[^)\s\\]+/, 'string'],
+          [/\s+/, 'string'],
+          [/\\./, 'string.escape']
+        ],
+        percentWordCurly: [
+          [/\}/, { token: 'string', next: '@pop' }],
+          [/[^}\s\\]+/, 'string'],
+          [/\s+/, 'string'],
+          [/\\./, 'string.escape']
+        ],
+
+        // %i[] %I[] symbol arrays
+        percentSymBracket: [
+          [/\]/, { token: 'constant.other.symbol', next: '@pop' }],
+          [/[^\]\s\\]+/, 'constant.other.symbol'],
+          [/\s+/, 'constant.other.symbol'],
+          [/\\./, 'constant.other.symbol']
+        ],
+        percentSymParen: [
+          [/\)/, { token: 'constant.other.symbol', next: '@pop' }],
+          [/[^)\s\\]+/, 'constant.other.symbol'],
+          [/\s+/, 'constant.other.symbol'],
+          [/\\./, 'constant.other.symbol']
+        ],
+
+        // %(str) %[str] %{str} interpolating strings
+        percentDqParen: [
+          [/\)/, { token: 'string.quoted.double', next: '@pop' }],
+          [/#\{/, { token: 'string.interpolated', next: '@interpolated' }],
+          [/[^)\\\#]+/, 'string.quoted.double'],
+          [/\\./, 'string.quoted.double.escape']
+        ],
+        percentDqBracket: [
+          [/\]/, { token: 'string.quoted.double', next: '@pop' }],
+          [/#\{/, { token: 'string.interpolated', next: '@interpolated' }],
+          [/[^\]\\\#]+/, 'string.quoted.double'],
+          [/\\./, 'string.quoted.double.escape']
+        ],
+        percentDqCurly: [
+          [/\}/, { token: 'string.quoted.double', next: '@pop' }],
+          [/#\{/, { token: 'string.interpolated', next: '@interpolated' }],
+          [/[^}\\\#]+/, 'string.quoted.double'],
+          [/\\./, 'string.quoted.double.escape']
+        ],
+
+        blockComment: [
+          [/^=end\b.*$/, { token: 'comment', next: '@pop' }],
+          [/.+/, 'comment']
+        ]
       }
     });
 
@@ -317,6 +689,61 @@
           text: fix.replacement
         }], function() { return null; });
       }).catch(function() {});
+    });
+
+    // Ruby method definition hover provider.
+    // Calls the backend /definition endpoint (Ripper-based) and renders
+    // the method signature and any preceding # comments as hover markdown.
+    monaco.languages.registerHoverProvider('ruby', {
+      provideHover: function provideHover(model, position) {
+        var wordInfo = model.getWordAtPosition(position);
+        if (!wordInfo) return null;
+
+        var word = wordInfo.word;
+        if (!word || word.length < 2) return null;
+        if (RUBY_KEYWORDS[word]) return null;
+        if (typeof FileService === 'undefined' || !FileService.getDefinition) return null;
+
+        var currentFile = model._mbeditorPath || null;
+
+        return FileService.getDefinition(word, 'ruby').then(function(data) {
+          var results = data && Array.isArray(data.results) ? data.results : [];
+          // Filter out results that are in the file currently being edited —
+          // showing a hover for a method you can already see adds no value.
+          if (currentFile) {
+            results = results.filter(function(r) { return r.file !== currentFile; });
+          }
+          if (results.length === 0) return null;
+
+          var first = results[0];
+
+          // Build two separate MarkdownString sections so Monaco renders a
+          // visual divider between the code block and the documentation.
+          var codeParts = ['```ruby'];
+
+          // Include a trimmed comment block as a Ruby comment inside the code
+          // fence so the whole thing looks like source you'd read in an editor.
+          if (first.comments && first.comments.length > 0) {
+            first.comments.split('\n').forEach(function(l) {
+              codeParts.push(l.trim() || '#');
+            });
+          }
+
+          codeParts.push(first.signature);
+          codeParts.push('```');
+
+          var locationParts = results.length > 1
+            ? first.file + ':' + first.line + '  _(+' + (results.length - 1) + ' more)_'
+            : first.file + ':' + first.line;
+
+          return {
+            contents: [
+              { value: codeParts.join('\n'), isTrusted: true },
+              { value: '<span style="opacity:0.55;font-size:0.9em;">' + locationParts + '</span>', isTrusted: true, supportHtml: true }
+            ]
+          };
+        }).catch(function() { return null; });
+      }
     });
   }
 

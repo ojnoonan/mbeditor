@@ -46,7 +46,7 @@ var FileTree = function FileTree(_ref) {
     if (!selectedPath || !containerRef.current) return;
     var timer = setTimeout(function () {
       var el = containerRef.current && containerRef.current.querySelector('.tree-item.selected');
-      if (el) el.scrollIntoView({ block: 'nearest' });
+      if (el) el.scrollIntoView({ block: 'center' });
     }, 60);
     return function () { clearTimeout(timer); };
   }, [selectedPath]);
@@ -71,7 +71,7 @@ var FileTree = function FileTree(_ref) {
     var timer = setTimeout(function () {
       if (!containerRef.current) return;
       var el = containerRef.current.querySelector('.tree-item.active');
-      if (el) el.scrollIntoView({ block: 'nearest' });
+      if (el) el.scrollIntoView({ block: 'center' });
     }, 80);
     return function () { clearTimeout(timer); };
   }, [activePath]);

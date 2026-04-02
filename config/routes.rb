@@ -16,6 +16,7 @@ Mbeditor::Engine.routes.draw do
   get    'state',           to: 'editors#state'
   post   'state',           to: 'editors#save_state'
   get    'search',          to: 'editors#search'
+  get    'definition',      to: 'editors#definition'
   get    'git_info',        to: 'editors#git_info'
   get    'git_status',      to: 'editors#git_status'
   get    'manifest.webmanifest',            to: 'editors#pwa_manifest',   format: false

@@ -36,7 +36,7 @@ var TestResultsPanel = function TestResultsPanel(_ref) {
       React.createElement(
         'div',
         { className: 'ide-file-history-title' },
-        React.createElement('i', { className: 'fas fa-flask' }),
+        React.createElement('i', { className: isLoading ? 'fas fa-spinner fa-spin' : 'fas fa-flask' }),
         React.createElement(
           'span',
           null,

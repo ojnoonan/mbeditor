@@ -11,9 +11,9 @@ Mbeditor.configure do |config|
   config.redmine_url     = "https://redmine.example.test"
   config.redmine_api_key = "dummy-api-key"
 
-  # Point the editor at a local sample workspace so branch commits contain
-  # #ticket_id references that will be picked up by the Redmine panel.
-  config.workspace_root = Rails.root.join("tmp", "sample_workspace").to_s
+  # Point the editor at the dummy app root so the file tree shows the actual
+  # app/models, app/controllers, app/helpers, and app/services directories.
+  config.workspace_root = Rails.root.to_s
 
   # Test runner — uses Minitest.  The sample workspace test files require only
   # the standard library and minitest, so `bundle exec ruby -Itest` resolves

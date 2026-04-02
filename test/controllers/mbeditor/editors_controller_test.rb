@@ -571,6 +571,64 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # definition
+    # ---------------------------------------------------------------------------
+
+    test "definition returns 200 with empty results for blank symbol" do
+      get "/mbeditor/definition", params: { symbol: "", language: "ruby" }
+      assert_response :ok
+      data = JSON.parse(response.body)
+      assert_equal [], data["results"]
+    end
+
+    test "definition returns 400 for symbol with path-traversal characters" do
+      get "/mbeditor/definition", params: { symbol: "../etc/passwd", language: "ruby" }
+      assert_response :bad_request
+    end
+
+    test "definition returns 400 for symbol with spaces" do
+      get "/mbeditor/definition", params: { symbol: "foo bar", language: "ruby" }
+      assert_response :bad_request
+    end
+
+    test "definition returns 200 with empty results for unsupported language" do
+      get "/mbeditor/definition", params: { symbol: "foo", language: "python" }
+      assert_response :ok
+      data = JSON.parse(response.body)
+      assert_equal [], data["results"]
+    end
+
+    test "definition finds a Ruby method defined in the workspace" do
+      File.write(File.join(@workspace, "app", "models", "user.rb"), <<~RUBY)
+        class User
+          # Finds by email
+          def find_by_email(email)
+            where(email: email)
+          end
+        end
+      RUBY
+
+      get "/mbeditor/definition", params: { symbol: "find_by_email", language: "ruby" }
+      assert_response :ok
+
+      data = JSON.parse(response.body)
+      assert data["results"].length >= 1
+
+      first = data["results"][0]
+      assert_includes first["file"], "user.rb"
+      assert_equal 3, first["line"]
+      assert_includes first["signature"], "def find_by_email"
+      assert_includes first["comments"], "Finds by email"
+    end
+
+    test "definition returns empty results when symbol not found" do
+      get "/mbeditor/definition", params: { symbol: "totally_missing_xyz", language: "ruby" }
+      assert_response :ok
+      data = JSON.parse(response.body)
+      assert_equal [], data["results"]
+    end
+
+    # ---------------------------------------------------------------------------
     # index (HTML smoke test)
     # ---------------------------------------------------------------------------
 

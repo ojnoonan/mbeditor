@@ -199,6 +199,33 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
+    # GET /mbeditor/definition?symbol=...&language=...
+    # Looks up method definitions in workspace source files using Ripper (Ruby
+    # AST parser). Returns up to 20 matches with signature and preceding comments.
+    def definition
+      symbol = params[:symbol].to_s.strip
+      language = params[:language].to_s.strip
+
+      return render json: { results: [] } if symbol.blank?
+      return render json: { error: "Invalid symbol" }, status: :bad_request unless symbol.match?(/\A[a-zA-Z0-9_]{1,60}\z/)
+
+      results = case language
+                when "ruby"
+                  RubyDefinitionService.call(
+                    workspace_root,
+                    symbol,
+                    excluded_dirnames: excluded_dirnames,
+                    excluded_paths: excluded_paths
+                  )
+                else
+                  []
+                end
+
+      render json: { results: results }
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
     # GET /mbeditor/search?q=...
     def search
       query = params[:q].to_s.strip

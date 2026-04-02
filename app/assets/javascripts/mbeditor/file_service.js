@@ -71,6 +71,10 @@ var FileService = (function () {
     return axios.post(basePath() + '/state', { state: state }).then(function(res) { return res.data; });
   }
 
+  function getDefinition(symbol, language) {
+    return axios.get(basePath() + '/definition', { params: { symbol: symbol, language: language } }).then(function(res) { return res.data; });
+  }
+
   return {
     getWorkspace: getWorkspace,
     getTree: getTree,
@@ -86,6 +90,7 @@ var FileService = (function () {
     runTests: runTests,
     ping: ping,
     getState: getState,
-    saveState: saveState
+    saveState: saveState,
+    getDefinition: getDefinition
   };
 })();

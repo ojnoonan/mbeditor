@@ -41,7 +41,8 @@ var DEFAULT_EDITOR_PREFS = {
   prettierSemi: true,
   prettierSingleQuote: false,
   prettierTrailingComma: 'all',
-  prettierBracketSpacing: true
+  prettierBracketSpacing: true,
+  vimMode: false
 };
 
 var SidebarActionButton = function SidebarActionButton(_ref) {
@@ -2311,7 +2312,14 @@ var MbeditorApp = function MbeditorApp() {
                         React.createElement('option', { value: 'vs-dark' }, 'Dark (vs-dark)'),
                         React.createElement('option', { value: 'vs' }, 'Light (vs)'),
                         React.createElement('option', { value: 'hc-black' }, 'High Contrast Dark'),
-                        React.createElement('option', { value: 'hc-light' }, 'High Contrast Light')
+                        React.createElement('option', { value: 'hc-light' }, 'High Contrast Light'),
+                        React.createElement('option', { value: 'dracula' }, 'Dracula'),
+                        React.createElement('option', { value: 'night-owl' }, 'Night Owl'),
+                        React.createElement('option', { value: 'monokai' }, 'Monokai'),
+                        React.createElement('option', { value: 'nord' }, 'Nord'),
+                        React.createElement('option', { value: 'github-dark' }, 'GitHub Dark'),
+                        React.createElement('option', { value: 'tomorrow-night' }, 'Tomorrow Night'),
+                        React.createElement('option', { value: 'github-light' }, 'GitHub Light')
                       )
                     ),
                     React.createElement(
@@ -2431,6 +2439,16 @@ var MbeditorApp = function MbeditorApp() {
                         className: 'ide-settings-checkbox',
                         checked: !!(editorPrefs.bracketPairColorization),
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { bracketPairColorization: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Vim mode'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: !!(editorPrefs.vimMode),
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { vimMode: v }); }); }
                       })
                     ),
                     React.createElement(
@@ -2572,7 +2590,8 @@ var MbeditorApp = function MbeditorApp() {
                   )
                 );
               } else if (pActiveTab.isDiff) {
-                var isDiffDark = (editorPrefs.theme || 'vs-dark') !== 'vs' && (editorPrefs.theme || 'vs-dark') !== 'hc-light';
+                var _t = editorPrefs.theme || 'vs-dark';
+                var isDiffDark = _t !== 'vs' && _t !== 'hc-light' && _t !== 'github-light';
                 content = React.createElement(window.DiffViewer || DiffViewer, {
                   key: pActiveTab.id,
                   path: pActiveTab.path,
@@ -2597,6 +2616,7 @@ var MbeditorApp = function MbeditorApp() {
                   testInlineVisible: testInlineVisible,
                   editorPrefs: editorPrefs,
                   onFormat: function() { onFormatRef.current(); },
+                  onSave: function() { handleSave(pane.id, pActiveTab); },
                   onRunTest: handleRunTest,
                   onShowHistory: function(path) { setHistoryPanelPath(path); },
                   onContentChange: function onContentChange(val) {

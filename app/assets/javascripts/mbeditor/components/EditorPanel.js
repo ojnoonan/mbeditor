@@ -21,6 +21,7 @@ var EditorPanel = function EditorPanel(_ref) {
   var gitAvailable = _ref.gitAvailable === true;
   var testAvailable = _ref.testAvailable === true;
   var onFormat = _ref.onFormat;
+  var onSave = _ref.onSave;
   var onRunTest = _ref.onRunTest;
   var onShowHistory = _ref.onShowHistory;
   var treeData = _ref.treeData || [];
@@ -67,6 +68,12 @@ var EditorPanel = function EditorPanel(_ref) {
 
   var onFormatRef = useRef(onFormat);
   onFormatRef.current = onFormat;
+
+  var onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
+
+  var vimStatusRef = useRef(null);
+  var vimModeObjRef = useRef(null);
 
   var clearTestZones = function clearTestZones(editor) {
     if (!editor) return;
@@ -129,8 +136,9 @@ var EditorPanel = function EditorPanel(_ref) {
             [/-#.*$/, 'comment'],
             // HTML comment: /
             [/\/.*$/, 'comment'],
-            // Leading whitespace — consume so tag/class/id patterns match at current pos
-            [/^(\s*)/, 'white'],
+            // Leading whitespace — must use \s+ (not \s*) to avoid a zero-width match
+            // which Monarch treats as "no progress" and throws a tokenizer error.
+            [/^\s+/, 'white'],
             // Ruby output line: = expr
             [/(=)(\s*)/, [{ token: 'keyword.operator' }, { token: '', next: '@rubyLine' }]],
             // Ruby statement line: - stmt (but not -#)
@@ -467,13 +475,13 @@ var EditorPanel = function EditorPanel(_ref) {
       formatOnType: true
     });
 
-    if (tab.viewState) {
-      editor.restoreViewState(tab.viewState);
-    }
-
     monacoRef.current = editor;
     window.__mbeditorActiveEditor = editor;
     setEditorReady(true);
+
+    if (tab.viewState) {
+      editor.restoreViewState(tab.viewState);
+    }
 
     // Stash the workspace-relative path on the model so code-action providers
     // can identify which file they are operating on without needing React state.
@@ -495,14 +503,11 @@ var EditorPanel = function EditorPanel(_ref) {
       editorPluginDisposable = window.MbeditorEditorPlugins.attachEditorFeatures(editor, language);
     }
 
-    // Column selection only when Ctrl/Cmd is held during drag.
-    // We toggle Monaco's columnSelection option on Ctrl/Cmd+mousedown and reset on mouseup.
-    // Alt+mousedown without Ctrl/Cmd is suppressed (preventDefault stops Monaco's built-in Alt+drag).
+    // Column selection only when Alt is held during drag.
+    // We toggle Monaco's columnSelection option on Alt+mousedown and reset on mouseup.
     var onColumnMouseDown = function(ev) {
-      if (ev.ctrlKey || ev.metaKey) {
+      if (ev.altKey && !ev.ctrlKey && !ev.metaKey) {
         editor.updateOptions({ columnSelection: true });
-      } else if (ev.altKey) {
-        ev.preventDefault();
       }
     };
     var onColumnMouseUp = function() {
@@ -606,6 +611,46 @@ var EditorPanel = function EditorPanel(_ref) {
       });
     }
   }, [editorPrefs]);
+
+  // Toggle vim mode when editorPrefs.vimMode changes
+  useEffect(function () {
+    var editor = monacoRef.current;
+    if (!editor) return;
+
+    if (editorPrefs.vimMode) {
+      // Lazy-load monaco-vim via the same AMD loader that Monaco uses
+      require(['monaco-vim'], function(MonacoVim) {
+        // Dispose any previous instance first (e.g. editorPrefs changed rapidly)
+        if (vimModeObjRef.current) {
+          try { vimModeObjRef.current.dispose(); } catch (e) {}
+          vimModeObjRef.current = null;
+        }
+        var statusNode = vimStatusRef.current;
+        if (!statusNode || !monacoRef.current) return;
+        var vimInstance = MonacoVim.initVimMode(monacoRef.current, statusNode);
+        // Wire :w and :wq to the editor's save action
+        MonacoVim.VimMode.Vim.defineEx('write', 'w', function() {
+          if (onSaveRef.current) onSaveRef.current();
+        });
+        MonacoVim.VimMode.Vim.defineEx('wq', 'wq', function() {
+          if (onSaveRef.current) onSaveRef.current();
+        });
+        vimModeObjRef.current = vimInstance;
+      });
+    } else {
+      if (vimModeObjRef.current) {
+        try { vimModeObjRef.current.dispose(); } catch (e) {}
+        vimModeObjRef.current = null;
+      }
+    }
+
+    return function() {
+      if (vimModeObjRef.current) {
+        try { vimModeObjRef.current.dispose(); } catch (e) {}
+        vimModeObjRef.current = null;
+      }
+    };
+  }, [editorPrefs.vimMode]);
 
   // Jump to line if specified
   useEffect(function () {
@@ -858,7 +903,8 @@ var EditorPanel = function EditorPanel(_ref) {
   // Map a test method name to the best-matching line in the source file.
   // Extracts keywords from the test name and scores each source line.
   var mapTestToSourceLine = function(testName, sourceContent) {
-    var name = (testName || '').replace(/^test_/, '').replace(/^(it |should )/, '');
+    // Strip Minitest-style "ClassName#" prefix before the usual transformations
+    var name = (testName || '').replace(/^\w+#/, '').replace(/^test_/, '').replace(/^(it |should )/, '');
     var tokens = name.split('_').filter(function(t) { return t.length > 1; });
     if (tokens.length === 0) return 1;
 
@@ -1085,7 +1131,8 @@ var EditorPanel = function EditorPanel(_ref) {
         !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, testLoading ? 'Running...' : 'Test')
       )
     ),
-    React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } })
+    React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } }),
+    React.createElement('div', { ref: vimStatusRef, className: 'vim-statusbar', style: { display: editorPrefs.vimMode ? 'flex' : 'none', height: '22px', alignItems: 'center', padding: '0 10px', fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace", fontSize: '12px', background: 'var(--ide-statusbar-bg, #1e1e2e)', color: 'var(--ide-statusbar-fg, #9cdcfe)', borderTop: '1px solid var(--ide-border, #3e3e3e)', flexShrink: 0, userSelect: 'none', letterSpacing: '0.02em' } })
   );
 };
 

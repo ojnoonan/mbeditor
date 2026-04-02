@@ -117,9 +117,9 @@ module Mbeditor
       when :minitest
         bin = File.join(repo_path, "bin", "rails")
         if File.exist?(bin)
-          [bin, "test", full_path]
+          [bin, "test", "--verbose", full_path]
         else
-          ["bundle", "exec", "ruby", "-Itest", full_path]
+          ["bundle", "exec", "ruby", "-Itest", full_path, "--verbose"]
         end
       else
         ["bundle", "exec", "ruby", "-Itest", full_path]
@@ -192,32 +192,59 @@ module Mbeditor
     end
 
     def parse_minitest_output(raw)
-      tests = []
       lines = raw.lines
 
-      # Parse individual test results from Minitest output
+      # First pass: collect per-test results from verbose output.
+      # Verbose format (--verbose): "ClassName#test_name = N.NNN s = [./F/E/S]"
+      verbose_results = {}
+      lines.each do |line|
+        m = line.match(/\A([\w:]+#\w+)\s+=\s+[\d.]+\s+s\s+=\s+([.FES])\s*\z/)
+        next unless m
+
+        status = case m[2]
+                 when "." then "pass"
+                 when "F" then "fail"
+                 when "E" then "error"
+                 when "S" then "skip"
+                 end
+        verbose_results[m[1]] = { name: m[1], status: status, line: nil, message: nil }
+      end
+
+      # Second pass: parse failure/error blocks for messages and line numbers.
+      # Format: "  1) Failure:\nTestName#method [file:line]:\nmessage"
+      failure_entries = []
       lines.each_with_index do |line, idx|
-        # Failure/Error blocks: "  1) Failure:\nTestName#method [file:line]:\nmessage"
-        if line.match?(/^\s+\d+\)\s+(Failure|Error):/)
-          name_line = lines[idx + 1]
-          if name_line
-            name = name_line.strip.split(" [").first
-            line_num = name_line[/:(\d+)\]/, 1]&.to_i
-            # Collect message lines until next blank or numbered item
-            msg_lines = []
-            (idx + 2...lines.length).each do |j|
-              break if lines[j].strip.empty? || lines[j].match?(/^\s+\d+\)\s+/)
-              msg_lines << lines[j].strip
-            end
-            tests << {
-              name: name,
-              status: line.include?("Error") ? "error" : "fail",
-              line: line_num,
-              message: msg_lines.join("\n")
-            }
-          end
+        next unless line.match?(/^\s+\d+\)\s+(Failure|Error):/)
+
+        name_line = lines[idx + 1]
+        next unless name_line
+
+        name = name_line.strip.split(" [").first.chomp(":")
+        line_num = name_line[/:(\d+)\]/, 1]&.to_i
+        msg_lines = []
+        (idx + 2...lines.length).each do |j|
+          break if lines[j].strip.empty? || lines[j].match?(/^\s+\d+\)\s+/)
+          msg_lines << lines[j].strip
+        end
+
+        entry = {
+          name: name,
+          status: line.include?("Error") ? "error" : "fail",
+          line: line_num,
+          message: msg_lines.join("\n")
+        }
+
+        if verbose_results.key?(name)
+          verbose_results[name][:line]    = line_num
+          verbose_results[name][:message] = msg_lines.join("\n")
+        else
+          failure_entries << entry
         end
       end
+
+      # Build final tests list: verbose entries first (sorted by name for stability),
+      # then any failure entries not already covered by verbose output.
+      tests = verbose_results.values + failure_entries
 
       summary = empty_summary
 

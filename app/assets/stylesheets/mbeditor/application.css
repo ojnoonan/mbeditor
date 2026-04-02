@@ -59,17 +59,17 @@
   flex-direction: column;
   height: 100%;
   width: 100%;
-  background-color: #1e1e1e;
+  background-color: var(--bg-base);
 }
 .ide-diff-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 6px 12px;
-  background-color: #252526;
-  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
   font-size: 13px;
-  color: #ccc;
+  color: var(--text-main);
   user-select: none;
 }
 .ide-diff-title {
@@ -88,7 +88,7 @@
   overflow: hidden;
 }
 .ide-diff-title-name {
-  color: #d4d4d4;
+  color: var(--text-main);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -109,7 +109,7 @@
 .ide-diff-btn {
   background: transparent;
   border: none;
-  color: #ccc;
+  color: var(--text-main);
   cursor: pointer;
   padding: 4px;
   border-radius: 3px;
@@ -132,11 +132,11 @@
 /* Commit Graph */
 .ide-commit-graph {
   padding: 8px 4px;
-  color: #ccc;
+  color: var(--text-main);
   overflow-y: auto;
   overflow-x: hidden;  /* prevent long commit messages from widening the panel */
   height: 100%;
-  background-color: #1e1e1e;
+  background-color: var(--bg-base);
   font-size: 12px;
 }
 /* Each commit is wrapped in a flex-column group. Spacing between groups
@@ -152,7 +152,7 @@
   border-radius: 3px;
 }
 .commit-row:hover {
-  background-color: rgba(255,255,255,0.05);
+  background-color: var(--bg-hover);
 }
 .commit-graph-col {
   width: 24px;
@@ -167,7 +167,7 @@
   left: 50%;
   transform: translateX(-50%);
   width: 2px;
-  background-color: #555;
+  background-color: var(--graph-line, #555);
 }
 .commit-line-top { top: -1px; bottom: 50%; }
 .commit-line-bottom { top: 50%; bottom: -1px; }
@@ -192,7 +192,7 @@
   width: 2px;
   top: -1px;
   bottom: -1px;
-  background-color: #555;
+  background-color: var(--graph-line, #555);
   z-index: 1;
 }
 
@@ -238,7 +238,7 @@
   overflow: hidden;
 }
 .commit-title {
-  color: #d4d4d4;
+  color: var(--text-main);
   font-size: 12px;
   font-weight: 500;
   margin-bottom: 3px;
@@ -313,7 +313,7 @@
   overflow: hidden;
   transition: background 0.1s;
 }
-.git-commit-row:hover { background: #2a2d2e; }
+.git-commit-row:hover { background: var(--bg-hover); }
 .git-commit-row.commit-local .commit-dot-small { background: #4caf50; border-color: #4caf50; }
 
 .git-commit-expand-icon {
@@ -341,7 +341,7 @@
 }
 .git-commit-title {
   font-size: 12px;
-  color: #d4d4d4;
+  color: var(--text-main);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -365,7 +365,7 @@
   border-radius: 3px;
   transition: background 0.1s;
 }
-.git-commit-subrow:hover { background: #2a2d2e; }
+.git-commit-subrow:hover { background: var(--bg-hover); }
 .git-commit-file-row .git-file-actions { display: flex; gap: 4px; }
 .git-commit-subrow:hover .git-action-btn { opacity: 1; }
 .git-commit-loading {
@@ -486,8 +486,8 @@
   width: 560px;
   max-width: calc(100vw - 40px);
   max-height: 70vh;
-  background: #1e1f22;
-  border: 1px solid #3c3c3c;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
   box-shadow: 0 8px 24px rgba(0,0,0,0.6);
   border-radius: 6px;
   z-index: 9001;
@@ -500,14 +500,14 @@
   justify-content: space-between;
   align-items: flex-start;
   padding: 12px 14px;
-  background: #252628;
-  border-bottom: 1px solid #3c3c3c;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 .ide-commit-detail-title {
   font-size: 13px;
   font-weight: 600;
-  color: #d4d4d4;
+  color: var(--text-main);
   margin-bottom: 4px;
 }
 .ide-commit-detail-meta {
@@ -582,7 +582,7 @@
 .git-redmine-title {
   font-size: 12px;
   font-weight: 600;
-  color: #d4d4d4;
+  color: var(--text-main);
   line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -592,7 +592,7 @@
 }
 .git-redmine-desc {
   font-size: 12px;
-  color: #ccc;
+  color: var(--text-main);
   line-height: 1.4;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -632,7 +632,7 @@
 }
 .ide-code-review-title {
   font-weight: 500;
-  color: #d4d4d4;
+  color: var(--text-main);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -666,7 +666,7 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 6px;
-  color: #d4d4d4;
+  color: var(--text-main);
 }
 .redmine-badge {
   background-color: #569cd6;
@@ -684,7 +684,7 @@
 }
 .redmine-desc {
   font-size: 12px;
-  color: #ccc;
+  color: var(--text-main);
   line-height: 1.4;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -711,8 +711,8 @@
   user-select: none;
 }
 .git-section-title-main:hover {
-  background: rgba(255,255,255,0.04);
-  color: #d4d4d4;
+  background: var(--bg-hover);
+  color: var(--text-main);
 }
 .git-section-action-btn {
   flex-shrink: 0;
@@ -744,7 +744,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #1e1e1e;
+  background: var(--bg-base);
   font-family: var(--font-mono, 'Cascadia Code', 'Fira Code', 'Menlo', monospace);
   font-size: 12px;
 }
@@ -766,15 +766,15 @@
   align-items: center;
   gap: 8px;
   padding: 6px 14px;
-  background: #252526;
-  border-bottom: 1px solid #3c3c3c;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, sans-serif);
   font-size: 12px;
 }
 .combined-diff-label {
   font-weight: 500;
-  color: #d4d4d4;
+  color: var(--text-main);
   flex: 1;
 }
 .combined-diff-file-count {
@@ -789,23 +789,23 @@
 
 /* Each file segment */
 .cdiff-file-segment {
-  border-bottom: 1px solid #2a2a2a;
+  border-bottom: 1px solid var(--border);
 }
 .cdiff-file-bar {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 5px 10px;
-  background: #252526;
+  background: var(--bg-panel);
   cursor: pointer;
   user-select: none;
   position: sticky;
   top: 0;
   z-index: 2;
-  border-bottom: 1px solid #3c3c3c;
+  border-bottom: 1px solid var(--border);
 }
 .cdiff-file-bar:hover {
-  background: #2a2d2e;
+  background: var(--bg-hover);
 }
 .cdiff-chevron {
   color: #858585;
@@ -819,7 +819,7 @@
   flex-shrink: 0;
 }
 .cdiff-file-name {
-  color: #d4d4d4;
+  color: var(--text-main);
   font-weight: 500;
   font-size: 12px;
 }
