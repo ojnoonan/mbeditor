@@ -1,3 +1,4 @@
+//= require mbeditor/application_iife_head
 //= require mbeditor/editor_store
 //= require mbeditor/file_icon
 //= require mbeditor/file_service
@@ -19,3 +20,4 @@
 //= require mbeditor/components/QuickOpenDialog
 //= require mbeditor/components/TabBar
 //= require mbeditor/components/MbeditorApp
+//= require mbeditor/application_iife_tail
