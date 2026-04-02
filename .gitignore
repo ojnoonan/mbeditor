@@ -11,4 +11,5 @@
 /test/dummy/tmp/
 /test/dummy/storage/
 Gemfile.lock
+gemfiles/*.lock
 /node_modules/
