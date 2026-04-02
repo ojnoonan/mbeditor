@@ -1,0 +1,6 @@
+ignore:
+  # activestorage DoS via multi-range requests in proxy mode — no fix available within
+  # Rails 7.1.x; fix requires >= 7.2.3.1 or >= 8.1.2.1. Accepted for the rails71
+  # matrix entry since mbeditor is a dev-only engine, proxy mode is not used, and
+  # the engine does not serve user-uploaded content via Active Storage in production.
+  - GHSA-p9fm-f462-ggrg

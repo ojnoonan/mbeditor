@@ -53,9 +53,7 @@ jobs:
         run: bundle exec brakeman --no-pager -q -w 2 -i brakeman.ignore -x EOLRails
 
       - name: bundler-audit CVE check
-        run: |
-          bundle exec bundler-audit update
-          bundle exec bundler-audit check
+        run: bundle exec bundler-audit check -u
 
       - name: Set up Node
         uses: actions/setup-node@v4
