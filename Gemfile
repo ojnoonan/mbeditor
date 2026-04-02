@@ -2,6 +2,7 @@ source 'https://rubygems.org'
 
 gemspec
 
+gem 'nokogiri',           '>= 1.19.1'
 gem 'brakeman',           require: false
 gem 'bundler-audit',      require: false
 gem 'capybara',           require: false
