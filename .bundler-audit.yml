@@ -4,7 +4,11 @@ ignore:
   # matrix entry since mbeditor is a dev-only engine, proxy mode is not used, and
   # the engine does not serve user-uploaded content via Active Storage in production.
   - GHSA-p9fm-f462-ggrg
-  # nokogiri xmlC14NExecute return value not checked — fix requires nokogiri >= 1.19.1
-  # which in turn requires Ruby >= 3.2; accepted since mbeditor targets Ruby >= 3.0 and
-  # does not expose XML canonicalization to untrusted input.
-  - GHSA-wx95-c6cv-8532
+  # nokogiri advisories below all require >= 1.18.x (Ruby >= 3.1) or >= 1.19.x (Ruby >= 3.2)
+  # to fix. Accepted since mbeditor targets Ruby >= 3.0 and is a dev-only engine that does
+  # not process untrusted XML/XSLT input.
+  - GHSA-wx95-c6cv-8532  # xmlC14NExecute return value not checked; fix >= 1.19.1
+  - GHSA-353f-x4gh-cqq8  # vendored libxml2 multiple CVEs; fix >= 1.18.9
+  - GHSA-5w6v-399v-w3cc  # libxml2 CVE-2025-32414/32415; fix >= 1.18.8
+  - GHSA-mrxw-mxhj-p664  # libxslt v1.1.43 multiple CVEs; fix >= 1.18.4
+  - GHSA-vvfq-8hwr-qm4m  # libxml2 CVE-2025-24928/CVE-2024-56171; fix >= 1.18.3
