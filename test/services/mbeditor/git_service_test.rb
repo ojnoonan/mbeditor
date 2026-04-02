@@ -113,5 +113,60 @@ module Mbeditor
       refute_match GitService::SAFE_GIT_REF, 'branch&other'
       refute_match GitService::SAFE_GIT_REF, 'not-valid!!'
     end
+
+    # -------------------------------------------------------------------------
+    # Broken / degenerate repo states
+    # -------------------------------------------------------------------------
+
+    def test_current_branch_returns_nil_in_non_git_directory
+      Dir.mktmpdir('mbeditor_nongit_') do |dir|
+        result = GitService.current_branch(dir)
+        assert_nil result
+      end
+    end
+
+    def test_current_branch_returns_head_string_in_detached_head_state
+      Dir.mktmpdir('mbeditor_detached_') do |repo|
+        system('git', '-C', repo, 'init', '-q')
+        system('git', '-C', repo, 'config', 'user.email', 'test@mbeditor.test')
+        system('git', '-C', repo, 'config', 'user.name', 'Test')
+        File.write(File.join(repo, 'f.rb'), "x = 1\n")
+        system('git', '-C', repo, 'add', 'f.rb')
+        system('git', '-C', repo, 'commit', '-m', 'init', '-q')
+        system('git', '-C', repo, 'checkout', '--detach', 'HEAD', '--quiet')
+
+        # rev-parse --abbrev-ref HEAD returns "HEAD" in detached state
+        result = GitService.current_branch(repo)
+        assert_equal 'HEAD', result
+      end
+    end
+
+    def test_upstream_branch_returns_nil_in_non_git_directory
+      Dir.mktmpdir('mbeditor_nongit_') do |dir|
+        result = GitService.upstream_branch(dir)
+        assert_nil result
+      end
+    end
+
+    def test_upstream_branch_returns_nil_when_no_upstream_configured
+      Dir.mktmpdir('mbeditor_noupstream_') do |repo|
+        system('git', '-C', repo, 'init', '-q')
+        system('git', '-C', repo, 'config', 'user.email', 'test@mbeditor.test')
+        system('git', '-C', repo, 'config', 'user.name', 'Test')
+        File.write(File.join(repo, 'f.rb'), "x = 1\n")
+        system('git', '-C', repo, 'add', 'f.rb')
+        system('git', '-C', repo, 'commit', '-m', 'init', '-q')
+
+        result = GitService.upstream_branch(repo)
+        assert_nil result
+      end
+    end
+
+    def test_ahead_behind_returns_zeros_in_non_git_directory
+      Dir.mktmpdir('mbeditor_nongit_') do |dir|
+        ahead, behind = GitService.ahead_behind(dir, 'origin/main')
+        assert_equal [0, 0], [ahead, behind]
+      end
+    end
   end
 end

@@ -179,6 +179,34 @@ module Mbeditor
     end
 
     # -------------------------------------------------------------------------
+    # excluded_paths parameter
+    # -------------------------------------------------------------------------
+
+    test "skips files under an excluded_paths path prefix" do
+      write_rb("app/models/user.rb",       "class User\n  def the_method\n  end\nend\n")
+      write_rb("public/assets/bundle.rb",  "class Bundle\n  def the_method\n  end\nend\n")
+
+      results = call("the_method", excluded_paths: %w[public/assets])
+
+      assert results.any? { |r| r[:file] == "app/models/user.rb" },
+             "app/models/user.rb should be included"
+      assert results.none? { |r| r[:file].start_with?("public/assets/") },
+             "files under public/assets should be excluded"
+    end
+
+    test "skips files matching an excluded_paths basename" do
+      write_rb("app/models/user.rb",       "class User\n  def the_method\n  end\nend\n")
+      write_rb("app/models/generated.rb",  "class Generated\n  def the_method\n  end\nend\n")
+
+      results = call("the_method", excluded_paths: %w[generated.rb])
+
+      assert results.any? { |r| r[:file] == "app/models/user.rb" },
+             "app/models/user.rb should be included"
+      assert results.none? { |r| r[:file].end_with?("generated.rb") },
+             "files named generated.rb should be excluded"
+    end
+
+    # -------------------------------------------------------------------------
     # Malformed file does not crash the scan
     # -------------------------------------------------------------------------
 

@@ -13,6 +13,7 @@
 - [ ] Class-level binary probe caches (`editors_controller.rb` lines 696-732) — `rubocop_available?`, `haml_lint_available?`, and `git_available?` use a `get || set` pattern on class instance variables that is not atomic; under concurrent Puma workers, multiple threads can bypass the `cache.key?(key)` guard simultaneously and spawn duplicate `--version` subprocesses; wrap with a `Mutex` or use `||=` inside `Mutex#synchronize`
 - [ ] Redmine SSL verification (`redmine_service.rb` line ~59) — `Net::HTTP` HTTPS connection does not set `http.verify_mode = OpenSSL::SSL::VERIFY_PEER`; in some Ruby configurations peer certificates are not verified, exposing the API key to MITM interception
 - [ ] CSRF protection relies solely on `X-Mbeditor-Client: 1` header (`editors_controller.rb` line 10) — `skip_before_action :verify_authenticity_token` disables Rails CSRF entirely; a forged cross-origin request from an attacker-controlled page running in the same browser could include this header via a custom fetch; consider keeping CSRF token validation or at least verifying `Origin`/`Referer` against the host
+- [ ] `save_state` unconstrained payload size (`editors_controller.rb` line 69) — `params[:state].to_json` is written to disk with no size check; a runaway frontend or malicious request could fill available disk space; add a cap (e.g. 1 MB) and return 413 if exceeded
 
 ## Configuration
 
@@ -27,11 +28,13 @@
 - [x] `raw` endpoint — no test for the 413 response when a file exceeds 5 MB; the `show` endpoint has this coverage but `raw` does not (`editors_controller.rb` lines 100-109)
 - [x] Search length boundary — the 500-character query cap is tested for the over-limit case but not at the boundary (499, 500, 501 chars)
 - [x] Symlink edge cases in write operations — `save`, `create_file`, and `rename` use `File.expand_path` (not `realpath`) for new paths; no tests verify that a parent directory which is a symlink pointing outside the workspace is rejected
-- [ ] Path traversal coverage gaps — only a few endpoints (`show`, `raw`, `diff`, `blame`) have explicit traversal tests; `save`, `create_file`, `create_dir`, `rename` (both old and new paths), `delete`, `lint`, and `format` are untested for `../../` style inputs
-- [ ] `git_blame_service_test.rb` does not exist — cover porcelain output parsing, the final-block completeness guard, and behavior on a file with no trailing newline
-- [ ] `git_file_history_service_test.rb` does not exist — cover `--follow` rename tracking and empty history (new file with no commits)
-- [ ] `git_commit_graph_service_test.rb` does not exist — cover `isLocal` flag logic, merge commits (multiple parents), and the 150-commit cap
-- [ ] No tests exercise git service behavior when the `git` binary is absent or the repo is in a broken state (detached HEAD, shallow clone, missing objects)
+- [x] Path traversal coverage gaps — only a few endpoints (`show`, `raw`, `diff`, `blame`) have explicit traversal tests; `save`, `create_file`, `create_dir`, `rename` (both old and new paths), `delete`, `lint`, and `format` are untested for `../../` style inputs
+- [x] `git_blame_service_test.rb` does not exist — cover porcelain output parsing, the final-block completeness guard, and behavior on a file with no trailing newline
+- [x] `git_file_history_service_test.rb` does not exist — cover `--follow` rename tracking and empty history (new file with no commits)
+- [x] `git_commit_graph_service_test.rb` does not exist — cover `isLocal` flag logic, merge commits (multiple parents), and the 150-commit cap
+- [x] No tests exercise git service behavior when the `git` binary is absent or the repo is in a broken state (detached HEAD, shallow clone, missing objects)
+- [x] `ruby_definition_service_test.rb` — no test for the `excluded_paths` parameter; the service accepts both `excluded_dirnames` and `excluded_paths` but only the former is exercised in tests; add cases for path-prefix exclusion and basename exclusion via `excluded_paths`
+- [ ] `editors_controller_test.rb` `save_state` — no test for an oversized payload; once a size cap is added (see Security section) a 413 test should accompany it
 
 ## Quality / robustness
 
@@ -42,7 +45,9 @@
 - [ ] `editors_controller.rb` ~lines 508, 572 — tmpfile path for RuboCop/HAML fix operations is constructed manually with `SecureRandom.hex`; use `Tempfile.create` instead to avoid the unlikely but possible collision and to ensure cleanup on unexpected exits
 - [ ] `editors_controller.rb` workspace state file (`tmp/mbeditor_workspace.json`) — written without file locking; concurrent requests from multiple browser tabs can produce interleaved writes and corrupt JSON; use an advisory lock (`File.flock`) around read-modify-write
 - [ ] `editors_controller.rb` ~line 226 — `JSON.parse(line) rescue next` in the search results loop silently discards malformed lines with no logging; add a `Rails.logger.warn` so encoding or format regressions are observable
+- [ ] `editors_controller.rb` `state` action (line 56) — a corrupted `mbeditor_workspace.json` returns a 422 error response instead of falling back to `{}`; add an explicit `rescue JSON::ParserError` before the outer `rescue StandardError` and return `render json: {}` to match the missing-file behaviour
 - [ ] `git_service.rb` — `parse_git_log` and `parse_git_log_with_parents` share nearly identical structure but are maintained separately; extract a shared private method parameterised by whether parents are included
+- [ ] `ruby_definition_service.rb` (line 41) — `Find.find(@workspace_root)` traverses the entire workspace with no file-count or byte-size cap; on a very large monorepo this blocks the Puma thread for several seconds and may exhaust memory; add an early-exit guard (e.g. bail after scanning N files) or run in a background thread with a timeout
 
 ## Frontend
 

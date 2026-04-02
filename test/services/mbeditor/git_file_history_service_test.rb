@@ -40,5 +40,34 @@ module Mbeditor
       assert_kind_of Array, result
       assert_empty result
     end
+
+    # -------------------------------------------------------------------------
+    # --follow rename tracking
+    # -------------------------------------------------------------------------
+
+    def test_follow_tracks_history_through_a_rename
+      Dir.mktmpdir('mbeditor_rename_hist_') do |repo|
+        system('git', '-C', repo, 'init', '-q')
+        system('git', '-C', repo, 'config', 'user.email', 'test@mbeditor.test')
+        system('git', '-C', repo, 'config', 'user.name', 'Test')
+
+        # Commit 1: create original.rb
+        File.write(File.join(repo, 'original.rb'), "class Original\nend\n")
+        system('git', '-C', repo, 'add', 'original.rb')
+        system('git', '-C', repo, 'commit', '-m', 'Add original.rb', '-q')
+
+        # Commit 2: rename to renamed.rb
+        FileUtils.mv(File.join(repo, 'original.rb'), File.join(repo, 'renamed.rb'))
+        system('git', '-C', repo, 'add', '-A')
+        system('git', '-C', repo, 'commit', '-m', 'Rename to renamed.rb', '-q')
+
+        result = GitFileHistoryService.new(repo_path: repo, file_path: 'renamed.rb').call
+
+        assert_kind_of Array, result
+        assert_equal 2, result.length, '--follow should surface both the rename commit and the original commit'
+        assert_equal 'Rename to renamed.rb', result[0]['title']
+        assert_equal 'Add original.rb',      result[1]['title']
+      end
+    end
   end
 end

@@ -30,9 +30,11 @@ jobs:
         run: bundle exec rake test
 
       - name: Check Chrome
+        if: ${{ !env.ACT }}
         run: google-chrome --version
 
       - name: Run system tests
+        if: ${{ !env.ACT }}
         run: bundle exec rake system_test
 
   security:
