@@ -8,6 +8,11 @@ module Mbeditor
       app.middleware.insert_before Rails::Rack::Logger, Mbeditor::Rack::SilencePingRequest
     end
 
+    config.after_initialize do
+      Mbeditor::RubyDefinitionService.cache_path =
+        Rails.root.join("tmp", "mbeditor_ruby_defs.json").to_s
+    end
+
     initializer "mbeditor.assets.precompile" do |app|
       app.config.assets.precompile += %w[
         mbeditor/application.css

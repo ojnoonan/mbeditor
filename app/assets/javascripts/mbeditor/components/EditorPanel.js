@@ -639,7 +639,7 @@ var EditorPanel = function EditorPanel(_ref) {
           if (onSaveRef.current) onSaveRef.current();
         });
         // Wire Ctrl+P to quick-open (VIM intercepts the key before the window listener sees it)
-        MonacoVim.VimMode.Vim.defineEx('mbeditorquickopen', 'mbqo', function() {
+        MonacoVim.VimMode.Vim.defineEx('mbeditorquickopen', null, function() {
           EditorStore.setState({ isQuickOpenVisible: true });
         });
         MonacoVim.VimMode.Vim.map('<C-p>', ':mbeditorquickopen<CR>', 'normal');

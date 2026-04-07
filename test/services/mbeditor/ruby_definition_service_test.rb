@@ -5,6 +5,7 @@ require "test_helper"
 module Mbeditor
   class RubyDefinitionServiceTest < ActiveSupport::TestCase
     def setup
+      RubyDefinitionService.clear_cache!
       @workspace = Dir.mktmpdir("mbeditor_def_test_")
     end
 

@@ -695,6 +695,10 @@
     // Ruby method definition hover provider.
     // Calls the backend /definition endpoint (Ripper-based) and renders
     // the method signature and any preceding # comments as hover markdown.
+    // Results are cached client-side for 60 s to make re-hovers instantaneous.
+    var hoverCache = {};
+    var HOVER_CACHE_TTL_MS = 60000;
+
     monaco.languages.registerHoverProvider('ruby', {
       provideHover: function provideHover(model, position, token) {
         var wordInfo = model.getWordAtPosition(position);
@@ -707,51 +711,74 @@
 
         var currentFile = model._mbeditorPath || null;
 
-        return FileService.getDefinition(word, 'ruby').then(function(data) {
+        // Return cached result immediately if still fresh.
+        var cached = hoverCache[word];
+        if (cached && (Date.now() - cached.ts) < HOVER_CACHE_TTL_MS) {
+          var cachedResults = cached.results;
+          if (currentFile) {
+            cachedResults = cachedResults.filter(function(r) { return r.file !== currentFile; });
+          }
+          return cachedResults.length > 0 ? buildHoverResult(cachedResults) : null;
+        }
+
+        // Cancel the underlying HTTP request when Monaco cancels the hover
+        // (e.g. user moved the mouse away before the response arrived).
+        var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        if (controller && token && token.onCancellationRequested) {
+          token.onCancellationRequested(function() { controller.abort(); });
+        }
+        var extraOptions = controller ? { signal: controller.signal } : {};
+
+        return FileService.getDefinition(word, 'ruby', extraOptions).then(function(data) {
           // If the hover was cancelled while the request was in flight (e.g. the
           // user moved the mouse away), return null so Monaco's CancelablePromise
           // wrapper resolves cleanly instead of throwing "Canceled".
           if (token && token.isCancellationRequested) return null;
 
           var results = data && Array.isArray(data.results) ? data.results : [];
-          // Filter out results that are in the file currently being edited —
-          // showing a hover for a method you can already see adds no value.
+          // Cache the raw results (before current-file filter).
+          hoverCache[word] = { ts: Date.now(), results: results };
+
           if (currentFile) {
             results = results.filter(function(r) { return r.file !== currentFile; });
           }
           if (results.length === 0) return null;
 
-          var first = results[0];
-
-          // Build two separate MarkdownString sections so Monaco renders a
-          // visual divider between the code block and the documentation.
-          var codeParts = ['```ruby'];
-
-          // Include a trimmed comment block as a Ruby comment inside the code
-          // fence so the whole thing looks like source you'd read in an editor.
-          if (first.comments && first.comments.length > 0) {
-            first.comments.split('\n').forEach(function(l) {
-              codeParts.push(l.trim() || '#');
-            });
-          }
-
-          codeParts.push(first.signature);
-          codeParts.push('```');
-
-          var fileRef = first.line > 0 ? first.file + ':' + first.line : first.file;
-          var locationParts = results.length > 1
-            ? fileRef + '  _(+' + (results.length - 1) + ' more)_'
-            : fileRef;
-
-          return {
-            contents: [
-              { value: codeParts.join('\n'), isTrusted: true },
-              { value: '<span style="opacity:0.55;font-size:0.9em;">' + locationParts + '</span>', isTrusted: true, supportHtml: true }
-            ]
-          };
+          return buildHoverResult(results);
         }).catch(function() { return null; });
       }
     });
+
+    function buildHoverResult(results) {
+      var first = results[0];
+
+      // Build two separate MarkdownString sections so Monaco renders a
+      // visual divider between the code block and the documentation.
+      var codeParts = ['```ruby'];
+
+      // Include a trimmed comment block as a Ruby comment inside the code
+      // fence so the whole thing looks like source you'd read in an editor.
+      if (first.comments && first.comments.length > 0) {
+        first.comments.split('\n').forEach(function(l) {
+          codeParts.push(l.trim() || '#');
+        });
+      }
+
+      codeParts.push(first.signature);
+      codeParts.push('```');
+
+      var fileRef = first.line > 0 ? first.file + ':' + first.line : first.file;
+      var locationParts = results.length > 1
+        ? fileRef + '  _(+' + (results.length - 1) + ' more)_'
+        : fileRef;
+
+      return {
+        contents: [
+          { value: codeParts.join('\n'), isTrusted: true },
+          { value: '<span style="opacity:0.55;font-size:0.9em;">' + locationParts + '</span>', isTrusted: true, supportHtml: true }
+        ]
+      };
+    }
   }
 
   window.MbeditorEditorPlugins = {

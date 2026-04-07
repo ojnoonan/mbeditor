@@ -71,8 +71,9 @@ var FileService = (function () {
     return axios.post(basePath() + '/state', { state: state }).then(function(res) { return res.data; });
   }
 
-  function getDefinition(symbol, language) {
-    return axios.get(basePath() + '/definition', { params: { symbol: symbol, language: language } }).then(function(res) { return res.data; });
+  function getDefinition(symbol, language, extraOptions) {
+    var config = Object.assign({ params: { symbol: symbol, language: language }, timeout: 5000 }, extraOptions || {});
+    return axios.get(basePath() + '/definition', config).then(function(res) { return res.data; });
   }
 
   return {
