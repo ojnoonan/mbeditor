@@ -8,6 +8,7 @@ var TestResultsPanel = function TestResultsPanel(_ref) {
   var showInline = _ref.showInline;
   var onToggleInline = _ref.onToggleInline;
   var onOpenTestFile = _ref.onOpenTestFile;
+  var onRerun = _ref.onRerun;
 
   if (!result && !isLoading) return null;
 
@@ -47,6 +48,17 @@ var TestResultsPanel = function TestResultsPanel(_ref) {
       React.createElement(
         'div',
         { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+        !isLoading && onRerun && React.createElement(
+          'button',
+          {
+            className: 'ide-icon-btn',
+            onClick: onRerun,
+            title: 'Run Again',
+            style: { fontSize: '11px', padding: '2px 6px', background: 'rgba(255,255,255,0.08)', border: 'none', color: '#ccc', cursor: 'pointer', borderRadius: '3px' }
+          },
+          React.createElement('i', { className: 'fas fa-redo', style: { marginRight: '4px' } }),
+          'Run Again'
+        ),
         onToggleInline && React.createElement(
           'button',
           {
@@ -102,7 +114,8 @@ var TestResultsPanel = function TestResultsPanel(_ref) {
           summary.failed > 0 && React.createElement('span', { style: { color: '#f14c4c' } }, React.createElement('i', { className: 'fas fa-times-circle', style: { marginRight: '3px' } }), summary.failed, ' failed'),
           summary.errored > 0 && React.createElement('span', { style: { color: '#cca700' } }, React.createElement('i', { className: 'fas fa-exclamation-circle', style: { marginRight: '3px' } }), summary.errored, ' errors'),
           summary.skipped > 0 && React.createElement('span', { style: { color: '#888' } }, summary.skipped, ' skipped'),
-          summary.duration != null && React.createElement('span', { style: { color: '#888' } }, summary.duration, 's')
+          summary.duration != null && React.createElement('span', { style: { color: '#888' } }, summary.duration, 's'),
+          result.cachedAt && React.createElement('span', { style: { color: '#666', marginLeft: 'auto', fontSize: '10px' } }, 'ran ', new Date(result.cachedAt).toLocaleTimeString())
         ),
         tests.length > 0 ? React.createElement(
           'div',

@@ -738,9 +738,10 @@
           codeParts.push(first.signature);
           codeParts.push('```');
 
+          var fileRef = first.line > 0 ? first.file + ':' + first.line : first.file;
           var locationParts = results.length > 1
-            ? first.file + ':' + first.line + '  _(+' + (results.length - 1) + ' more)_'
-            : first.file + ':' + first.line;
+            ? fileRef + '  _(+' + (results.length - 1) + ' more)_'
+            : fileRef;
 
           return {
             contents: [

@@ -200,8 +200,8 @@ module Mbeditor
     end
 
     # GET /mbeditor/definition?symbol=...&language=...
-    # Looks up method definitions in workspace source files using Ripper (Ruby
-    # AST parser). Returns up to 20 matches with signature and preceding comments.
+    # Looks up method definitions in workspace source files (Ripper) and in the
+    # Ruby/gem documentation via +ri+. Workspace results appear first.
     def definition
       symbol = params[:symbol].to_s.strip
       language = params[:language].to_s.strip
@@ -211,12 +211,14 @@ module Mbeditor
 
       results = case language
                 when "ruby"
-                  RubyDefinitionService.call(
+                  workspace = RubyDefinitionService.call(
                     workspace_root,
                     symbol,
                     excluded_dirnames: excluded_dirnames,
                     excluded_paths: excluded_paths
                   )
+                  ri = RiDefinitionService.call(symbol)
+                  workspace + ri
                 else
                   []
                 end

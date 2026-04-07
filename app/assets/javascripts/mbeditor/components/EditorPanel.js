@@ -638,6 +638,12 @@ var EditorPanel = function EditorPanel(_ref) {
         MonacoVim.VimMode.Vim.defineEx('wq', 'wq', function() {
           if (onSaveRef.current) onSaveRef.current();
         });
+        // Wire Ctrl+P to quick-open (VIM intercepts the key before the window listener sees it)
+        MonacoVim.VimMode.Vim.defineEx('mbeditorquickopen', 'mbqo', function() {
+          EditorStore.setState({ isQuickOpenVisible: true });
+        });
+        MonacoVim.VimMode.Vim.map('<C-p>', ':mbeditorquickopen<CR>', 'normal');
+        MonacoVim.VimMode.Vim.map('<C-p>', ':mbeditorquickopen<CR>', 'visual');
         vimModeObjRef.current = vimInstance;
       });
     } else {

@@ -628,6 +628,42 @@ module Mbeditor
       assert_equal [], data["results"]
     end
 
+    test "definition response includes a 'results' array for Ruby" do
+      get "/mbeditor/definition", params: { symbol: "puts", language: "ruby" }
+      assert_response :ok
+      data = JSON.parse(response.body)
+      assert data.key?("results"), "Response must have a 'results' key"
+      assert_kind_of Array, data["results"]
+    end
+
+    test "definition workspace results appear before ri results when both present" do
+      # Override RiDefinitionService.call to inject a known ri result without
+      # spawning a subprocess, using simple method aliasing.
+      ri_result = [{ file: "ruby core", line: 0, signature: "my_ws_symbol() -> nil", comments: "" }]
+
+      File.write(File.join(@workspace, "app", "models", "user.rb"), <<~RUBY)
+        class User
+          def my_ws_symbol; end
+        end
+      RUBY
+
+      original = RiDefinitionService.method(:call)
+      RiDefinitionService.define_singleton_method(:call) { |_sym| ri_result }
+      begin
+        get "/mbeditor/definition", params: { symbol: "my_ws_symbol", language: "ruby" }
+        assert_response :ok
+        data = JSON.parse(response.body)
+        results = data["results"]
+        assert results.length >= 2, "Expected workspace + ri results"
+        # All workspace results (line > 0) must precede ri results (line == 0)
+        first_ri_index = results.index { |r| r["line"] == 0 }
+        last_ws_index  = results.rindex { |r| r["line"] > 0 }
+        assert last_ws_index < first_ri_index, "Workspace results must come before ri results"
+      ensure
+        RiDefinitionService.define_singleton_method(:call, &original)
+      end
+    end
+
     # ---------------------------------------------------------------------------
     # index (HTML smoke test)
     # ---------------------------------------------------------------------------

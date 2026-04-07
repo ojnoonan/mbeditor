@@ -1261,17 +1261,34 @@ var MbeditorApp = function MbeditorApp() {
     }
   };
 
-  var handleRunTest = function handleRunTest() {
-    if (!activeTab || !activeTab.path) return;
-    if (testLoading) return;
+  var TEST_CACHE_PREFIX = 'mbeditor_test_result_';
 
+  var loadCachedTestResult = function loadCachedTestResult(filePath) {
+    try {
+      var stored = localStorage.getItem(TEST_CACHE_PREFIX + filePath);
+      return stored ? JSON.parse(stored) : null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  var saveCachedTestResult = function saveCachedTestResult(filePath, result) {
+    try {
+      localStorage.setItem(TEST_CACHE_PREFIX + filePath, JSON.stringify(result));
+    } catch (e) {}
+  };
+
+  var executeTestRun = function executeTestRun(filePath) {
     setTestLoading(true);
     EditorStore.setStatus('Running tests...', 'info');
 
-    FileService.runTests(activeTab.path).then(function (res) {
-      setTestResult(res);
-      setTestPanelFile(res.testFile || activeTab.path);
+    FileService.runTests(filePath).then(function (res) {
+      var resultWithMeta = Object.assign({}, res, { cachedAt: Date.now() });
+      var targetFile = res.testFile || filePath;
+      setTestResult(resultWithMeta);
+      setTestPanelFile(targetFile);
       setTestPanelOpen(true);
+      saveCachedTestResult(filePath, resultWithMeta);
       if (res.ok) {
         var s = res.summary || {};
         var failCount = (s.failed || 0) + (s.errored || 0);
@@ -1285,13 +1302,36 @@ var MbeditorApp = function MbeditorApp() {
       }
     })["catch"](function (err) {
       var msg = err.response && err.response.data && err.response.data.error || err.message;
-      setTestResult({ ok: false, error: msg, tests: [], summary: null });
-      setTestPanelFile(activeTab.path);
+      var errResult = { ok: false, error: msg, tests: [], summary: null, cachedAt: Date.now() };
+      setTestResult(errResult);
+      setTestPanelFile(filePath);
       setTestPanelOpen(true);
+      saveCachedTestResult(filePath, errResult);
       EditorStore.setStatus('Test run failed: ' + msg, 'error');
     })["finally"](function () {
       setTestLoading(false);
     });
+  };
+
+  var handleRunTest = function handleRunTest() {
+    if (!activeTab || !activeTab.path) return;
+    if (testLoading) return;
+
+    var cached = loadCachedTestResult(activeTab.path);
+    if (cached && !testPanelOpen) {
+      setTestResult(cached);
+      setTestPanelFile(cached.testFile || activeTab.path);
+      setTestPanelOpen(true);
+      return;
+    }
+
+    executeTestRun(activeTab.path);
+  };
+
+  var handleRerunTest = function handleRerunTest() {
+    if (!activeTab || !activeTab.path) return;
+    if (testLoading) return;
+    executeTestRun(activeTab.path);
   };
 
   var onFormatRef = useRef(handleFormat);
@@ -2881,6 +2921,7 @@ var MbeditorApp = function MbeditorApp() {
       showInline: testInlineVisible,
       onToggleInline: function () { setTestInlineVisible(function (prev) { return !prev; }); },
       onClose: function () { setTestPanelOpen(false); },
+      onRerun: handleRerunTest,
       onOpenTestFile: testPanelFile ? function () {
         var fileName = testPanelFile.split('/').pop();
         TabManager.openTab(testPanelFile, fileName);
