@@ -39,8 +39,6 @@ jobs:
 
       - name: Push gem to RubyGems.org
         run: gem push pkg/mbeditor-*.gem --key github_oidc
-        env:
-          GEM_HOST_API_KEY: ${{ secrets.GEM_HOST_API_KEY }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
