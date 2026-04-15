@@ -1739,6 +1739,27 @@ button:not(.pico-btn) {
   font-size: 12px;
 }
 
+/* Monaco widget isolation — Pico's [role=button] selector matches Monaco's
+ * internal action elements (View Problem, Quick Fix…, lightbulb actions)
+ * because Monaco renders them as <a role="button">. Without this reset, Pico
+ * applies its primary-colour background, white text, and large form-element
+ * padding, making those buttons huge and unreadable on certain themes.
+ * Resetting the Pico CSS variables here is lower-impact than fighting
+ * per-property specificity battles with Monaco's --vscode-* rules.
+ */
+.monaco-hover [role=button],
+.action-widget [role=button],
+.context-view [role=button],
+.monaco-editor [role=button],
+.monaco-diff-editor [role=button] {
+  --pico-background-color: transparent;
+  --pico-border-color: transparent;
+  --pico-color: inherit;
+  --pico-box-shadow: none;
+  --pico-form-element-spacing-vertical: 0;
+  --pico-form-element-spacing-horizontal: 0;
+}
+
 /* Inputs and selects — keep compact but styled */
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 select,
