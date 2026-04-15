@@ -118,7 +118,8 @@ var TabManager = (function () {
       content: "",
       viewState: null,
       isImage: _isImagePath(path),
-      isSoftOpen: isSoftOpen ? true : false
+      isSoftOpen: isSoftOpen ? true : false,
+      loading: true
     };
     if (line) newTab.gotoLine = line;
 
@@ -145,7 +146,8 @@ var TabManager = (function () {
         externalContentVersion: 1,
         isImage: data.image === true ? true : _isImagePath(path),
         fileNotFound: fileNotFound,
-        dirty: false
+        dirty: false,
+        loading: false
       });
       if (!fileNotFound && _isMarkdownPath(path)) {
         _ensureMarkdownPreview(paneId, path, name, loadedContent);

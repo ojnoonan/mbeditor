@@ -42,7 +42,9 @@ var DEFAULT_EDITOR_PREFS = {
   prettierSingleQuote: false,
   prettierTrailingComma: 'all',
   prettierBracketSpacing: true,
-  vimMode: false
+  vimMode: false,
+  fileTreeTypeahead: true,
+  quickOpenShowFolders: false
 };
 
 var SidebarActionButton = function SidebarActionButton(_ref) {
@@ -55,6 +57,8 @@ var SidebarActionButton = function SidebarActionButton(_ref) {
   var danger = _ref$danger === undefined ? false : _ref$danger;
   var _ref$ariaLabel = _ref.ariaLabel;
   var ariaLabel = _ref$ariaLabel === undefined ? null : _ref$ariaLabel;
+  var _ref$ariaBusy = _ref.ariaBusy;
+  var ariaBusy = _ref$ariaBusy === undefined ? false : _ref$ariaBusy;
 
   return React.createElement(
     "button",
@@ -63,10 +67,11 @@ var SidebarActionButton = function SidebarActionButton(_ref) {
       className: "project-action-btn" + (danger ? " danger" : ""),
       title: title,
       "aria-label": ariaLabel || title,
+      "aria-busy": !!ariaBusy,
       onClick: onClick,
       disabled: !!disabled
     },
-    React.createElement("i", { className: iconClass })
+    !ariaBusy && React.createElement("i", { className: iconClass })
   );
 };
 
@@ -80,7 +85,7 @@ var SectionActionGroup = function SectionActionGroup(_ref2) {
     "div",
     {
       className: "project-actions" + (className ? " " + className : ""),
-      role: "toolbar",
+      role: "group",
       "aria-label": ariaLabel
     },
     children
@@ -141,6 +146,11 @@ var MbeditorApp = function MbeditorApp() {
   var selectedTreeNode = _useState62[0];
   var setSelectedTreeNode = _useState62[1];
 
+  var _useStateSP = useState(new Set());
+  var _useStateSP2 = _slicedToArray(_useStateSP, 2);
+  var selectedPaths = _useStateSP2[0];
+  var setSelectedPaths = _useStateSP2[1];
+
   var _useState7 = useState("");
 
   var _useState72 = _slicedToArray(_useState7, 2);
@@ -154,6 +164,26 @@ var MbeditorApp = function MbeditorApp() {
   var setSearchLoading = _useState332[1];
 
   var searchRequestIdRef = useRef(0);
+
+  var _useState33h = useState(false);
+  var _useState33h2 = _slicedToArray(_useState33h, 2);
+  var searchHasMore = _useState33h2[0];
+  var setSearchHasMore = _useState33h2[1];
+
+  var _useState33i = useState(false);
+  var _useState33i2 = _slicedToArray(_useState33i, 2);
+  var searchLoadingMore = _useState33i2[0];
+  var setSearchLoadingMore = _useState33i2[1];
+
+  var searchOffsetRef = useRef(0);        // tracks next offset to load
+  var searchQueryRef  = useRef('');       // tracks query that produced current results
+  var searchResultsContainerRef = useRef(null);
+  var searchVirtStartRef = useRef(0);     // first visible item index (for virtual list)
+
+  var _useState33j = useState(0);
+  var _useState33j2 = _slicedToArray(_useState33j, 2);
+  var searchVirtStart = _useState33j2[0];
+  var setSearchVirtStart = _useState33j2[1];
 
   var _useState8 = useState("explorer");
 
@@ -371,6 +401,8 @@ var MbeditorApp = function MbeditorApp() {
 
   var resizeSessionRef = useRef(null);
   var resizeRafRef = useRef(null);
+  var prevGitBranchRef = useRef(null);
+  var isSwitchingBranchRef = useRef(false);
 
   var clamp = function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
@@ -392,6 +424,23 @@ var MbeditorApp = function MbeditorApp() {
     if (!railsRoot) return "PROJECT";
     var parts = railsRoot.split("/").filter(Boolean);
     return parts.length ? parts[parts.length - 1] : "PROJECT";
+  };
+
+  // Optimistically insert a new node into the in-memory treeData at the given parentPath.
+  // This avoids the visual "disappear then reappear" flash while waiting for refreshProjectTree.
+  var insertNodeIntoTree = function insertNodeIntoTree(tree, parentPath, node) {
+    if (!parentPath) {
+      return tree.concat(node);
+    }
+    return tree.map(function (item) {
+      if (item.path === parentPath && item.type === 'folder') {
+        return Object.assign({}, item, { children: (item.children || []).concat(node) });
+      }
+      if (item.type === 'folder' && item.children) {
+        return Object.assign({}, item, { children: insertNodeIntoTree(item.children, parentPath, node) });
+      }
+      return item;
+    });
   };
 
   var refreshProjectTree = function refreshProjectTree() {
@@ -486,8 +535,8 @@ var MbeditorApp = function MbeditorApp() {
         parser: parserName,
         plugins: Object.values(window.prettierPlugins),
         printWidth: prefs.prettierPrintWidth != null ? prefs.prettierPrintWidth : 80,
-        tabWidth: prefs.prettierTabWidth != null ? prefs.prettierTabWidth : 2,
-        useTabs: !!prefs.prettierUseTabs,
+        tabWidth: prefs.tabSize != null ? prefs.tabSize : 2,
+        useTabs: !(prefs.insertSpaces),
         semi: prefs.prettierSemi !== false,
         singleQuote: !!prefs.prettierSingleQuote,
         trailingComma: prefs.prettierTrailingComma || 'all',
@@ -573,87 +622,156 @@ var MbeditorApp = function MbeditorApp() {
         setTestAvailable(workspace.testAvailable);
       }
     });
-    GitService.fetchStatus();
 
-    // Load persisted state
-    FileService.getState().then(function (savedState) {
-      var panesToLoad = savedState && savedState.panes;
-      if (savedState && savedState.openTabs) {
-        panesToLoad = [{ id: 1, tabs: savedState.openTabs, activeTabId: savedState.activeTabId }, { id: 2, tabs: [], activeTabId: null }];
-      }
-      if (savedState && savedState.editorPrefs && typeof savedState.editorPrefs === 'object') {
+    // Helper: load tab content for a set of panes and restore them into EditorStore
+    function loadPaneState(panesToLoad, focusedPaneId) {
+      if (!panesToLoad || panesToLoad.length === 0) return Promise.resolve();
+      var allTabs = panesToLoad.flatMap(function (p) { return p.tabs; });
+      return Promise.all(allTabs.map(function (t) {
+        if (t.isSettings || t.path === '__settings__') {
+          return Promise.resolve({ content: '' });
+        }
+        if (t.isDiff && t.repoPath) {
+          return GitService.fetchDiff(t.repoPath, t.diffBaseSha, t.diffHeadSha)
+            .then(function (d) { return { content: 'Diff loaded', diffOriginal: d.original || '', diffModified: d.modified || '', _isDiffResult: true }; })
+            ["catch"](function () { return { content: '', diffOriginal: '', diffModified: '', _isDiffResult: true }; });
+        }
+        if (t.isCombinedDiff || (t.path || '').startsWith('combined-diff://') || (t.path || '').startsWith('diff://')) {
+          return Promise.resolve({ content: '' });
+        }
+        var sourcePath = t.isPreview || /::preview$/.test(t.path || '') ? t.previewFor || (t.path || '').replace(/::preview$/, '') : t.path;
+        return FileService.getFile(sourcePath, { allowMissing: true }).then(function (data) {
+          return {
+            content: typeof data.content === 'string' ? data.content : '',
+            fileNotFound: data && data.missing === true,
+            image: data && data.image === true
+          };
+        })["catch"](function () { return { content: '', fileNotFound: false }; });
+      })).then(function (results) {
+        var resIdx = 0;
+        var restoredPanes = panesToLoad.map(function (p) {
+          return _extends({}, p, {
+            tabs: p.tabs.map(function (t) {
+              var res = results[resIdx++];
+              return _extends({}, t, {
+                content: res.content,
+                externalContentVersion: (t.externalContentVersion || 0) + 1
+              }, res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {},
+              typeof res.fileNotFound === 'boolean' ? { fileNotFound: res.fileNotFound, dirty: res.fileNotFound ? false : t.dirty } : {},
+              res.image === true ? { isImage: true } : {});
+            })
+          });
+        });
+        EditorStore.setState({ panes: restoredPanes, focusedPaneId: focusedPaneId || 1 });
+      });
+    }
+
+    // Load global prefs + initial branch state concurrently
+    Promise.all([
+      GitService.fetchStatus()["catch"](function () { return null; }),
+      FileService.getState()["catch"](function () { return {}; })
+    ]).then(function (results) {
+      var gitData = results[0];
+      var savedState = results[1] || {};
+      var branch = (gitData && gitData.branch) || EditorStore.getState().gitBranch || null;
+      prevGitBranchRef.current = branch;
+
+      // Restore global non-pane prefs
+      if (savedState.editorPrefs && typeof savedState.editorPrefs === 'object') {
         setEditorPrefs(Object.assign({}, DEFAULT_EDITOR_PREFS, savedState.editorPrefs));
       }
-      if (savedState && savedState.activeSidebarTab) {
+      if (savedState.activeSidebarTab) {
         setActiveSidebarTab(savedState.activeSidebarTab);
       }
-      if (savedState && savedState.sidebarCollapsed) {
+      if (savedState.sidebarCollapsed) {
         setSidebarCollapsed(true);
       }
-      if (panesToLoad && panesToLoad.length > 0) {
-        var allTabs = panesToLoad.flatMap(function (p) {
-          return p.tabs;
-        });
-        Promise.all(allTabs.map(function (t) {
-          if (t.isSettings || t.path === '__settings__') {
-            return Promise.resolve({ content: '' });
-          }
-          if (t.isDiff && t.repoPath) {
-            return GitService.fetchDiff(t.repoPath, t.diffBaseSha, t.diffHeadSha)
-              .then(function (d) { return { content: 'Diff loaded', diffOriginal: d.original || '', diffModified: d.modified || '', _isDiffResult: true }; })
-              ["catch"](function () { return { content: '', diffOriginal: '', diffModified: '', _isDiffResult: true }; });
-          }
-          if (t.isCombinedDiff || (t.path || '').startsWith('combined-diff://') || (t.path || '').startsWith('diff://')) {
-            return Promise.resolve({ content: '' });
-          }
-          var sourcePath = t.isPreview || /::preview$/.test(t.path || '') ? t.previewFor || (t.path || '').replace(/::preview$/, '') : t.path;
-          return FileService.getFile(sourcePath, { allowMissing: true }).then(function (data) {
-            return {
-              content: typeof data.content === 'string' ? data.content : '',
-              fileNotFound: data && data.missing === true,
-              image: data && data.image === true
-            };
-          })["catch"](function () {
-            return { content: '', fileNotFound: false };
-          });
-        })).then(function (results) {
-          var resIdx = 0;
-          var restoredPanes = panesToLoad.map(function (p) {
-            return _extends({}, p, {
-              tabs: p.tabs.map(function (t) {
-                var res = results[resIdx++];
-                return _extends({}, t, {
-                  content: res.content,
-                  externalContentVersion: (t.externalContentVersion || 0) + 1
-                }, res._isDiffResult ? {
-                  diffOriginal: res.diffOriginal,
-                  diffModified: res.diffModified
-                } : {}, typeof res.fileNotFound === 'boolean' ? {
-                  fileNotFound: res.fileNotFound,
-                  dirty: res.fileNotFound ? false : t.dirty
-                } : {}, res.image === true ? { isImage: true } : {});
-              })
-            });
-          });
-          EditorStore.setState(_extends({}, savedState, { panes: restoredPanes, openTabs: undefined }));
-          // Restore collapsedSections UI state
-          if (savedState.collapsedSections) {
-            setCollapsedSections(savedState.collapsedSections);
-          }
-          if (savedState.expandedDirs) {
-            setExpandedDirs(savedState.expandedDirs);
-          }
-          if (typeof savedState.showGitPanel === 'boolean') {
-            setShowGitPanel(savedState.showGitPanel);
-            if (savedState.showGitPanel) {
-              GitService.fetchInfo();
-            }
-          }
-          if (typeof savedState.gitPanelWidth === 'number') {
-            setGitPanelWidth(savedState.gitPanelWidth);
-          }
-        });
+      if (savedState.collapsedSections) {
+        setCollapsedSections(savedState.collapsedSections);
       }
+      if (savedState.expandedDirs) {
+        setExpandedDirs(savedState.expandedDirs);
+      }
+      if (typeof savedState.showGitPanel === 'boolean') {
+        setShowGitPanel(savedState.showGitPanel);
+        if (savedState.showGitPanel) GitService.fetchInfo();
+      }
+      if (typeof savedState.gitPanelWidth === 'number') {
+        setGitPanelWidth(savedState.gitPanelWidth);
+      }
+
+      // Load pane state for current branch; fall back to legacy global state panes
+      var branchStatePromise = branch
+        ? FileService.getBranchState(branch)["catch"](function () { return null; })
+        : Promise.resolve(null);
+
+      return branchStatePromise.then(function (branchState) {
+        var hasBranchPanes = branchState && branchState.panes && branchState.panes.some(function (p) { return p.tabs && p.tabs.length > 0; });
+        var panesToLoad, focusedPaneId;
+        if (hasBranchPanes) {
+          panesToLoad = branchState.panes;
+          focusedPaneId = branchState.focusedPaneId || 1;
+        } else {
+          // Legacy fallback: use global state panes from mbeditor_workspace.json
+          panesToLoad = savedState.panes;
+          if (!panesToLoad && savedState.openTabs) {
+            panesToLoad = [{ id: 1, tabs: savedState.openTabs, activeTabId: savedState.activeTabId }, { id: 2, tabs: [], activeTabId: null }];
+          }
+          focusedPaneId = savedState.focusedPaneId || 1;
+        }
+        return loadPaneState(panesToLoad, focusedPaneId);
+      });
+    });
+
+    // Watch for git branch changes and swap per-branch tab state
+    var unsubBranch = EditorStore.subscribeToSlice(['gitBranch'], function (st) {
+      var newBranch = st.gitBranch;
+      var oldBranch = prevGitBranchRef.current;
+      if (!newBranch || newBranch === oldBranch) return;
+      prevGitBranchRef.current = newBranch;
+      if (!oldBranch || isSwitchingBranchRef.current) return;
+
+      isSwitchingBranchRef.current = true;
+
+      // Save pane state for old branch before switching
+      var cur = EditorStore.getState();
+      var lightweightPanes = cur.panes.map(function (p) {
+        return {
+          id: p.id,
+          activeTabId: p.activeTabId,
+          tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff; }).map(function (t) {
+            return {
+              id: t.id, path: t.path, name: t.name, dirty: t.dirty, viewState: t.viewState,
+              isSettings: !!t.isSettings, isPreview: !!t.isPreview, previewFor: t.previewFor || null,
+              isDiff: !!t.isDiff, diffBaseSha: t.diffBaseSha || null, diffHeadSha: t.diffHeadSha || null,
+              repoPath: t.repoPath || null
+            };
+          })
+        };
+      });
+      FileService.saveBranchState(oldBranch, { panes: lightweightPanes, focusedPaneId: cur.focusedPaneId })["catch"](function () {});
+
+      // Clear all open tabs for the new branch
+      EditorStore.setState({
+        panes: [{ id: 1, tabs: [], activeTabId: null }, { id: 2, tabs: [], activeTabId: null }],
+        focusedPaneId: 1,
+        activeTabId: null
+      });
+
+      // Load pane state for new branch (or start empty)
+      FileService.getBranchState(newBranch)["catch"](function () { return null; }).then(function (branchState) {
+        var hasBranchPanes = branchState && branchState.panes && branchState.panes.some(function (p) { return p.tabs && p.tabs.length > 0; });
+        if (hasBranchPanes) {
+          return loadPaneState(branchState.panes, branchState.focusedPaneId || 1);
+        }
+        return null;
+      }).then(function () {
+        // Prune states for deleted branches
+        FileService.pruneBranchStates()["catch"](function () {});
+        isSwitchingBranchRef.current = false;
+      })["catch"](function () {
+        isSwitchingBranchRef.current = false;
+      });
     });
 
     // Hotkeys setup
@@ -756,6 +874,7 @@ var MbeditorApp = function MbeditorApp() {
     window.addEventListener('mouseup', handleMouseUp);
     return function () {
       unsubscribe();
+      unsubBranch();
       if (resizeRafRef.current) {
         cancelAnimationFrame(resizeRafRef.current);
         resizeRafRef.current = null;
@@ -805,16 +924,35 @@ var MbeditorApp = function MbeditorApp() {
     return function () { clearTimeout(timeoutId); };
   }, []);
 
+  // Auto-refresh the file tree every 10s to pick up external changes (new files, deletions, etc.)
+  // Uses functional setTreeData to skip the re-render when nothing has changed.
+  useEffect(function () {
+    var intervalId = setInterval(function () {
+      if (document.hidden) return;
+      // Refresh tree and check for git branch changes (to trigger per-branch tab state swap)
+      GitService.fetchStatus()["catch"](function () {});
+      FileService.getTree().then(function (data) {
+        var newData = data || [];
+        setTreeData(function (prevData) {
+          if (JSON.stringify(newData) === JSON.stringify(prevData)) return prevData;
+          SearchService.buildIndex(newData);
+          return newData;
+        });
+      }).catch(function () {}); // silently ignore auto-refresh errors
+    }, 10000);
+    return function () { clearInterval(intervalId); };
+  }, []);
+
   var handleSelectFile = function handleSelectFile(path, name, line) {
     TabManager.openTab(path, name, line);
-    setSelectedTreeNode({ path: path, name: name || path.split('/').pop(), type: 'file' });
+    handleNodeSelect({ path: path, name: name || path.split('/').pop(), type: 'file' });
     setQuickOpen(false);
   };
 
   // Single-click in explorer: soft (preview) open — replaces any existing soft tab
   var handleSoftOpenFile = function handleSoftOpenFile(path, name) {
     TabManager.openTab(path, name, null, null, true);
-    setSelectedTreeNode({ path: path, name: name || path.split('/').pop(), type: 'file' });
+    handleNodeSelect({ path: path, name: name || path.split('/').pop(), type: 'file' });
   };
 
   // Double-click in explorer or on tab: harden the tab (remove italic/preview)
@@ -831,7 +969,7 @@ var MbeditorApp = function MbeditorApp() {
     } else {
       TabManager.openTab(path, name, null, null, false);
     }
-    setSelectedTreeNode({ path: path, name: name || path.split('/').pop(), type: 'file' });
+    handleNodeSelect({ path: path, name: name || path.split('/').pop(), type: 'file' });
   };
 
   var requestCloseTab = function requestCloseTab(paneId, id) {
@@ -951,6 +1089,12 @@ var MbeditorApp = function MbeditorApp() {
           })
         };
       });
+      // Save pane state per-branch so it can be restored when switching back
+      var currentBranch = prevGitBranchRef.current;
+      if (currentBranch && !isSwitchingBranchRef.current) {
+        FileService.saveBranchState(currentBranch, { panes: lightweightPanes, focusedPaneId: st.focusedPaneId })["catch"](function () {});
+      }
+      // Also persist to global state (prefs + panes as legacy fallback)
       FileService.saveState({ panes: lightweightPanes, focusedPaneId: st.focusedPaneId, collapsedSections: collapsedSections, expandedDirs: expandedDirs, showGitPanel: showGitPanel, gitPanelWidth: gitPanelWidth, editorPrefs: editorPrefs, activeSidebarTab: activeSidebarTab, sidebarCollapsed: sidebarCollapsed });
     }, 1000);
     return function () {
@@ -1341,16 +1485,28 @@ var MbeditorApp = function MbeditorApp() {
     if (!q.trim()) {
       searchRequestIdRef.current += 1;
       setSearchLoading(false);
-      EditorStore.setState({ searchResults: [] });
+      setSearchHasMore(false);
+      searchOffsetRef.current = 0;
+      searchQueryRef.current = '';
+      EditorStore.setState({ searchResults: [], searchHasMore: false });
       return;
     }
     var requestId = ++searchRequestIdRef.current;
     setSearchLoading(true);
+    setSearchHasMore(false);
+    searchOffsetRef.current = 0;
+    searchQueryRef.current = q;
+    setSearchVirtStart(0);
+    searchVirtStartRef.current = 0;
+    EditorStore.setState({ searchResults: [], searchHasMore: false });
     EditorStore.setStatus("Searching project...", "info");
-    SearchService.projectSearch(q).then(function (res) {
+    SearchService.projectSearch(q, 0, SearchService.PAGE_SIZE).then(function (res) {
       if (searchRequestIdRef.current === requestId) {
-        var count = res && res.results ? res.results.length : (Array.isArray(res) ? res.length : 0);
-        EditorStore.setStatus("Found " + count + " result" + (count !== 1 ? "s" : ""), "success");
+        var hasMore = !!(res && res.hasMore);
+        setSearchHasMore(hasMore);
+        searchOffsetRef.current = SearchService.PAGE_SIZE;
+        var count = res && res.results ? res.results.length : 0;
+        EditorStore.setStatus("Found " + count + (hasMore ? '+' : '') + " result" + (count !== 1 ? "s" : ""), "success");
       }
     }).finally(function () {
       if (searchRequestIdRef.current === requestId) {
@@ -1361,6 +1517,7 @@ var MbeditorApp = function MbeditorApp() {
 
   var handleSearchChange = function handleSearchChange(e) {
     var val = e.target.value;
+    if (!val) { clearSearch(); return; }
     setSearchQuery(val);
     _debouncedSearch(val);
   };
@@ -1370,12 +1527,50 @@ var MbeditorApp = function MbeditorApp() {
     if (_debouncedSearch.cancel) _debouncedSearch.cancel();
     setSearchQuery("");
     setSearchLoading(false);
-    EditorStore.setState({ searchResults: [] });
+    setSearchHasMore(false);
+    setSearchLoadingMore(false);
+    searchOffsetRef.current = 0;
+    searchQueryRef.current = '';
+    setSearchVirtStart(0);
+    searchVirtStartRef.current = 0;
+    EditorStore.setState({ searchResults: [], searchHasMore: false });
   };
 
   var execSearch = function execSearch(e) {
     e.preventDefault();
     _debouncedSearch(searchQuery);
+  };
+
+  var loadMoreSearchResults = function loadMoreSearchResults() {
+    var q = searchQueryRef.current;
+    if (!q || searchLoadingMore || !searchHasMore) return;
+    var offset = searchOffsetRef.current;
+    setSearchLoadingMore(true);
+    SearchService.projectSearch(q, offset, SearchService.PAGE_SIZE).then(function (res) {
+      var hasMore = !!(res && res.hasMore);
+      setSearchHasMore(hasMore);
+      searchOffsetRef.current = offset + SearchService.PAGE_SIZE;
+    }).finally(function () {
+      setSearchLoadingMore(false);
+    });
+  };
+
+  // Scroll handler for the virtualized search results list.
+  var SEARCH_ITEM_H = 40;
+  var SEARCH_OVERSCAN = 8;
+  var handleSearchResultsScroll = function handleSearchResultsScroll(e) {
+    var el = e.currentTarget;
+    var newStart = Math.floor(el.scrollTop / SEARCH_ITEM_H);
+    if (Math.abs(newStart - searchVirtStartRef.current) >= 4) {
+      searchVirtStartRef.current = newStart;
+      setSearchVirtStart(newStart);
+    }
+    // Trigger load-more when within 200px of the bottom
+    if (!searchLoadingMore && searchHasMore) {
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
+        loadMoreSearchResults();
+      }
+    }
   };
 
   var toggleGitPanel = function toggleGitPanel() {
@@ -1413,9 +1608,47 @@ var MbeditorApp = function MbeditorApp() {
     return setExpandedDirs({});
   };
 
+  // Unified single-node select: keeps selectedTreeNode (anchor) + selectedPaths in sync
+  var handleNodeSelect = function handleNodeSelect(node) {
+    setSelectedTreeNode(node);
+    setSelectedPaths(node ? new Set([node.path]) : new Set());
+  };
+
+  // Multi-select: Ctrl/Cmd or Shift click — updates selectedPaths without touching the anchor
+  var handleMultiSelect = function handleMultiSelect(pathsSet) {
+    setSelectedPaths(pathsSet);
+  };
+
+  // Move one or more paths into a target folder via the rename/mv API
+  var handleMoveNodes = function handleMoveNodes(srcPaths, targetFolderPath) {
+    var validSrcs = srcPaths.filter(function(p) {
+      // Prevent moving a folder into itself or one of its descendants
+      return p !== targetFolderPath && !targetFolderPath.startsWith(p + '/');
+    });
+    if (validSrcs.length === 0) return;
+
+    var moves = validSrcs.map(function(srcPath) {
+      var baseName = srcPath.split('/').pop();
+      var destPath = targetFolderPath + '/' + baseName;
+      return FileService.renamePath(srcPath, destPath).then(function() {
+        applyRenameToOpenTabs(srcPath, destPath);
+      });
+    });
+
+    Promise.all(moves).then(function() {
+      setSelectedTreeNode(null);
+      setSelectedPaths(new Set());
+      EditorStore.setStatus('Moved ' + validSrcs.length + ' item(s).', 'success');
+      return refreshProjectTree().then(function() { GitService.fetchStatus(); });
+    })['catch'](function(err) {
+      var message = err && err.response && err.response.data && err.response.data.error || err.message;
+      EditorStore.setStatus('Move failed: ' + message, 'error');
+    });
+  };
+
   var openContextMenu = function openContextMenu(e, node) {
     setContextMenu({ x: e.clientX, y: e.clientY, node: node });
-    setSelectedTreeNode(node);
+    handleNodeSelect(node);
   };
 
   var closeContextMenu = function closeContextMenu() {
@@ -1580,6 +1813,22 @@ var MbeditorApp = function MbeditorApp() {
     }
   };
 
+  // Reveal a folder path in the explorer: switch to explorer tab and expand
+  // all ancestor dirs plus the folder itself.
+  var handleOpenFolderInExplorer = function handleOpenFolderInExplorer(folderPath) {
+    var folderName = folderPath.split('/').pop() || folderPath;
+    // Build ancestor + self expansion map
+    var parts = folderPath.split('/');
+    var toExpand = {};
+    for (var i = 1; i <= parts.length; i++) {
+      toExpand[parts.slice(0, i).join('/')] = true;
+    }
+    // Apply all state updates together so the tree renders once with everything correct
+    setExpandedDirs(function(prev) { return Object.assign({}, prev, toExpand); });
+    handleNodeSelect({ path: folderPath, name: folderName, type: 'folder' });
+    setActiveSidebarTab('explorer');
+  };
+
   var handleCreateFile = function handleCreateFile(targetNode) {
     var node = targetNode !== undefined ? targetNode : selectedTreeNode;
     var baseDir = node ? node.type === 'folder' ? node.path : parentDir(node.path) : '';
@@ -1609,6 +1858,10 @@ var MbeditorApp = function MbeditorApp() {
     var path = normalizeRelativePath(parentPath ? parentPath + '/' + name : name);
     setPendingCreate(null);
 
+    // Optimistically insert the new node so the tree doesn't flash empty while waiting for the server
+    var optimisticNode = { path: path, name: name, type: type === 'folder' ? 'folder' : 'file', children: type === 'folder' ? [] : undefined };
+    setTreeData(function (prev) { return insertNodeIntoTree(prev, parentPath, optimisticNode); });
+
     if (type === 'file') {
       setLoading(function (prev) {
         return _extends({}, prev, { createFile: true });
@@ -1616,7 +1869,7 @@ var MbeditorApp = function MbeditorApp() {
       FileService.createFile(path, '').then(function (res) {
         var createdPath = res && res.path || path;
         var createdName = createdPath.split('/').pop();
-        setSelectedTreeNode({ path: createdPath, name: createdName, type: 'file' });
+        handleNodeSelect({ path: createdPath, name: createdName, type: 'file' });
         EditorStore.setStatus('Created file: ' + createdName, 'success');
         return refreshProjectTree().then(function () {
           handleSelectFile(createdPath, createdName);
@@ -1625,6 +1878,8 @@ var MbeditorApp = function MbeditorApp() {
       })["catch"](function (err) {
         var message = err && err.response && err.response.data && err.response.data.error || err.message;
         EditorStore.setStatus('Create file failed: ' + message, 'error');
+        // Roll back the optimistic node on failure
+        refreshProjectTree();
       })["finally"](function () {
         return setLoading(function (prev) {
           return _extends({}, prev, { createFile: false });
@@ -1636,7 +1891,7 @@ var MbeditorApp = function MbeditorApp() {
       });
       FileService.createDir(path).then(function (res) {
         var createdPath = res && res.path || path;
-        setSelectedTreeNode({ path: createdPath, name: createdPath.split('/').pop(), type: 'folder' });
+        handleNodeSelect({ path: createdPath, name: createdPath.split('/').pop(), type: 'folder' });
         EditorStore.setStatus('Created folder: ' + createdPath, 'success');
         return refreshProjectTree().then(function () {
           return GitService.fetchStatus();
@@ -1644,6 +1899,8 @@ var MbeditorApp = function MbeditorApp() {
       })["catch"](function (err) {
         var message = err && err.response && err.response.data && err.response.data.error || err.message;
         EditorStore.setStatus('Create folder failed: ' + message, 'error');
+        // Roll back the optimistic node on failure
+        refreshProjectTree();
       })["finally"](function () {
         return setLoading(function (prev) {
           return _extends({}, prev, { createDir: false });
@@ -1709,6 +1966,7 @@ var MbeditorApp = function MbeditorApp() {
       setSelectedTreeNode(function (prev) {
         return prev ? _extends({}, prev, { path: renamedPath, name: renamedPath.split('/').pop() }) : prev;
       });
+      setSelectedPaths(new Set([renamedPath]));
       EditorStore.setStatus('Renamed to: ' + renamedPath, 'success');
       return refreshProjectTree().then(function () {
         GitService.fetchStatus();
@@ -1728,23 +1986,34 @@ var MbeditorApp = function MbeditorApp() {
   };
 
   var handleDeletePath = function handleDeletePath(targetNode) {
-    var node = targetNode !== undefined ? targetNode : selectedTreeNode;
-    if (!node || !node.path) {
+    // If a specific node is provided (e.g. from context menu), delete just that.
+    // Otherwise delete all paths in the multi-selection (or fall back to selectedTreeNode).
+    var pathsToDelete;
+    if (targetNode !== undefined && targetNode) {
+      pathsToDelete = [targetNode.path];
+    } else if (selectedPaths && selectedPaths.size > 0) {
+      pathsToDelete = Array.from(selectedPaths);
+    } else if (selectedTreeNode && selectedTreeNode.path) {
+      pathsToDelete = [selectedTreeNode.path];
+    } else {
       EditorStore.setStatus('Select a file or folder to delete first.', 'warning');
       return;
     }
 
-    var targetPath = node.path;
-    var confirmed = window.confirm('Delete ' + targetPath + '? This cannot be undone.');
+    var label = pathsToDelete.length === 1 ? pathsToDelete[0] : pathsToDelete.length + ' items';
+    var confirmed = window.confirm('Delete ' + label + '? This cannot be undone.');
     if (!confirmed) return;
 
     setLoading(function (prev) {
       return _extends({}, prev, { deletePath: true });
     });
-    FileService.deletePath(targetPath).then(function () {
-      removeDeletedPathFromOpenTabs(targetPath);
-      setSelectedTreeNode(null);
-      EditorStore.setStatus('Deleted: ' + targetPath, 'success');
+    Promise.all(pathsToDelete.map(function(p) {
+      return FileService.deletePath(p).then(function() {
+        removeDeletedPathFromOpenTabs(p);
+      });
+    })).then(function () {
+      handleNodeSelect(null);
+      EditorStore.setStatus('Deleted: ' + label, 'success');
       return refreshProjectTree().then(function () {
         GitService.fetchStatus();
       });
@@ -1773,7 +2042,12 @@ var MbeditorApp = function MbeditorApp() {
       activeId: activeId,
       paneId: paneId,
       onSelect: function (id) {
-        return TabManager.switchTab(paneId, id);
+        // Sync explorer selection with the newly active tab so there's only one highlight
+        var tab = tabs.find(function(t) { return t.id === id; });
+        if (tab && tab.path && !tab.path.startsWith('mbeditor://') && tab.path !== '__settings__') {
+          handleNodeSelect({ path: tab.path, name: tab.name, type: 'file' });
+        }
+        TabManager.switchTab(paneId, id);
       },
       onClose: function (id) {
         return requestCloseTab(paneId, id);
@@ -1790,7 +2064,7 @@ var MbeditorApp = function MbeditorApp() {
       },
       onRevealInExplorer: function (path) {
         setActiveSidebarTab('explorer');
-        setSelectedTreeNode({ path: path, name: path.split('/').pop(), type: 'file' });
+        handleNodeSelect({ path: path, name: path.split('/').pop(), type: 'file' });
         setExpandedDirs(function (prev) {
           var parts = path.split('/');
           var updates = {};
@@ -1853,10 +2127,10 @@ var MbeditorApp = function MbeditorApp() {
           "button",
           { className: "statusbar-btn", onClick: function () {
               return activeTab && handleSave(focusedPane.id, activeTab);
-            }, disabled: loading.save || !activeTab || !activeTab.dirty },
-          React.createElement("i", { className: loading.save ? "fas fa-spinner fa-spin" : "fas fa-save" }),
-          !editorPrefs.toolbarIconOnly && " Save",
-          activeTab && activeTab.dirty ? " ●" : ""
+            }, disabled: loading.save || !activeTab || !activeTab.dirty, 'aria-busy': !!loading.save },
+          !loading.save && React.createElement("i", { className: "fas fa-save" }),
+          !editorPrefs.toolbarIconOnly && !loading.save && " Save",
+          !loading.save && activeTab && activeTab.dirty ? " ●" : ""
         ),
         React.createElement(
           "button",
@@ -1864,20 +2138,37 @@ var MbeditorApp = function MbeditorApp() {
               return p.tabs;
             }).some(function (t) {
               return t.dirty;
-            }) },
-          React.createElement(
+            }), 'aria-busy': !!loading.saveAll },
+          !loading.saveAll && React.createElement(
             "i",
-            { className: loading.saveAll ? "fas fa-spinner fa-spin" : "fas fa-save", style: loading.saveAll ? {} : { position: 'relative' } },
-            !loading.saveAll && React.createElement("i", { className: "fas fa-save", style: { position: 'absolute', top: '-2px', left: '3px', fontSize: '9px', opacity: 0.8 } })
+            { className: "fas fa-save", style: { position: 'relative' } },
+            React.createElement("i", { className: "fas fa-save", style: { position: 'absolute', top: '-2px', left: '3px', fontSize: '9px', opacity: 0.8 } })
           ),
-          !editorPrefs.toolbarIconOnly && " Save All"
+          !editorPrefs.toolbarIconOnly && !loading.saveAll && " Save All"
+        ),
+        React.createElement("div", { className: "statusbar-sep" }),
+        React.createElement(
+          'div',
+          { role: 'group' },
+          React.createElement(
+            "button",
+            { className: "statusbar-btn", onClick: function() { var ed = window.__mbeditorActiveEditor; if (ed) ed.trigger('keyboard', 'undo', null); }, disabled: !activeTab || !state.canUndo, title: "Undo (Ctrl+Z)" },
+            React.createElement("i", { className: "fas fa-undo" }),
+            !editorPrefs.toolbarIconOnly && " Undo"
+          ),
+          React.createElement(
+            "button",
+            { className: "statusbar-btn", onClick: function() { var ed = window.__mbeditorActiveEditor; if (ed) ed.trigger('keyboard', 'redo', null); }, disabled: !activeTab || !state.canRedo, title: "Redo (Ctrl+Y)" },
+            React.createElement("i", { className: "fas fa-redo" }),
+            !editorPrefs.toolbarIconOnly && " Redo"
+          )
         ),
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
           "button",
-          { className: "statusbar-btn", onClick: handleFormat, disabled: loading.format || !canLintAndFormat },
-          React.createElement("i", { className: loading.format ? "fas fa-spinner fa-spin" : "fas fa-magic" }),
-          !editorPrefs.toolbarIconOnly && " Format"
+          { className: "statusbar-btn", onClick: handleFormat, disabled: loading.format || !canLintAndFormat, 'aria-busy': !!loading.format },
+          !loading.format && React.createElement("i", { className: "fas fa-magic" }),
+          !editorPrefs.toolbarIconOnly && !loading.format && " Format"
         ),
         hasGitBranch && React.createElement(
           React.Fragment,
@@ -1933,24 +2224,28 @@ var MbeditorApp = function MbeditorApp() {
                 "div",
                 { className: "sidebar-strip-top" },
                 React.createElement(
-                  "button",
-                  { type: "button", className: "sidebar-strip-btn " + (activeSidebarTab === 'explorer' ? 'active' : ''), title: "Explorer", onClick: function () { return expandSidebarTo('explorer'); } },
-                  React.createElement("i", { className: "far fa-folder" })
-                ),
-                React.createElement(
-                  "button",
-                  { type: "button", className: "sidebar-strip-btn " + (activeSidebarTab === 'search' ? 'active' : ''), title: "Search", onClick: function () { return expandSidebarTo('search'); } },
-                  React.createElement("i", { className: "fas fa-search" })
+                  "div",
+                  { className: "sidebar-nav-group", "data-group": "nav" },
+                  React.createElement(
+                    "button",
+                    { type: "button", className: "sidebar-strip-btn " + (activeSidebarTab === 'explorer' ? 'active' : ''), title: "Explorer", onClick: function () { return expandSidebarTo('explorer'); } },
+                    React.createElement("i", { className: "far fa-folder" })
+                  ),
+                  React.createElement(
+                    "button",
+                    { type: "button", className: "sidebar-strip-btn " + (activeSidebarTab === 'search' ? 'active' : ''), title: "Search", onClick: function () { return expandSidebarTo('search'); } },
+                    React.createElement("i", { className: "fas fa-search" })
+                  ),
+                  React.createElement(
+                    "button",
+                    { type: "button", className: "sidebar-strip-btn", title: "Editor Preferences", onClick: openSettingsTab },
+                    React.createElement("i", { className: "fas fa-cog" })
+                  )
                 )
               ),
               React.createElement(
                 "div",
                 { className: "sidebar-strip-bottom" },
-                React.createElement(
-                  "button",
-                  { type: "button", className: "sidebar-strip-btn", title: "Editor Preferences", onClick: openSettingsTab },
-                  React.createElement("i", { className: "fas fa-cog" })
-                ),
                 React.createElement(
                   "button",
                   { type: "button", className: "sidebar-strip-btn", title: "Expand sidebar", onClick: toggleSidebarCollapsed },
@@ -2057,6 +2352,9 @@ var MbeditorApp = function MbeditorApp() {
                           key: tab.id,
                           className: "tree-item " + (pane.activeTabId === tab.id && state.focusedPaneId === pane.id ? "active" : ""),
                           onClick: function () {
+                            if (tab.path && !tab.path.startsWith('mbeditor://') && tab.path !== '__settings__') {
+                              handleNodeSelect({ path: tab.path, name: tab.name, type: 'file' });
+                            }
                             TabManager.focusPane(pane.id);TabManager.switchTab(pane.id, tab.id);
                           }
                         },
@@ -2118,7 +2416,8 @@ var MbeditorApp = function MbeditorApp() {
                 }),
                 React.createElement(SidebarActionButton, {
                   title: "New file",
-                  iconClass: loading.createFile ? 'fas fa-spinner fa-spin' : 'far fa-file',
+                  iconClass: 'far fa-file',
+                  ariaBusy: !!loading.createFile,
                   onClick: function () {
                     return handleCreateFile();
                   },
@@ -2126,7 +2425,8 @@ var MbeditorApp = function MbeditorApp() {
                 }),
                 React.createElement(SidebarActionButton, {
                   title: "New folder",
-                  iconClass: loading.createDir ? 'fas fa-spinner fa-spin' : 'far fa-folder',
+                  iconClass: 'far fa-folder',
+                  ariaBusy: !!loading.createDir,
                   onClick: function () {
                     return handleCreateDir();
                   },
@@ -2134,7 +2434,8 @@ var MbeditorApp = function MbeditorApp() {
                 }),
                 React.createElement(SidebarActionButton, {
                   title: "Rename selected",
-                  iconClass: loading.renamePath ? 'fas fa-spinner fa-spin' : 'fas fa-pen',
+                  iconClass: 'fas fa-pen',
+                  ariaBusy: !!loading.renamePath,
                   onClick: function () {
                     return handleRenamePath();
                   },
@@ -2142,11 +2443,12 @@ var MbeditorApp = function MbeditorApp() {
                 }),
                 React.createElement(SidebarActionButton, {
                   title: "Delete selected",
-                  iconClass: loading.deletePath ? 'fas fa-spinner fa-spin' : 'far fa-trash-alt',
+                  iconClass: 'far fa-trash-alt',
+                  ariaBusy: !!loading.deletePath,
                   onClick: function () {
                     return handleDeletePath();
                   },
-                  disabled: !!loading.deletePath || !selectedTreePath,
+                  disabled: !!loading.deletePath || selectedPaths.size === 0,
                   danger: true
                 })
               )
@@ -2155,8 +2457,11 @@ var MbeditorApp = function MbeditorApp() {
               items: treeData,
               onSelect: handleSoftOpenFile,
               activePath: editorPrefs.autoRevealInExplorer !== false ? (activeTab && activeTab.path) : null,
-              selectedPath: selectedTreePath,
-              onNodeSelect: setSelectedTreeNode,
+              selectedPaths: selectedPaths,
+              anchorPath: selectedTreePath,
+              onNodeSelect: handleNodeSelect,
+              onMultiSelect: handleMultiSelect,
+              onMove: handleMoveNodes,
               gitFiles: state.gitFiles,
               expandedDirs: expandedDirs,
               onExpandedDirsChange: setExpandedDirs,
@@ -2167,95 +2472,107 @@ var MbeditorApp = function MbeditorApp() {
               onCreateCancel: handleCreateCancel,
               pendingRename: pendingRename,
               onRenameConfirm: handleRenameConfirm,
-              onRenameCancel: handleRenameCancel
+              onRenameCancel: handleRenameCancel,
+              typeaheadEnabled: editorPrefs.fileTreeTypeahead !== false
             })
           )
           )
         ),
         activeSidebarTab === 'search' && React.createElement(
-          "form",
-          { className: "search-panel", onSubmit: execSearch },
+          "div",
+          { className: "search-panel" },
           React.createElement(
             "div",
             { className: "search-input-wrap" },
-            React.createElement(
-              "div",
-              { className: "search-input-shell" },
-              React.createElement("input", {
-                className: "search-input",
-                placeholder: "Find in files...",
-                value: searchQuery,
-                onChange: handleSearchChange
-              }),
-              searchQuery && React.createElement(
-                "button",
-                {
-                  type: "button",
-                  className: "search-clear-btn",
-                  onClick: clearSearch,
-                  title: "Clear search",
-                  "aria-label": "Clear search"
-                },
-                React.createElement("i", { className: "fas fa-times" })
-              )
-            ),
-            React.createElement(
-              "button",
-              { type: "submit", className: "search-btn", disabled: searchLoading, title: searchLoading ? "Searching..." : "Search" },
-              React.createElement("i", { className: searchLoading ? "fas fa-spinner fa-spin" : "fas fa-search" })
-            )
+            React.createElement("input", {
+              type: "text",
+              className: "search-input",
+              placeholder: "Find in files…",
+              value: searchQuery,
+              onChange: handleSearchChange
+            })
           ),
           React.createElement(
             "div",
-            { className: "search-results" },
-            searchQuery && state.searchResults.length > 0 && React.createElement(
-              "div",
-              { className: "search-results-meta" },
-              state.searchResults.length,
-              " result" + (state.searchResults.length !== 1 ? "s" : ""),
-              state.searchCapped && React.createElement(
-                "span",
-                { className: "search-results-capped" },
-                " — refine query to see more"
-              )
-            ),
-            searchQuery && state.searchResults.length === 0 && React.createElement(
-              "div",
-              { className: "search-results-empty" },
-              "No results"
-            ),
-            state.searchResults.map(function (res, i) {
-              var fileName = res.file.split('/').pop();
+            {
+              className: "search-results",
+              ref: searchResultsContainerRef,
+              onScroll: handleSearchResultsScroll
+            },
+            (function() {
+              var allResults = state.searchResults || [];
+              var totalCount = allResults.length;
+
+              if (searchQuery && totalCount === 0 && !searchLoading) {
+                return React.createElement(
+                  "div", { className: "search-results-empty" }, "No results"
+                );
+              }
+
+              if (totalCount === 0) return null;
+
+              // Compute virtual window
+              var containerEl = searchResultsContainerRef.current;
+              var containerH = containerEl ? containerEl.clientHeight : 400;
+              var visibleCount = Math.ceil(containerH / SEARCH_ITEM_H) + SEARCH_OVERSCAN * 2;
+              var virtStart = Math.max(0, searchVirtStart - SEARCH_OVERSCAN);
+              var virtEnd   = Math.min(totalCount, virtStart + visibleCount);
+              var paddingTop    = virtStart * SEARCH_ITEM_H;
+              var paddingBottom = Math.max(0, (totalCount - virtEnd) * SEARCH_ITEM_H);
+
+              var visibleItems = allResults.slice(virtStart, virtEnd).map(function(res, idx) {
+                var absoluteIdx = virtStart + idx;
+                var fileName = res.file.split('/').pop();
+                return React.createElement(
+                  "div",
+                  {
+                    key: absoluteIdx,
+                    className: "search-result-item",
+                    onClick: function() { handleSelectFile(res.file, res.file.split('/').pop(), res.line); }
+                  },
+                  React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
+                  React.createElement(
+                    "div",
+                    { className: "search-result-body" },
+                    React.createElement(
+                      "div",
+                      { className: "search-result-file" },
+                      fileName,
+                      React.createElement(
+                        "span",
+                        { className: "search-result-line-num" },
+                        " ", res.file, ":", res.line
+                      )
+                    ),
+                    React.createElement(
+                      "div",
+                      { className: "search-result-text" },
+                      res.text
+                    )
+                  )
+                );
+              });
+
               return React.createElement(
-                "div",
-                { key: i, className: "search-result-item", onClick: function () {
-                    return handleSelectFile(res.file, res.file.split('/').pop(), res.line);
-                  } },
-                React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
+                React.Fragment,
+                null,
                 React.createElement(
                   "div",
-                  { className: "search-result-body" },
-                  React.createElement(
-                    "div",
-                    { className: "search-result-file" },
-                    fileName,
-                    React.createElement(
-                      "span",
-                      { className: "search-result-line-num" },
-                      " ",
-                      res.file,
-                      ":",
-                      res.line
-                    )
-                  ),
-                  React.createElement(
-                    "div",
-                    { className: "search-result-text" },
-                    res.text
-                  )
+                  { className: "search-results-meta" },
+                  totalCount,
+                  " result" + (totalCount !== 1 ? "s" : ""),
+                  searchHasMore && React.createElement("span", { className: "search-results-capped" }, " — more available, scroll for next page")
                 ),
+                React.createElement("div", { style: { height: paddingTop + 'px', flexShrink: 0 } }),
+                visibleItems,
+                React.createElement("div", { style: { height: paddingBottom + 'px', flexShrink: 0 } }),
+                searchLoadingMore && React.createElement(
+                  "div",
+                  { className: "search-results-loading-more", 'aria-busy': 'true' },
+                  'Loading more…'
+                )
               );
-            })
+            })()
           )
         )
       )
@@ -2340,19 +2657,21 @@ var MbeditorApp = function MbeditorApp() {
                   React.createElement(
                     'div',
                     { className: 'ide-settings-body' },
+
+                    /* ── Appearance ──────────────────────────────── */
+                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Appearance'),
                     React.createElement(
-                      'label', { className: 'ide-settings-row' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Theme'),
                       React.createElement(
                         'select', {
-                          className: 'ide-settings-select',
                           value: editorPrefs.theme || 'vs-dark',
                           onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { theme: e.target.value }); }); }
                         },
-                        React.createElement('option', { value: 'vs-dark' }, 'Dark (vs-dark)'),
-                        React.createElement('option', { value: 'vs' }, 'Light (vs)'),
-                        React.createElement('option', { value: 'hc-black' }, 'High Contrast Dark'),
-                        React.createElement('option', { value: 'hc-light' }, 'High Contrast Light'),
+                        React.createElement('option', { value: 'vs-dark' }, 'Dark'),
+                        React.createElement('option', { value: 'vs' }, 'Light'),
+                        React.createElement('option', { value: 'hc-black' }, 'HC Dark'),
+                        React.createElement('option', { value: 'hc-light' }, 'HC Light'),
                         React.createElement('option', { value: 'dracula' }, 'Dracula'),
                         React.createElement('option', { value: 'night-owl' }, 'Night Owl'),
                         React.createElement('option', { value: 'monokai' }, 'Monokai'),
@@ -2363,7 +2682,7 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Font size'),
                       React.createElement('input', {
                         type: 'number', min: '8', max: '32', step: '1',
@@ -2376,12 +2695,25 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row' },
+                      'label', { className: 'ide-settings-row-full' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Font family'),
+                      React.createElement('input', {
+                        type: 'text',
+                        className: 'ide-settings-input ide-settings-input-wide',
+                        value: editorPrefs.fontFamily || "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
+                        onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { fontFamily: e.target.value }); }); }
+                      })
+                    ),
+
+                    /* ── Indentation (unified editor + Prettier) ── */
+                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Indentation'),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-half' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Tab size'),
                       React.createElement('input', {
                         type: 'number', min: '1', max: '8', step: '1',
                         className: 'ide-settings-input',
-                        value: editorPrefs.tabSize || 1,
+                        value: editorPrefs.tabSize || 4,
                         onChange: function(e) {
                           var v = parseInt(e.target.value, 10);
                           if (v >= 1 && v <= 8) setEditorPrefs(function(p) { return Object.assign({}, p, { tabSize: v }); });
@@ -2398,22 +2730,14 @@ var MbeditorApp = function MbeditorApp() {
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { insertSpaces: v }); }); }
                       })
                     ),
+
+                    /* ── Editor ──────────────────────────────────── */
+                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Editor'),
                     React.createElement(
-                      'label', { className: 'ide-settings-row' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Font family'),
-                      React.createElement('input', {
-                        type: 'text',
-                        className: 'ide-settings-input ide-settings-input-wide',
-                        value: editorPrefs.fontFamily || "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
-                        onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { fontFamily: e.target.value }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Word wrap'),
                       React.createElement(
                         'select', {
-                          className: 'ide-settings-select',
                           value: editorPrefs.wordWrap || 'off',
                           onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { wordWrap: e.target.value }); }); }
                         },
@@ -2423,11 +2747,10 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Line numbers'),
                       React.createElement(
                         'select', {
-                          className: 'ide-settings-select',
                           value: editorPrefs.lineNumbers || 'on',
                           onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { lineNumbers: e.target.value }); }); }
                         },
@@ -2437,16 +2760,15 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Render whitespace'),
+                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Whitespace'),
                       React.createElement(
                         'select', {
-                          className: 'ide-settings-select',
                           value: editorPrefs.renderWhitespace || 'none',
                           onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { renderWhitespace: e.target.value }); }); }
                         },
                         React.createElement('option', { value: 'none' }, 'None'),
-                        React.createElement('option', { value: 'selection' }, 'Selection only'),
+                        React.createElement('option', { value: 'selection' }, 'Selection'),
                         React.createElement('option', { value: 'boundary' }, 'Boundary'),
                         React.createElement('option', { value: 'all' }, 'All')
                       )
@@ -2463,7 +2785,7 @@ var MbeditorApp = function MbeditorApp() {
                     ),
                     React.createElement(
                       'label', { className: 'ide-settings-row ide-settings-row-check' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Scroll beyond last line'),
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Scroll past end'),
                       React.createElement('input', {
                         type: 'checkbox',
                         className: 'ide-settings-checkbox',
@@ -2473,7 +2795,7 @@ var MbeditorApp = function MbeditorApp() {
                     ),
                     React.createElement(
                       'label', { className: 'ide-settings-row ide-settings-row-check' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Bracket colorization'),
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Bracket colors'),
                       React.createElement('input', {
                         type: 'checkbox',
                         className: 'ide-settings-checkbox',
@@ -2491,29 +2813,11 @@ var MbeditorApp = function MbeditorApp() {
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { vimMode: v }); }); }
                       })
                     ),
+
+                    /* ── Formatting (Prettier) ───────────────────── */
+                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Formatting'),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Explorer follows active file'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!(editorPrefs.autoRevealInExplorer),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { autoRevealInExplorer: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Toolbar: icons only'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!(editorPrefs.toolbarIconOnly),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { toolbarIconOnly: v }); }); }
-                      })
-                    ),
-                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Prettier'),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Print width'),
                       React.createElement('input', {
                         type: 'number', min: '40', max: '200', step: '1',
@@ -2526,27 +2830,17 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Tab width'),
-                      React.createElement('input', {
-                        type: 'number', min: '1', max: '8', step: '1',
-                        className: 'ide-settings-input',
-                        value: editorPrefs.prettierTabWidth != null ? editorPrefs.prettierTabWidth : 2,
-                        onChange: function(e) {
-                          var v = parseInt(e.target.value, 10);
-                          if (v >= 1 && v <= 8) setEditorPrefs(function(p) { return Object.assign({}, p, { prettierTabWidth: v }); });
-                        }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Use tabs'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!editorPrefs.prettierUseTabs,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { prettierUseTabs: v }); }); }
-                      })
+                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Trailing commas'),
+                      React.createElement(
+                        'select', {
+                          value: editorPrefs.prettierTrailingComma || 'all',
+                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { prettierTrailingComma: e.target.value }); }); }
+                        },
+                        React.createElement('option', { value: 'all' }, 'All'),
+                        React.createElement('option', { value: 'es5' }, 'ES5'),
+                        React.createElement('option', { value: 'none' }, 'None')
+                      )
                     ),
                     React.createElement(
                       'label', { className: 'ide-settings-row ide-settings-row-check' },
@@ -2569,20 +2863,6 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Trailing commas'),
-                      React.createElement(
-                        'select', {
-                          className: 'ide-settings-select',
-                          value: editorPrefs.prettierTrailingComma || 'all',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { prettierTrailingComma: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'all' }, 'All'),
-                        React.createElement('option', { value: 'es5' }, 'ES5'),
-                        React.createElement('option', { value: 'none' }, 'None')
-                      )
-                    ),
-                    React.createElement(
                       'label', { className: 'ide-settings-row ide-settings-row-check' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Bracket spacing'),
                       React.createElement('input', {
@@ -2592,6 +2872,51 @@ var MbeditorApp = function MbeditorApp() {
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { prettierBracketSpacing: v }); }); }
                       })
                     ),
+
+                    /* ── Interface ───────────────────────────────── */
+                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Interface'),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Explorer follows active file'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: !!(editorPrefs.autoRevealInExplorer),
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { autoRevealInExplorer: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Explorer type-ahead'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: !!(editorPrefs.fileTreeTypeahead !== false),
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { fileTreeTypeahead: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Quick Open: show folders'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: !!(editorPrefs.quickOpenShowFolders),
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { quickOpenShowFolders: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Toolbar: icons only'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: !!(editorPrefs.toolbarIconOnly),
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { toolbarIconOnly: v }); }); }
+                      })
+                    ),
+
+                    /* ── RuboCop ─────────────────────────────────── */
                     React.createElement('div', { className: 'ide-settings-section-header' }, 'RuboCop'),
                     React.createElement(
                       'label', { className: 'ide-settings-row ide-settings-row-check' },
@@ -2964,7 +3289,7 @@ var MbeditorApp = function MbeditorApp() {
           )
         ),
         commitDetailFiles === null
-          ? React.createElement("div", { className: "git-empty" }, React.createElement("i", { className: "fas fa-spinner fa-spin" }), " Loading...")
+          ? React.createElement("div", { className: "git-empty", 'aria-busy': 'true' }, "Loading…")
           : commitDetailFiles.length === 0
             ? React.createElement("div", { className: "git-empty" }, "No file changes found.")
             : React.createElement(
@@ -3004,9 +3329,12 @@ var MbeditorApp = function MbeditorApp() {
     ),
 
     // Modals & Panels
-    state.isQuickOpenVisible && React.createElement(window.QuickOpenDialog || QuickOpenDialog, { onSelect: handleSelectFile, onClose: function () {
-        return setQuickOpen(false);
-      } }),
+    state.isQuickOpenVisible && React.createElement(window.QuickOpenDialog || QuickOpenDialog, {
+      onSelect: handleSelectFile,
+      showFolders: !!(editorPrefs.quickOpenShowFolders),
+      onSelectFolder: handleOpenFolderInExplorer,
+      onClose: function () { return setQuickOpen(false); }
+    }),
     contextMenu && React.createElement(
       React.Fragment,
       null,

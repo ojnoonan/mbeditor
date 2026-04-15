@@ -1,4 +1,5 @@
 require "mbeditor/rack/silence_ping_request"
+require "mbeditor/rack/handle_pending_migrations"
 
 module Mbeditor
   class Engine < ::Rails::Engine
@@ -6,6 +7,18 @@ module Mbeditor
 
     initializer "mbeditor.silence_ping_request" do |app|
       app.middleware.insert_before Rails::Rack::Logger, Mbeditor::Rack::SilencePingRequest
+    end
+
+    initializer "mbeditor.handle_pending_migrations" do |app|
+      # Insert before CheckPending so our middleware wraps it and can rescue
+      # the error it raises. Falls back silently if CheckPending is absent
+      # (e.g. host app does not use ActiveRecord).
+      check_pending = defined?(ActiveRecord::Migration::CheckPending) &&
+                      app.middleware.middlewares.find { |m| m.name == "ActiveRecord::Migration::CheckPending" }
+      if check_pending
+        app.middleware.insert_before ActiveRecord::Migration::CheckPending,
+                                     Mbeditor::Rack::HandlePendingMigrations
+      end
     end
 
     config.after_initialize do

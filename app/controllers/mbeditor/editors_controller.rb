@@ -72,6 +72,56 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
+    SAFE_BRANCH_NAME = /\A[a-zA-Z0-9._\-\/]+\z/
+
+    # GET /mbeditor/branch_state?branch=... — load per-branch pane state
+    def branch_state
+      branch = sanitize_branch_name(params[:branch])
+      return render json: {}, status: :bad_request unless branch
+
+      path = workspace_root.join("tmp", "mbeditor_branch_states.json")
+      if File.exist?(path)
+        all = JSON.parse(File.read(path))
+        render json: (all[branch] || {})
+      else
+        render json: {}
+      end
+    rescue StandardError
+      render json: {}
+    end
+    def save_branch_state
+      branch = sanitize_branch_name(params[:branch])
+      return render json: { error: "Invalid branch name" }, status: :bad_request unless branch
+
+      path = workspace_root.join("tmp", "mbeditor_branch_states.json")
+      FileUtils.mkdir_p(workspace_root.join("tmp"))
+      all = File.exist?(path) ? JSON.parse(File.read(path)) : {}
+      all[branch] = params[:state].to_unsafe_h
+      File.write(path, all.to_json)
+      render json: { ok: true }
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
+    # POST /mbeditor/prune_branch_states — remove states for deleted branches
+    def prune_branch_states
+      state_path = workspace_root.join("tmp", "mbeditor_branch_states.json")
+      return render json: { pruned: [] } unless File.exist?(state_path)
+
+      root = workspace_root.to_s
+      out, _err, status = Open3.capture3("git", "-C", root, "branch", "--format=%(refname:short)")
+      return render json: { pruned: [] } unless status.success?
+
+      local_branches = out.split("\n").map(&:strip).reject(&:empty?)
+      all = JSON.parse(File.read(state_path))
+      pruned = all.keys - local_branches
+      pruned.each { |b| all.delete(b) }
+      File.write(state_path, all.to_json)
+      render json: { pruned: pruned }
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
     # GET /mbeditor/file?path=...
     def show
       path = resolve_path(params[:path])
@@ -95,8 +145,13 @@ module Mbeditor
         }
       end
 
-      content = File.read(path, encoding: "UTF-8", invalid: :replace, undef: :replace)
-      render json: { path: relative_path(path), content: content }
+      stat = File.stat(path)
+      etag = "#{stat.mtime.to_i}-#{stat.size}"
+
+      if stale?(etag: etag, public: false)
+        content = File.read(path, encoding: "UTF-8", invalid: :replace, undef: :replace)
+        render json: { path: relative_path(path), content: content }
+      end
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -228,64 +283,19 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
-    # GET /mbeditor/search?q=...
+    # GET /mbeditor/search?q=...&offset=0&limit=50
     def search
-      query = params[:q].to_s.strip
+      query  = params[:q].to_s.strip
+      offset = [params[:offset].to_i, 0].max
+      limit  = [[params[:limit].to_i > 0 ? params[:limit].to_i : 50, 200].min, 1].max
+      needed = offset + limit + 1   # collect one extra to detect has_more
+
       return render json: [] if query.blank?
       return render json: { error: "Query too long" }, status: :bad_request if query.length > 500
 
-      results = []
-      cmd = if RG_AVAILABLE
-              args = ["rg", "--json", "--max-count", "30", "--no-ignore"]
-              excluded_paths.each { |p| args << "--glob=!#{p}" }
-              args + ["--", query, workspace_root.to_s]
-            else
-              args = ["grep", "-rn", "-F", "-m", "30"]
-              excluded_dirnames.each do |dirname|
-                args << "--exclude-dir=#{dirname}"
-              end
-              args + [query, workspace_root.to_s]
-            end
-
-      if RG_AVAILABLE
-        output, = Open3.capture3(*cmd)
-        output.lines.each do |line|
-          break if results.length > 30
-
-          data = JSON.parse(line) rescue next
-          next unless data["type"] == "match"
-
-          match_data = data["data"]
-          results << {
-            file: relative_path(match_data.dig("path", "text").to_s),
-            line: match_data.dig("line_number"),
-            text: match_data.dig("lines", "text").to_s.strip
-          }
-        end
-      else
-        output, = Open3.capture3(*cmd)
-        output.lines.each do |line|
-          break if results.length > 30
-
-          line.chomp!
-          next unless line =~ /\A(.+?):(\d+):(.*)\z/
-
-          file_path = Regexp.last_match(1)
-          next unless file_path.start_with?(workspace_root.to_s)
-
-          relative_file_path = relative_path(file_path)
-          next if excluded_path?(relative_file_path, File.basename(file_path))
-
-          results << {
-            file: relative_file_path,
-            line: Regexp.last_match(2).to_i,
-            text: Regexp.last_match(3).strip
-          }
-        end
-      end
-
-      capped = results.length > 30
-      render json: { results: results.first(30), capped: capped }
+      results = stream_search_results(query, needed)
+      has_more = results.length > offset + limit
+      render json: { results: results[offset, limit] || [], has_more: has_more }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -619,6 +629,13 @@ module Mbeditor
 
     private
 
+    def sanitize_branch_name(branch)
+      return nil if branch.blank?
+      str = branch.to_s.strip
+      return nil if str.include?('..')
+      str.match?(SAFE_BRANCH_NAME) ? str : nil
+    end
+
     def allow_missing_file?
       %w[1 true yes on].include?(params[:allow_missing].to_s.downcase)
     end
@@ -642,6 +659,66 @@ module Mbeditor
       return true if rel.blank?
 
       excluded_path?(rel, File.basename(full_path))
+    end
+
+    # Stream search results using popen so we can stop reading early once we
+    # have collected `limit` matches (avoids buffering the entire rg/grep output
+    # in memory when searching large codebases for common tokens).
+    def stream_search_results(query, limit)
+      results = []
+
+      if RG_AVAILABLE
+        args = ["rg", "--json", "--no-ignore"]
+        excluded_paths.each { |p| args << "--glob=!#{p}" }
+        args += ["--", query, workspace_root.to_s]
+
+        IO.popen(args, err: File::NULL) do |io|
+          io.each_line do |raw|
+            break if results.length >= limit
+
+            begin
+              data = JSON.parse(raw)
+            rescue JSON::ParserError
+              next
+            end
+            next unless data["type"] == "match"
+
+            md = data["data"]
+            results << {
+              file: relative_path(md.dig("path", "text").to_s),
+              line: md.dig("line_number"),
+              text: md.dig("lines", "text").to_s.strip
+            }
+          end
+        end
+      else
+        args = ["grep", "-rn", "-F"]
+        excluded_dirnames.each { |d| args << "--exclude-dir=#{d}" }
+        args += [query, workspace_root.to_s]
+
+        IO.popen(args, err: File::NULL) do |io|
+          io.each_line do |raw|
+            break if results.length >= limit
+
+            raw.chomp!
+            next unless raw =~ /\A(.+?):(\d+):(.*)\z/
+
+            file_path = Regexp.last_match(1)
+            next unless file_path.start_with?(workspace_root.to_s)
+
+            rel = relative_path(file_path)
+            next if excluded_path?(rel, File.basename(file_path))
+
+            results << {
+              file: rel,
+              line: Regexp.last_match(2).to_i,
+              text: Regexp.last_match(3).strip
+            }
+          end
+        end
+      end
+
+      results
     end
 
     def build_tree(dir, max_depth: 10, depth: 0)

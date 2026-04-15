@@ -66,9 +66,8 @@ var FileHistoryPanel = function FileHistoryPanel(_ref) {
       { className: 'ide-file-history-content' },
       loading ? React.createElement(
         'div',
-        { className: 'ide-loading-state' },
-        React.createElement('i', { className: 'fas fa-spinner fa-spin' }),
-        ' Loading history...'
+        { className: 'ide-loading-state', 'aria-busy': 'true' },
+        'Loading history…'
       ) : error ? React.createElement(
         'div',
         { className: 'ide-error-state' },

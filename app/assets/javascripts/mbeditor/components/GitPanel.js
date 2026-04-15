@@ -112,7 +112,7 @@ var GitPanel = function GitPanel(_ref) {
       React.createElement('span', { className: 'git-status-badge ' + statusClass, title: meta.description }, meta.badge),
       React.createElement(
         'div',
-        { className: 'git-file-actions' },
+        { className: 'git-file-actions', role: 'group' },
         showOpen ? React.createElement(
           'button',
           { className: 'git-action-btn', title: 'Open file', onClick: function (e) { e.stopPropagation(); onOpenFile && onOpenFile(item.path, name); } },
@@ -327,7 +327,7 @@ var GitPanel = function GitPanel(_ref) {
       ),
       React.createElement(
         'div',
-        { className: 'ide-git-panel-actions' },
+        { className: 'ide-git-panel-actions', role: 'group' },
         onRefresh && React.createElement(
           'button',
           { className: 'git-header-btn', onClick: handleRefresh, title: 'Refresh', disabled: refreshing, 'aria-busy': refreshing },
@@ -367,8 +367,7 @@ var GitPanel = function GitPanel(_ref) {
         'div',
         { className: 'git-redmine-content' },
         redmineLoading
-          ? React.createElement('div', { className: 'git-empty' },
-              React.createElement('i', { className: 'fas fa-spinner fa-spin', style: { marginRight: '6px' } }),
+          ? React.createElement('div', { className: 'git-empty', 'aria-busy': 'true' },
               'Loading issue\u2026'
             )
           : !redmineTicketId

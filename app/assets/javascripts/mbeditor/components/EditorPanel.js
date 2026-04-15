@@ -35,6 +35,8 @@ var EditorPanel = function EditorPanel(_ref) {
   var monacoRef = useRef(null);
   var latestContentRef = useRef('');
   var lastAppliedExternalVersionRef = useRef(-1);
+  var aviBaseRef = useRef(0);
+  var aviMaxRef = useRef(0);
 
   var _useState = useState('');
   var _useState2 = _slicedToArray(_useState, 2);
@@ -519,15 +521,65 @@ var EditorPanel = function EditorPanel(_ref) {
     var editorDomNode = editor.getDomNode();
     editorDomNode.addEventListener('mousedown', onColumnMouseDown, true);
     document.addEventListener('mouseup', onColumnMouseUp, true);
+
+    var onFindWidgetKeyDown = function(e) {
+      if (!e.target || !e.target.closest) return;
+      if (!e.target.closest('.find-widget')) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        e.stopPropagation();
+        editor.trigger('keyboard', 'editor.action.nextMatchFindAction', null);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        e.stopPropagation();
+        editor.trigger('keyboard', 'editor.action.previousMatchFindAction', null);
+      }
+    };
+    editorDomNode.addEventListener('keydown', onFindWidgetKeyDown, true);
+
     var columnSelectDisposable = {
       dispose: function() {
         editorDomNode.removeEventListener('mousedown', onColumnMouseDown, true);
         document.removeEventListener('mouseup', onColumnMouseUp, true);
+        editorDomNode.removeEventListener('keydown', onFindWidgetKeyDown, true);
       }
     };
 
+    // Track undo/redo availability via Monaco's alternativeVersionId.
+    // AVI goes up on every edit, down on undo, back up on redo.
+    var avi = modelObj.getAlternativeVersionId();
+    aviBaseRef.current = avi;
+    aviMaxRef.current = avi;
+    EditorStore.setState({ canUndo: false, canRedo: false });
+
     var contentDisposable = modelObj.onDidChangeContent(function (e) {
+      var currentAvi = modelObj.getAlternativeVersionId();
+      if (!e.isUndoing && !e.isRedoing) {
+        // New edit: redo stack discarded at this point, so max resets here
+        aviMaxRef.current = currentAvi;
+      } else if (currentAvi > aviMaxRef.current) {
+        aviMaxRef.current = currentAvi;
+      }
+      EditorStore.setState({ canUndo: currentAvi > aviBaseRef.current, canRedo: currentAvi < aviMaxRef.current });
+
       var val = editor.getValue();
+
+      // Belt-and-suspenders: when undoing, directly check if content matches the
+      // saved clean state. This guarantees the dirty flag clears on full undo even
+      // if the latestContentRef comparison path misses an event.
+      if (e.isUndoing) {
+        var _st = EditorStore.getState();
+        var _pane = _st.panes.find(function(p) { return p.id === paneId; });
+        var _tab = _pane && _pane.tabs.find(function(t) { return t.id === tab.id; });
+        if (_tab && _tab.dirty) {
+          var _cleanNorm = ((_tab.cleanContent) || '').replace(/\r\n/g, '\n');
+          var _valNorm = val.replace(/\r\n/g, '\n');
+          if (_valNorm === _cleanNorm) {
+            TabManager.markClean(paneId, tab.id, val);
+          }
+        }
+      }
+
       var currentContent = latestContentRef.current;
 
       // Normalize before comparing to prevent false positive dirty edits
@@ -554,6 +606,7 @@ var EditorPanel = function EditorPanel(_ref) {
       formatActionDisposable.dispose();
       columnSelectDisposable.dispose();
       contentDisposable.dispose();
+      EditorStore.setState({ canUndo: false, canRedo: false });
       editor.dispose();
     };
   }, [tab.id, tab.isPreview]); // re-run ONLY on tab switch, not on content change (Monaco handles its own content state)
@@ -583,6 +636,12 @@ var EditorPanel = function EditorPanel(_ref) {
       // If the editor is currently completely empty, treat it as an initial load.
       // setValue clears the undo stack which is correct for initial load.
       editor.setValue(tab.content);
+      // Reset the AVI baseline: setValue clears the undo stack so anything before
+      // this point is no longer reachable. Also clear the canUndo/canRedo display.
+      var newBase = model.getAlternativeVersionId();
+      aviBaseRef.current = newBase;
+      aviMaxRef.current = newBase;
+      EditorStore.setState({ canUndo: false, canRedo: false });
     } else {
       // Keep undo stack for formats or replaces by using executeEdits
       editor.pushUndoStop();
@@ -774,6 +833,7 @@ var EditorPanel = function EditorPanel(_ref) {
         var sha = lineData && lineData.sha || '';
         var author = lineData && lineData.author || 'Unknown';
         var summary = lineData && lineData.summary || 'No commit message';
+        var date = lineData && lineData.date || null;
         var isUncommitted = sha.substring(0, 8) === '00000000';
 
         return {
@@ -781,6 +841,7 @@ var EditorPanel = function EditorPanel(_ref) {
           sha: sha,
           author: isUncommitted ? 'Not Committed' : author,
           summary: summary,
+          date: date,
           isUncommitted: isUncommitted
         };
       }).filter(Boolean);
@@ -795,6 +856,7 @@ var EditorPanel = function EditorPanel(_ref) {
             sha: item.sha,
             author: item.author,
             summary: item.summary,
+            date: item.date,
             isUncommitted: item.isUncommitted,
             startLine: item.line,
             endLine: item.line
@@ -811,7 +873,14 @@ var EditorPanel = function EditorPanel(_ref) {
           header.className = block.isUncommitted
             ? 'ide-blame-block-header ide-blame-block-header-uncommitted'
             : 'ide-blame-block-header';
-          header.textContent = block.author + ' - ' + block.summary;
+          var dateStr = '';
+          if (!block.isUncommitted && block.date) {
+            try {
+              var d = new Date(block.date);
+              dateStr = ' · ' + d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + ', ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+            } catch (e) { /* ignore */ }
+          }
+          header.textContent = block.author + dateStr + ' - ' + block.summary;
 
           var zoneId = accessor.addZone({
             afterLineNumber: block.startLine > 1 ? block.startLine - 1 : 0,
@@ -1097,15 +1166,33 @@ var EditorPanel = function EditorPanel(_ref) {
     return React.createElement('div', { className: 'markdown-preview markdown-preview-full', dangerouslySetInnerHTML: { __html: markup } });
   }
 
+  // Helper: shorten long paths by showing the last 2 segments with a leading ellipsis
+  function shortPath(path) {
+    if (!path) return '';
+    var parts = path.split('/');
+    if (parts.length <= 3) return path;
+    return '\u2026/' + parts.slice(-2).join('/');
+  }
+
   // Always render the same wrapper structure so the editorRef div is never
   // unmounted when gitAvailable changes (e.g. loaded async after workspace
   // call returns). The toolbar is conditionally included inside the wrapper.
   return React.createElement(
     'div',
-    { className: 'ide-editor-wrapper', style: { display: 'flex', flexDirection: 'column', height: '100%' } },
-    (gitAvailable || testAvailable) && React.createElement(
+    { className: 'ide-editor-wrapper', style: { position: 'relative', display: 'flex', flexDirection: 'column', height: '100%' } },
+    tab.loading && React.createElement(
+      'div',
+      { className: 'editor-loading-overlay' },
+      React.createElement('div', { className: 'editor-loading-spinner' })
+    ),
+    tab.path && React.createElement(
       'div',
       { className: 'ide-editor-toolbar' },
+      React.createElement(
+        'span',
+        { className: 'ide-editor-file-location', title: tab.path },
+        shortPath(tab.path)
+      ),
       gitAvailable && tab.path && React.createElement(
         'button',
         {
@@ -1132,11 +1219,11 @@ var EditorPanel = function EditorPanel(_ref) {
           className: 'ide-icon-btn',
           onClick: function() { if (onRunTest) onRunTest(); },
           disabled: testLoading,
-          title: 'Run Tests',
-          style: { cursor: testLoading ? 'wait' : 'pointer' }
+          'aria-busy': !!testLoading,
+          title: 'Run Tests'
         },
-        React.createElement('i', { className: testLoading ? 'fas fa-spinner fa-spin' : 'fas fa-flask', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
-        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, testLoading ? 'Running...' : 'Test')
+        !testLoading && React.createElement('i', { className: 'fas fa-flask', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
+        !editorPrefs.toolbarIconOnly && !testLoading && React.createElement('span', { className: 'ide-toolbar-label' }, 'Test')
       )
     ),
     React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } }),

@@ -26,8 +26,10 @@ function saveFavourites(list) {
 // ── Component ──────────────────────────────────────────────────────────────
 
 var QuickOpenDialog = function QuickOpenDialog(_ref) {
-  var onSelect = _ref.onSelect;
-  var onClose  = _ref.onClose;
+  var onSelect       = _ref.onSelect;
+  var onClose        = _ref.onClose;
+  var onSelectFolder = _ref.onSelectFolder;
+  var showFolders    = !!_ref.showFolders;
 
   var _q = useState('');               var query = _q[0];         var setQuery = _q[1];
   var _r = useState([]);               var results = _r[0];       var setResults = _r[1];
@@ -74,7 +76,10 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     if (inputRef.current) inputRef.current.focus();
   };
 
-  var getQuickOpenIcon = function getQuickOpenIcon(path, name) {
+  var getQuickOpenIcon = function getQuickOpenIcon(path, name, type) {
+    if (type === 'dir') {
+      return React.createElement('i', { className: 'fas fa-folder quick-open-result-icon quick-open-folder-icon', 'aria-hidden': 'true' });
+    }
     var iconClass = window.getFileIcon ? window.getFileIcon(path || name || '') : 'far fa-file-code';
     return React.createElement('i', { className: iconClass + ' quick-open-result-icon', 'aria-hidden': 'true' });
   };
@@ -92,9 +97,11 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
       return;
     }
     var res = SearchService.searchFiles(query);
-    setResults(res.slice(0, 20));
+    // Filter by type: always include files; include dirs only when showFolders is on
+    var filtered = showFolders ? res : res.filter(function(r) { return r.type !== 'dir'; });
+    setResults(filtered.slice(0, 20));
     setSelectedIndex(0);
-  }, [query]);
+  }, [query, showFolders]);
 
   // ── Keyboard ─────────────────────────────────────────────────────────────
 
@@ -105,7 +112,13 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
       if (e.key === 'ArrowUp')   { setSelectedIndex(function (i) { return Math.max(i - 1, 0); }); return; }
       if (e.key === 'Enter' && results[selectedIndex]) {
         var res = results[selectedIndex];
-        handleSelect(res.path, res.name);
+        if (res.type === 'dir') {
+          addToRecent(query);
+          if (onSelectFolder) onSelectFolder(res.path);
+          onClose();
+        } else {
+          handleSelect(res.path, res.name);
+        }
       }
     }
   };
@@ -203,22 +216,11 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
           ref: inputRef,
           type: 'text',
           className: 'quick-open-input',
-          placeholder: 'Search files by name (Ctrl+P)...',
+          placeholder: 'Search files by name (Ctrl+P)…',
           value: query,
           onChange: function (e) { setQuery(e.target.value); },
           onKeyDown: handleKeyDown
-        }),
-        query && React.createElement(
-          'button',
-          {
-            type: 'button',
-            className: 'quick-open-clear-btn',
-            onClick: clearQuery,
-            title: 'Clear search',
-            'aria-label': 'Clear search'
-          },
-          React.createElement('i', { className: 'fas fa-times' })
-        )
+        })
       ),
       React.createElement(
         'div',
@@ -240,22 +242,31 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
               React.Fragment,
               null,
               results.map(function (res, i) {
+                var isDir = res.type === 'dir';
                 return React.createElement(
                   'div',
                   {
                     key: res.id,
-                    className: 'quick-open-result ' + (i === selectedIndex ? 'selected' : ''),
-                    onClick: function () { handleSelect(res.path, res.name); },
+                    className: 'quick-open-result ' + (i === selectedIndex ? 'selected' : '') + (isDir ? ' quick-open-result-dir' : ''),
+                    onClick: function () {
+                      if (isDir) {
+                        addToRecent(query);
+                        if (onSelectFolder) onSelectFolder(res.path);
+                        onClose();
+                      } else {
+                        handleSelect(res.path, res.name);
+                      }
+                    },
                     onMouseEnter: function () { setSelectedIndex(i); }
                   },
-                  getQuickOpenIcon(res.path, res.name),
+                  getQuickOpenIcon(res.path, res.name, res.type),
                   React.createElement(
                     'div',
                     { className: 'quick-open-result-body' },
                     React.createElement('div', { className: 'quick-open-result-name' }, res.name),
                     React.createElement('div', { className: 'quick-open-result-path' }, res.path)
                   ),
-                  renderStarBtn(res.path)
+                  !isDir && renderStarBtn(res.path)
                 );
               }),
               results.length === 0 && React.createElement(

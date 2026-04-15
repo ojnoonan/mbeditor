@@ -1,37 +1,8 @@
 /*
+ *= require pico.classless
+ *= require mbeditor/themes
  *= require mbeditor/editor
  */
-
-/* ── Theme-aware CSS variables ───────────────────────────────────────── */
-:root,
-[data-theme="vs-dark"] {
-  --panel-bg: #1e1e1e;
-  --header-bg: #252526;
-  --border-color: #3c3c3c;
-  --text-primary: #d4d4d4;
-  --status-hover-bg: rgba(255,255,255,0.08);
-}
-[data-theme="vs"] {
-  --panel-bg: #f3f3f3;
-  --header-bg: #e8e8e8;
-  --border-color: #c8c8c8;
-  --text-primary: #1e1e1e;
-  --status-hover-bg: rgba(0,0,0,0.06);
-}
-[data-theme="hc-black"] {
-  --panel-bg: #000000;
-  --header-bg: #0a0a0a;
-  --border-color: #6fc3df;
-  --text-primary: #ffffff;
-  --status-hover-bg: rgba(255,255,255,0.12);
-}
-[data-theme="hc-light"] {
-  --panel-bg: #ffffff;
-  --header-bg: #f8f8f8;
-  --border-color: #0f4a85;
-  --text-primary: #000000;
-  --status-hover-bg: rgba(0,0,0,0.06);
-}
 
 /* ── Git & Code Review Styles ───────────────────────────────────────── */
 
@@ -79,7 +50,7 @@
   min-width: 0;
 }
 .ide-diff-title i {
-  color: #569cd6;
+  color: var(--ide-accent-fg);
 }
 .ide-diff-title-info {
   display: flex;
@@ -95,7 +66,7 @@
   text-overflow: ellipsis;
 }
 .ide-diff-title-dir {
-  color: #6e7a85;
+  color: var(--ide-text-muted);
   font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
@@ -115,8 +86,8 @@
   border-radius: 3px;
 }
 .ide-diff-btn:hover {
-  background-color: rgba(255,255,255,0.1);
-  color: #fff;
+  background-color: var(--ide-hover-bg);
+  color: var(--ide-text);
 }
 .ide-diff-toggle-label {
   display: flex;
@@ -199,11 +170,11 @@
 /* Specific colors MUST come AFTER the base definition for correct overrides */
 .commit-local .commit-line-top,
 .commit-local .commit-line-bottom,
-.commit-local .commit-line-full { background-color: #4CAF50 !important; }
+.commit-local .commit-line-full { background-color: var(--ide-success) !important; }
 
 .commit-pushed .commit-line-top,
 .commit-pushed .commit-line-bottom,
-.commit-pushed .commit-line-full { background-color: #569cd6 !important; }
+.commit-pushed .commit-line-full { background-color: var(--ide-accent) !important; }
 .commit-subfile-row.git-file-item {
   overflow: visible;
   border-radius: 0;
@@ -219,13 +190,13 @@
   z-index: 10;
 }
 .dot-pushed {
-  background-color: #569cd6;
-  border: 2px solid #569cd6;
+  background-color: var(--ide-accent);
+  border: 2px solid var(--ide-accent);
   box-shadow: 0 0 0 2px rgba(86,156,214,0.18);
 }
 .dot-local {
-  background-color: #4CAF50;
-  border: 2px solid #4CAF50;
+  background-color: var(--ide-success);
+  border: 2px solid var(--ide-success);
   box-shadow: 0 0 0 2px rgba(76,175,80,0.18);
 }
 .commit-info-col {
@@ -254,16 +225,16 @@
 }
 .commit-meta {
   font-size: 11px;
-  color: #6e7a85;
+  color: var(--ide-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .commit-meta-author {
-  color: #9db0c7;
+  color: var(--ide-text-dim);
 }
 .commit-hash {
-  color: #d7ba7d;
+  color: var(--ide-warning);
   font-family: var(--font-mono);
   font-size: 10.5px;
 }
@@ -283,7 +254,7 @@
   transition: background 0.1s;
   cursor: default;
 }
-.commit-subfile-row:hover { background-color: rgba(255,255,255,0.05); }
+.commit-subfile-row:hover { background-color: var(--ide-hover-bg); }
 .commit-subfile-row:hover .git-action-btn { opacity: 1; }
 .commit-subfile-row .git-file-info {
   padding: 0;
@@ -296,7 +267,7 @@
   align-items: center;
   min-height: 24px;
   font-size: 11px;
-  color: #666;
+  color: var(--ide-text-muted);
   font-style: italic;
   padding: 0 4px;
 }
@@ -314,11 +285,11 @@
   transition: background 0.1s;
 }
 .git-commit-row:hover { background: var(--bg-hover); }
-.git-commit-row.commit-local .commit-dot-small { background: #4caf50; border-color: #4caf50; }
+.git-commit-row.commit-local .commit-dot-small { background: var(--ide-success); border-color: var(--ide-success); }
 
 .git-commit-expand-icon {
   font-size: 9px;
-  color: #666;
+  color: var(--ide-text-muted);
   flex-shrink: 0;
   width: 10px;
   text-align: center;
@@ -328,8 +299,8 @@
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: #1e1e1e;
-  border: 2px solid #569cd6;
+  background: var(--ide-bg);
+  border: 2px solid var(--ide-accent);
 }
 .git-commit-info {
   flex: 1;
@@ -348,7 +319,7 @@
 }
 .git-commit-meta {
   font-size: 10px;
-  color: #6e7a85;
+  color: var(--ide-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -370,7 +341,7 @@
 .git-commit-subrow:hover .git-action-btn { opacity: 1; }
 .git-commit-loading {
   font-size: 11px;
-  color: #666;
+  color: var(--ide-text-muted);
   padding: 4px 8px 4px 26px;
   font-style: italic;
 }
@@ -378,7 +349,7 @@
 .git-action-btn {
   background: transparent;
   border: none;
-  color: #888;
+  color: var(--ide-text-muted);
   cursor: pointer;
   padding: 4px;
   display: flex;
@@ -392,8 +363,8 @@
   opacity: 1;
 }
 .git-action-btn:hover {
-  color: #fff;
-  background-color: rgba(255, 255, 255, 0.15);
+  color: var(--ide-text);
+  background-color: var(--ide-hover-bg);
 }
 .git-file-actions {
   display: flex;
@@ -512,12 +483,12 @@
 }
 .ide-commit-detail-meta {
   font-size: 11px;
-  color: #8a9ab0;
+  color: var(--ide-text-muted);
 }
 
 /* Git Blame Inline Annotations */
 .ide-blame-annotation {
-  color: #858585;
+  color: var(--ide-text-muted);
   font-size: 11px;
   font-style: italic;
   font-family: var(--font-mono);
@@ -525,7 +496,7 @@
   opacity: 0.6;
 }
 .ide-blame-annotation-uncommitted {
-  color: #4CAF50;
+  color: var(--ide-success);
   font-size: 11px;
   font-style: italic;
   font-family: var(--font-mono);
@@ -541,7 +512,7 @@
   font-size: 11px;
   font-style: italic;
   font-family: var(--font-mono);
-  color: #d7ba7d;
+  color: var(--ide-warning);
   opacity: 0.85;
   white-space: nowrap;
   overflow: hidden;
@@ -551,7 +522,7 @@
   pointer-events: none;
 }
 .ide-blame-block-header-uncommitted {
-  color: #4CAF50;
+  color: var(--ide-success);
 }
 
 /* Code Review Panel & Redmine */
@@ -560,7 +531,7 @@
 }
 .git-redmine-error {
   font-size: 12px;
-  color: #f48771;
+  color: var(--ide-danger);
   padding: 6px 4px;
   line-height: 1.4;
 }
@@ -603,7 +574,7 @@
   display: flex;
   justify-content: flex-end;
   font-size: 11px;
-  color: #858585;
+  color: var(--ide-text-muted);
   line-height: 1.3;
 }
 .ide-code-review {
@@ -648,16 +619,16 @@
 .review-section-title {
   font-size: 13px;
   text-transform: uppercase;
-  color: #858585;
+  color: var(--ide-text-muted);
   margin-top: 0;
   margin-bottom: 8px;
   font-weight: 600;
   letter-spacing: 0.5px;
 }
 .redmine-card {
-  background-color: rgba(255,255,255,0.03);
+  background-color: var(--ide-hover-bg);
   border: 1px solid var(--border-color);
-  border-left: 3px solid #569cd6;
+  border-left: 3px solid var(--ide-accent);
   border-radius: 4px;
   padding: 12px;
 }
@@ -669,8 +640,8 @@
   color: var(--text-main);
 }
 .redmine-badge {
-  background-color: #569cd6;
-  color: #fff;
+  background-color: var(--ide-accent);
+  color: var(--ide-accent-text);
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 10px;
@@ -679,7 +650,7 @@
 }
 .redmine-meta {
   font-size: 11px;
-  color: #858585;
+  color: var(--ide-text-muted);
   margin-bottom: 8px;
 }
 .redmine-desc {
@@ -706,7 +677,7 @@
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #858585;
+  color: var(--ide-text-muted);
   font-weight: 600;
   user-select: none;
 }
@@ -725,7 +696,7 @@
   background: transparent;
   border: none;
   border-radius: 3px;
-  color: #858585;
+  color: var(--ide-text-muted);
   cursor: pointer;
   font-size: 11px;
   opacity: 0;
@@ -735,8 +706,8 @@
   opacity: 1;
 }
 .git-section-action-btn:hover {
-  background: rgba(255,255,255,0.08);
-  color: #569cd6;
+  background: var(--ide-hover-bg);
+  color: var(--ide-accent);
 }
 
 /* ── CombinedDiffViewer ─────────────────────────────────────────── */
@@ -754,12 +725,12 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #858585;
+  color: var(--ide-text-muted);
   font-size: 13px;
   gap: 8px;
 }
 .combined-diff-loading-msg {
-  color: #858585;
+  color: var(--ide-text-muted);
 }
 .combined-diff-toolbar {
   display: flex;
@@ -778,7 +749,7 @@
   flex: 1;
 }
 .combined-diff-file-count {
-  color: #858585;
+  color: var(--ide-text-muted);
   font-size: 11px;
 }
 .combined-diff-body {
@@ -808,13 +779,13 @@
   background: var(--bg-hover);
 }
 .cdiff-chevron {
-  color: #858585;
+  color: var(--ide-text-muted);
   font-size: 10px;
   width: 10px;
   flex-shrink: 0;
 }
 .cdiff-file-icon {
-  color: #569cd6;
+  color: var(--ide-accent-fg);
   font-size: 11px;
   flex-shrink: 0;
 }
@@ -824,7 +795,7 @@
   font-size: 12px;
 }
 .cdiff-file-dir {
-  color: #858585;
+  color: var(--ide-text-muted);
   font-size: 11px;
   margin-left: 4px;
 }
@@ -842,9 +813,9 @@
 }
 .cdiff-add  { background: rgba(137,209,133,0.10); color: #89d185; }
 .cdiff-del  { background: rgba(244,135,113,0.10); color: #f48771; }
-.cdiff-hunk { background: rgba(86,156,214,0.08);  color: #569cd6; font-style: italic; }
-.cdiff-meta { color: #666; font-size: 11px; }
-.cdiff-file-header { color: #9db0c7; }
+.cdiff-hunk { background: rgba(86,156,214,0.08);  color: var(--ide-accent); font-style: italic; }
+.cdiff-meta { color: var(--ide-text-muted); font-size: 11px; }
+.cdiff-file-header { color: var(--ide-text-dim); }
 
 /* ── Loading indicator ───────────────────────────────────────────────── */
 #mbeditor-loading {
@@ -853,8 +824,8 @@
   align-items: center;
   justify-content: center;
   height: 100vh;
-  background: #1e1e1e;
-  color: #858585;
+  background: var(--ide-bg);
+  color: var(--ide-text-muted);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 13px;
   gap: 14px;
@@ -863,11 +834,11 @@
   width: 28px;
   height: 28px;
   border: 2px solid rgba(255,255,255,0.08);
-  border-top-color: #569cd6;
+  border-top-color: var(--ide-accent);
   border-radius: 50%;
   animation: mbeditor-spin 0.75s linear infinite;
 }
 @keyframes mbeditor-spin {
   to { transform: rotate(360deg); }
 }
-.cdiff-ctx  { color: #9d9d9d; }
+.cdiff-ctx  { color: var(--ide-text-muted); }

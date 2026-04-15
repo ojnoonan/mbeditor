@@ -15,6 +15,8 @@ var EditorStore = (function () {
     searchResults: [],
     searchCapped: false,
     statusMessage: { text: "", kind: "info" },
+    canUndo: false,
+    canRedo: false,
   };
 
   var _listeners = [];

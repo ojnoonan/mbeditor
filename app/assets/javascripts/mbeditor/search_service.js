@@ -1,11 +1,13 @@
 var SearchService = (function () {
+  var SEARCH_PAGE_SIZE = 50;
+
   function basePath() {
     return (window.MBEDITOR_BASE_PATH || '/mbeditor').replace(/\/$/, '');
   }
 
   var _miniSearch = new MiniSearch({
-    fields: ['path', 'name'], // indexed fields
-    storeFields: ['path', 'name'] // returned fields
+    fields: ['path', 'name'],           // indexed fields
+    storeFields: ['path', 'name', 'type'] // returned fields (type: 'file'|'dir')
   });
 
   function buildIndex(treeData) {
@@ -20,9 +22,11 @@ var SearchService = (function () {
       function traverse(nodes) {
         nodes.forEach(function(n) {
           if (n.type === 'file') {
-            docs.push({ id: idCounter++, path: n.path, name: n.name });
-          } else if (n.children) {
-            traverse(n.children);
+            docs.push({ id: idCounter++, path: n.path, name: n.name, type: 'file' });
+          } else if (n.type === 'folder') {
+            // Always index folders so QuickOpen can show them when the setting is on
+            docs.push({ id: idCounter++, path: n.path, name: n.name, type: 'dir' });
+            if (n.children) traverse(n.children);
           }
         });
       }
@@ -33,31 +37,45 @@ var SearchService = (function () {
     });
   }
 
+  // Search files (and optionally folders) in the local MiniSearch index.
+  // Returns raw MiniSearch results; caller can filter by .type.
   function searchFiles(query) {
     if (!query) return [];
     return _miniSearch.search(query, { prefix: true, fuzzy: 0.2 });
   }
 
-  function projectSearch(query) {
-    if (!query) return Promise.resolve({ results: [], capped: false });
-    return axios.get(basePath() + '/search', { params: { q: query } })
-      .then(function(res) {
+  // Fetch one page of project-wide full-text search results.
+  // offset=0 replaces the EditorStore results list; offset>0 appends.
+  function projectSearch(query, offset, limit) {
+    if (!query) return Promise.resolve({ results: [], hasMore: false });
+    var off = (typeof offset === 'number') ? offset : 0;
+    var lim = (typeof limit  === 'number') ? limit  : SEARCH_PAGE_SIZE;
+
+    return axios.get(basePath() + '/search', {
+      params: { q: query, offset: off, limit: lim }
+    }).then(function(res) {
         var data = res.data;
-        // Handle both old array response and new {results, capped} shape
         var results = Array.isArray(data) ? data : (data && data.results || []);
-        var capped = !Array.isArray(data) && !!(data && data.capped);
-        EditorStore.setState({ searchResults: results, searchCapped: capped });
-        return { results: results, capped: capped };
+        var hasMore = !Array.isArray(data) && !!(data && data.has_more);
+
+        if (off === 0) {
+          EditorStore.setState({ searchResults: results, searchHasMore: hasMore });
+        } else {
+          var prev = EditorStore.getState().searchResults || [];
+          EditorStore.setState({ searchResults: prev.concat(results), searchHasMore: hasMore });
+        }
+        return { results: results, hasMore: hasMore };
       })
       .catch(function(err) {
         EditorStore.setStatus("Search failed: " + err.message, "error");
-        return { results: [], capped: false };
+        return { results: [], hasMore: false };
       });
   }
 
   return {
     buildIndex: buildIndex,
     searchFiles: searchFiles,
-    projectSearch: projectSearch
+    projectSearch: projectSearch,
+    PAGE_SIZE: SEARCH_PAGE_SIZE
   };
 })();

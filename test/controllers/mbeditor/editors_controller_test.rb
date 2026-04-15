@@ -163,6 +163,50 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # branch_state
+    # ---------------------------------------------------------------------------
+
+    test "branch_state returns empty hash when no state file exists" do
+      get "/mbeditor/branch_state", params: { branch: "main" }
+      assert_response :ok
+      assert_equal({}, json)
+    end
+
+    test "branch_state returns 400 for invalid branch name" do
+      get "/mbeditor/branch_state", params: { branch: "../../etc" }
+      assert_response :bad_request
+    end
+
+    test "save_branch_state persists and branch_state retrieves it" do
+      pane_state = { panes: [{ id: 1, tabs: [], activeTabId: nil }], focusedPaneId: 1 }
+      post "/mbeditor/branch_state", params: { branch: "feature/test-123", state: pane_state }, as: :json
+      assert_response :ok
+      assert_equal true, json["ok"]
+
+      get "/mbeditor/branch_state", params: { branch: "feature/test-123" }
+      assert_response :ok
+      assert_equal 1, json["panes"].length
+    end
+
+    test "save_branch_state returns 400 for invalid branch name" do
+      post "/mbeditor/branch_state", params: { branch: "bad name!", state: {} }, as: :json
+      assert_response :bad_request
+    end
+
+    test "prune_branch_states removes states for deleted branches" do
+      # Initialize a git repo so `git branch` works
+      system("git", "-C", @workspace, "init", "-q")
+      system("git", "-C", @workspace, "-c", "user.email=t@t.com", "-c", "user.name=T", "commit", "--allow-empty", "-m", "init", "-q")
+
+      # Save state for a branch that definitely doesn't exist in the repo
+      post "/mbeditor/branch_state", params: { branch: "definitely-not-a-real-branch-xyz", state: { panes: [] } }, as: :json
+
+      post "/mbeditor/prune_branch_states", as: :json
+      assert_response :ok
+      assert_includes json["pruned"], "definitely-not-a-real-branch-xyz"
+    end
+
+    # ---------------------------------------------------------------------------
     # show (GET /file)
     # ---------------------------------------------------------------------------
 
@@ -508,7 +552,15 @@ module Mbeditor
       assert_kind_of Hash, json
       assert_kind_of Array, json["results"]
       assert json["results"].any? { |r| r["file"].include?("user.rb") }, "expected user.rb in results"
-      assert_includes [true, false], json["capped"]
+      assert_includes [true, false], json["has_more"]
+    end
+
+    test "search singular query matches plural occurrences" do
+      File.write(File.join(@workspace, "app", "models", "project.rb"), "class Projects < ApplicationRecord\nend\n")
+      get "/mbeditor/search", params: { q: "Project" }
+      assert_response :ok
+      assert json["results"].any? { |r| r["file"].include?("project.rb") },
+             "searching 'Project' should match 'Projects' in file content (substring match)"
     end
 
     test "search returns ok with empty array when query param is absent" do
@@ -522,9 +574,9 @@ module Mbeditor
       assert_response :ok
       assert_kind_of Hash, json
       assert json.key?("results")
-      assert json.key?("capped")
+      assert json.key?("has_more")
       assert_kind_of Array, json["results"]
-      assert_includes [true, false], json["capped"]
+      assert_includes [true, false], json["has_more"]
     end
 
     test "search fallback excludes nested path without excluding similarly named directories" do

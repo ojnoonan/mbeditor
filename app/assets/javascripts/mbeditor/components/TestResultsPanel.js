@@ -37,7 +37,7 @@ var TestResultsPanel = function TestResultsPanel(_ref) {
       React.createElement(
         'div',
         { className: 'ide-file-history-title' },
-        React.createElement('i', { className: isLoading ? 'fas fa-spinner fa-spin' : 'fas fa-flask' }),
+        React.createElement('i', { className: 'fas fa-flask' }),
         React.createElement(
           'span',
           null,
@@ -47,14 +47,13 @@ var TestResultsPanel = function TestResultsPanel(_ref) {
       ),
       React.createElement(
         'div',
-        { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+        { role: 'group' },
         !isLoading && onRerun && React.createElement(
           'button',
           {
             className: 'ide-icon-btn',
             onClick: onRerun,
-            title: 'Run Again',
-            style: { fontSize: '11px', padding: '2px 6px', background: 'rgba(255,255,255,0.08)', border: 'none', color: '#ccc', cursor: 'pointer', borderRadius: '3px' }
+            title: 'Run Again'
           },
           React.createElement('i', { className: 'fas fa-redo', style: { marginRight: '4px' } }),
           'Run Again'
@@ -64,8 +63,7 @@ var TestResultsPanel = function TestResultsPanel(_ref) {
           {
             className: 'ide-icon-btn' + (showInline ? ' active' : ''),
             onClick: onToggleInline,
-            title: showInline ? 'Hide inline markers' : 'Show inline markers',
-            style: { fontSize: '11px', padding: '2px 5px', opacity: showInline ? 1 : 0.6, background: showInline ? 'rgba(255,255,255,0.1)' : 'transparent', border: 'none', color: '#ccc', cursor: 'pointer', borderRadius: '3px' }
+            title: showInline ? 'Hide inline markers' : 'Show inline markers'
           },
           React.createElement('i', { className: 'fas fa-map-marker-alt' })
         ),
@@ -74,8 +72,7 @@ var TestResultsPanel = function TestResultsPanel(_ref) {
           {
             className: 'ide-icon-btn',
             onClick: onOpenTestFile,
-            title: 'Open test file',
-            style: { fontSize: '11px', padding: '2px 5px', background: 'transparent', border: 'none', color: '#ccc', cursor: 'pointer', borderRadius: '3px' }
+            title: 'Open test file'
           },
           React.createElement('i', { className: 'fas fa-external-link-alt', style: { marginRight: '4px' } }),
           'Open Test File'
@@ -92,9 +89,8 @@ var TestResultsPanel = function TestResultsPanel(_ref) {
       { className: 'ide-file-history-content' },
       isLoading ? React.createElement(
         'div',
-        { className: 'ide-loading-state' },
-        React.createElement('i', { className: 'fas fa-spinner fa-spin' }),
-        ' Running tests...'
+        { className: 'ide-loading-state', 'aria-busy': 'true' },
+        'Running tests…'
       ) : error ? React.createElement(
         'div',
         { className: 'ide-error-state' },

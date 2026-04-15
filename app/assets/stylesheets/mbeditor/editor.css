@@ -5,8 +5,8 @@ html, body, #mbeditor-root {
   margin: 0; padding: 0;
   width: 100%; height: 100%;
   overflow: hidden;
-  background: #1e1e1e;
-  color: #cdd6f4;
+  background: var(--ide-bg);
+  color: var(--ide-text);
   font-family: 'Segoe UI', system-ui, sans-serif;
   font-size: 13px;
 }
@@ -17,14 +17,14 @@ html, body, #mbeditor-root {
   flex-direction: column;
   height: 100vh;
   width: 100vw;
-  background: #1e1e1e;
+  background: var(--ide-bg);
 }
 
 .ide-titlebar {
   display: flex;
   align-items: center;
-  background: #252526;
-  border-bottom: 1px solid #3c3c3c;
+  background: var(--ide-panel-bg);
+  border-bottom: 1px solid var(--ide-border);
   height: 32px;
   padding: 0 12px;
   flex-shrink: 0;
@@ -32,14 +32,14 @@ html, body, #mbeditor-root {
 }
 
 .ide-titlebar-icon {
-  color: #4ec9b0;
+  color: var(--ide-accent-fg);
   margin-right: 8px;
   font-size: 14px;
 }
 
 .ide-titlebar-title {
   font-size: 13px;
-  color: #cccccc;
+  color: var(--ide-text);
   font-weight: 500;
 }
 
@@ -54,8 +54,8 @@ html, body, #mbeditor-root {
   width: 280px;
   min-width: 280px;
   max-width: 560px;
-  background: #252526;
-  border-right: 1px solid #3c3c3c;
+  background: var(--ide-panel-bg);
+  border-right: 1px solid var(--ide-border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -98,8 +98,8 @@ html, body, #mbeditor-root {
   height: 36px;
   background: transparent;
   border: none;
-  border-radius: 6px;
-  color: #858585;
+  border-radius: 0;
+  color: var(--ide-text-muted);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -109,14 +109,22 @@ html, body, #mbeditor-root {
 }
 
 .sidebar-strip-btn:hover {
-  background: #2a2d2e;
-  color: #cccccc;
+  background: var(--ide-hover-bg);
+  color: var(--ide-text);
 }
 
 .sidebar-strip-btn.active {
-  color: #4ec9b0;
-  border-left: 2px solid #4ec9b0;
-  border-radius: 0 6px 6px 0;
+  color: var(--ide-accent-fg);
+  border-left: 2px solid var(--ide-accent-fg);
+}
+
+/* Visually groups Explorer + Search + Settings buttons in the collapsed strip */
+.sidebar-nav-group {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ide-border);
+  border-radius: 4px;
+  overflow: hidden;
 }
 
 .panel-divider {
@@ -127,8 +135,8 @@ html, body, #mbeditor-root {
 
 .sidebar-divider {
   width: 6px;
-  background: #2a2a2a;
-  border-right: 1px solid #3c3c3c;
+  background: var(--ide-panel-bg-alt);
+  border-right: 1px solid var(--ide-border);
 }
 
 .ide-sidebar-collapsed + .sidebar-divider {
@@ -136,18 +144,18 @@ html, body, #mbeditor-root {
 }
 
 .ide-sidebar-collapsed + .sidebar-divider:hover {
-  background: #2a2a2a;
+  background: var(--ide-panel-bg-alt);
 }
 
 .pane-divider {
   width: 4px;
-  background: #333;
+  background: var(--ide-panel-bg-alt);
   z-index: 10;
 }
 
 .panel-divider:hover,
 .panel-divider.active {
-  background: #007acc;
+  background: var(--ide-accent);
 }
 
 .ide-sidebar-header {
@@ -155,9 +163,9 @@ html, body, #mbeditor-root {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  color: #bbbbbb;
+  color: var(--ide-text-dim);
   letter-spacing: 0.08em;
-  border-bottom: 1px solid #3c3c3c;
+  border-bottom: 1px solid var(--ide-border);
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -166,7 +174,7 @@ html, body, #mbeditor-root {
 
 .ide-sidebar-tabs {
   display: flex;
-  border-bottom: 1px solid #3c3c3c;
+  border-bottom: 1px solid var(--ide-border);
   flex-shrink: 0;
 }
 
@@ -176,8 +184,9 @@ html, body, #mbeditor-root {
   font-size: 11px;
   text-align: center;
   cursor: pointer;
-  color: #888;
+  color: var(--ide-text-muted);
   border: none;
+  border-radius: 0;
   background: transparent;
   transition: color 0.15s, background 0.15s;
 }
@@ -188,8 +197,8 @@ html, body, #mbeditor-root {
   font-size: 14px;
 }
 
-.ide-sidebar-tab:hover { color: #ccc; background: #2d2d2d; }
-.ide-sidebar-tab.active { color: #4ec9b0; border-bottom: 2px solid #4ec9b0; }
+.ide-sidebar-tab:hover { color: var(--ide-text); background: var(--ide-input-bg); }
+.ide-sidebar-tab.active { color: var(--ide-accent-fg); border-bottom: 2px solid var(--ide-accent-fg); }
 
 .ide-sidebar-content {
   flex: 1;
@@ -210,7 +219,7 @@ html, body, #mbeditor-root {
 
 .ide-sidebar-scrollable::-webkit-scrollbar { width: 6px; }
 .ide-sidebar-scrollable::-webkit-scrollbar-track { background: transparent; }
-.ide-sidebar-scrollable::-webkit-scrollbar-thumb { background: #424242; border-radius: 3px; }
+.ide-sidebar-scrollable::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 3px; }
 
 /* ── File Tree ────────────────────────────────────────────── */
 .file-tree-root { padding: 4px 0; }
@@ -230,11 +239,12 @@ html, body, #mbeditor-root {
   text-overflow: ellipsis;
 }
 
-.tree-item:hover { background: #2a2d2e; }
-.tree-item.active { background: #094771; }
-.tree-item.selected { box-shadow: inset 0 0 0 1px rgba(120, 180, 224, 0.5); }
+.tree-item:hover { background: var(--ide-hover-bg); }
+.tree-item.active { background: var(--ide-active-bg); }
+.tree-item.selected { box-shadow: inset 0 0 0 1px rgba(120, 180, 224, 0.5); background: rgba(120, 180, 224, 0.08); }
 .tree-item.active.selected { box-shadow: inset 0 0 0 1px rgba(140, 210, 255, 0.8); }
-.tree-item.modified { color: #e2c08d; }
+.tree-item.drag-over { background: rgba(100, 160, 220, 0.25); box-shadow: inset 0 0 0 1px rgba(100, 160, 220, 0.7); }
+.tree-item.modified { color: var(--ide-warning); }
 
 /* Inline create row (VS Code-style new file/folder input) */
 .tree-item-inline-create {
@@ -247,10 +257,10 @@ html, body, #mbeditor-root {
 .tree-inline-input {
   flex: 1;
   min-width: 0;
-  background: #3c3c3c;
-  border: 1px solid #007acc;
+  background: var(--ide-input-bg);
+  border: 1px solid var(--ide-accent);
   border-radius: 3px;
-  color: #d4d4d4;
+  color: var(--ide-text);
   font-size: 12px;
   font-family: inherit;
   padding: 1px 4px;
@@ -289,7 +299,7 @@ html, body, #mbeditor-root {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
-  background: #1e1e1e;
+  background: var(--ide-bg);
 }
 
 .ide-pane {
@@ -298,7 +308,7 @@ html, body, #mbeditor-root {
 }
 
 .ide-pane.drop-target {
-  border-color: #4ec9b0;
+  border-color: var(--ide-accent-fg);
   box-shadow: inset 0 0 0 1px rgba(78, 201, 176, 0.35);
 }
 
@@ -306,8 +316,8 @@ html, body, #mbeditor-root {
 .tab-bar {
   display: flex;
   align-items: center;
-  background: #252526;
-  border-bottom: 1px solid #3c3c3c;
+  background: var(--ide-panel-bg);
+  border-bottom: 1px solid var(--ide-border);
   height: 35px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -315,7 +325,7 @@ html, body, #mbeditor-root {
 }
 
 .tab-bar::-webkit-scrollbar { height: 3px; }
-.tab-bar::-webkit-scrollbar-thumb { background: #555; }
+.tab-bar::-webkit-scrollbar-thumb { background: var(--ide-hover-bg); }
 
 .tab-item {
   display: flex;
@@ -325,9 +335,9 @@ html, body, #mbeditor-root {
   min-width: 100px;
   max-width: 200px;
   cursor: pointer;
-  border-right: 1px solid #3c3c3c;
-  background: #2d2d2d;
-  color: #888;
+  border-right: 1px solid var(--ide-border);
+  background: var(--ide-input-bg);
+  color: var(--ide-text-muted);
   font-size: 12px;
   transition: background 0.1s, color 0.1s;
   white-space: nowrap;
@@ -337,31 +347,31 @@ html, body, #mbeditor-root {
   flex-shrink: 0;
 }
 
-.tab-item.drop-before { box-shadow: inset 2px 0 0 #4ec9b0; }
-.tab-item.drop-after  { box-shadow: inset -2px 0 0 #4ec9b0; }
+.tab-item.drop-before { box-shadow: inset 2px 0 0 var(--ide-accent-fg); }
+.tab-item.drop-after  { box-shadow: inset -2px 0 0 var(--ide-accent-fg); }
 
 .tab-item.dragging {
   opacity: 0.55;
 }
 
-.tab-item:hover { background: #333; color: #ccc; }
-.tab-item.active { background: #1e1e1e; color: #fff; border-top: 1px solid #4ec9b0; }
+.tab-item:hover { background: var(--ide-panel-bg-alt); color: var(--ide-text); }
+.tab-item.active { background: var(--ide-bg); color: var(--ide-text); border-top: 1px solid var(--ide-accent-fg); }
 .tab-item.tab-soft .tab-item-name { font-style: italic; }
 
 .tab-has-error {
-  border-bottom: 2px solid #d32f2f !important;
+  border-bottom: 2px solid var(--ide-danger) !important;
 }
 .tab-item.active.tab-has-error {
-  border-top: 2px solid #d32f2f !important;
+  border-top: 2px solid var(--ide-danger) !important;
   border-bottom: none !important;
 }
 
 .tab-has-warning {
-  border-bottom: 2px solid #f9a825 !important;
+  border-bottom: 2px solid var(--ide-warning) !important;
 }
 
 .tab-item.active.tab-has-warning {
-  border-top: 2px solid #f9a825 !important;
+  border-top: 2px solid var(--ide-warning) !important;
   border-bottom: none !important;
 }
 
@@ -395,12 +405,12 @@ html, body, #mbeditor-root {
   justify-content: center;
   border-radius: 3px;
   font-size: 11px;
-  color: #666;
+  color: var(--ide-text-muted);
   flex-shrink: 0;
   transition: background 0.1s, color 0.1s;
 }
 
-.tab-close:hover { background: #555; color: #fff; }
+.tab-close:hover { background: var(--ide-hover-bg); color: var(--ide-text); }
 
 .tab-welcome {
   flex: 1;
@@ -408,25 +418,25 @@ html, body, #mbeditor-root {
   align-items: center;
   justify-content: flex-start;
   flex-direction: column;
-  color: #555;
+  color: var(--ide-text-muted);
   gap: 12px;
   overflow-y: auto;
   padding: 40px 48px;
 }
 
-.tab-welcome i { font-size: 48px; color: #333; opacity: 0.18; }
-.tab-welcome h2 { font-size: 18px; font-weight: 400; color: #444; margin: 0; }
-.tab-welcome p { font-size: 13px; color: #444; margin: 0; }
+.tab-welcome i { font-size: 48px; color: var(--ide-text-muted); opacity: 0.18; }
+.tab-welcome h2 { font-size: 18px; font-weight: 400; color: var(--ide-border-input); margin: 0; }
+.tab-welcome p { font-size: 13px; color: var(--ide-border-input); margin: 0; }
 .tab-welcome kbd {
-  background: #2a2d2e;
-  border: 1px solid #444;
+  background: var(--ide-hover-bg);
+  border: 1px solid var(--ide-border-input);
   border-radius: 4px;
   padding: 2px 6px;
   font-size: 11px;
   font-family: monospace;
 }
 
-.welcome-intro { font-size: 13px; color: #666; margin: 0; }
+.welcome-intro { font-size: 13px; color: var(--ide-text-muted); margin: 0; }
 
 .welcome-shortcuts {
   display: flex;
@@ -444,14 +454,14 @@ html, body, #mbeditor-root {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: #bbb;
+  color: var(--ide-text-dim);
   margin: 0 0 8px 0;
-  border-bottom: 1px solid #3a3a3a;
+  border-bottom: 1px solid var(--ide-border);
   padding-bottom: 4px;
 }
 
 .shortcut-table { border-collapse: collapse; width: 100%; }
-.shortcut-table td { padding: 3px 8px 3px 0; font-size: 12px; color: #888; vertical-align: middle; }
+.shortcut-table td { padding: 3px 8px 3px 0; font-size: 12px; color: var(--ide-text-muted); vertical-align: middle; background: transparent; }
 .shortcut-table td:first-child { padding-right: 14px; white-space: nowrap; }
 
 .welcome-tips {
@@ -462,19 +472,19 @@ html, body, #mbeditor-root {
   flex-direction: column;
   gap: 7px;
 }
-.welcome-tips li { font-size: 12px; color: #777; }
-.welcome-tips li i { color: #555; width: 14px; text-align: center; }
+.welcome-tips li { font-size: 12px; color: var(--ide-text-muted); }
+.welcome-tips li i { color: var(--ide-text-muted); width: 14px; text-align: center; }
 
 /* ── Search results meta ─────────────────────────────────── */
 .search-results-meta {
   padding: 4px 8px 6px;
   font-size: 11px;
-  color: #888;
-  border-bottom: 1px solid #2a2a2a;
+  color: var(--ide-text-muted);
+  border-bottom: 1px solid var(--ide-panel-bg-alt);
   margin-bottom: 4px;
 }
 .search-results-capped { color: #f0a040; }
-.search-results-empty { padding: 12px 8px; font-size: 12px; color: #666; }
+.search-results-empty { padding: 12px 8px; font-size: 12px; color: var(--ide-text-muted); }
 
 /* ── Shortcut Help Drawer ────────────────────────────────── */
 .shelp-backdrop {
@@ -488,8 +498,9 @@ html, body, #mbeditor-root {
 }
 
 .shelp-panel {
-  background: #252526;
-  border: 1px solid #3c3c3c;
+  background: var(--ide-panel-bg);
+  color: var(--ide-text);
+  border: 1px solid var(--ide-border);
   border-radius: 6px;
   width: 660px;
   max-width: calc(100vw - 48px);
@@ -505,27 +516,27 @@ html, body, #mbeditor-root {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid #3c3c3c;
+  border-bottom: 1px solid var(--ide-border);
   flex-shrink: 0;
 }
 
 .shelp-title {
   font-size: 13px;
   font-weight: 600;
-  color: #cccccc;
+  color: var(--ide-text);
 }
 
 .shelp-close {
   background: none;
   border: none;
-  color: #888;
+  color: var(--ide-text-muted);
   cursor: pointer;
   padding: 2px 6px;
   font-size: 14px;
   border-radius: 3px;
   line-height: 1;
 }
-.shelp-close:hover { background: #3c3c3c; color: #ccc; }
+.shelp-close:hover { background: var(--ide-hover-bg); color: var(--ide-text); }
 
 .shelp-body {
   overflow-y: auto;
@@ -553,9 +564,9 @@ html, body, #mbeditor-root {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: #666;
+  color: var(--ide-text-muted);
   margin: 0;
-  border-bottom: 1px solid #2a2a2a;
+  border-bottom: 1px solid var(--ide-panel-bg-alt);
   padding-bottom: 4px;
 }
 
@@ -563,15 +574,15 @@ html, body, #mbeditor-root {
 .shelp-table td { padding: 3px 8px 3px 0; vertical-align: middle; }
 .shelp-key { white-space: nowrap; }
 .shelp-key kbd {
-  background: #2a2d2e;
-  border: 1px solid #444;
+  background: var(--ide-hover-bg);
+  border: 1px solid var(--ide-border-input);
   border-radius: 4px;
   padding: 2px 7px;
   font-size: 11px;
   font-family: monospace;
-  color: #c8c8c8;
+  color: var(--ide-text-dim);
 }
-.shelp-desc { font-size: 12px; color: #999; }
+.shelp-table .shelp-desc { font-size: 12px; color: var(--ide-text-muted); }
 
 .shelp-tips {
   list-style: none;
@@ -581,8 +592,8 @@ html, body, #mbeditor-root {
   flex-direction: column;
   gap: 6px;
 }
-.shelp-tips li { font-size: 12px; color: #888; line-height: 1.4; }
-.shelp-tips li::before { content: '•'; color: #555; margin-right: 6px; }
+.shelp-tips li { font-size: 12px; color: var(--ide-text-muted); line-height: 1.4; }
+.shelp-tips li::before { content: '•'; color: var(--ide-text-muted); margin-right: 6px; }
 
 /* ── Monaco Container ────────────────────────────────────── */
 .monaco-container {
@@ -595,27 +606,51 @@ html, body, #mbeditor-root {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: #1e1e1e;
-  color: #888;
+  background: var(--ide-bg);
+  color: var(--ide-text-muted);
   user-select: none;
   gap: 8px;
 }
 
+/* ── File loading overlay ───────────────────────────────── */
+.editor-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ide-bg, #1e1e1e);
+  z-index: 10;
+}
+
+.editor-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(156, 220, 254, 0.15);
+  border-top-color: #9cdcfe;
+  border-radius: 50%;
+  animation: editor-spin 0.65s linear infinite;
+}
+
+@keyframes editor-spin {
+  to { transform: rotate(360deg); }
+}
+
 .file-not-found-icon {
   font-size: 36px;
-  color: #555;
+  color: var(--ide-text-muted);
   margin-bottom: 4px;
 }
 
 .file-not-found-title {
   font-size: 14px;
-  color: #aaa;
+  color: var(--ide-text-muted);
   margin: 0;
 }
 
 .file-not-found-path {
   font-size: 11px;
-  color: #666;
+  color: var(--ide-text-muted);
   font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
   margin: 0;
 }
@@ -629,8 +664,8 @@ html, body, #mbeditor-root {
   width: 100%;
   height: 100%;
   overflow-y: auto;
-  background: #1e1e1e;
-  color: #ccc;
+  background: var(--ide-bg);
+  color: var(--ide-text);
   font-family: 'Segoe UI', system-ui, sans-serif;
   padding: 20px;
 }
@@ -639,15 +674,15 @@ html, body, #mbeditor-root {
 .markdown-preview h2,
 .markdown-preview h3,
 .markdown-preview h4 {
-  color: #ffffff;
+  color: var(--ide-text);
 }
 
 .markdown-preview a {
-  color: #4ec9b0;
+  color: var(--ide-accent-fg);
 }
 
 .markdown-preview code {
-  background: #2d2d2d;
+  background: var(--ide-input-bg);
   padding: 1px 4px;
   border-radius: 4px;
   font-family: 'JetBrains Mono', Consolas, monospace;
@@ -663,12 +698,13 @@ html, body, #mbeditor-root {
 .ide-statusbar {
   display: flex;
   align-items: center;
-  background: #007acc;
+  background: var(--ide-accent);
   height: 22px;
   padding: 0 8px;
   gap: 4px;
   flex-shrink: 0;
   font-size: 11px;
+  color: var(--ide-accent-text);
 }
 
 .statusbar-branch {
@@ -677,22 +713,24 @@ html, body, #mbeditor-root {
   gap: 6px;
   font-size: 13px;
   font-weight: 600;
+  color: var(--ide-accent-text);
 }
 
 .statusbar-aheadbehind {
   font-size: 11px;
   font-weight: 600;
-  color: #89d185;
+  color: var(--ide-success);
   opacity: 0.9;
 }
-.statusbar-aheadbehind.statusbar-behind { color: #f48771; }
+.statusbar-aheadbehind.statusbar-behind { color: var(--ide-danger); }
 
 .statusbar-file-commit {
   display: flex;
   align-items: center;
   gap: 4px;
   font-size: 11px;
-  color: #8a9ab0;
+  color: var(--ide-accent-text);
+  opacity: 0.7;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -706,7 +744,7 @@ html, body, #mbeditor-root {
   gap: 6px;
   font-size: 12px;
   font-weight: 600;
-  color: #f48771;
+  color: var(--ide-danger);
   padding: 0 10px;
   animation: statusbar-pulse 2s ease-in-out infinite;
 }
@@ -725,7 +763,7 @@ html, body, #mbeditor-root {
   flex-shrink: 0;
   background: transparent;
   border: none;
-  color: rgba(255,255,255,0.9);
+  color: var(--ide-accent-text);
   cursor: pointer;
   font-size: 11px;
   border-radius: 2px;
@@ -733,7 +771,7 @@ html, body, #mbeditor-root {
   white-space: nowrap;
 }
 
-.statusbar-btn:hover { background: rgba(255,255,255,0.15); }
+.statusbar-btn:hover { background: color-mix(in srgb, var(--ide-accent-text) 15%, transparent); }
 .statusbar-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .titlebar-git-btn {
@@ -743,11 +781,11 @@ html, body, #mbeditor-root {
   z-index: 1;
 }
 
-.statusbar-sep { width: 1px; height: 14px; background: rgba(255,255,255,0.2); margin: 0 2px; }
+.statusbar-sep { width: 1px; height: 14px; background: color-mix(in srgb, var(--ide-accent-text) 20%, transparent); margin: 0 2px; }
 
 .statusbar-msg {
   margin-left: auto;
-  color: rgba(255,255,255,0.8);
+  color: color-mix(in srgb, var(--ide-accent-text) 80%, transparent);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -755,11 +793,11 @@ html, body, #mbeditor-root {
   max-width: 400px;
 }
 
-.statusbar-msg.error { color: #f48771; }
-.statusbar-msg.success { color: #89d185; }
+.statusbar-msg.error { color: var(--ide-danger); }
+.statusbar-msg.success { color: var(--ide-success); }
 
 .statusbar-version {
-  color: rgba(255,255,255,0.45);
+  color: color-mix(in srgb, var(--ide-accent-text) 45%, transparent);
   font-size: 10px;
   white-space: nowrap;
   padding-left: 8px;
@@ -777,67 +815,23 @@ html, body, #mbeditor-root {
 
 .search-input-wrap {
   display: flex;
-  gap: 6px;
-}
-
-.search-input-shell {
-  position: relative;
-  flex: 1;
-  min-width: 0;
+  flex-shrink: 0;
 }
 
 .search-input {
   width: 100%;
-  background: #3c3c3c;
-  border: 1px solid #555;
+  margin-bottom: 0;
+  padding: 5px 8px;
+  background: var(--ide-input-bg);
+  color: var(--ide-text);
+  border: 1px solid var(--ide-border-input);
   border-radius: 4px;
-  color: #ccc;
-  padding: 4px 28px 4px 8px;
   font-size: 12px;
   outline: none;
+  box-sizing: border-box;
 }
-
-.search-input:focus { border-color: #4ec9b0; }
-
-.search-clear-btn {
-  position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 20px;
-  height: 20px;
-  border: none;
-  border-radius: 3px;
-  background: transparent;
-  color: #aaa;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.search-clear-btn:hover {
-  background: #2a2d2e;
-  color: #ddd;
-}
-
-.search-btn {
-  background: #094771;
-  border: none;
-  border-radius: 4px;
-  color: #ccc;
-  padding: 4px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.1s;
-}
-
-.search-btn:hover { background: #0e639c; }
-
-.search-btn:disabled {
-  cursor: progress;
-  opacity: 0.85;
-}
+.search-input::placeholder { color: var(--ide-text-muted); }
+.search-input:focus { border-color: var(--ide-accent-fg); }
 
 .search-results {
   flex: 1;
@@ -845,17 +839,21 @@ html, body, #mbeditor-root {
 }
 
 .search-result-item {
+  height: 40px;
   padding: 4px 6px;
   cursor: pointer;
   border-radius: 3px;
   transition: background 0.1s;
-  border-bottom: 1px solid #2d2d2d;
+  border-bottom: 1px solid var(--ide-input-bg);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
+  overflow: hidden;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
-.search-result-item:hover { background: #2a2d2e; }
+.search-result-item:hover { background: var(--ide-hover-bg); }
 
 .search-result-icon {
   flex-shrink: 0;
@@ -872,23 +870,32 @@ html, body, #mbeditor-root {
 
 .search-result-file {
   font-size: 11px;
-  color: #4ec9b0;
+  color: var(--ide-accent-fg);
   font-weight: 500;
 }
 
 .search-result-line-num {
   font-size: 10px;
-  color: #666;
+  color: var(--ide-text-muted);
   margin-left: 4px;
 }
 
 .search-result-text {
   font-size: 11px;
-  color: #aaa;
+  color: var(--ide-text-muted);
   font-family: monospace;
-  white-space: pre;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.search-results-loading-more {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--ide-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* ── Git Status Panel ─────────────────────────────────────── */
@@ -906,24 +913,24 @@ html, body, #mbeditor-root {
   overflow: hidden;
 }
 
-.git-file-item:hover { background: #2a2d2e; }
+.git-file-item:hover { background: var(--ide-hover-bg); }
 
 .git-hint {
   padding: 6px 12px;
   font-size: 11px;
-  color: #7f8b97;
+  color: var(--ide-text-muted);
 }
 
-.git-M { color: #e2c08d; }
-.git-A { color: #89d185; }
-.git-D { color: #f48771; }
+.git-M { color: var(--ide-warning); }
+.git-A { color: var(--ide-success); }
+.git-D { color: var(--ide-danger); }
 .git-R { color: #78b4e0; }
-.git-Q { color: #888; }
+.git-Q { color: var(--ide-text-muted); }
 
 /* ── Right-side Git Panel ───────────────────────────────── */
 .ide-git-right-panel {
-  background: #202124;
-  border-left: 1px solid #3c3c3c;
+  background: var(--ide-panel-bg-alt);
+  border-left: 1px solid var(--ide-border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -934,14 +941,14 @@ html, body, #mbeditor-root {
 
 .gitpanel-divider {
   width: 5px;
-  background: #2a2a2a;
-  border-left: 1px solid #3c3c3c;
+  background: var(--ide-panel-bg-alt);
+  border-left: 1px solid var(--ide-border);
 }
 
 .ide-git-panel {
   width: 100%;
   height: 100%;
-  background: #202124;
+  background: var(--ide-panel-bg-alt);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -958,7 +965,7 @@ html, body, #mbeditor-root {
   justify-content: space-between;
   align-items: flex-start;
   padding: 10px 10px 8px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--ide-border);
 }
 
 .ide-git-panel-title {
@@ -966,12 +973,12 @@ html, body, #mbeditor-root {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #8ec7ff;
+  color: var(--ide-accent-fg);
 }
 
 .ide-git-panel-branch {
   margin-top: 4px;
-  color: #d6e9ff;
+  color: var(--ide-text);
   font-size: 13px;
   font-weight: 600;
 }
@@ -984,7 +991,7 @@ html, body, #mbeditor-root {
 .git-header-btn {
   background: none;
   border: none;
-  color: #9fabb7;
+  color: var(--ide-text-muted);
   cursor: pointer;
   padding: 3px 5px;
   border-radius: 3px;
@@ -992,20 +999,20 @@ html, body, #mbeditor-root {
   line-height: 1;
   transition: background 0.12s, color 0.12s;
 }
-.git-header-btn:hover { background: rgba(255,255,255,0.08); color: #cdd9e5; }
+.git-header-btn:hover { background: var(--ide-hover-bg); color: var(--ide-text); }
 
 .git-metadata {
   display: grid;
   grid-template-columns: 1fr;
   gap: 4px;
   padding: 8px 12px;
-  border-bottom: 1px solid #2d2f31;
-  color: #b4bcc4;
+  border-bottom: 1px solid var(--ide-panel-bg-alt);
+  color: var(--ide-text-dim);
   font-size: 12px;
 }
 
 .git-section {
-  border-bottom: 1px solid #2d2f31;
+  border-bottom: 1px solid var(--ide-panel-bg-alt);
   min-height: 0;
   flex-shrink: 0;  /* don't let sections steal space from the graph section */
 }
@@ -1021,8 +1028,8 @@ html, body, #mbeditor-root {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #9fabb7;
-  background: #25282b;
+  color: var(--ide-text-muted);
+  background: var(--ide-panel-bg-alt);
 }
 
 .git-list {
@@ -1078,7 +1085,7 @@ html, body, #mbeditor-root {
 
 .git-file-name {
   font-size: 12px;
-  color: #c8d4df;
+  color: var(--ide-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1086,8 +1093,8 @@ html, body, #mbeditor-root {
 
 .git-file-dir {
   font-size: 10px;
-  color: #6e7a85;
-  opacity: 0.6;
+  color: var(--ide-text-muted);
+  opacity: 0.8;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1112,8 +1119,8 @@ html, body, #mbeditor-root {
   margin-right: 4px;
   gap: 1px;
 }
-.git-stat-add { color: #89d185; }
-.git-stat-del { color: #f48771; }
+.git-stat-add { color: var(--ide-success); }
+.git-stat-del { color: var(--ide-danger); }
 
 .git-status-badge {
   font-size: 10px;
@@ -1127,10 +1134,10 @@ html, body, #mbeditor-root {
 
 .git-section-count {
   font-size: 10px;
-  background: rgba(255,255,255,0.1);
+  background: var(--ide-hover-bg);
   border-radius: 8px;
   padding: 1px 6px;
-  color: #9db0bb;
+  color: var(--ide-text-muted);
   font-weight: 600;
 }
 
@@ -1138,7 +1145,7 @@ html, body, #mbeditor-root {
   display: inline-block;
   margin-left: 6px;
   font-size: 11px;
-  color: #89d185;
+  color: var(--ide-success);
   font-weight: 600;
 }
 
@@ -1146,17 +1153,17 @@ html, body, #mbeditor-root {
   display: inline-block;
   margin-left: 4px;
   font-size: 11px;
-  color: #f48771;
+  color: var(--ide-danger);
   font-weight: 600;
 }
 
 .git-commit-item {
   padding: 8px 10px;
-  border-bottom: 1px solid #2a2e31;
+  border-bottom: 1px solid var(--ide-border);
 }
 
 .git-commit-title {
-  color: #d7dfe7;
+  color: var(--ide-text);
   font-size: 12px;
   line-height: 1.35;
 }
@@ -1164,7 +1171,7 @@ html, body, #mbeditor-root {
 .git-commit-meta {
   margin-top: 4px;
   font-size: 11px;
-  color: #7f8b97;
+  color: var(--ide-text-muted);
 }
 
 .git-empty,
@@ -1174,16 +1181,24 @@ html, body, #mbeditor-root {
 }
 
 .git-empty {
-  color: #7d8791;
+  color: var(--ide-text-muted);
+}
+
+/* Pico aria-busy on git-empty / ide-loading-state: compact inline spinner */
+.git-empty[aria-busy="true"],
+.ide-loading-state[aria-busy="true"] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .git-error {
-  color: #f48771;
+  color: var(--ide-danger);
 }
 
 /* ── Collapsible Section ──────────────────────────────────────── */
 .collapsible-section {
-  border-bottom: 1px solid #3c3c3c;
+  border-bottom: 1px solid var(--ide-border);
   margin-bottom: 0;
 }
 
@@ -1195,7 +1210,7 @@ html, body, #mbeditor-root {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  color: #bbbbbb;
+  color: var(--ide-text-dim);
   letter-spacing: 0.08em;
   cursor: pointer;
   user-select: none;
@@ -1206,11 +1221,11 @@ html, body, #mbeditor-root {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #252526;
+  background: var(--ide-panel-bg);
 }
 
 .collapsible-header:hover {
-  background: #2a2d2e;
+  background: var(--ide-hover-bg);
 }
 
 
@@ -1241,7 +1256,7 @@ html, body, #mbeditor-root {
 .collapsible-actions {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
   margin-left: auto;
 }
@@ -1249,7 +1264,7 @@ html, body, #mbeditor-root {
 .project-actions {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
 }
 
 .open-editors-group-header {
@@ -1281,7 +1296,7 @@ html, body, #mbeditor-root {
   background: transparent;
   border: none;
   border-radius: 4px;
-  color: #858585;
+  color: var(--ide-text-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1292,24 +1307,39 @@ html, body, #mbeditor-root {
 }
 
 .ide-icon-btn:hover {
-  background: #2a2d2e;
-  color: #cccccc;
+  background: var(--ide-hover-bg);
+  color: var(--ide-text);
 }
 
 .ide-icon-btn.active {
-  color: #4ec9b0;
+  color: var(--ide-accent-fg);
 }
 
 .ide-editor-toolbar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
   align-items: center;
   padding: 4px 8px;
-  background: #252526;
-  border-bottom: 1px solid #3c3c3c;
+  background: var(--ide-panel-bg);
+  border-bottom: 1px solid var(--ide-border);
   gap: 4px;
   overflow: hidden;
   min-width: 0;
+}
+
+.ide-editor-file-location {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+  font-size: 11px;
+  color: var(--ide-text-muted);
+  padding: 0 4px;
+  cursor: default;
+  user-select: text;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
 }
 
 .ide-editor-toolbar .ide-icon-btn {
@@ -1339,23 +1369,24 @@ html, body, #mbeditor-root {
 }
 
 .project-action-btn {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   border: 1px solid transparent;
   background: transparent;
-  color: #97a3ae;
+  color: var(--ide-text-muted);
   border-radius: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  font-size: 13px;
   transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 
 .project-action-btn:hover:not(:disabled) {
-  background: #303234;
-  border-color: #4a4c4f;
-  color: #d7dce1;
+  background: var(--ide-hover-bg);
+  border-color: var(--ide-border-input);
+  color: var(--ide-text);
 }
 
 .project-action-btn:disabled {
@@ -1364,7 +1395,7 @@ html, body, #mbeditor-root {
 }
 
 .project-action-btn.danger:hover:not(:disabled) {
-  color: #f48771;
+  color: var(--ide-danger);
   border-color: rgba(244, 135, 113, 0.45);
 }
 
@@ -1373,13 +1404,13 @@ html, body, #mbeditor-root {
   position: fixed;
   z-index: 9999;
   min-width: 180px;
-  background: #252526;
-  border: 1px solid #454545;
+  background: var(--ide-panel-bg);
+  border: 1px solid var(--ide-border-input);
   border-radius: 4px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.5);
   padding: 4px 0;
   font-size: 12px;
-  color: #cccccc;
+  color: var(--ide-text);
   user-select: none;
 }
 
@@ -1393,13 +1424,13 @@ html, body, #mbeditor-root {
 }
 
 .context-menu-item:hover {
-  background: #094771;
+  background: var(--ide-active-bg);
   color: #ffffff;
 }
 
 .context-menu-item-danger:hover {
   background: rgba(244, 135, 113, 0.15);
-  color: #f48771;
+  color: var(--ide-danger);
 }
 
 .context-menu-icon {
@@ -1412,7 +1443,7 @@ html, body, #mbeditor-root {
 
 .context-menu-divider {
   height: 1px;
-  background: #3c3c3c;
+  background: var(--ide-border);
   margin: 4px 0;
 }
 
@@ -1444,8 +1475,8 @@ html, body, #mbeditor-root {
 }
 
 .quick-open-box {
-  background: #252526;
-  border: 1px solid #454545;
+  background: var(--ide-panel-bg);
+  border: 1px solid var(--ide-border-input);
   border-radius: 8px;
   width: 500px;
   max-height: 400px;
@@ -1462,13 +1493,15 @@ html, body, #mbeditor-root {
 .quick-open-input {
   background: transparent;
   border: none;
-  border-bottom: 1px solid #3c3c3c;
-  color: #ccc;
+  border-bottom: 1px solid var(--ide-border);
+  color: var(--ide-text);
   padding: 12px 34px 12px 16px;
   font-size: 14px;
   outline: none;
   width: 100%;
+  box-sizing: border-box;
 }
+.quick-open-input::placeholder { color: var(--ide-text-muted); }
 
 .quick-open-clear-btn {
   position: absolute;
@@ -1480,7 +1513,7 @@ html, body, #mbeditor-root {
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: #999;
+  color: var(--ide-text-muted);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1488,8 +1521,8 @@ html, body, #mbeditor-root {
 }
 
 .quick-open-clear-btn:hover {
-  background: #2a2d2e;
-  color: #ddd;
+  background: var(--ide-hover-bg);
+  color: var(--ide-text-dim);
 }
 
 .quick-open-results {
@@ -1520,13 +1553,13 @@ html, body, #mbeditor-root {
 }
 
 .quick-open-result:hover,
-.quick-open-result.selected { background: #094771; }
+.quick-open-result.selected { background: var(--ide-active-bg); }
 
-.quick-open-result-name { color: #ccc; }
-.quick-open-result-path { color: #666; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quick-open-result-name { color: var(--ide-text); }
+.quick-open-result-path { color: var(--ide-text-muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .quick-open-section { margin-bottom: 4px; }
-.quick-open-section-header { padding: 6px 14px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #555; font-weight: 600; }
+.quick-open-section-header { padding: 6px 14px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ide-text-muted); font-weight: 600; }
 
 .quick-open-star-btn {
   flex-shrink: 0;
@@ -1534,7 +1567,7 @@ html, body, #mbeditor-root {
   border: none;
   cursor: pointer;
   padding: 2px 6px;
-  color: #555;
+  color: var(--ide-text-muted);
   font-size: 12px;
   line-height: 1;
   opacity: 0;
@@ -1544,35 +1577,39 @@ html, body, #mbeditor-root {
 .quick-open-star-btn.starred { opacity: 1; color: #f0c040; }
 .quick-open-star-btn:hover { color: #f0c040; }
 
+/* Folder entries in Quick Open */
+.quick-open-folder-icon { color: #dcb67a; }
+.quick-open-result-dir .quick-open-result-name { color: #dcb67a; }
+
 .quick-open-empty-hint {
   padding: 20px 16px;
-  color: #555;
+  color: var(--ide-text-muted);
   font-size: 12px;
   text-align: center;
   line-height: 1.6;
 }
 
 .typescript-icon { color: #3178c6 !important; }
-.shell-icon { color: #89d185 !important; }
-.pdf-icon { color: #f48771 !important; }
+.shell-icon { color: var(--ide-success) !important; }
+.pdf-icon { color: var(--ide-danger) !important; }
 
 /* ── Scrollbars ────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: #1e1e1e; }
-::-webkit-scrollbar-thumb { background: #424242; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #555; }
+::-webkit-scrollbar-track { background: var(--ide-bg); }
+::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ide-hover-bg); }
 
 /* ── Notification toast ─────────────────────────────────────── */
 .ide-toast {
   position: fixed;
   bottom: 32px;
   right: 16px;
-  background: #333;
-  border: 1px solid #555;
+  background: var(--ide-panel-bg-alt);
+  border: 1px solid var(--ide-border-input);
   border-radius: 6px;
   padding: 8px 14px;
   font-size: 12px;
-  color: #ccc;
+  color: var(--ide-text);
   z-index: 10000;
   box-shadow: 0 4px 16px rgba(0,0,0,0.5);
   animation: toast-in 0.15s ease;
@@ -1585,20 +1622,30 @@ html, body, #mbeditor-root {
 
 /* ── Settings panel ─────────────────────────────────────────── */
 .ide-settings-panel { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
-.ide-settings-body { padding: 8px 12px; display: flex; flex-direction: column; gap: 14px; }
-.ide-settings-row { display: flex; flex-direction: column; gap: 4px; }
-.ide-settings-row-check { flex-direction: row; align-items: center; justify-content: space-between; }
-.ide-settings-label { font-size: 11px; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px; }
-.ide-settings-select,
-.ide-settings-input { background: #2d2d2d; color: #ccc; border: 1px solid #444; border-radius: 3px; padding: 4px 6px; font-size: 12px; width: 100%; box-sizing: border-box; }
-.ide-settings-input-wide { font-family: monospace; }
-.ide-settings-checkbox { width: auto; cursor: pointer; }
-.ide-settings-reset-btn { margin-top: 8px; background: #333; color: #aaa; border: 1px solid #555; border-radius: 3px; padding: 5px 10px; font-size: 11px; cursor: pointer; align-self: flex-start; }
-.ide-settings-reset-btn:hover { background: #444; color: #ddd; }
-.ide-settings-section-header { font-size: 10px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 1px; padding: 6px 0 2px; border-bottom: 1px solid #3a3a3a; margin-top: 4px; }
-.ide-settings-row-link { flex-direction: row; align-items: center; justify-content: space-between; }
-.ide-settings-config-link { background: none; border: none; color: #7db9f5; font-size: 11px; cursor: pointer; padding: 0; display: flex; align-items: center; gap: 3px; text-decoration: underline; text-underline-offset: 2px; }
-.ide-settings-config-link:hover { color: #a8cfff; }
+.ide-settings-body { padding: 8px 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; align-items: start; }
+/* Full-width rows: label sits inline next to the control */
+.ide-settings-row { display: flex; flex-direction: row; align-items: center; gap: 8px; grid-column: 1/-1; }
+/* Half-width rows: label stacked above control, fits in one grid column */
+.ide-settings-row-half { display: flex; flex-direction: column; gap: 2px; grid-column: auto; align-items: flex-start; }
+/* Full-width rows with stacked label — for wide text inputs like font family */
+.ide-settings-row-full { display: flex; flex-direction: column; gap: 2px; grid-column: 1/-1; align-items: flex-start; }
+.ide-settings-row-full .ide-settings-input-wide { width: 100%; flex: none; box-sizing: border-box; }
+/* Checkbox rows: full-width, label on left, checkbox on right */
+.ide-settings-row-check { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 6px; grid-column: 1/-1; padding: 3px 0; }
+.ide-settings-label { font-size: 11px; color: var(--ide-text-muted); white-space: nowrap; }
+/* Inputs in full-width rows stay narrow */
+.ide-settings-input { background: var(--ide-input-bg); color: var(--ide-text); border: 1px solid var(--ide-border-input); border-radius: 3px; padding: 4px 6px; font-size: 12px; width: 72px; box-sizing: border-box; }
+.ide-settings-input-wide { font-family: monospace; flex: 1; width: auto; }
+/* Selects in half-width rows use Pico styling (inherit theme vars); just cap size */
+.ide-settings-row-half select { width: 100%; }
+.ide-settings-checkbox { width: auto; cursor: pointer; flex-shrink: 0; }
+.ide-settings-reset-btn { margin-top: 4px; grid-column: 1/-1; background: var(--ide-panel-bg-alt); color: var(--ide-text-muted); border: 1px solid var(--ide-border-input); border-radius: 3px; padding: 5px 10px; font-size: 11px; cursor: pointer; align-self: flex-start; }
+.ide-settings-reset-btn:hover { background: var(--ide-border-input); color: var(--ide-text-dim); }
+.ide-settings-section-header { font-size: 10px; font-weight: 700; color: var(--ide-text-muted); text-transform: uppercase; letter-spacing: 1px; padding: 8px 0 3px; border-bottom: 1px solid var(--ide-border); margin-top: 6px; grid-column: 1/-1; }
+.ide-settings-section-header:first-child { margin-top: 0; }
+.ide-settings-row-link { grid-column: 1/-1; flex-direction: row; align-items: center; justify-content: space-between; }
+.ide-settings-config-link { background: none; border: none; color: var(--ide-accent-fg); font-size: 11px; cursor: pointer; padding: 0; display: flex; align-items: center; gap: 3px; text-decoration: underline; text-underline-offset: 2px; }
+.ide-settings-config-link:hover { color: var(--ide-accent); }
 
 /* Settings tab (pane view) */
 .ide-settings-tab-content {
@@ -1606,456 +1653,294 @@ html, body, #mbeditor-root {
   flex-direction: column;
   height: 100%;
   overflow-y: auto;
-  background: var(--bg-panel, #1e1e1e);
-  color: var(--text-main, #ccc);
+  background: var(--bg-panel, var(--ide-bg));
+  color: var(--text-main, var(--ide-text));
 }
 
-/* ── CSS theme tokens (defaults = vs-dark) ───────────────── */
-:root {
-  --bg-base:   #1e1e1e;
-  --bg-panel:  #252526;
-  --bg-hover:  #2a2d2e;
-  --bg-active: #094771;
-  --bg-input:  #2d2d2d;
-  --border:    #3c3c3c;
-  --border-input: #444;
-  --text-main: #cccccc;
-  --text-dim:  #bbbbbb;
-  --text-muted:#888888;
-  --accent:    #007acc;
-  --accent-fg: #4ec9b0;
+
+/* ══ PICO CSS COMPACT OVERRIDES ═════════════════════════════════════════════
+ * Pico's classless variant inflates native elements with generous padding.
+ * These overrides restore IDE-density sizing while keeping Pico's theming.
+ * Applied with higher specificity to beat Pico's :root-level defaults.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/* Reset Pico's body/html margin and padding added to :root, body */
+:root { --pico-font-size: 13px; --pico-line-height: 1.4; }
+body { margin: 0; padding: 0; min-height: unset; }
+main { padding: unset; }
+
+/* ── Pico aria-busy loaders ──────────────────────────────────────────────────
+ * Pico renders a spinner via ::before on [aria-busy=true].
+ * For IDE-density elements (icon buttons, compact panels) we need the
+ * spinner to be small and inline, not Pico's full-page-width default.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/* Compact spinner size for non-button IDE loading states */
+.ide-loading-state[aria-busy="true"]::before,
+.git-empty[aria-busy="true"]::before,
+.search-results-loading-more[aria-busy="true"]::before {
+  --pico-loading-spinner-opacity: 0.7;
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+  flex-shrink: 0;
 }
 
-/* ── Light theme (vs) ────────────────────────────────────── */
-[data-theme="vs"] {
-  --bg-base:   #ffffff;
-  --bg-panel:  #f3f3f3;
-  --bg-hover:  #e8e8e8;
-  --bg-active: #d4e6f5;
-  --bg-input:  #ffffff;
-  --border:    #cecece;
-  --border-input: #c0c0c0;
-  --text-main: #333333;
-  --text-dim:  #616161;
-  --text-muted:#999999;
-  --accent:    #007acc;
-  --accent-fg: #0070c1;
+/* For icon-only buttons (sidebar actions, test button) Pico shows spinner
+ * in place of content — keep the button's own padding/size intact */
+.ide-icon-btn[aria-busy="true"],
+.project-action-btn[aria-busy="true"] {
+  --pico-form-element-spacing-vertical: 0;
+  --pico-form-element-spacing-horizontal: 0;
+  position: relative;
 }
-[data-theme="vs"] html,
-[data-theme="vs"] body,
-[data-theme="vs"] #mbeditor-root { background: #ffffff; color: #333333; }
-[data-theme="vs"] .ide-shell { background: #ffffff; }
-[data-theme="vs"] .ide-titlebar { background: #f3f3f3; border-color: #cecece; color: #333; }
-[data-theme="vs"] .ide-titlebar-title { color: #333; }
-[data-theme="vs"] .ide-sidebar { background: #f3f3f3; border-color: #cecece; }
-[data-theme="vs"] .ide-sidebar-scrollable .collapsible-header { background: #f3f3f3; }
-[data-theme="vs"] .sidebar-strip-btn { color: #616161; }
-[data-theme="vs"] .sidebar-strip-btn:hover { background: #e8e8e8; color: #333; }
-[data-theme="vs"] .sidebar-strip-btn.active { color: #0070c1; border-left-color: #0070c1; }
-[data-theme="vs"] .sidebar-divider { background: #e0e0e0; border-color: #cecece; }
-[data-theme="vs"] .sidebar-divider:hover,
-[data-theme="vs"] .sidebar-divider.active { background: #c0c0c0; }
-[data-theme="vs"] .ide-sidebar-header { color: #616161; border-color: #cecece; }
-[data-theme="vs"] .ide-sidebar-tabs { border-color: #cecece; }
-[data-theme="vs"] .ide-sidebar-tab { color: #616161; background: transparent; }
-[data-theme="vs"] .ide-sidebar-tab:hover { color: #333; background: #e8e8e8; }
-[data-theme="vs"] .ide-sidebar-tab.active { color: #0070c1; border-bottom-color: #0070c1; }
-[data-theme="vs"] .ide-sidebar-scrollable::-webkit-scrollbar-thumb { background: #c0c0c0; }
-[data-theme="vs"] .tree-item { color: #333333; }
-[data-theme="vs"] .tree-item:hover { background: #e8e8e8; }
-[data-theme="vs"] .tree-item.active { background: #d4e6f5; }
-[data-theme="vs"] .tree-item.modified { color: #8c7000; }
-[data-theme="vs"] .ide-sidebar-content .ide-inline-input { background: #fff; border-color: #007acc; color: #333; }
-[data-theme="vs"] .ide-main { background: #ffffff; }
-[data-theme="vs"] .tab-bar { background: #ececec; border-color: #cecece; }
-[data-theme="vs"] .tab-item { background: transparent; color: #666; border-color: transparent; }
-[data-theme="vs"] .tab-item:hover { background: #e0e0e0; color: #333; }
-[data-theme="vs"] .tab-item.active { background: #ffffff; color: #333; border-bottom-color: #007acc; }
-[data-theme="vs"] .tab-item-name { color: inherit; }
-[data-theme="vs"] .tab-close { color: #999; }
-[data-theme="vs"] .tab-close:hover { color: #333; background: #d0d0d0; }
-[data-theme="vs"] .ide-pane.focused-pane { border-color: transparent; }
-[data-theme="vs"] .ide-statusbar { background: #007acc; }
-[data-theme="vs"] .ide-empty-pane { background: #ffffff; color: #999; }
-[data-theme="vs"] .panel-divider { background: #e0e0e0; }
-[data-theme="vs"] .panel-divider:hover,
-[data-theme="vs"] .panel-divider.active { background: #007acc; }
-[data-theme="vs"] .search-input { background: #fff; border-color: #c0c0c0; color: #333; }
-[data-theme="vs"] .search-input:focus { border-color: #007acc; }
-[data-theme="vs"] .search-result-item:hover,
-[data-theme="vs"] .search-result-item.selected { background: #e8e8e8; }
-[data-theme="vs"] .search-result-file { color: #0070c1; }
-[data-theme="vs"] .search-result-text { color: #333; }
-[data-theme="vs"] .search-result-match { color: #792800; }
-[data-theme="vs"] .ide-settings-tab-content { background: #ffffff; color: #333; }
-[data-theme="vs"] .ide-settings-label { color: #616161; }
-[data-theme="vs"] .ide-settings-select,
-[data-theme="vs"] .ide-settings-input { background: #fff; color: #333; border-color: #c0c0c0; }
-[data-theme="vs"] .ide-settings-reset-btn { background: #ececec; color: #333; border-color: #c0c0c0; }
-[data-theme="vs"] .ide-settings-reset-btn:hover { background: #ddd; color: #111; }
-[data-theme="vs"] .ide-settings-section-header { color: #555; border-bottom-color: #d0d0d0; }
-[data-theme="vs"] .ide-settings-config-link { color: #0060b8; }
-[data-theme="vs"] .ide-settings-config-link:hover { color: #004080; }
-[data-theme="vs"] .ide-toast { background: #f3f3f3; border-color: #c0c0c0; color: #333; }
-
-/* ── vs: missing component overrides ─────────────────────── */
-[data-theme="vs"] ::-webkit-scrollbar-track { background: #f5f5f5; }
-[data-theme="vs"] ::-webkit-scrollbar-thumb { background: #c0c0c0; }
-[data-theme="vs"] ::-webkit-scrollbar-thumb:hover { background: #a0a0a0; }
-[data-theme="vs"] .tab-bar::-webkit-scrollbar-thumb { background: #c0c0c0; }
-[data-theme="vs"] .collapsible-header { color: #555; }
-[data-theme="vs"] .collapsible-header:hover { background: #e8e8e8; color: #333; }
-[data-theme="vs"] .ide-icon-btn { color: #555; }
-[data-theme="vs"] .ide-icon-btn:hover { background: #e8e8e8; color: #333; }
-[data-theme="vs"] .ide-icon-btn.active { color: #0070c1; }
-[data-theme="vs"] .ide-editor-toolbar { background: #ececec; border-bottom-color: #cecece; }
-[data-theme="vs"] .context-menu { background: #f3f3f3; border-color: #c0c0c0; color: #333; box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
-[data-theme="vs"] .context-menu-item:hover { background: #d4e6f5; color: #000; }
-[data-theme="vs"] .context-menu-item-danger:hover { background: rgba(244,135,113,0.15); color: #c0392b; }
-[data-theme="vs"] .context-menu-divider { background: #d0d0d0; }
-[data-theme="vs"] .quick-open-box { background: #f3f3f3; border-color: #c0c0c0; box-shadow: 0 16px 48px rgba(0,0,0,0.2); }
-[data-theme="vs"] .quick-open-input { color: #333; border-bottom-color: #cecece; }
-[data-theme="vs"] .quick-open-clear-btn { color: #666; }
-[data-theme="vs"] .quick-open-clear-btn:hover { background: #e0e0e0; color: #333; }
-[data-theme="vs"] .quick-open-result:hover,
-[data-theme="vs"] .quick-open-result.selected { background: #d4e6f5; }
-[data-theme="vs"] .quick-open-result-name { color: #333; }
-[data-theme="vs"] .quick-open-result-path { color: #666; }
-[data-theme="vs"] .quick-open-section-header { color: #666; }
-[data-theme="vs"] .quick-open-empty-hint { color: #666; }
-[data-theme="vs"] .quick-open-star-btn { color: #bbb; }
-[data-theme="vs"] .shelp-panel { background: #f3f3f3; border-color: #c0c0c0; box-shadow: 0 12px 40px rgba(0,0,0,0.15); }
-[data-theme="vs"] .shelp-header { border-bottom-color: #cecece; }
-[data-theme="vs"] .shelp-title { color: #333; }
-[data-theme="vs"] .shelp-close { color: #555; }
-[data-theme="vs"] .shelp-close:hover { background: #e0e0e0; color: #333; }
-[data-theme="vs"] .shelp-key kbd { background: #e8e8e8; border-color: #c0c0c0; color: #333; }
-[data-theme="vs"] .shelp-section-title { color: #555; border-bottom-color: #d0d0d0; }
-[data-theme="vs"] .shelp-desc { color: #555; }
-[data-theme="vs"] .shelp-tips li { color: #555; }
-[data-theme="vs"] .shelp-tips li::before { color: #aaa; }
-[data-theme="vs"] .tab-welcome { background: #fff; color: #888; }
-[data-theme="vs"] .tab-welcome i { color: #ccc; }
-[data-theme="vs"] .tab-welcome h2 { color: #555; }
-[data-theme="vs"] .tab-welcome p { color: #666; }
-[data-theme="vs"] .tab-welcome kbd { background: #ececec; border-color: #c0c0c0; color: #333; }
-[data-theme="vs"] .welcome-intro { color: #888; }
-[data-theme="vs"] .welcome-section h3 { color: #555; border-bottom-color: #d0d0d0; }
-[data-theme="vs"] .shortcut-table td { color: #555; }
-[data-theme="vs"] .welcome-tips li { color: #666; }
-[data-theme="vs"] .welcome-tips li i { color: #aaa; }
-[data-theme="vs"] .file-not-found-overlay { background: #fff; color: #888; }
-[data-theme="vs"] .file-not-found-icon { color: #ccc; }
-[data-theme="vs"] .file-not-found-title { color: #555; }
-[data-theme="vs"] .file-not-found-path { color: #888; }
-[data-theme="vs"] .search-results-meta { color: #666; border-bottom-color: #d0d0d0; }
-[data-theme="vs"] .search-results-empty { color: #888; }
-[data-theme="vs"] .ide-git-panel-header { border-color: #cecece; color: #555; }
-[data-theme="vs"] .git-commit-row:hover { background: #e8e8e8; }
-[data-theme="vs"] .git-commit-subrow:hover { background: #e8e8e8; }
-[data-theme="vs"] .git-commit-title { color: #333; }
-[data-theme="vs"] .git-commit-meta { color: #666; }
-[data-theme="vs"] .git-commit-loading { color: #888; }
-[data-theme="vs"] .git-action-btn { color: #555; }
-[data-theme="vs"] .git-action-btn:hover { color: #000; background: rgba(0,0,0,0.08); }
-[data-theme="vs"] .commit-dot-small { background: #fff; }
-[data-theme="vs"] .ide-settings-section-header { color: #555; border-bottom-color: #d0d0d0; }
-[data-theme="vs"] .project-action-btn { color: #555; }
-[data-theme="vs"] .project-action-btn:hover:not(:disabled) { background: #e0e0e0; border-color: #c0c0c0; color: #333; }
-[data-theme="vs"] .git-section-count { background: rgba(0,0,0,0.08); color: #555; }
-
-/* ── High Contrast Dark (hc-black) ───────────────────────── */
-[data-theme="hc-black"] {
-  --bg-base:   #000000;
-  --bg-panel:  #0c0c0c;
-  --bg-hover:  #1a1a1a;
-  --bg-active: #004c8c;
-  --border:    #6fc3df;
-  --text-main: #ffffff;
-  --text-dim:  #ffffff;
-  --text-muted:#aaaaaa;
-  --accent:    #1aebff;
+.ide-icon-btn[aria-busy="true"]::before,
+.project-action-btn[aria-busy="true"]::before {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
 }
-[data-theme="hc-black"] html,
-[data-theme="hc-black"] body,
-[data-theme="hc-black"] #mbeditor-root { background: #000; color: #fff; }
-[data-theme="hc-black"] .ide-shell { background: #000; }
-[data-theme="hc-black"] .ide-titlebar { background: #000; border-color: #6fc3df; color: #fff; }
-[data-theme="hc-black"] .ide-titlebar-title { color: #fff; }
-[data-theme="hc-black"] .ide-sidebar { background: #000; border-color: #6fc3df; }
-[data-theme="hc-black"] .ide-sidebar-scrollable .collapsible-header { background: #000; }
-[data-theme="hc-black"] .sidebar-divider { background: #3c3c3c; border-color: #6fc3df; }
-[data-theme="hc-black"] .ide-sidebar-header { color: #fff; border-color: #6fc3df; }
-[data-theme="hc-black"] .ide-sidebar-tabs { border-color: #6fc3df; }
-[data-theme="hc-black"] .ide-sidebar-tab { color: #ccc; }
-[data-theme="hc-black"] .ide-sidebar-tab:hover { color: #fff; background: #1a1a1a; }
-[data-theme="hc-black"] .ide-sidebar-tab.active { color: #1aebff; border-bottom-color: #1aebff; }
-[data-theme="hc-black"] .tree-item { color: #fff; }
-[data-theme="hc-black"] .tree-item:hover { background: #1a1a1a; outline: 1px solid #6fc3df; }
-[data-theme="hc-black"] .tree-item.active { background: #004c8c; outline: 1px solid #1aebff; }
-[data-theme="hc-black"] .ide-main { background: #000; }
-[data-theme="hc-black"] .tab-bar { background: #000; border-color: #6fc3df; }
-[data-theme="hc-black"] .tab-item { color: #ccc; }
-[data-theme="hc-black"] .tab-item:hover { background: #1a1a1a; outline: 1px solid #6fc3df; }
-[data-theme="hc-black"] .tab-item.active { background: #000; color: #1aebff; border-bottom-color: #1aebff; outline: 1px solid #1aebff; }
-[data-theme="hc-black"] .ide-statusbar { background: #000; border-top: 1px solid #6fc3df; }
-[data-theme="hc-black"] .ide-empty-pane { background: #000; color: #aaa; }
-[data-theme="hc-black"] .ide-settings-tab-content { background: #000; color: #fff; }
-[data-theme="hc-black"] .ide-settings-label { color: #aaa; }
-[data-theme="hc-black"] .ide-settings-select,
-[data-theme="hc-black"] .ide-settings-input { background: #000; color: #fff; border-color: #6fc3df; }
-[data-theme="hc-black"] .ide-settings-reset-btn { background: #000; color: #fff; border-color: #6fc3df; }
-[data-theme="hc-black"] .ide-toast { background: #000; border-color: #6fc3df; color: #fff; }
 
-/* ── hc-black: missing component overrides ───────────────── */
-[data-theme="hc-black"] ::-webkit-scrollbar-track { background: #000; }
-[data-theme="hc-black"] ::-webkit-scrollbar-thumb { background: #555; border: 1px solid #6fc3df; }
-[data-theme="hc-black"] ::-webkit-scrollbar-thumb:hover { background: #888; }
-[data-theme="hc-black"] .tab-bar::-webkit-scrollbar-thumb { background: #555; }
-[data-theme="hc-black"] .collapsible-header { color: #ccc; }
-[data-theme="hc-black"] .collapsible-header:hover { background: #1a1a1a; color: #fff; outline: 1px solid #6fc3df; }
-[data-theme="hc-black"] .ide-icon-btn { color: #ccc; }
-[data-theme="hc-black"] .ide-icon-btn:hover { background: #1a1a1a; color: #fff; outline: 1px solid #6fc3df; }
-[data-theme="hc-black"] .ide-icon-btn.active { color: #1aebff; }
-[data-theme="hc-black"] .ide-editor-toolbar { background: #000; border-bottom-color: #6fc3df; }
-[data-theme="hc-black"] .context-menu { background: #000; border-color: #6fc3df; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,0.8); }
-[data-theme="hc-black"] .context-menu-item:hover { background: #004c8c; color: #fff; outline: 1px solid #1aebff; }
-[data-theme="hc-black"] .context-menu-item-danger:hover { outline-color: #f48771; }
-[data-theme="hc-black"] .context-menu-divider { background: #6fc3df; }
-[data-theme="hc-black"] .quick-open-box { background: #000; border-color: #6fc3df; box-shadow: 0 16px 48px rgba(0,0,0,0.9); }
-[data-theme="hc-black"] .quick-open-input { color: #fff; border-bottom-color: #6fc3df; }
-[data-theme="hc-black"] .quick-open-clear-btn { color: #ccc; }
-[data-theme="hc-black"] .quick-open-clear-btn:hover { background: #1a1a1a; color: #fff; }
-[data-theme="hc-black"] .quick-open-result:hover,
-[data-theme="hc-black"] .quick-open-result.selected { background: #004c8c; outline: 1px solid #1aebff; }
-[data-theme="hc-black"] .quick-open-result-name { color: #fff; }
-[data-theme="hc-black"] .quick-open-result-path { color: #aaa; }
-[data-theme="hc-black"] .quick-open-section-header { color: #aaa; }
-[data-theme="hc-black"] .quick-open-empty-hint { color: #aaa; }
-[data-theme="hc-black"] .shelp-panel { background: #000; border-color: #6fc3df; box-shadow: 0 12px 40px rgba(0,0,0,0.9); }
-[data-theme="hc-black"] .shelp-header { border-bottom-color: #6fc3df; }
-[data-theme="hc-black"] .shelp-title { color: #fff; }
-[data-theme="hc-black"] .shelp-close { color: #ccc; }
-[data-theme="hc-black"] .shelp-close:hover { background: #1a1a1a; color: #fff; }
-[data-theme="hc-black"] .shelp-key kbd { background: #111; border-color: #6fc3df; color: #fff; }
-[data-theme="hc-black"] .shelp-section-title { color: #aaa; border-bottom-color: #6fc3df; }
-[data-theme="hc-black"] .shelp-desc { color: #ccc; }
-[data-theme="hc-black"] .shelp-tips li { color: #ccc; }
-[data-theme="hc-black"] .tab-welcome { background: #000; }
-[data-theme="hc-black"] .tab-welcome i { color: #333; }
-[data-theme="hc-black"] .tab-welcome h2,
-[data-theme="hc-black"] .tab-welcome p { color: #aaa; }
-[data-theme="hc-black"] .tab-welcome kbd { background: #111; border-color: #6fc3df; color: #fff; }
-[data-theme="hc-black"] .welcome-section h3 { color: #aaa; border-bottom-color: #6fc3df; }
-[data-theme="hc-black"] .shortcut-table td { color: #ccc; }
-[data-theme="hc-black"] .file-not-found-overlay { background: #000; color: #aaa; }
-[data-theme="hc-black"] .file-not-found-icon { color: #333; }
-[data-theme="hc-black"] .file-not-found-title { color: #ccc; }
-[data-theme="hc-black"] .search-results-meta { color: #aaa; border-bottom-color: #6fc3df; }
-[data-theme="hc-black"] .search-results-empty { color: #aaa; }
-[data-theme="hc-black"] .git-commit-row:hover { background: #1a1a1a; outline: 1px solid #6fc3df; }
-[data-theme="hc-black"] .git-commit-subrow:hover { background: #1a1a1a; outline: 1px solid #6fc3df; }
-[data-theme="hc-black"] .git-commit-title { color: #fff; }
-[data-theme="hc-black"] .git-commit-meta { color: #aaa; }
-[data-theme="hc-black"] .git-action-btn { color: #ccc; }
-[data-theme="hc-black"] .git-action-btn:hover { color: #fff; background: rgba(255,255,255,0.1); }
-[data-theme="hc-black"] .commit-dot-small { background: #000; }
-[data-theme="hc-black"] .project-action-btn { color: #ccc; }
-[data-theme="hc-black"] .project-action-btn:hover:not(:disabled) { background: #1a1a1a; border-color: #6fc3df; color: #fff; }
-[data-theme="hc-black"] .git-section-count { background: rgba(255,255,255,0.1); color: #ccc; }
-[data-theme="hc-black"] .sidebar-strip-btn { color: #ccc; }
-[data-theme="hc-black"] .sidebar-strip-btn:hover { background: #1a1a1a; color: #fff; outline: 1px solid #6fc3df; }
-[data-theme="hc-black"] .sidebar-strip-btn.active { color: #1aebff; border-left-color: #1aebff; }
-
-/* ── High Contrast Light (hc-light) ─────────────────────── */
-[data-theme="hc-light"] {
-  --bg-base:   #ffffff;
-  --bg-panel:  #f8f8f8;
-  --bg-hover:  #ebebeb;
-  --bg-active: #0f4a85;
-  --border:    #000000;
-  --text-main: #000000;
-  --text-dim:  #000000;
-  --text-muted:#444444;
-  --accent:    #0000c5;
+/* Statusbar buttons — keep them 22px tall while aria-busy spinner shows */
+.statusbar-btn[aria-busy="true"] {
+  min-width: 44px;
 }
-[data-theme="hc-light"] html,
-[data-theme="hc-light"] body,
-[data-theme="hc-light"] #mbeditor-root { background: #fff; color: #000; }
-[data-theme="hc-light"] .ide-shell { background: #fff; }
-[data-theme="hc-light"] .ide-titlebar { background: #f8f8f8; border-color: #000; color: #000; }
-[data-theme="hc-light"] .ide-titlebar-title { color: #000; }
-[data-theme="hc-light"] .ide-sidebar { background: #f8f8f8; border-color: #000; }
-[data-theme="hc-light"] .ide-sidebar-scrollable .collapsible-header { background: #f8f8f8; }
-[data-theme="hc-light"] .sidebar-divider { background: #e0e0e0; border-color: #000; }
-[data-theme="hc-light"] .ide-sidebar-header { color: #000; border-color: #000; font-weight: 700; }
-[data-theme="hc-light"] .ide-sidebar-tabs { border-color: #000; }
-[data-theme="hc-light"] .ide-sidebar-tab { color: #000; }
-[data-theme="hc-light"] .ide-sidebar-tab:hover { background: #ebebeb; outline: 1px solid #000; }
-[data-theme="hc-light"] .ide-sidebar-tab.active { color: #0000c5; border-bottom: 2px solid #0000c5; }
-[data-theme="hc-light"] .tree-item { color: #000; }
-[data-theme="hc-light"] .tree-item:hover { background: #ebebeb; outline: 1px solid #000; }
-[data-theme="hc-light"] .tree-item.active { background: #d0e4f7; outline: 1px solid #0000c5; color: #000; }
-[data-theme="hc-light"] .ide-main { background: #fff; }
-[data-theme="hc-light"] .tab-bar { background: #f8f8f8; border-color: #000; }
-[data-theme="hc-light"] .tab-item { color: #000; }
-[data-theme="hc-light"] .tab-item:hover { background: #ebebeb; outline: 1px solid #000; }
-[data-theme="hc-light"] .tab-item.active { background: #fff; color: #0000c5; border-bottom: 2px solid #0000c5; outline: 1px solid #0000c5; }
-[data-theme="hc-light"] .ide-statusbar { background: #0000c5; }
-[data-theme="hc-light"] .ide-empty-pane { background: #fff; color: #444; }
-[data-theme="hc-light"] .ide-settings-tab-content { background: #fff; color: #000; }
-[data-theme="hc-light"] .ide-settings-label { color: #444; }
-[data-theme="hc-light"] .ide-settings-select,
-[data-theme="hc-light"] .ide-settings-input { background: #fff; color: #000; border-color: #000; }
-[data-theme="hc-light"] .ide-settings-reset-btn { background: #f8f8f8; color: #000; border-color: #000; }
-[data-theme="hc-light"] .ide-toast { background: #f8f8f8; border-color: #000; color: #000; }
+.statusbar-btn[aria-busy="true"]::before {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+}
 
-/* ── hc-light: missing component overrides ───────────────── */
-[data-theme="hc-light"] ::-webkit-scrollbar-track { background: #fff; }
-[data-theme="hc-light"] ::-webkit-scrollbar-thumb { background: #aaa; border: 1px solid #000; }
-[data-theme="hc-light"] ::-webkit-scrollbar-thumb:hover { background: #777; }
-[data-theme="hc-light"] .tab-bar::-webkit-scrollbar-thumb { background: #aaa; }
-[data-theme="hc-light"] .collapsible-header { color: #000; font-weight: 700; }
-[data-theme="hc-light"] .collapsible-header:hover { background: #ebebeb; color: #000; outline: 1px solid #000; }
-[data-theme="hc-light"] .ide-icon-btn { color: #000; }
-[data-theme="hc-light"] .ide-icon-btn:hover { background: #ebebeb; color: #000; outline: 1px solid #000; }
-[data-theme="hc-light"] .ide-icon-btn.active { color: #0000c5; }
-[data-theme="hc-light"] .ide-editor-toolbar { background: #f8f8f8; border-bottom-color: #000; }
-[data-theme="hc-light"] .context-menu { background: #fff; border-color: #000; color: #000; box-shadow: 0 4px 16px rgba(0,0,0,0.2); }
-[data-theme="hc-light"] .context-menu-item:hover { background: #d0e4f7; color: #000; outline: 1px solid #0000c5; }
-[data-theme="hc-light"] .context-menu-item-danger:hover { background: rgba(244,135,113,0.15); color: #c0392b; outline-color: #c0392b; }
-[data-theme="hc-light"] .context-menu-divider { background: #000; }
-[data-theme="hc-light"] .quick-open-box { background: #fff; border-color: #000; box-shadow: 0 16px 48px rgba(0,0,0,0.2); }
-[data-theme="hc-light"] .quick-open-input { color: #000; border-bottom-color: #000; }
-[data-theme="hc-light"] .quick-open-clear-btn { color: #444; }
-[data-theme="hc-light"] .quick-open-clear-btn:hover { background: #ebebeb; color: #000; }
-[data-theme="hc-light"] .quick-open-result:hover,
-[data-theme="hc-light"] .quick-open-result.selected { background: #d0e4f7; outline: 1px solid #0000c5; }
-[data-theme="hc-light"] .quick-open-result-name { color: #000; }
-[data-theme="hc-light"] .quick-open-result-path { color: #444; }
-[data-theme="hc-light"] .quick-open-section-header { color: #444; }
-[data-theme="hc-light"] .quick-open-empty-hint { color: #444; }
-[data-theme="hc-light"] .shelp-panel { background: #fff; border-color: #000; box-shadow: 0 12px 40px rgba(0,0,0,0.2); }
-[data-theme="hc-light"] .shelp-header { border-bottom-color: #000; }
-[data-theme="hc-light"] .shelp-title { color: #000; font-weight: 700; }
-[data-theme="hc-light"] .shelp-close { color: #444; }
-[data-theme="hc-light"] .shelp-close:hover { background: #ebebeb; color: #000; outline: 1px solid #000; }
-[data-theme="hc-light"] .shelp-key kbd { background: #f0f0f0; border-color: #000; color: #000; }
-[data-theme="hc-light"] .shelp-section-title { color: #000; font-weight: 700; border-bottom-color: #000; }
-[data-theme="hc-light"] .shelp-desc { color: #333; }
-[data-theme="hc-light"] .shelp-tips li { color: #333; }
-[data-theme="hc-light"] .shelp-tips li::before { color: #000; }
-[data-theme="hc-light"] .tab-welcome { background: #fff; color: #555; }
-[data-theme="hc-light"] .tab-welcome i { color: #aaa; }
-[data-theme="hc-light"] .tab-welcome h2 { color: #000; }
-[data-theme="hc-light"] .tab-welcome p { color: #333; }
-[data-theme="hc-light"] .tab-welcome kbd { background: #f0f0f0; border-color: #000; color: #000; }
-[data-theme="hc-light"] .welcome-intro { color: #444; }
-[data-theme="hc-light"] .welcome-section h3 { color: #000; font-weight: 700; border-bottom-color: #000; }
-[data-theme="hc-light"] .shortcut-table td { color: #333; }
-[data-theme="hc-light"] .welcome-tips li { color: #333; }
-[data-theme="hc-light"] .file-not-found-overlay { background: #fff; color: #555; }
-[data-theme="hc-light"] .file-not-found-icon { color: #aaa; }
-[data-theme="hc-light"] .file-not-found-title { color: #000; }
-[data-theme="hc-light"] .file-not-found-path { color: #444; }
-[data-theme="hc-light"] .search-results-meta { color: #444; border-bottom-color: #000; }
-[data-theme="hc-light"] .search-results-empty { color: #555; }
-[data-theme="hc-light"] .git-commit-row:hover { background: #ebebeb; outline: 1px solid #000; }
-[data-theme="hc-light"] .git-commit-subrow:hover { background: #ebebeb; outline: 1px solid #000; }
-[data-theme="hc-light"] .git-commit-title { color: #000; }
-[data-theme="hc-light"] .git-commit-meta { color: #444; }
-[data-theme="hc-light"] .git-action-btn { color: #444; }
-[data-theme="hc-light"] .git-action-btn:hover { color: #000; background: rgba(0,0,0,0.08); outline: 1px solid #000; }
-[data-theme="hc-light"] .commit-dot-small { background: #fff; border-color: #0000c5; }
-[data-theme="hc-light"] .project-action-btn { color: #333; }
-[data-theme="hc-light"] .project-action-btn:hover:not(:disabled) { background: #ebebeb; border-color: #000; color: #000; }
-[data-theme="hc-light"] .git-section-count { background: rgba(0,0,0,0.08); color: #000; }
-[data-theme="hc-light"] .sidebar-strip-btn { color: #333; }
-[data-theme="hc-light"] .sidebar-strip-btn:hover { background: #ebebeb; color: #000; outline: 1px solid #000; }
-[data-theme="hc-light"] .sidebar-strip-btn.active { color: #0000c5; border-left-color: #0000c5; }
+/* ── Base loading / empty / error state classes ────────────────────────── */
+.ide-loading-state {
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--ide-text-muted);
+}
+.ide-empty-state {
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--ide-text-muted);
+  text-align: center;
+}
+.ide-error-state {
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--ide-danger);
+}
 
-/* ── Markdown preview — light theme ────────────────────── */
-[data-theme="vs"] .markdown-preview { background: #ffffff; color: #333; }
-[data-theme="vs"] .markdown-preview h1,
-[data-theme="vs"] .markdown-preview h2,
-[data-theme="vs"] .markdown-preview h3,
-[data-theme="vs"] .markdown-preview h4 { color: #000; }
-[data-theme="vs"] .markdown-preview a { color: #0070c1; }
-[data-theme="vs"] .markdown-preview code { background: #efefef; color: #333; }
-[data-theme="vs"] .markdown-preview pre code { background: #f5f5f5; }
-[data-theme="vs"] .markdown-preview blockquote { border-left: 3px solid #c0c0c0; color: #555; }
-[data-theme="vs"] .markdown-preview table td,
-[data-theme="vs"] .markdown-preview table th { border-color: #c0c0c0; }
-[data-theme="vs"] .markdown-preview hr { border-color: #c0c0c0; }
+/* Buttons — Pico makes them large; IDE uses tiny icon/toolbar buttons.
+ * Do NOT set border-radius here — each button class controls its own.
+ */
+button:not(.pico-btn) {
+  --pico-form-element-spacing-vertical: 3px;
+  --pico-form-element-spacing-horizontal: 8px;
+  padding: var(--pico-form-element-spacing-vertical) var(--pico-form-element-spacing-horizontal);
+  font-size: 12px;
+}
 
-/* ── Markdown preview — HC Dark ─────────────────────────── */
-[data-theme="hc-black"] .markdown-preview { background: #000; color: #fff; }
-[data-theme="hc-black"] .markdown-preview h1,
-[data-theme="hc-black"] .markdown-preview h2,
-[data-theme="hc-black"] .markdown-preview h3,
-[data-theme="hc-black"] .markdown-preview h4 { color: #fff; }
-[data-theme="hc-black"] .markdown-preview a { color: #1aebff; }
-[data-theme="hc-black"] .markdown-preview code { background: #1a1a1a; color: #fff; }
-[data-theme="hc-black"] .markdown-preview blockquote { border-left: 3px solid #6fc3df; }
+/* Inputs and selects — keep compact but styled */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+select,
+textarea {
+  --pico-form-element-spacing-vertical: 4px;
+  --pico-form-element-spacing-horizontal: 8px;
+  padding: var(--pico-form-element-spacing-vertical) var(--pico-form-element-spacing-horizontal);
+  font-size: 12px;
+  margin-bottom: 0;
+}
 
-/* ── Markdown preview — HC Light ────────────────────────── */
-[data-theme="hc-light"] .markdown-preview { background: #fff; color: #000; }
-[data-theme="hc-light"] .markdown-preview h1,
-[data-theme="hc-light"] .markdown-preview h2,
-[data-theme="hc-light"] .markdown-preview h3,
-[data-theme="hc-light"] .markdown-preview h4 { color: #000; font-weight: 700; }
-[data-theme="hc-light"] .markdown-preview a { color: #0000c5; }
-[data-theme="hc-light"] .markdown-preview code { background: #f0f0f0; color: #000; border: 1px solid #000; }
-[data-theme="hc-light"] .markdown-preview blockquote { border-left: 3px solid #000; }
+/* Status bar buttons override (22px tall, full-bleed) */
+.ide-statusbar button,
+.statusbar-btn {
+  --pico-form-element-spacing-vertical: 0;
+  --pico-form-element-spacing-horizontal: 8px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  border-radius: 2px;
+  border: none;
+  background: transparent;
+  color: var(--ide-accent-text);
+}
 
-/* ── Git panel — light theme ─────────────────────────────── */
-[data-theme="vs"] .ide-git-right-panel { background: #f3f3f3; border-color: #cecece; }
-[data-theme="vs"] .gitpanel-divider { background: #e0e0e0; border-color: #cecece; }
-[data-theme="vs"] .ide-git-panel { background: #f3f3f3; }
-[data-theme="vs"] .ide-git-panel-header { border-color: #cecece; }
-[data-theme="vs"] .ide-git-panel-title { color: #0070c1; }
-[data-theme="vs"] .ide-git-panel-branch { color: #333; }
-[data-theme="vs"] .git-header-btn { color: #555; }
-[data-theme="vs"] .git-header-btn:hover { background: rgba(0,0,0,0.06); color: #000; }
-[data-theme="vs"] .git-metadata { color: #444; border-color: #cecece; }
-[data-theme="vs"] .git-section { border-color: #ddd; }
-[data-theme="vs"] .git-section-title { background: #ececec; color: #555; }
-[data-theme="vs"] .git-file-item:hover { background: #e3e3e3; }
-[data-theme="vs"] .git-file-name { color: #333; }
-[data-theme="vs"] .git-file-dir { color: #888; }
-[data-theme="vs"] .git-hint { color: #666; }
-[data-theme="vs"] .git-list::-webkit-scrollbar-thumb { background: #c0c0c0; }
+/* Sidebar icon strip and icon buttons — must stay square and tiny */
+.ide-icon-btn,
+.git-header-btn,
+.git-action-btn,
+.project-action-btn,
+.tab-close,
+.search-clear-btn,
+.quick-open-clear-btn,
+.shelp-close {
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.sidebar-strip-btn {
+  padding: 0;
+  margin: 0;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 
-/* ── Git panel — HC Dark ─────────────────────────────────── */
-[data-theme="hc-black"] .ide-git-right-panel { background: #000; border-color: #6fc3df; }
-[data-theme="hc-black"] .gitpanel-divider { background: #000; border-color: #6fc3df; }
-[data-theme="hc-black"] .ide-git-panel { background: #000; }
-[data-theme="hc-black"] .ide-git-panel-header { border-color: #6fc3df; }
-[data-theme="hc-black"] .ide-git-panel-title { color: #1aebff; }
-[data-theme="hc-black"] .ide-git-panel-branch { color: #fff; }
-[data-theme="hc-black"] .git-header-btn { color: #ccc; }
-[data-theme="hc-black"] .git-header-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
-[data-theme="hc-black"] .git-metadata { color: #ccc; border-color: #6fc3df; }
-[data-theme="hc-black"] .git-section { border-color: #6fc3df; }
-[data-theme="hc-black"] .git-section-title { background: #0c0c0c; color: #ccc; }
-[data-theme="hc-black"] .git-file-item:hover { background: #1a1a1a; outline: 1px solid #6fc3df; }
-[data-theme="hc-black"] .git-file-name { color: #fff; }
-[data-theme="hc-black"] .git-file-dir { color: #aaa; }
-[data-theme="hc-black"] .git-hint { color: #aaa; }
+/* Context menu items */
+.context-menu-item {
+  --pico-form-element-spacing-vertical: 6px;
+  font-size: 12px;
+  border-radius: 0;
+  border: none;
+}
 
-/* ── Git panel — HC Light ────────────────────────────────── */
-[data-theme="hc-light"] .ide-git-right-panel { background: #f8f8f8; border-color: #000; }
-[data-theme="hc-light"] .gitpanel-divider { background: #e0e0e0; border-color: #000; }
-[data-theme="hc-light"] .ide-git-panel { background: #f8f8f8; }
-[data-theme="hc-light"] .ide-git-panel-header { border-color: #000; }
-[data-theme="hc-light"] .ide-git-panel-title { color: #0000c5; font-weight: 700; }
-[data-theme="hc-light"] .ide-git-panel-branch { color: #000; font-weight: 700; }
-[data-theme="hc-light"] .git-header-btn { color: #000; }
-[data-theme="hc-light"] .git-header-btn:hover { background: rgba(0,0,0,0.08); outline: 1px solid #000; }
-[data-theme="hc-light"] .git-metadata { color: #000; border-color: #000; }
-[data-theme="hc-light"] .git-section { border-color: #000; }
-[data-theme="hc-light"] .git-section-title { background: #ebebeb; color: #000; font-weight: 700; }
-[data-theme="hc-light"] .git-file-item:hover { background: #ebebeb; outline: 1px solid #000; }
-[data-theme="hc-light"] .git-file-name { color: #000; }
-[data-theme="hc-light"] .git-file-dir { color: #444; }
-[data-theme="hc-light"] .git-hint { color: #444; }
+/* Tree inline create input — ultra-compact */
+.tree-inline-input {
+  padding: 1px 4px;
+  height: 18px;
+  line-height: 18px;
+  font-size: 12px;
+  margin-bottom: 0;
+}
+
+/* Tab bar and tab items — horizontal strip, no Pico margin */
+.tab-bar, .tab-item { margin: 0; }
+
+/* Settings panel forms — compact Pico overrides; selects use full column width */
+.ide-settings-body input,
+.ide-settings-body select {
+  --pico-form-element-spacing-vertical: 3px;
+  --pico-form-element-spacing-horizontal: 6px;
+  font-size: 12px;
+  margin-bottom: 0;
+}
+
+/* Pico adds bottom margin to most elements — strip it from IDE components */
+.ide-sidebar *, .ide-statusbar *, .tab-bar * { margin-bottom: 0; }
+
+/* kbd in shortcut help and welcome screen — keep compact */
+kbd {
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: monospace;
+  border-radius: 3px;
+}
+
+/* Checkboxes and radios — restore native appearance; Pico replaces them with pure CSS */
+input[type="checkbox"],
+input[type="radio"] {
+  appearance: auto;
+  -webkit-appearance: auto;
+  width: auto;
+  height: auto;
+  margin: 0;
+}
+
+/* Global margin-bottom reset so Pico doesn't push IDE buttons out of flex rows */
+button:not(.pico-btn) { margin-bottom: 0; }
+
+/* Titlebar buttons (git status, keyboard shortcuts) — keep inline in the 32px bar */
+.ide-titlebar button {
+  margin-bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  line-height: 1;
+}
+
+/* Status bar button text colour must match the accent bar background */
+.ide-statusbar button,
+.statusbar-btn {
+  color: var(--ide-accent-text);
+}
+
+/* Global border-radius reset for all IDE buttons — Pico's [type=button] gives 0.25rem.
+ * This selector has higher specificity (0,1,1) than Pico's (0,1,0) so wins without !important. */
+.ide-shell button {
+  border-radius: 0;
+}
+/* Re-apply border-radius for buttons that intentionally need it */
+.ide-shell .project-action-btn { border-radius: 4px; }
+.ide-shell .ide-icon-btn,
+.ide-shell .git-header-btn,
+.ide-shell .git-action-btn,
+.ide-shell .tab-close,
+.ide-shell .search-clear-btn,
+.ide-shell .quick-open-clear-btn,
+.ide-shell .shelp-close { border-radius: 3px; }
+.ide-shell .statusbar-btn { border-radius: 2px; }
+
+/* Shortcuts panel table — Pico classless styles <table> with its own background
+   and color; override so the panel background and text chain shows through */
+.shelp-panel table,
+.shelp-panel thead,
+.shelp-panel tbody,
+.shelp-panel th,
+.shelp-panel td,
+.shelp-panel tr {
+  background: transparent;
+  border-color: var(--ide-border);
+  color: inherit;
+}
+
+/* Modal panel inner tables (e.g. settings) — same transparent fix */
+.ide-modal-panel table,
+.ide-modal-panel thead,
+.ide-modal-panel tbody,
+.ide-modal-panel th,
+.ide-modal-panel td {
+  background: transparent;
+  border-color: var(--ide-border);
+}
+
+/* Context menus — Pico may give article/section a card background; keep transparent */
+.context-menu table,
+.context-menu thead,
+.context-menu tbody,
+.context-menu td {
+  background: transparent;
+  border: none;
+}
+
+/* ── Pico [role="group"] compact overrides for IDE density ───────────────────
+ * Pico's default group: display:inline-flex; width:100%; margin-bottom:spacing
+ * and sets flex:1 1 auto on children + 2rem horizontal padding on buttons.
+ * IDE groups must stay compact (auto-width, no bottom margin, no stretch).
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/* Reset full-width and bottom-margin on all IDE-density groups */
+.ide-titlebar [role="group"],
+.ide-git-panel-actions[role="group"],
+.git-file-actions[role="group"],
+.ide-file-history-header [role="group"],
+.project-actions[role="group"] {
+  width: auto;
+  margin-bottom: 0;
+}
+
+/* Neutralise Pico's border-joining negative margin — buttons have no border so it just causes overlap */
+.ide-titlebar [role="group"] > *:not(:first-child) {
+  margin-left: 4px;
+}
+
+/* Stop children from stretching (override Pico's flex:1 1 auto on group children) */
+.ide-titlebar [role="group"] > *,
+.ide-git-panel-actions[role="group"] > *,
+.git-file-actions[role="group"] > *,
+.ide-file-history-header [role="group"] > *,
+.project-actions[role="group"] > * {
+  flex: 0 0 auto;
+}
+
+/* Neutralise Pico's 2rem horizontal padding override on group buttons */
+.ide-titlebar [role="group"] button,
+.ide-git-panel-actions[role="group"] button,
+.git-file-actions[role="group"] button,
+.ide-file-history-header [role="group"] button,
+.project-actions[role="group"] button {
+  --pico-form-element-spacing-horizontal: 0;
+}

@@ -83,8 +83,8 @@ var CodeReviewPanel = function CodeReviewPanel(_ref) {
         ),
         isRedmineLoading ? React.createElement(
           'div',
-          { className: 'ide-loading-state' },
-          'Loading issue details...'
+          { className: 'ide-loading-state', 'aria-busy': 'true' },
+          'Loading issue details…'
         ) : redmineError ? React.createElement(
           'div',
           { className: 'ide-error-state' },

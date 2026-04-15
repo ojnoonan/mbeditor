@@ -779,6 +779,34 @@
         ]
       };
     }
+
+    // Vim-style fold-marker folding provider.
+    // Recognises {{{ (open) and }}} (close) anywhere in a line, matching the
+    // convention used by vim's `foldmethod=marker`. Registered for every
+    // language so it works in Ruby, JS, CSS, etc. The provider is additive —
+    // Monaco merges its results with any language-specific syntax ranges.
+    var VIM_FOLD_OPEN  = /\{\{\{/;
+    var VIM_FOLD_CLOSE = /\}\}\}/;
+
+    monaco.languages.registerFoldingRangeProvider({ scheme: '*' }, {
+      provideFoldingRanges: function provideFoldingRanges(model) {
+        var lineCount = model.getLineCount();
+        var stack = [];
+        var ranges = [];
+
+        for (var i = 1; i <= lineCount; i++) {
+          var line = model.getLineContent(i);
+          if (VIM_FOLD_OPEN.test(line)) {
+            stack.push(i);
+          } else if (VIM_FOLD_CLOSE.test(line) && stack.length > 0) {
+            var start = stack.pop();
+            ranges.push({ start: start, end: i, kind: monaco.languages.FoldingRangeKind.Region });
+          }
+        }
+
+        return ranges;
+      }
+    });
   }
 
   window.MbeditorEditorPlugins = {

@@ -1,0 +1,450 @@
+/* ── Mbeditor Theme Token System ─────────────────────────────────────────────
+ * Single source of truth for all 18 --ide-* design tokens across 11 themes.
+ * Pico CSS --pico-* variables are mapped to these tokens so Pico-styled
+ * elements automatically inherit the active theme on every theme switch.
+ *
+ * Theme is applied by MbeditorApp.js:
+ *   document.documentElement.setAttribute('data-theme', editorPrefs.theme)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/* ══ DEFAULT / vs-dark ══════════════════════════════════════════════════════ */
+:root,
+[data-theme="vs-dark"] {
+  color-scheme: dark;
+  --status-hover-bg:    rgba(255,255,255,0.08);
+  --ide-accent-text:    #ffffff;
+
+  /* Backgrounds */
+  --ide-bg:             #1e1e1e;
+  --ide-panel-bg:       #252526;
+  --ide-panel-bg-alt:   #202124;
+  --ide-hover-bg:       #2a2d2e;
+  --ide-active-bg:      #094771;
+  --ide-input-bg:       #3c3c3c;
+
+  /* Borders */
+  --ide-border:         #3c3c3c;
+  --ide-border-input:   #555555;
+
+  /* Text */
+  --ide-text:           #cccccc;
+  --ide-text-dim:       #bbbbbb;
+  --ide-text-muted:     #888888;
+
+  /* Accent */
+  --ide-accent:         #007acc;
+  --ide-accent-fg:      #4ec9b0;
+
+  /* Status */
+  --ide-success:        #89d185;
+  --ide-danger:         #f48771;
+  --ide-warning:        #f9a825;
+
+  /* Misc */
+  --ide-scrollbar:      #424242;
+  --ide-graph-line:     #555555;
+}
+
+/* ══ LIGHT / vs ═════════════════════════════════════════════════════════════ */
+[data-theme="vs"] {
+  color-scheme: light;
+  --ide-accent-text:    #ffffff;
+  --status-hover-bg:    rgba(0,0,0,0.06);
+  --ide-bg:             #ffffff;
+  --ide-panel-bg:       #f3f3f3;
+  --ide-panel-bg-alt:   #ececec;
+  --ide-hover-bg:       #e8e8e8;
+  --ide-active-bg:      #d4e6f5;
+  --ide-input-bg:       #ffffff;
+
+  --ide-border:         #cecece;
+  --ide-border-input:   #bdbdbd;
+
+  --ide-text:           #333333;
+  --ide-text-dim:       #616161;
+  --ide-text-muted:     #999999;
+
+  --ide-accent:         #007acc;
+  --ide-accent-fg:      #0070c1;
+
+  --ide-success:        #388a34;
+  --ide-danger:         #d32f2f;
+  --ide-warning:        #b5890a;
+
+  --ide-scrollbar:      #c0c0c0;
+  --ide-graph-line:     #bdbdbd;
+}
+
+/* ══ HIGH CONTRAST DARK / hc-black ══════════════════════════════════════════ */
+[data-theme="hc-black"] {
+  color-scheme: dark;
+  --ide-accent-text:    #000000;
+  --status-hover-bg:    rgba(255,255,255,0.12);
+  --ide-bg:             #000000;
+  --ide-panel-bg:       #0a0a0a;
+  --ide-panel-bg-alt:   #111111;
+  --ide-hover-bg:       #1a1a1a;
+  --ide-active-bg:      #0050a4;
+  --ide-input-bg:       #1a1a1a;
+
+  --ide-border:         #6fc3df;
+  --ide-border-input:   #6fc3df;
+
+  --ide-text:           #ffffff;
+  --ide-text-dim:       #d4d4d4;
+  --ide-text-muted:     #a0a0a0;
+
+  --ide-accent:         #1aebff;
+  --ide-accent-fg:      #1aebff;
+
+  --ide-success:        #2bb174;
+  --ide-danger:         #f48771;
+  --ide-warning:        #f9a825;
+
+  --ide-scrollbar:      #6fc3df;
+  --ide-graph-line:     #6fc3df;
+}
+
+/* ══ HIGH CONTRAST LIGHT / hc-light ═════════════════════════════════════════ */
+[data-theme="hc-light"] {
+  color-scheme: light;
+  --ide-accent-text:    #ffffff;
+  --status-hover-bg:    rgba(0,0,0,0.06);
+  --ide-bg:             #ffffff;
+  --ide-panel-bg:       #f8f8f8;
+  --ide-panel-bg-alt:   #f0f0f0;
+  --ide-hover-bg:       #e0e0e0;
+  --ide-active-bg:      #cce5ff;
+  --ide-input-bg:       #ffffff;
+
+  --ide-border:         #0f4a85;
+  --ide-border-input:   #0f4a85;
+
+  --ide-text:           #000000;
+  --ide-text-dim:       #292929;
+  --ide-text-muted:     #444444;
+
+  --ide-accent:         #0000c5;
+  --ide-accent-fg:      #0000c5;
+
+  --ide-success:        #006600;
+  --ide-danger:         #cc0000;
+  --ide-warning:        #7d4f01;
+
+  --ide-scrollbar:      #0f4a85;
+  --ide-graph-line:     #0f4a85;
+}
+
+/* ══ DRACULA ════════════════════════════════════════════════════════════════ */
+[data-theme="dracula"] {
+  color-scheme: dark;
+  --ide-accent-text:    #ffffff;
+  --status-hover-bg:    rgba(255,255,255,0.08);
+  --ide-bg:             #282a36;
+  --ide-panel-bg:       #21222c;
+  --ide-panel-bg-alt:   #1e1f29;
+  --ide-hover-bg:       #343746;
+  --ide-active-bg:      #44475a;
+  --ide-input-bg:       #343746;
+
+  --ide-border:         #44475a;
+  --ide-border-input:   #6272a4;
+
+  --ide-text:           #f8f8f2;
+  --ide-text-dim:       #cdd6f4;
+  --ide-text-muted:     #6272a4;
+
+  --ide-accent:         #bd93f9;
+  --ide-accent-fg:      #50fa7b;
+
+  --ide-success:        #50fa7b;
+  --ide-danger:         #ff5555;
+  --ide-warning:        #ffb86c;
+
+  --ide-scrollbar:      #6272a4;
+  --ide-graph-line:     #6272a4;
+}
+
+/* ══ NIGHT OWL ══════════════════════════════════════════════════════════════ */
+[data-theme="night-owl"] {
+  color-scheme: dark;
+  --ide-accent-text:    #ffffff;
+  --status-hover-bg:    rgba(255,255,255,0.08);
+  --ide-bg:             #011627;
+  --ide-panel-bg:       #01111d;
+  --ide-panel-bg-alt:   #010e17;
+  --ide-hover-bg:       #0d2137;
+  --ide-active-bg:      #1d3b53;
+  --ide-input-bg:       #0d2137;
+
+  --ide-border:         #1d3b53;
+  --ide-border-input:   #2d5a8e;
+
+  --ide-text:           #d6deeb;
+  --ide-text-dim:       #adbac7;
+  --ide-text-muted:     #637777;
+
+  --ide-accent:         #82aaff;
+  --ide-accent-fg:      #7fdbca;
+
+  --ide-success:        #addb67;
+  --ide-danger:         #ef5350;
+  --ide-warning:        #ffcb8b;
+
+  --ide-scrollbar:      #2d5a8e;
+  --ide-graph-line:     #2d5a8e;
+}
+
+/* ══ MONOKAI ════════════════════════════════════════════════════════════════ */
+[data-theme="monokai"] {
+  color-scheme: dark;
+  --ide-accent-text:    #000000;
+  --status-hover-bg:    rgba(255,255,255,0.08);
+  --ide-bg:             #272822;
+  --ide-panel-bg:       #1e1f1c;
+  --ide-panel-bg-alt:   #1b1c1a;
+  --ide-hover-bg:       #3e3d32;
+  --ide-active-bg:      #49483e;
+  --ide-input-bg:       #3e3d32;
+
+  --ide-border:         #3e3d32;
+  --ide-border-input:   #75715e;
+
+  --ide-text:           #f8f8f2;
+  --ide-text-dim:       #cfcfc2;
+  --ide-text-muted:     #75715e;
+
+  --ide-accent:         #a6e22e;
+  --ide-accent-fg:      #66d9e8;
+
+  --ide-success:        #a6e22e;
+  --ide-danger:         #f92672;
+  --ide-warning:        #fd971f;
+
+  --ide-scrollbar:      #75715e;
+  --ide-graph-line:     #75715e;
+}
+
+/* ══ NORD ═══════════════════════════════════════════════════════════════════ */
+[data-theme="nord"] {
+  color-scheme: dark;
+  --ide-accent-text:    #000000;
+  --status-hover-bg:    rgba(255,255,255,0.08);
+  --ide-bg:             #2e3440;
+  --ide-panel-bg:       #252a34;
+  --ide-panel-bg-alt:   #20242e;
+  --ide-hover-bg:       #3b4252;
+  --ide-active-bg:      #434c5e;
+  --ide-input-bg:       #3b4252;
+
+  --ide-border:         #434c5e;
+  --ide-border-input:   #4c566a;
+
+  --ide-text:           #d8dee9;
+  --ide-text-dim:       #e5e9f0;
+  --ide-text-muted:     #4c566a;
+
+  --ide-accent:         #88c0d0;
+  --ide-accent-fg:      #8fbcbb;
+
+  --ide-success:        #a3be8c;
+  --ide-danger:         #bf616a;
+  --ide-warning:        #ebcb8b;
+
+  --ide-scrollbar:      #4c566a;
+  --ide-graph-line:     #4c566a;
+}
+
+/* ══ GITHUB DARK ═══════════════════════════════════════════════════════════ */
+[data-theme="github-dark"] {
+  color-scheme: dark;
+  --ide-accent-text:    #ffffff;
+  --status-hover-bg:    rgba(255,255,255,0.08);
+  --ide-bg:             #0d1117;
+  --ide-panel-bg:       #161b22;
+  --ide-panel-bg-alt:   #0d1117;
+  --ide-hover-bg:       #21262d;
+  --ide-active-bg:      #1f6feb;
+  --ide-input-bg:       #21262d;
+
+  --ide-border:         #30363d;
+  --ide-border-input:   #484f58;
+
+  --ide-text:           #c9d1d9;
+  --ide-text-dim:       #8b949e;
+  --ide-text-muted:     #6e7681;
+
+  --ide-accent:         #1f6feb;
+  --ide-accent-fg:      #58a6ff;
+
+  --ide-success:        #3fb950;
+  --ide-danger:         #f85149;
+  --ide-warning:        #d29922;
+
+  --ide-scrollbar:      #30363d;
+  --ide-graph-line:     #30363d;
+}
+
+/* ══ TOMORROW NIGHT ════════════════════════════════════════════════════════ */
+[data-theme="tomorrow-night"] {
+  color-scheme: dark;
+  --ide-accent-text:    #ffffff;
+  --status-hover-bg:    rgba(255,255,255,0.08);
+  --ide-bg:             #1d1f21;
+  --ide-panel-bg:       #161719;
+  --ide-panel-bg-alt:   #111213;
+  --ide-hover-bg:       #282a2e;
+  --ide-active-bg:      #373b41;
+  --ide-input-bg:       #282a2e;
+
+  --ide-border:         #373b41;
+  --ide-border-input:   #4d5057;
+
+  --ide-text:           #c5c8c6;
+  --ide-text-dim:       #a8a8a8;
+  --ide-text-muted:     #707880;
+
+  --ide-accent:         #81a2be;
+  --ide-accent-fg:      #8abeb7;
+
+  --ide-success:        #b5bd68;
+  --ide-danger:         #cc6666;
+  --ide-warning:        #de935f;
+
+  --ide-scrollbar:      #4d5057;
+  --ide-graph-line:     #4d5057;
+}
+
+/* ══ GITHUB LIGHT ══════════════════════════════════════════════════════════ */
+[data-theme="github-light"] {
+  color-scheme: light;
+  --ide-accent-text:    #ffffff;
+  --status-hover-bg:    rgba(0,0,0,0.06);
+  --ide-bg:             #ffffff;
+  --ide-panel-bg:       #f6f8fa;
+  --ide-panel-bg-alt:   #eaeef2;
+  --ide-hover-bg:       #eaeef2;
+  --ide-active-bg:      #dae8f4;
+  --ide-input-bg:       #ffffff;
+
+  --ide-border:         #d0d7de;
+  --ide-border-input:   #c6cdd5;
+
+  --ide-text:           #1f2328;
+  --ide-text-dim:       #424a53;
+  --ide-text-muted:     #6e7781;
+
+  --ide-accent:         #0969da;
+  --ide-accent-fg:      #0969da;
+
+  --ide-success:        #1a7f37;
+  --ide-danger:         #cf222e;
+  --ide-warning:        #9a6700;
+
+  --ide-scrollbar:      #c6cdd5;
+  --ide-graph-line:     #c6cdd5;
+}
+
+/* ══ PICO CSS VARIABLE BRIDGE ═══════════════════════════════════════════════
+ * Map Pico's internal --pico-* variables to IDE tokens.
+ * This runs after each [data-theme] block above so Pico-styled native elements
+ * (inputs, selects, buttons, kbd, etc.) automatically adopt the active theme.
+ *
+ * SPECIFICITY NOTE: Pico defines its own theme vars with the selector
+ * :root:not([data-theme=dark]) — specificity (0,2,0). Our bridge must match
+ * or exceed that specificity to win the cascade. :root[data-theme] equals
+ * (0,2,0) and loads AFTER pico.classless.css, so it wins on cascade order.
+ * ─────────────────────────────────────────────────────────────────────────── */
+:root[data-theme],
+:root,
+[data-theme] {
+  /* Colours */
+  --pico-background-color:              var(--ide-bg);
+  --pico-color:                         var(--ide-text);
+  --pico-primary:                       var(--ide-accent);
+  --pico-primary-hover:                 var(--ide-accent-fg);
+  --pico-primary-background:            var(--ide-accent);
+  --pico-primary-hover-background:      var(--ide-accent-fg);
+  --pico-secondary:                     var(--ide-text-dim);
+  --pico-muted-color:                   var(--ide-text-muted);
+  --pico-muted-border-color:            var(--ide-border);
+
+  /* Form elements */
+  --pico-form-element-background-color: var(--ide-input-bg);
+  --pico-form-element-active-background-color: var(--ide-input-bg);
+  --pico-form-element-border-color:     var(--ide-border-input);
+  --pico-form-element-color:            var(--ide-text);
+  --pico-form-element-focus-color:      var(--ide-accent-fg);
+  --pico-form-element-placeholder-color:var(--ide-text-muted);
+
+  /* Card / article */
+  --pico-card-background-color:         var(--ide-panel-bg);
+  --pico-card-border-color:             var(--ide-border);
+  --pico-card-sectioning-background-color: var(--ide-panel-bg-alt);
+
+  /* Table */
+  --pico-table-border-color:            var(--ide-border);
+  --pico-table-row-stripped-background-color: var(--ide-hover-bg);
+
+  /* Code / kbd — Pico uses --pico-code-kbd-* (not --pico-kbd-*) */
+  --pico-code-background-color:         var(--ide-input-bg);
+  --pico-code-color:                    var(--ide-accent-fg);
+  --pico-code-kbd-background-color:     var(--ide-panel-bg-alt);
+  --pico-code-kbd-color:                var(--ide-text);
+
+  /* Misc */
+  --pico-border-color:                  var(--ide-border);
+  --pico-box-shadow:                    0 2px 8px rgba(0,0,0,0.35);
+
+  /* Typography – keep IDE fonts */
+  --pico-font-family:                   'Segoe UI', system-ui, sans-serif;
+  --pico-font-size:                     13px;
+  --pico-line-height:                   1.5;
+  --pico-border-radius:                 4px;
+}
+
+/* ══ BACKWARD-COMPAT ALIASES ═════════════════════════════════════════════════
+ * Maps legacy variable names still used in application.css to the canonical
+ * --ide-* tokens. Add new code using --ide-* directly.
+ * ─────────────────────────────────────────────────────────────────────────── */
+:root[data-theme],
+:root,
+[data-theme] {
+  --bg-base:      var(--ide-bg);
+  --bg-panel:     var(--ide-panel-bg);
+  --bg-hover:     var(--ide-hover-bg);
+  --bg-active:    var(--ide-active-bg);
+  --bg-input:     var(--ide-input-bg);
+  --border:       var(--ide-border);
+  --border-input: var(--ide-border-input);
+  --text-main:    var(--ide-text);
+  --text-dim:     var(--ide-text-dim);
+  --text-muted:   var(--ide-text-muted);
+  --accent:       var(--ide-accent);
+  --accent-fg:    var(--ide-accent-fg);
+  --panel-bg:     var(--ide-panel-bg);
+  --header-bg:    var(--ide-panel-bg);
+  --border-color: var(--ide-border);
+  --text-primary: var(--ide-text);
+  --graph-line:   var(--ide-graph-line);
+  --font-mono:    'JetBrains Mono', 'Fira Code', Consolas, monospace;
+}
+
+/* ══ COLOR-SCHEME OVERRIDES ══════════════════════════════════════════════════
+ * Pico's :root:not([data-theme=dark]) selector has specificity (0,2,0) and
+ * sets color-scheme:light for all custom themes (vs-dark, dracula, monokai …).
+ * :root[data-theme="…"] also has (0,2,0) and wins by cascade order since
+ * themes.css loads after pico.classless.css.
+ * ─────────────────────────────────────────────────────────────────────────── */
+:root[data-theme="vs-dark"],
+:root[data-theme="hc-black"],
+:root[data-theme="dracula"],
+:root[data-theme="night-owl"],
+:root[data-theme="monokai"],
+:root[data-theme="nord"],
+:root[data-theme="github-dark"],
+:root[data-theme="tomorrow-night"] { color-scheme: dark; }
+
+:root[data-theme="vs"],
+:root[data-theme="hc-light"],
+:root[data-theme="github-light"] { color-scheme: light; }

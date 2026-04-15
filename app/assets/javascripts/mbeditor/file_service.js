@@ -2,6 +2,31 @@
 // The server uses this header to silence editor logs and guard non-GET requests.
 axios.defaults.headers.common['X-Mbeditor-Client'] = '1';
 
+// Surface pending-migration errors as a dismissible banner instead of silently failing.
+axios.interceptors.response.use(null, function(error) {
+  if (error.response && error.response.data && error.response.data.pending_migration_error) {
+    var bannerId = 'mbeditor-migration-banner';
+    if (!document.getElementById(bannerId)) {
+      var banner = document.createElement('div');
+      banner.id = bannerId;
+      banner.style.cssText = [
+        'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:99999',
+        'background:#f1c40f', 'color:#1e1e1e', 'font-family:system-ui,sans-serif',
+        'font-size:13px', 'padding:8px 16px', 'display:flex',
+        'align-items:center', 'gap:12px'
+      ].join(';');
+      banner.innerHTML =
+        '<strong>Pending migrations detected.</strong>' +
+        ' Run <code style="background:rgba(0,0,0,.15);padding:1px 5px;border-radius:3px">rails db:migrate</code>' +
+        ' then reload — editor is still available.' +
+        '<button onclick="this.parentNode.remove()" style="margin-left:auto;background:none;border:none;' +
+        'cursor:pointer;font-size:16px;line-height:1;padding:0 4px" aria-label="Dismiss">\u00d7</button>';
+      document.body.prepend(banner);
+    }
+  }
+  return Promise.reject(error);
+});
+
 var FileService = (function () {
   function basePath() {
     return (window.MBEDITOR_BASE_PATH || '/mbeditor').replace(/\/$/, '');
@@ -71,6 +96,18 @@ var FileService = (function () {
     return axios.post(basePath() + '/state', { state: state }).then(function(res) { return res.data; });
   }
 
+  function getBranchState(branch) {
+    return axios.get(basePath() + '/branch_state', { params: { branch: branch } }).then(function(res) { return res.data; });
+  }
+
+  function saveBranchState(branch, state) {
+    return axios.post(basePath() + '/branch_state', { branch: branch, state: state }).then(function(res) { return res.data; });
+  }
+
+  function pruneBranchStates() {
+    return axios.post(basePath() + '/prune_branch_states').then(function(res) { return res.data; });
+  }
+
   function getDefinition(symbol, language, extraOptions) {
     var config = Object.assign({ params: { symbol: symbol, language: language }, timeout: 5000 }, extraOptions || {});
     return axios.get(basePath() + '/definition', config).then(function(res) { return res.data; });
@@ -92,6 +129,9 @@ var FileService = (function () {
     ping: ping,
     getState: getState,
     saveState: saveState,
+    getBranchState: getBranchState,
+    saveBranchState: saveBranchState,
+    pruneBranchStates: pruneBranchStates,
     getDefinition: getDefinition
   };
 })();
