@@ -13,9 +13,8 @@ jobs:
 
       - uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.0'
+          ruby-version: '3.3'
           bundler-cache: true
-          bundler: '2.4.22'
 
       - name: Run tests
         run: bundle exec rake test
@@ -34,9 +33,8 @@ jobs:
 
       - uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.0'
+          ruby-version: '3.3'
           bundler-cache: true
-          bundler: '2.4.22'
 
       - name: Publish to RubyGems
         uses: rubygems/release-gem@v1
