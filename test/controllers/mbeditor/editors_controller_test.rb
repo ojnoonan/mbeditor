@@ -473,9 +473,10 @@ module Mbeditor
       assert_not File.exist?(File.join(@workspace, "app"))
     end
 
-    test "destroy_path returns 404 for missing path" do
+    test "destroy_path returns 200 for already-missing path (idempotent)" do
       delete "/mbeditor/delete", params: { path: "ghost.rb" }, as: :json
-      assert_response :not_found
+      assert_response :ok
+      assert_equal true, json["ok"]
     end
 
     test "destroy_path returns 403 for path traversal" do
