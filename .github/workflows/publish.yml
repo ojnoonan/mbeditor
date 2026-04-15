@@ -9,11 +9,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: ruby/setup-ruby@v1
+      - uses: actions/checkout@v6.0.2
         with:
-          ruby-version: '3.3'
+          fetch-depth: 0
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1.292.0
+        with:
+          ruby-version: "3.0"
           bundler-cache: true
 
       - name: Run tests
@@ -29,11 +32,14 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: ruby/setup-ruby@v1
+      - uses: actions/checkout@v6.0.2
         with:
-          ruby-version: '3.3'
+          fetch-depth: 0
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1.292.0
+        with:
+          ruby-version: "3.0"
           bundler-cache: true
 
       - name: Publish to RubyGems
