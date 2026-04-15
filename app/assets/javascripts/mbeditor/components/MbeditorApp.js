@@ -2484,13 +2484,32 @@ var MbeditorApp = function MbeditorApp() {
           React.createElement(
             "div",
             { className: "search-input-wrap" },
-            React.createElement("input", {
-              type: "text",
-              className: "search-input",
-              placeholder: "Find in files…",
-              value: searchQuery,
-              onChange: handleSearchChange
-            })
+            React.createElement(
+              "div",
+              { className: "search-input-shell" },
+              React.createElement("input", {
+                className: "search-input",
+                placeholder: "Find in files…",
+                value: searchQuery,
+                onChange: handleSearchChange
+              }),
+              searchQuery && React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className: "search-clear-btn",
+                  onClick: clearSearch,
+                  title: "Clear search",
+                  "aria-label": "Clear search"
+                },
+                React.createElement("i", { className: "fas fa-times" })
+              )
+            ),
+            React.createElement(
+              "button",
+              { type: "submit", className: "search-btn", disabled: searchLoading, title: searchLoading ? "Searching..." : "Search" },
+              React.createElement("i", { className: searchLoading ? "fas fa-spinner fa-spin" : "fas fa-search" })
+            )
           ),
           React.createElement(
             "div",

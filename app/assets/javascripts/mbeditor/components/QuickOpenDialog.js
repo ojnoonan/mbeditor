@@ -220,7 +220,18 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
           value: query,
           onChange: function (e) { setQuery(e.target.value); },
           onKeyDown: handleKeyDown
-        })
+        }),
+        query && React.createElement(
+          'button',
+          {
+            type: 'button',
+            className: 'quick-open-clear-btn',
+            onClick: clearQuery,
+            title: 'Clear search',
+            'aria-label': 'Clear search'
+          },
+          React.createElement('i', { className: 'fas fa-times' })
+        )
       ),
       React.createElement(
         'div',
