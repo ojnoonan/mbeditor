@@ -318,6 +318,21 @@ var TabManager = (function () {
       focusedPaneId: nextFocusedPaneId,
       activeTabId: maybeNewGlobalActiveTab
     });
+
+    // Dispose the cached Monaco model for this path if it is no longer open in
+    // any pane. This keeps the model registry clean and frees memory.
+    if (window.__mbeditorModels && window.__mbeditorModels[path]) {
+      var _stillOpen = newPanes.some(function(p) {
+        return p.tabs.some(function(t) { return t.path === path; });
+      });
+      if (!_stillOpen) {
+        var _entry = window.__mbeditorModels[path];
+        if (_entry.model && !_entry.model.isDisposed()) {
+          _entry.model.dispose();
+        }
+        delete window.__mbeditorModels[path];
+      }
+    }
   }
 
   function closeAllTabsInPane(paneId) {

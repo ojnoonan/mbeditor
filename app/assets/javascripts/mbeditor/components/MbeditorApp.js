@@ -2000,6 +2000,15 @@ var MbeditorApp = function MbeditorApp() {
       return;
     }
 
+    // Remove paths that are already covered by a selected ancestor directory.
+    // This prevents redundant requests (and resulting 404s) when a folder and
+    // its children are both in the selection.
+    pathsToDelete = pathsToDelete.filter(function(p) {
+      return !pathsToDelete.some(function(other) {
+        return other !== p && p.startsWith(other.endsWith('/') ? other : other + '/');
+      });
+    });
+
     var label = pathsToDelete.length === 1 ? pathsToDelete[0] : pathsToDelete.length + ' items';
     var confirmed = window.confirm('Delete ' + label + '? This cannot be undone.');
     if (!confirmed) return;
@@ -2007,19 +2016,22 @@ var MbeditorApp = function MbeditorApp() {
     setLoading(function (prev) {
       return _extends({}, prev, { deletePath: true });
     });
-    Promise.all(pathsToDelete.map(function(p) {
+    Promise.allSettled(pathsToDelete.map(function(p) {
       return FileService.deletePath(p).then(function() {
         removeDeletedPathFromOpenTabs(p);
       });
-    })).then(function () {
-      handleNodeSelect(null);
-      EditorStore.setStatus('Deleted: ' + label, 'success');
+    })).then(function (results) {
+      var failures = results.filter(function(r) { return r.status === 'rejected'; });
+      if (failures.length === 0) {
+        handleNodeSelect(null);
+        EditorStore.setStatus('Deleted: ' + label, 'success');
+      } else {
+        var message = failures[0].reason && failures[0].reason.response && failures[0].reason.response.data && failures[0].reason.response.data.error || (failures[0].reason && failures[0].reason.message) || 'Unknown error';
+        EditorStore.setStatus('Delete failed: ' + message, 'error');
+      }
       return refreshProjectTree().then(function () {
         GitService.fetchStatus();
       });
-    })["catch"](function (err) {
-      var message = err && err.response && err.response.data && err.response.data.error || err.message;
-      EditorStore.setStatus('Delete failed: ' + message, 'error');
     })["finally"](function () {
       setLoading(function (prev) {
         return _extends({}, prev, { deletePath: false });

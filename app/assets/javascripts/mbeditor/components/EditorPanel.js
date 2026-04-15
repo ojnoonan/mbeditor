@@ -451,9 +451,32 @@ var EditorPanel = function EditorPanel(_ref) {
     if (language === 'image') return;
 
     lastAppliedExternalVersionRef.current = -1;
+
+    // Look up or create a persistent Monaco model for this file path.
+    // Reusing the model across tab switches preserves the undo/redo history.
+    if (!window.__mbeditorModels) window.__mbeditorModels = {};
+    var _modelEntry = window.__mbeditorModels[tab.path];
+    var _reusingModel = false;
+    var modelObj;
+    if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
+      modelObj = _modelEntry.model;
+      _reusingModel = true;
+      // Re-apply language in case it changed (e.g. file renamed)
+      if (modelObj.getLanguageId() !== language) {
+        window.monaco.editor.setModelLanguage(modelObj, language);
+      }
+    } else {
+      modelObj = window.monaco.editor.createModel(tab.content, language);
+      window.__mbeditorModels[tab.path] = { model: modelObj, aviBase: null, aviMax: null };
+      _modelEntry = window.__mbeditorModels[tab.path];
+    }
+
+    // Sync latestContentRef from the actual model content so the onDidChangeContent
+    // handler doesn't fire a spurious onContentChange call on the first keystroke.
+    latestContentRef.current = _reusingModel ? modelObj.getValue() : (tab.content || '');
+
     var editor = window.monaco.editor.create(editorRef.current, {
-      value: tab.content,
-      language: language,
+      model: modelObj,
       theme: editorPrefs.theme || 'vs-dark',
       automaticLayout: true,
       minimap: { enabled: !!(editorPrefs.minimap) },
@@ -487,7 +510,6 @@ var EditorPanel = function EditorPanel(_ref) {
 
     // Stash the workspace-relative path on the model so code-action providers
     // can identify which file they are operating on without needing React state.
-    var modelObj = editor.getModel();
     if (modelObj) modelObj._mbeditorPath = tab.path;
 
     var formatActionDisposable = editor.addAction({
@@ -547,10 +569,17 @@ var EditorPanel = function EditorPanel(_ref) {
 
     // Track undo/redo availability via Monaco's alternativeVersionId.
     // AVI goes up on every edit, down on undo, back up on redo.
+    // When reusing an existing model, restore the saved AVI thresholds so the
+    // canUndo/canRedo buttons reflect the real state of the undo stack.
     var avi = modelObj.getAlternativeVersionId();
-    aviBaseRef.current = avi;
-    aviMaxRef.current = avi;
-    EditorStore.setState({ canUndo: false, canRedo: false });
+    if (_reusingModel && _modelEntry.aviBase !== null) {
+      aviBaseRef.current = _modelEntry.aviBase;
+      aviMaxRef.current = _modelEntry.aviMax !== null ? _modelEntry.aviMax : avi;
+    } else {
+      aviBaseRef.current = avi;
+      aviMaxRef.current = avi;
+    }
+    EditorStore.setState({ canUndo: avi > aviBaseRef.current, canRedo: avi < aviMaxRef.current });
 
     var contentDisposable = modelObj.onDidChangeContent(function (e) {
       var currentAvi = modelObj.getAlternativeVersionId();
@@ -599,6 +628,12 @@ var EditorPanel = function EditorPanel(_ref) {
       clearBlameZones(editor);
       clearTestZones(editor);
       TabManager.saveTabViewState(tab.id, editor.saveViewState());
+      // Persist AVI thresholds on the model entry so undo/redo state is correct on return.
+      var _me = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+      if (_me) {
+        _me.aviBase = aviBaseRef.current;
+        _me.aviMax = aviMaxRef.current;
+      }
       if (window.__mbeditorActiveEditor === editor) {
         window.__mbeditorActiveEditor = null;
       }
@@ -607,6 +642,9 @@ var EditorPanel = function EditorPanel(_ref) {
       columnSelectDisposable.dispose();
       contentDisposable.dispose();
       EditorStore.setState({ canUndo: false, canRedo: false });
+      // Detach the model before disposing the editor so the model (and its undo
+      // history) survives for when the user returns to this tab.
+      editor.setModel(null);
       editor.dispose();
     };
   }, [tab.id, tab.isPreview]); // re-run ONLY on tab switch, not on content change (Monaco handles its own content state)

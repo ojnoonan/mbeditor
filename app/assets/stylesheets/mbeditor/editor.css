@@ -816,6 +816,59 @@ html, body, #mbeditor-root {
 .search-input-wrap {
   display: flex;
   flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.search-input-shell {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.search-input-shell .search-input {
+  padding-right: 24px;
+}
+
+/* search-clear-btn sits absolutely inside the input shell */
+.search-input-shell .search-clear-btn {
+  position: absolute;
+  right: 4px;
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  color: var(--ide-text-muted);
+  background: transparent;
+}
+
+/* Use .search-panel ancestor for higher specificity than button:not(.pico-btn) */
+.search-panel .search-btn {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--ide-border-input);
+  border-radius: 4px;
+  background: var(--ide-input-bg);
+  color: var(--ide-text-muted);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.search-panel .search-btn:hover {
+  color: var(--ide-text);
+  border-color: var(--ide-accent-fg);
+}
+
+.search-panel .search-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .search-input {
@@ -872,6 +925,9 @@ html, body, #mbeditor-root {
   font-size: 11px;
   color: var(--ide-accent-fg);
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .search-result-line-num {

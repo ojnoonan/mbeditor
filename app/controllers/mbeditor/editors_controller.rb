@@ -240,7 +240,8 @@ module Mbeditor
     def destroy_path
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
-      return render json: { error: "Path not found" }, status: :not_found unless File.exist?(path)
+      # Idempotent: if already gone the desired state is already achieved.
+      return render json: { ok: true } unless File.exist?(path)
       return render json: { error: "Cannot delete this path" }, status: :forbidden if path_blocked_for_operations?(path)
 
       if File.directory?(path)
