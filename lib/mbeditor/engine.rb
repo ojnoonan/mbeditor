@@ -13,9 +13,9 @@ module Mbeditor
       # Insert before CheckPending so our middleware wraps it and can rescue
       # the error it raises. Falls back silently if CheckPending is absent
       # (e.g. host app does not use ActiveRecord).
-      check_pending = defined?(ActiveRecord::Migration::CheckPending) &&
-                      app.middleware.to_a.find { |m| m.name == "ActiveRecord::Migration::CheckPending" }
-      if check_pending
+      # Note: app.middleware is a MiddlewareStackProxy during initializers and
+      # does not support .to_a — rely solely on defined? to detect ActiveRecord.
+      if defined?(ActiveRecord::Migration::CheckPending)
         app.middleware.insert_before ActiveRecord::Migration::CheckPending,
                                      Mbeditor::Rack::HandlePendingMigrations
       end
