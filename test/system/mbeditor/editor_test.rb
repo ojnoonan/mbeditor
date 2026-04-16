@@ -137,6 +137,38 @@ module Mbeditor
       assert_equal({ "lineNumber" => 1, "column" => 6 }, active_editor_position)
     end
 
+    test "tab key does not collapse multi-line selections in jsx" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      result = page.evaluate_script(<<~'JS')
+        (function () {
+          var editor = window.__mbeditorActiveEditor;
+          var monaco = window.monaco;
+          editor.setValue(["<div>", "<span>", "</span>"].join("\n"));
+
+          var model = editor.getModel();
+          editor.setSelection(new monaco.Selection(1, 1, 3, model.getLineMaxColumn(3)));
+          var action = editor.getAction('mbeditor.emmet.expandAbbreviation');
+          if (action && action.run) action.run();
+
+          return {
+            lineCount: model.getLineCount(),
+            line1: model.getLineContent(1),
+            line2: model.getLineContent(2),
+            line3: model.getLineContent(3)
+          };
+        })()
+      JS
+
+      assert_equal 3, result["lineCount"]
+      assert_match(/^\s*<div>\z/, result["line1"])
+      assert_match(/^\s*<span>\z/, result["line2"])
+      assert_match(/^\s*<\/span>\z/, result["line3"])
+    end
+
     test "git blame toggle renders inline annotations" do
       repo_root = File.expand_path("../../..", __dir__)
       previous_workspace = @workspace

@@ -197,12 +197,12 @@
         id: 'mbeditor.emmet.expandAbbreviation',
         label: 'Emmet: Expand Abbreviation',
         keybindings: [window.monaco.KeyCode.Tab],
-        precondition: '!suggestWidgetVisible && !parameterHintsVisible',
+        precondition: '!suggestWidgetVisible && !parameterHintsVisible && !editorHasSelection',
         run: function(editor) {
           var selection = editor.getSelection();
-          // Only expand when the selection is collapsed (no range selected)
+          // Selection indentation should use Monaco defaults, not Emmet expansion.
           if (!selection.isEmpty()) {
-            editor.trigger('keyboard', 'type', { text: '\t' });
+            editor.trigger('keyboard', 'editor.action.indentLines', null);
             return;
           }
           var pos = editor.getPosition();
