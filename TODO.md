@@ -12,6 +12,7 @@
 - [ ] Git diff/blame/history ref validation (`git_controller.rb` lines 29-30) — the allowed regex includes `@`, which permits reflog syntax like `@{-1}`; exclude `@` or add an explicit blocklist for reflog patterns
 - [ ] Class-level binary probe caches (`editors_controller.rb` lines 696-732) — `rubocop_available?`, `haml_lint_available?`, and `git_available?` use a `get || set` pattern on class instance variables that is not atomic; under concurrent Puma workers, multiple threads can bypass the `cache.key?(key)` guard simultaneously and spawn duplicate `--version` subprocesses; wrap with a `Mutex` or use `||=` inside `Mutex#synchronize`
 - [ ] Redmine SSL verification (`redmine_service.rb` line ~59) — `Net::HTTP` HTTPS connection does not set `http.verify_mode = OpenSSL::SSL::VERIFY_PEER`; in some Ruby configurations peer certificates are not verified, exposing the API key to MITM interception
+- [ ] Redmine URL scheme not validated (`redmine_service.rb` lines 42-54) — `redmine_url` is only checked for blankness; a non-HTTP/S value (e.g. `file:///etc/passwd`) makes `uri.host` return `nil`, crashing with `NoMethodError`; validate that the scheme is `http` or `https` in the config validator
 - [ ] CSRF protection relies solely on `X-Mbeditor-Client: 1` header (`editors_controller.rb` line 10) — `skip_before_action :verify_authenticity_token` disables Rails CSRF entirely; a forged cross-origin request from an attacker-controlled page running in the same browser could include this header via a custom fetch; consider keeping CSRF token validation or at least verifying `Origin`/`Referer` against the host
 - [ ] `save_state` unconstrained payload size (`editors_controller.rb` line 69) — `params[:state].to_json` is written to disk with no size check; a runaway frontend or malicious request could fill available disk space; add a cap (e.g. 1 MB) and return 413 if exceeded
 
@@ -38,7 +39,8 @@
 
 ## Quality / robustness
 
-- [ ] `parse_porcelain_status` (`editors_controller.rb` ~line 738) — slices lines with `[3..]` without checking length first; malformed or empty git output lines will raise `NoMethodError`; add a length guard
+- [ ] `parse_porcelain_status` (`editors_controller.rb` ~line 738) — slices lines with `[3..]` without checking length first; malformed or empty git output lines will raise `NoMethodError`; add a length guard; also switch from `.map` to `.filter_map` (with a `next if path.blank?` guard) to match the defensive pattern used in `parse_name_status`
+- [ ] `git_status` action (`editors_controller.rb` line 296) — inline mapping uses `line[3..].strip` without `.to_s`; unlike `parse_porcelain_status` (line 876) which guards with `.to_s.strip`, this will raise `NoMethodError` on any line shorter than 3 characters; use the existing `parse_porcelain_status` helper instead of duplicating the logic
 - [ ] `redmine_service.rb` — Redmine configuration is only validated when `call` is first invoked, not at startup; misconfiguration goes undetected until a request is made; validate in an `after_initialize` block when `redmine_enabled` is true
 - [ ] `git_blame_service.rb` lines 56-82 — blame parsing relies on implicit line ordering from `git blame --porcelain`; if the file ends mid-entry (e.g. file with no trailing newline plus edge case in git version), the final `current` block may be added with missing fields; add a completeness guard before appending
 - [ ] `git_controller.rb` `combined_diff` (lines 141-147) — when `scope=branch` and the branch has no upstream configured, the endpoint returns `{diff: ""}` identically to an empty diff; the frontend cannot distinguish "no changes" from "no upstream set"; return a distinct key (e.g. `no_upstream: true`) so the UI can surface a helpful message
@@ -51,10 +53,11 @@
 
 ## Frontend
 
-- [ ] `file_service.js` and `git_service.js` both define an identical `basePath()` helper (lines 6-8 in each); if `MBEDITOR_BASE_PATH` changes the path logic must be updated in two places; extract to a shared module or inline constant
+- [ ] `file_service.js`, `git_service.js`, and `search_service.js` all define an identical `basePath()` helper (lines 6-8, 2-4, 2-4 respectively); if `MBEDITOR_BASE_PATH` changes the path logic must be updated in three places; extract to a shared module or inline constant
 - [ ] `editor_store.js` `subscribeToSlice` — uses `===` to detect state changes; object slices are compared by reference, so in-place mutations to nested state will not trigger subscriber callbacks; document (or enforce) that all state updates must produce a new object reference
 - [ ] `GitPanel.js` line ~18 — `expandedCommits` is component-local state and resets on every page load; for large repos users repeatedly expand the same commits; persist to `localStorage` keyed by repo path
 
 ## Nice to have
 
 - [ ] Markdown preview (`EditorPanel.js` line 468) — `dangerouslySetInnerHTML` with `marked.parse()` blocks raw HTML via custom renderer but does not sanitise `javascript:` scheme in links/images; low practical risk since only local files are rendered, but worth hardening with a `href` sanitiser pass
+- [ ] No global axios timeout configured (`file_service.js`, `git_service.js`, `search_service.js`) — only `ping` has a per-request timeout (4 s); all other API calls can hang indefinitely if the Rails server is unresponsive; set `axios.defaults.timeout` once in `file_service.js` (where axios is already globally configured) to cap all requests
