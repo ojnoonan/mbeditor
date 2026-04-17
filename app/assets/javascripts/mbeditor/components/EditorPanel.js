@@ -480,24 +480,34 @@ var EditorPanel = function EditorPanel(_ref) {
       theme: editorPrefs.theme || 'vs-dark',
       automaticLayout: true,
       minimap: { enabled: !!(editorPrefs.minimap) },
-      renderLineHighlight: 'none',
+      renderLineHighlight: editorPrefs.renderLineHighlight || 'none',
       bracketPairColorization: { enabled: editorPrefs.bracketPairColorization !== false },
       fontFamily: editorPrefs.fontFamily || "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
       fontSize: editorPrefs.fontSize || 13,
+      lineHeight: editorPrefs.lineHeight || 0,
+      letterSpacing: editorPrefs.letterSpacing || 0,
       tabSize: editorPrefs.tabSize || 4,
       insertSpaces: typeof editorPrefs.insertSpaces === 'boolean' ? editorPrefs.insertSpaces : false,
       wordWrap: editorPrefs.wordWrap || 'off',
       lineNumbers: editorPrefs.lineNumbers || 'on',
       renderWhitespace: editorPrefs.renderWhitespace || 'none',
       scrollBeyondLastLine: !!(editorPrefs.scrollBeyondLastLine),
-      linkedEditing: true, // Enables Auto-Rename Tag natively!
+      cursorStyle: editorPrefs.cursorStyle || 'line',
+      cursorBlinking: editorPrefs.cursorBlinking || 'blink',
+      folding: editorPrefs.folding !== false,
+      smoothScrolling: !!(editorPrefs.smoothScrolling),
+      mouseWheelZoom: !!(editorPrefs.mouseWheelZoom),
+      autoClosingBrackets: editorPrefs.autoClosingBrackets || 'always',
+      autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
+      autoIndent: editorPrefs.autoIndent || 'full',
+      formatOnPaste: editorPrefs.formatOnPaste !== false,
+      formatOnType: editorPrefs.formatOnType !== false,
+      quickSuggestions: editorPrefs.quickSuggestions !== false,
+      wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'matchingDocuments',
+      acceptSuggestionOnEnter: editorPrefs.acceptSuggestionOnEnter || 'on',
+      linkedEditing: true,
       fixedOverflowWidgets: true,
-      hover: { above: false },
-      autoClosingBrackets: 'always',
-      autoClosingQuotes: 'always',
-      autoIndent: 'full',
-      formatOnPaste: true,
-      formatOnType: true
+      hover: { above: false }
     });
 
     if (tab.viewState) {
@@ -700,6 +710,8 @@ var EditorPanel = function EditorPanel(_ref) {
       monacoRef.current.updateOptions({
         fontSize: editorPrefs.fontSize || 13,
         fontFamily: editorPrefs.fontFamily || "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
+        lineHeight: editorPrefs.lineHeight || 0,
+        letterSpacing: editorPrefs.letterSpacing || 0,
         tabSize: editorPrefs.tabSize || 4,
         insertSpaces: typeof editorPrefs.insertSpaces === 'boolean' ? editorPrefs.insertSpaces : false,
         wordWrap: editorPrefs.wordWrap || 'off',
@@ -707,7 +719,21 @@ var EditorPanel = function EditorPanel(_ref) {
         renderWhitespace: editorPrefs.renderWhitespace || 'none',
         minimap: { enabled: !!(editorPrefs.minimap) },
         scrollBeyondLastLine: !!(editorPrefs.scrollBeyondLastLine),
-        bracketPairColorization: { enabled: editorPrefs.bracketPairColorization !== false }
+        bracketPairColorization: { enabled: editorPrefs.bracketPairColorization !== false },
+        renderLineHighlight: editorPrefs.renderLineHighlight || 'none',
+        cursorStyle: editorPrefs.cursorStyle || 'line',
+        cursorBlinking: editorPrefs.cursorBlinking || 'blink',
+        folding: editorPrefs.folding !== false,
+        smoothScrolling: !!(editorPrefs.smoothScrolling),
+        mouseWheelZoom: !!(editorPrefs.mouseWheelZoom),
+        autoClosingBrackets: editorPrefs.autoClosingBrackets || 'always',
+        autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
+        autoIndent: editorPrefs.autoIndent || 'full',
+        formatOnPaste: editorPrefs.formatOnPaste !== false,
+        formatOnType: editorPrefs.formatOnType !== false,
+        quickSuggestions: editorPrefs.quickSuggestions !== false,
+        wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'matchingDocuments',
+        acceptSuggestionOnEnter: editorPrefs.acceptSuggestionOnEnter || 'on'
       });
     }
   }, [editorPrefs]);

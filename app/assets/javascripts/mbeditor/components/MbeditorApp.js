@@ -24,6 +24,8 @@ var DEFAULT_EDITOR_PREFS = {
   theme: 'vs-dark',
   fontSize: 13,
   fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
+  lineHeight: 0,
+  letterSpacing: 0,
   tabSize: 4,
   insertSpaces: false,
   wordWrap: 'off',
@@ -32,6 +34,20 @@ var DEFAULT_EDITOR_PREFS = {
   scrollBeyondLastLine: false,
   minimap: false,
   bracketPairColorization: true,
+  renderLineHighlight: 'none',
+  cursorStyle: 'line',
+  cursorBlinking: 'blink',
+  folding: true,
+  smoothScrolling: false,
+  mouseWheelZoom: false,
+  autoClosingBrackets: 'always',
+  autoClosingQuotes: 'always',
+  autoIndent: 'full',
+  formatOnPaste: true,
+  formatOnType: true,
+  quickSuggestions: true,
+  wordBasedSuggestions: 'matchingDocuments',
+  acceptSuggestionOnEnter: 'on',
   autoRevealInExplorer: true,
   toolbarIconOnly: false,
   rubocopLintEnabled: true,
@@ -2735,6 +2751,32 @@ var MbeditorApp = function MbeditorApp() {
                         onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { fontFamily: e.target.value }); }); }
                       })
                     ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Row height in pixels. 0 = auto (roughly font size × 1.5)' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Line height (0=auto)'),
+                      React.createElement('input', {
+                        type: 'number', min: '0', max: '100', step: '1',
+                        className: 'ide-settings-input',
+                        value: editorPrefs.lineHeight != null ? editorPrefs.lineHeight : 0,
+                        onChange: function(e) {
+                          var v = parseInt(e.target.value, 10);
+                          if (!isNaN(v) && v >= 0 && v <= 100) setEditorPrefs(function(p) { return Object.assign({}, p, { lineHeight: v }); });
+                        }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Extra space between characters in pixels. 0 = default' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Letter spacing (px)'),
+                      React.createElement('input', {
+                        type: 'number', min: '-5', max: '20', step: '0.5',
+                        className: 'ide-settings-input',
+                        value: editorPrefs.letterSpacing != null ? editorPrefs.letterSpacing : 0,
+                        onChange: function(e) {
+                          var v = parseFloat(e.target.value);
+                          if (!isNaN(v) && v >= -5 && v <= 20) setEditorPrefs(function(p) { return Object.assign({}, p, { letterSpacing: v }); });
+                        }
+                      })
+                    ),
 
                     /* ── Indentation (unified editor + Prettier) ── */
                     React.createElement('div', { className: 'ide-settings-section-header' }, 'Indentation'),
@@ -2842,6 +2884,184 @@ var MbeditorApp = function MbeditorApp() {
                         className: 'ide-settings-checkbox',
                         checked: !!(editorPrefs.vimMode),
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { vimMode: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'When to insert a matching closing bracket automatically' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Auto-close brackets'),
+                      React.createElement(
+                        'select', {
+                          value: editorPrefs.autoClosingBrackets || 'always',
+                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { autoClosingBrackets: e.target.value }); }); }
+                        },
+                        React.createElement('option', { value: 'always' }, 'Always'),
+                        React.createElement('option', { value: 'languageDefined' }, 'Per language rules'),
+                        React.createElement('option', { value: 'beforeWhitespace' }, 'Only before whitespace'),
+                        React.createElement('option', { value: 'never' }, 'Never')
+                      )
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'When to insert a matching closing quote automatically' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Auto-close quotes'),
+                      React.createElement(
+                        'select', {
+                          value: editorPrefs.autoClosingQuotes || 'always',
+                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { autoClosingQuotes: e.target.value }); }); }
+                        },
+                        React.createElement('option', { value: 'always' }, 'Always'),
+                        React.createElement('option', { value: 'languageDefined' }, 'Per language rules'),
+                        React.createElement('option', { value: 'beforeWhitespace' }, 'Only before whitespace'),
+                        React.createElement('option', { value: 'never' }, 'Never')
+                      )
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'What to highlight on the current editor line' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Line highlight'),
+                      React.createElement(
+                        'select', {
+                          value: editorPrefs.renderLineHighlight || 'none',
+                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { renderLineHighlight: e.target.value }); }); }
+                        },
+                        React.createElement('option', { value: 'none' }, 'None'),
+                        React.createElement('option', { value: 'gutter' }, 'Line number only'),
+                        React.createElement('option', { value: 'line' }, 'Current line background'),
+                        React.createElement('option', { value: 'all' }, 'Line number + background')
+                      )
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Cursor style'),
+                      React.createElement(
+                        'select', {
+                          value: editorPrefs.cursorStyle || 'line',
+                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { cursorStyle: e.target.value }); }); }
+                        },
+                        React.createElement('option', { value: 'line' }, 'Line (|)'),
+                        React.createElement('option', { value: 'block' }, 'Block (filled)'),
+                        React.createElement('option', { value: 'underline' }, 'Underline (_)'),
+                        React.createElement('option', { value: 'line-thin' }, 'Line thin'),
+                        React.createElement('option', { value: 'block-outline' }, 'Block outline'),
+                        React.createElement('option', { value: 'underline-thin' }, 'Underline thin')
+                      )
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Cursor blinking'),
+                      React.createElement(
+                        'select', {
+                          value: editorPrefs.cursorBlinking || 'blink',
+                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { cursorBlinking: e.target.value }); }); }
+                        },
+                        React.createElement('option', { value: 'blink' }, 'Blink (on/off)'),
+                        React.createElement('option', { value: 'smooth' }, 'Smooth (fade)'),
+                        React.createElement('option', { value: 'phase' }, 'Phase (offset fade)'),
+                        React.createElement('option', { value: 'expand' }, 'Expand (grow/shrink)'),
+                        React.createElement('option', { value: 'solid' }, 'Solid (no blink)')
+                      )
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Show collapse arrows next to foldable regions (functions, classes, blocks)' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Code folding'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: editorPrefs.folding !== false,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { folding: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Animate scrolling instead of jumping instantly' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Smooth scrolling'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: !!(editorPrefs.smoothScrolling),
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { smoothScrolling: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Hold Ctrl (or Cmd) and scroll the mouse wheel to zoom the font size' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Ctrl+scroll to zoom'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: !!(editorPrefs.mouseWheelZoom),
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { mouseWheelZoom: v }); }); }
+                      })
+                    ),
+
+                    /* ── Behaviour ───────────────────────────────── */
+                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Behaviour'),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'How aggressively the editor re-indents lines as you type' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Auto indent'),
+                      React.createElement(
+                        'select', {
+                          value: editorPrefs.autoIndent || 'full',
+                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { autoIndent: e.target.value }); }); }
+                        },
+                        React.createElement('option', { value: 'none' }, 'None (disabled)'),
+                        React.createElement('option', { value: 'keep' }, 'Keep current level'),
+                        React.createElement('option', { value: 'brackets' }, 'Indent on { and ['),
+                        React.createElement('option', { value: 'advanced' }, 'Language indent rules'),
+                        React.createElement('option', { value: 'full' }, 'Full (language grammar)')
+                      )
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Whether pressing Enter accepts the highlighted autocomplete suggestion' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Accept suggestion on Enter'),
+                      React.createElement(
+                        'select', {
+                          value: editorPrefs.acceptSuggestionOnEnter || 'on',
+                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { acceptSuggestionOnEnter: e.target.value }); }); }
+                        },
+                        React.createElement('option', { value: 'on' }, 'Always'),
+                        React.createElement('option', { value: 'smart' }, 'Only when navigated (↑↓)'),
+                        React.createElement('option', { value: 'off' }, 'Never (Tab only)')
+                      )
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Suggest completions based on words already present in open files' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Word-based suggestions'),
+                      React.createElement(
+                        'select', {
+                          value: editorPrefs.wordBasedSuggestions || 'matchingDocuments',
+                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { wordBasedSuggestions: e.target.value }); }); }
+                        },
+                        React.createElement('option', { value: 'off' }, 'Off'),
+                        React.createElement('option', { value: 'currentDocument' }, 'Current file only'),
+                        React.createElement('option', { value: 'matchingDocuments' }, 'Same language files'),
+                        React.createElement('option', { value: 'allDocuments' }, 'All open files')
+                      )
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Auto-format pasted code using the language formatter' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Format on paste'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: editorPrefs.formatOnPaste !== false,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { formatOnPaste: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Re-indent and auto-close blocks as you type (e.g. after pressing Enter inside {})' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Format on type'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: editorPrefs.formatOnType !== false,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { formatOnType: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Show autocomplete suggestions while typing (not just on trigger characters like .)' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Quick suggestions'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: editorPrefs.quickSuggestions !== false,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { quickSuggestions: v }); }); }
                       })
                     ),
 
