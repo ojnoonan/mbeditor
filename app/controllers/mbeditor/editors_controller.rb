@@ -322,9 +322,15 @@ module Mbeditor
       return render json: [] if query.blank?
       return render json: { error: "Query too long" }, status: :bad_request if query.length > 500
 
-      results = stream_search_results(query, needed)
-      has_more = results.length > offset + limit
-      render json: { results: results[offset, limit] || [], has_more: has_more }
+      # On first page, count total matches in parallel with fetching results.
+      count_thread = offset == 0 ? Thread.new { count_search_results(query) } : nil
+
+      results   = stream_search_results(query, needed)
+      has_more  = results.length > offset + limit
+      response  = { results: results[offset, limit] || [], has_more: has_more }
+      response[:total_count] = count_thread.value if count_thread
+
+      render json: response
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -746,6 +752,30 @@ module Mbeditor
       end
 
       results
+    end
+
+    # Count total matching lines across the workspace using rg --count (or grep -c).
+    # Fast: rg just counts without extracting context. Runs in a background thread.
+    def count_search_results(query)
+      total = 0
+      if RG_AVAILABLE
+        args = ["rg", "--count", "--no-ignore"]
+        excluded_paths.each { |p| args << "--glob=!#{p}" }
+        args += ["--", query, workspace_root.to_s]
+        IO.popen(args, err: File::NULL) do |io|
+          io.each_line { |line| total += line.strip.split(":").last.to_i rescue 0 }
+        end
+      else
+        args = ["grep", "-rc", "-F"]
+        excluded_dirnames.each { |d| args << "--exclude-dir=#{d}" }
+        args += [query, workspace_root.to_s]
+        IO.popen(args, err: File::NULL) do |io|
+          io.each_line { |line| total += line.strip.split(":").last.to_i rescue 0 }
+        end
+      end
+      total
+    rescue StandardError
+      0
     end
 
     def build_tree(dir, max_depth: 10, depth: 0)

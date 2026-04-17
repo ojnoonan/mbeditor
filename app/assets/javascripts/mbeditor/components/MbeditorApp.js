@@ -186,20 +186,17 @@ var MbeditorApp = function MbeditorApp() {
   var searchHasMore = _useState33h2[0];
   var setSearchHasMore = _useState33h2[1];
 
-  var _useState33i = useState(false);
-  var _useState33i2 = _slicedToArray(_useState33i, 2);
-  var searchLoadingMore = _useState33i2[0];
-  var setSearchLoadingMore = _useState33i2[1];
+  var _useState33tc = useState(0);
+  var _useState33tc2 = _slicedToArray(_useState33tc, 2);
+  var searchTotalCount = _useState33tc2[0];
+  var setSearchTotalCount = _useState33tc2[1];
 
-  var searchOffsetRef = useRef(0);        // tracks next offset to load
-  var searchQueryRef  = useRef('');       // tracks query that produced current results
+  var searchHasMoreRef      = useRef(false);
+  var searchOffsetRef       = useRef(0);
+  var searchLoadingMoreRef  = useRef(false);
+
+  var searchQueryRef = useRef('');
   var searchResultsContainerRef = useRef(null);
-  var searchVirtStartRef = useRef(0);     // first visible item index (for virtual list)
-
-  var _useState33j = useState(0);
-  var _useState33j2 = _slicedToArray(_useState33j, 2);
-  var searchVirtStart = _useState33j2[0];
-  var setSearchVirtStart = _useState33j2[1];
 
   var _useState8 = useState("explorer");
 
@@ -1497,39 +1494,60 @@ var MbeditorApp = function MbeditorApp() {
   var onFormatRef = useRef(handleFormat);
   onFormatRef.current = handleFormat;
 
+  // Eagerly load all remaining pages sequentially in the background.
+  // Self-chains via .then() so only one request is in-flight at a time.
+  // Uses only refs so it's safe to call from async callbacks without
+  // worrying about stale closure state.
   var _debouncedSearch = useRef(window._.debounce(function (q) {
     if (!q.trim()) {
       searchRequestIdRef.current += 1;
       setSearchLoading(false);
-      setSearchHasMore(false);
+      setSearchHasMore(false); searchHasMoreRef.current = false;
+      setSearchTotalCount(0);
       searchOffsetRef.current = 0;
+      searchLoadingMoreRef.current = false;
       searchQueryRef.current = '';
       EditorStore.setState({ searchResults: [], searchHasMore: false });
       return;
     }
     var requestId = ++searchRequestIdRef.current;
     setSearchLoading(true);
-    setSearchHasMore(false);
+    setSearchHasMore(false); searchHasMoreRef.current = false;
+    setSearchTotalCount(0);
     searchOffsetRef.current = 0;
+    searchLoadingMoreRef.current = false;
     searchQueryRef.current = q;
-    setSearchVirtStart(0);
-    searchVirtStartRef.current = 0;
     EditorStore.setState({ searchResults: [], searchHasMore: false });
     EditorStore.setStatus("Searching project...", "info");
     SearchService.projectSearch(q, 0, SearchService.PAGE_SIZE).then(function (res) {
-      if (searchRequestIdRef.current === requestId) {
-        var hasMore = !!(res && res.hasMore);
-        setSearchHasMore(hasMore);
-        searchOffsetRef.current = SearchService.PAGE_SIZE;
-        var count = res && res.results ? res.results.length : 0;
-        EditorStore.setStatus("Found " + count + (hasMore ? '+' : '') + " result" + (count !== 1 ? "s" : ""), "success");
-      }
+      if (searchRequestIdRef.current !== requestId) return;
+      var hasMore = !!(res && res.hasMore);
+      setSearchHasMore(hasMore); searchHasMoreRef.current = hasMore;
+      searchOffsetRef.current = SearchService.PAGE_SIZE;
+      if (res && res.totalCount != null) setSearchTotalCount(res.totalCount);
+      var total = (res && res.totalCount != null) ? res.totalCount : (res && res.results ? res.results.length : 0);
+      EditorStore.setStatus("Found " + total + (hasMore ? '+' : '') + " result" + (total !== 1 ? "s" : ""), "success");
     }).finally(function () {
-      if (searchRequestIdRef.current === requestId) {
-        setSearchLoading(false);
-      }
+      if (searchRequestIdRef.current === requestId) setSearchLoading(false);
     });
   }, 400)).current;
+
+  var loadMoreSearchResults = function loadMoreSearchResults() {
+    var q = searchQueryRef.current;
+    if (!q || searchLoadingMoreRef.current || !searchHasMoreRef.current) return;
+    searchLoadingMoreRef.current = true;
+    var offset = searchOffsetRef.current;
+    SearchService.projectSearch(q, offset, SearchService.PAGE_SIZE).then(function(res) {
+      if (searchQueryRef.current !== q) { searchLoadingMoreRef.current = false; return; }
+      var hasMore = !!(res && res.hasMore);
+      searchHasMoreRef.current = hasMore;
+      setSearchHasMore(hasMore);
+      searchOffsetRef.current = offset + SearchService.PAGE_SIZE;
+      searchLoadingMoreRef.current = false;
+    }).catch(function() {
+      searchLoadingMoreRef.current = false;
+    });
+  };
 
   var handleSearchChange = function handleSearchChange(e) {
     var val = e.target.value;
@@ -1543,12 +1561,11 @@ var MbeditorApp = function MbeditorApp() {
     if (_debouncedSearch.cancel) _debouncedSearch.cancel();
     setSearchQuery("");
     setSearchLoading(false);
-    setSearchHasMore(false);
-    setSearchLoadingMore(false);
+    setSearchHasMore(false); searchHasMoreRef.current = false;
+    setSearchTotalCount(0);
     searchOffsetRef.current = 0;
+    searchLoadingMoreRef.current = false;
     searchQueryRef.current = '';
-    setSearchVirtStart(0);
-    searchVirtStartRef.current = 0;
     EditorStore.setState({ searchResults: [], searchHasMore: false });
   };
 
@@ -1557,35 +1574,11 @@ var MbeditorApp = function MbeditorApp() {
     _debouncedSearch(searchQuery);
   };
 
-  var loadMoreSearchResults = function loadMoreSearchResults() {
-    var q = searchQueryRef.current;
-    if (!q || searchLoadingMore || !searchHasMore) return;
-    var offset = searchOffsetRef.current;
-    setSearchLoadingMore(true);
-    SearchService.projectSearch(q, offset, SearchService.PAGE_SIZE).then(function (res) {
-      var hasMore = !!(res && res.hasMore);
-      setSearchHasMore(hasMore);
-      searchOffsetRef.current = offset + SearchService.PAGE_SIZE;
-    }).finally(function () {
-      setSearchLoadingMore(false);
-    });
-  };
-
-  // Scroll handler for the virtualized search results list.
-  var SEARCH_ITEM_H = 40;
-  var SEARCH_OVERSCAN = 8;
+  // Load more results when the user scrolls near the bottom of the list.
   var handleSearchResultsScroll = function handleSearchResultsScroll(e) {
     var el = e.currentTarget;
-    var newStart = Math.floor(el.scrollTop / SEARCH_ITEM_H);
-    if (Math.abs(newStart - searchVirtStartRef.current) >= 4) {
-      searchVirtStartRef.current = newStart;
-      setSearchVirtStart(newStart);
-    }
-    // Trigger load-more when within 200px of the bottom
-    if (!searchLoadingMore && searchHasMore) {
-      if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
-        loadMoreSearchResults();
-      }
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
+      loadMoreSearchResults();
     }
   };
 
@@ -2539,88 +2532,58 @@ var MbeditorApp = function MbeditorApp() {
               React.createElement("i", { className: searchLoading ? "fas fa-spinner fa-spin" : "fas fa-search" })
             )
           ),
-          React.createElement(
-            "div",
-            {
-              className: "search-results",
-              ref: searchResultsContainerRef,
-              onScroll: handleSearchResultsScroll
-            },
-            (function() {
-              var allResults = state.searchResults || [];
-              var totalCount = allResults.length;
+          (function() {
+            var allResults  = state.searchResults || [];
+            var loadedCount = allResults.length;
+            var total       = searchTotalCount > 0 ? searchTotalCount : loadedCount;
+            var hasAny      = loadedCount > 0;
 
-              if (searchQuery && totalCount === 0 && !searchLoading) {
-                return React.createElement(
-                  "div", { className: "search-results-empty" }, "No results"
-                );
-              }
-
-              if (totalCount === 0) return null;
-
-              // Compute virtual window
-              var containerEl = searchResultsContainerRef.current;
-              var containerH = containerEl ? containerEl.clientHeight : 400;
-              var visibleCount = Math.ceil(containerH / SEARCH_ITEM_H) + SEARCH_OVERSCAN * 2;
-              var virtStart = Math.max(0, searchVirtStart - SEARCH_OVERSCAN);
-              var virtEnd   = Math.min(totalCount, virtStart + visibleCount);
-              var paddingTop    = virtStart * SEARCH_ITEM_H;
-              var paddingBottom = Math.max(0, (totalCount - virtEnd) * SEARCH_ITEM_H);
-
-              var visibleItems = allResults.slice(virtStart, virtEnd).map(function(res, idx) {
-                var absoluteIdx = virtStart + idx;
-                var fileName = res.file.split('/').pop();
-                return React.createElement(
-                  "div",
-                  {
-                    key: absoluteIdx,
-                    className: "search-result-item",
-                    onClick: function() { handleSelectFile(res.file, res.file.split('/').pop(), res.line); }
-                  },
-                  React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
-                  React.createElement(
+            return React.createElement(
+              React.Fragment,
+              null,
+              searchQuery && !searchLoading && React.createElement(
+                "div",
+                { className: "search-results-header" },
+                hasAny
+                  ? (total + (searchHasMore ? '+' : '') + " result" + (total !== 1 ? "s" : ""))
+                  : "No results"
+              ),
+              hasAny && React.createElement(
+                "div",
+                {
+                  className: "search-results",
+                  ref: searchResultsContainerRef,
+                  onScroll: handleSearchResultsScroll
+                },
+                allResults.map(function(res, i) {
+                  var fileName = res.file.split('/').pop();
+                  return React.createElement(
                     "div",
-                    { className: "search-result-body" },
+                    {
+                      key: i,
+                      className: "search-result-item",
+                      onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line); }; })(res)
+                    },
+                    React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
                     React.createElement(
-                      "div",
-                      { className: "search-result-file" },
-                      fileName,
+                      "div", { className: "search-result-body" },
                       React.createElement(
-                        "span",
-                        { className: "search-result-line-num" },
-                        " ", res.file, ":", res.line
-                      )
-                    ),
-                    React.createElement(
-                      "div",
-                      { className: "search-result-text" },
-                      res.text
+                        "div", { className: "search-result-file" },
+                        fileName,
+                        React.createElement("span", { className: "search-result-line-num" }, " ", res.file, ":", res.line)
+                      ),
+                      React.createElement("div", { className: "search-result-text" }, res.text)
                     )
-                  )
-                );
-              });
-
-              return React.createElement(
-                React.Fragment,
-                null,
-                React.createElement(
-                  "div",
-                  { className: "search-results-meta" },
-                  totalCount,
-                  " result" + (totalCount !== 1 ? "s" : ""),
-                  searchHasMore && React.createElement("span", { className: "search-results-capped" }, " — more available, scroll for next page")
-                ),
-                React.createElement("div", { style: { height: paddingTop + 'px', flexShrink: 0 } }),
-                visibleItems,
-                React.createElement("div", { style: { height: paddingBottom + 'px', flexShrink: 0 } }),
-                searchLoadingMore && React.createElement(
-                  "div",
-                  { className: "search-results-loading-more", 'aria-busy': 'true' },
-                  'Loading more…'
+                  );
+                }),
+                searchHasMore && React.createElement(
+                  "div", { className: "search-loading-more" },
+                  React.createElement("i", { className: "fas fa-spinner fa-spin" }),
+                  " Loading more\u2026"
                 )
-              );
-            })()
-          )
+              )
+            );
+          })()
         )
       )
     ),

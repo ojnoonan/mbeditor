@@ -76,6 +76,24 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     if (inputRef.current) inputRef.current.focus();
   };
 
+  // Priority tier for a file path: lower = shown first.
+  // Order: controller > model > helper > concern > view > job > other > noise
+  function getFilePriority(path) {
+    var p = (path || '').toLowerCase();
+    if (p.indexOf('/controllers/') >= 0) return 1;
+    if (p.indexOf('/models/')      >= 0) return 2;
+    if (p.indexOf('/helpers/')     >= 0) return 3;
+    if (p.indexOf('/concerns/')    >= 0) return 4;
+    if (p.indexOf('/views/')       >= 0) return 5;
+    if (p.indexOf('/jobs/')        >= 0) return 6;
+    // Deprioritise: migrations, schema, compiled assets, vendor, lock files
+    if (p.indexOf('/migrate/')  >= 0 || p.indexOf('schema.rb') >= 0) return 90;
+    if (p.indexOf('/public/')   >= 0 || p.indexOf('/vendor/')   >= 0) return 91;
+    if (p.slice(-7)  === '.min.js' || p.slice(-8) === '.min.css' ||
+        p.slice(-4)  === '.map'    || p.slice(-5) === '.lock')        return 92;
+    return 50;
+  }
+
   var getQuickOpenIcon = function getQuickOpenIcon(path, name, type) {
     if (type === 'dir') {
       return React.createElement('i', { className: 'fas fa-folder quick-open-result-icon quick-open-folder-icon', 'aria-hidden': 'true' });
@@ -99,7 +117,13 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     var res = SearchService.searchFiles(query);
     // Filter by type: always include files; include dirs only when showFolders is on
     var filtered = showFolders ? res : res.filter(function(r) { return r.type !== 'dir'; });
-    setResults(filtered.slice(0, 20));
+    // Stable priority sort: controller > model > helper > concern > view > job > other > noise.
+    // JS sort is stable in modern engines, so relative order within the same tier
+    // (i.e. MiniSearch relevance score) is preserved.
+    filtered.sort(function(a, b) {
+      return getFilePriority(a.path) - getFilePriority(b.path);
+    });
+    setResults(filtered.slice(0, 200));
     setSelectedIndex(0);
   }, [query, showFolders]);
 
