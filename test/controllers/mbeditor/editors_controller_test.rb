@@ -162,6 +162,13 @@ module Mbeditor
       assert_equal ["foo.rb"], json["openTabs"]
     end
 
+    test "save_state returns 413 for oversized payload" do
+      oversized = "x" * (Mbeditor::EditorsController::STATE_MAX_BYTES + 1)
+      post "/mbeditor/state", params: { state: oversized }, as: :json
+      assert_response :content_too_large
+      assert_match(/too large/i, json["error"])
+    end
+
     # ---------------------------------------------------------------------------
     # branch_state
     # ---------------------------------------------------------------------------
@@ -527,13 +534,14 @@ module Mbeditor
     # state — corrupted JSON
     # ---------------------------------------------------------------------------
 
-    test "state returns 422 for corrupted JSON in state file" do
+    test "state returns empty hash for corrupted JSON in state file" do
       state_path = File.join(@workspace, "tmp", "mbeditor_workspace.json")
+      FileUtils.mkdir_p(File.dirname(state_path))
       File.write(state_path, "this is not valid json {{{{")
 
       get "/mbeditor/state"
-      assert_response :unprocessable_content
-      assert json.key?("error")
+      assert_response :ok
+      assert_equal({}, json)
     end
 
     # ---------------------------------------------------------------------------
@@ -811,13 +819,7 @@ module Mbeditor
       script.write("sleep\n")
       script.flush
 
-      Mbeditor.configure { |c| c.rubocop_command = "ruby #{script.path}" }
-
-      # Temporarily lower the constant so the test completes in ~2 s, not 15 s.
-      original_timeout = Mbeditor::EditorsController::RUBOCOP_TIMEOUT_SECONDS
-      $VERBOSE = nil
-      Mbeditor::EditorsController::RUBOCOP_TIMEOUT_SECONDS = 2
-      $VERBOSE = true
+      Mbeditor.configure { |c| c.rubocop_command = "ruby #{script.path}"; c.lint_timeout = 2 }
 
       post '/mbeditor/lint',
            params: { path: 'app/models/user.rb', code: 'class User; end' },
@@ -826,10 +828,7 @@ module Mbeditor
       assert_response :unprocessable_content
       assert_match(/timed out/i, json['error'])
     ensure
-      $VERBOSE = nil
-      Mbeditor::EditorsController::RUBOCOP_TIMEOUT_SECONDS = original_timeout
-      $VERBOSE = true
-      Mbeditor.configure { |c| c.rubocop_command = 'rubocop' }
+      Mbeditor.configure { |c| c.rubocop_command = 'rubocop'; c.lint_timeout = 15 }
       script&.close!
     end
 

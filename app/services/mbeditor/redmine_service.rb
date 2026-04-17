@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "net/http"
+require "openssl"
 require "uri"
 require "json"
 
@@ -42,6 +43,9 @@ module Mbeditor
       raise RedmineConfigError, "redmine_url is not configured" if config.redmine_url.blank?
       raise RedmineConfigError, "redmine_api_key is not configured" if config.redmine_api_key.blank?
 
+      uri = URI.parse(config.redmine_url.to_s.chomp("/"))
+      raise RedmineConfigError, "redmine_url must use http or https scheme" unless %w[http https].include?(uri.scheme)
+
       fetch_issue(config.redmine_url, config.redmine_api_key)
     end
 
@@ -52,6 +56,9 @@ module Mbeditor
 
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.scheme == "https"
+      if uri.scheme == "https"
+        http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+      end
       http.open_timeout = TIMEOUT_SECONDS
       http.read_timeout = TIMEOUT_SECONDS
 

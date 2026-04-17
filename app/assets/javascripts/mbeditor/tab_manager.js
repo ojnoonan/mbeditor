@@ -257,11 +257,15 @@ var TabManager = (function () {
     });
     EditorStore.setState({ panes: newPanes, focusedPaneId: paneId, activeTabId: tabId });
 
-    var basePath = (window.MBEDITOR_BASE_PATH || '/mbeditor').replace(/\/$/, '');
-    axios.get(basePath + '/git/combined_diff', { params: { scope: scope || 'local' } })
+    axios.get(window.mbeditorBasePath() + '/git/combined_diff', { params: { scope: scope || 'local' } })
       .then(function(res) {
+        var data = res.data;
+        if (data && typeof data === 'object' && data.no_upstream) {
+          _updateTab(paneId, tabId, { combinedDiffText: '', combinedDiffNoUpstream: true, combinedDiffLoaded: true });
+          return;
+        }
         _updateTab(paneId, tabId, {
-          combinedDiffText: typeof res.data === 'string' ? res.data : '',
+          combinedDiffText: typeof data === 'string' ? data : (data && data.diff) || '',
           combinedDiffLoaded: true
         });
       })

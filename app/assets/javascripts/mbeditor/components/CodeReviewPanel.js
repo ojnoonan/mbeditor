@@ -27,7 +27,7 @@ var CodeReviewPanel = function CodeReviewPanel(_ref) {
     setIsRedmineLoading(true);
 
     // Call the redmine endpoint. It will 503 if disabled via config.
-    axios.get((window.MBEDITOR_BASE_PATH || '/mbeditor' ) + '/redmine/issue/' + issueId)
+    axios.get(window.mbeditorBasePath() + '/redmine/issue/' + issueId)
       .then(function (res) {
         setRedmineIssue(res.data);
         setIsRedmineLoading(false);

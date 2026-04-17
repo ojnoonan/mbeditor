@@ -1,10 +1,6 @@
 var SearchService = (function () {
   var SEARCH_PAGE_SIZE = 50;
 
-  function basePath() {
-    return (window.MBEDITOR_BASE_PATH || '/mbeditor').replace(/\/$/, '');
-  }
-
   var _miniSearch = new MiniSearch({
     fields: ['path', 'name'],           // indexed fields
     storeFields: ['path', 'name', 'type'] // returned fields (type: 'file'|'dir')
@@ -51,7 +47,7 @@ var SearchService = (function () {
     var off = (typeof offset === 'number') ? offset : 0;
     var lim = (typeof limit  === 'number') ? limit  : SEARCH_PAGE_SIZE;
 
-    return axios.get(basePath() + '/search', {
+    return axios.get(window.mbeditorBasePath() + '/search', {
       params: { q: query, offset: off, limit: lim }
     }).then(function(res) {
         var data = res.data;

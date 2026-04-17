@@ -22,6 +22,7 @@ module Mbeditor
   class RubyDefinitionService
     MAX_RESULTS = 20
     MAX_COMMENT_LOOKAHEAD = 15
+    MAX_FILES_SCANNED = 10_000
 
     # In-process file-index cache.
     # Structure: { absolute_path => { mtime: Float, lines: [String], all_defs: { method_name => [line, ...] } } }
@@ -101,8 +102,11 @@ module Mbeditor
     def call
       self.class.load_disk_cache_once
 
-      results     = []
-      @new_entries = false
+      results       = []
+      @new_entries  = false
+      files_scanned = 0
+
+      evict_deleted_cache_entries
 
       Find.find(@workspace_root) do |path|
         # Prune excluded directories
@@ -119,6 +123,12 @@ module Mbeditor
 
         rel = relative_path(path)
         next if excluded_rel_path?(rel, File.basename(path))
+
+        files_scanned += 1
+        if files_scanned > MAX_FILES_SCANNED
+          Rails.logger.warn("[mbeditor] RubyDefinitionService: workspace exceeds #{MAX_FILES_SCANNED} .rb files; stopping scan early")
+          break
+        end
 
         begin
           cached = cache_entry_for(path)
@@ -146,6 +156,17 @@ module Mbeditor
     end
 
     private
+
+    # Remove cache entries for files that no longer exist on disk.
+    def evict_deleted_cache_entries
+      stale_keys = self.class.mutex.synchronize do
+        self.class.file_cache.keys.select { |p| !File.exist?(p) }
+      end
+      return if stale_keys.empty?
+
+      self.class.mutex.synchronize { stale_keys.each { |k| self.class.file_cache.delete(k) } }
+      @new_entries = true
+    end
 
     # Returns the cached index entry for +path+, rebuilding it if the file has
     # been modified since the last parse.  Returns nil on any read/parse error.

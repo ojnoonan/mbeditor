@@ -15,7 +15,6 @@ module Mbeditor
     IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
     MAX_OPEN_FILE_SIZE_BYTES = 5 * 1024 * 1024
     RG_AVAILABLE = system("which rg > /dev/null 2>&1")
-    RUBOCOP_TIMEOUT_SECONDS = 15
 
     # GET /mbeditor — renders the IDE shell
     def index
@@ -59,14 +58,27 @@ module Mbeditor
       end
     rescue Errno::ENOENT
       render json: {}
+    rescue JSON::ParserError
+      render json: {}
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
 
+    STATE_MAX_BYTES = 1 * 1024 * 1024
+
     # POST /mbeditor/state — save workspace state
     def save_state
+      payload = params[:state].to_json
+      return render json: { error: "State payload too large" }, status: :content_too_large if payload.bytesize > STATE_MAX_BYTES
+
       path = workspace_root.join("tmp", "mbeditor_workspace.json")
-      File.write(path, params[:state].to_json)
+      FileUtils.mkdir_p(workspace_root.join("tmp"))
+      File.open(path, File::RDWR | File::CREAT) do |f|
+        f.flock(File::LOCK_EX)
+        f.truncate(0)
+        f.rewind
+        f.write(payload)
+      end
       render json: { ok: true }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -93,11 +105,19 @@ module Mbeditor
       branch = sanitize_branch_name(params[:branch])
       return render json: { error: "Invalid branch name" }, status: :bad_request unless branch
 
+      payload = params[:state].to_unsafe_h
+      return render json: { error: "State payload too large" }, status: :content_too_large if payload.to_json.bytesize > STATE_MAX_BYTES
+
       path = workspace_root.join("tmp", "mbeditor_branch_states.json")
       FileUtils.mkdir_p(workspace_root.join("tmp"))
-      all = File.exist?(path) ? JSON.parse(File.read(path)) : {}
-      all[branch] = params[:state].to_unsafe_h
-      File.write(path, all.to_json)
+      File.open(path, File::RDWR | File::CREAT) do |f|
+        f.flock(File::LOCK_EX)
+        existing = f.size > 0 ? JSON.parse(f.read) : {}
+        existing[branch] = payload
+        f.truncate(0)
+        f.rewind
+        f.write(existing.to_json)
+      end
       render json: { ok: true }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -113,10 +133,18 @@ module Mbeditor
       return render json: { pruned: [] } unless status.success?
 
       local_branches = out.split("\n").map(&:strip).reject(&:empty?)
-      all = JSON.parse(File.read(state_path))
-      pruned = all.keys - local_branches
-      pruned.each { |b| all.delete(b) }
-      File.write(state_path, all.to_json)
+      pruned = []
+      File.open(state_path, File::RDWR) do |f|
+        f.flock(File::LOCK_EX)
+        all = JSON.parse(f.read) rescue {}
+        pruned = all.keys - local_branches
+        if pruned.any?
+          pruned.each { |b| all.delete(b) }
+          f.truncate(0)
+          f.rewind
+          f.write(all.to_json)
+        end
+      end
       render json: { pruned: pruned }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -305,9 +333,7 @@ module Mbeditor
     def git_status
       output, _err, status = Open3.capture3("git", "-C", workspace_root.to_s, "status", "--porcelain")
       branch = GitService.current_branch(workspace_root.to_s) || ""
-      files = output.lines.map do |line|
-        { status: line[0..1].strip, path: line[3..].strip }
-      end
+      files = parse_porcelain_status(output)
       render json: { ok: status.success?, files: files, branch: branch }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -325,7 +351,7 @@ module Mbeditor
 
       # Annotate each working-tree file with added/removed line counts
       numstat_out, = Open3.capture3("git", "-C", repo, "diff", "--numstat", "HEAD")
-      numstat_map  = parse_numstat(numstat_out)
+      numstat_map  = GitService.parse_numstat(numstat_out)
       working_tree = working_tree.map { |f| f.merge(numstat_map.fetch(f[:path], {})) }
 
       upstream_output, _err, upstream_status = Open3.capture3("git", "-C", repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
@@ -339,7 +365,7 @@ module Mbeditor
 
       # Determine the branch's fork point relative to a base branch (develop/main/master).
       # This ensures History and Changes only show work unique to this branch.
-      base_sha, base_ref = find_branch_base(repo, branch)
+      base_sha, base_ref = GitService.find_branch_base(repo, branch)
 
       if upstream_branch.present?
         counts_output, _err, counts_status = Open3.capture3("git", "-C", repo, "rev-list", "--left-right", "--count", "HEAD...#{upstream_branch}")
@@ -350,7 +376,7 @@ module Mbeditor
         end
 
         unpushed_log_output, _err, unpushed_log_status = Open3.capture3("git", "-C", repo, "log", "#{upstream_branch}..HEAD", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
-        unpushed_commits = parse_git_log(unpushed_log_output) if unpushed_log_status.success?
+        unpushed_commits = GitService.parse_git_log(unpushed_log_output) if unpushed_log_status.success?
       end
 
       # "Changes in Branch" — use the merge-base against the base branch when available
@@ -361,7 +387,7 @@ module Mbeditor
         if unpushed_status.success?
           unpushed_files   = parse_name_status(unpushed_output)
           unp_numstat_out, = Open3.capture3("git", "-C", repo, "diff", "--numstat", "#{diff_base}..HEAD")
-          unp_numstat_map  = parse_numstat(unp_numstat_out)
+          unp_numstat_map  = GitService.parse_numstat(unp_numstat_out)
           unpushed_files   = unpushed_files.map { |f| f.merge(unp_numstat_map.fetch(f[:path], {})) }
         end
       end
@@ -373,7 +399,7 @@ module Mbeditor
         Open3.capture3("git", "-C", repo, "log", "--first-parent", branch, "-n", "100",
                        "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
       end
-      branch_commits = branch_log_status.success? ? parse_git_log(branch_log_output) : []
+      branch_commits = branch_log_status.success? ? GitService.parse_git_log(branch_log_output) : []
 
       redmine_ticket_id = nil
       if Mbeditor.configuration.redmine_enabled
@@ -382,7 +408,7 @@ module Mbeditor
           redmine_ticket_id = m[1] if m
         else
           branch_commits.each do |commit|
-            m = commit[:title]&.match(/#(\d+)/)
+            m = commit["title"]&.match(/#(\d+)/)
             if m
               redmine_ticket_id = m[1]
               break
@@ -545,9 +571,10 @@ module Mbeditor
 
       # Use a workspace-local tempfile so RuboCop's config discovery walks up
       # from the source file's directory and finds the host app's .rubocop.yml.
-      tmpfile = File.join(File.dirname(path), ".mbeditor_fix_#{SecureRandom.hex(8)}#{ext}")
-      begin
-        File.write(tmpfile, code)
+      Tempfile.create([".mbeditor_fix_", ext], File.dirname(path)) do |f|
+        f.write(code)
+        f.flush
+        tmpfile = f.path
 
         cmd = rubocop_command + ["--no-server", "--cache", "false", "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
@@ -561,8 +588,6 @@ module Mbeditor
         corrected = File.read(tmpfile, encoding: "UTF-8", invalid: :replace, undef: :replace)
         fix = compute_text_edit(code, corrected)
         render json: { fix: fix }
-      ensure
-        File.delete(tmpfile) if tmpfile && File.exist?(tmpfile)
       end
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -608,10 +633,12 @@ module Mbeditor
       code = params[:code].to_s
       return render json: { error: "code required" }, status: :unprocessable_content if code.empty?
 
-      ext     = File.extname(File.basename(path))
-      tmpfile = File.join(File.dirname(path), ".mbeditor_fmt_#{SecureRandom.hex(8)}#{ext}")
-      begin
-        File.write(tmpfile, code)
+      ext = File.extname(File.basename(path))
+      Tempfile.create([".mbeditor_fmt_", ext], File.dirname(path)) do |f|
+        f.write(code)
+        f.flush
+        tmpfile = f.path
+
         cmd = rubocop_command + ["--no-server", "--cache", "false", "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
         _out, _err, status = Open3.capture3(env, *cmd)
@@ -621,8 +648,6 @@ module Mbeditor
 
         corrected = File.read(tmpfile, encoding: "UTF-8", invalid: :replace, undef: :replace)
         render json: { ok: true, content: corrected }
-      ensure
-        File.delete(tmpfile) if tmpfile && File.exist?(tmpfile)
       end
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -679,7 +704,8 @@ module Mbeditor
 
             begin
               data = JSON.parse(raw)
-            rescue JSON::ParserError
+            rescue JSON::ParserError => e
+              Rails.logger.warn("[mbeditor] search: malformed rg JSON line: #{e.message}")
               next
             end
             next unless data["type"] == "match"
@@ -694,7 +720,7 @@ module Mbeditor
         end
       else
         args = ["grep", "-rn", "-F"]
-        excluded_dirnames.each { |d| args << "--exclude-dir=#{d}" }
+        excluded_dirnames.select { |d| d.match?(/\A[\w.\/-]+\z/) }.each { |d| args << "--exclude-dir=#{d}" }
         args += [query, workspace_root.to_s]
 
         IO.popen(args, err: File::NULL) do |io|
@@ -761,27 +787,29 @@ module Mbeditor
     end
 
     def run_with_timeout(env, cmd, stdin_data:)
-      output = +""
-      timed_out = false
+      timeout_seconds = Mbeditor.configuration.lint_timeout&.to_i
+      output = +""; timed_out = false
 
       Open3.popen3(env, *cmd, pgroup: true) do |stdin, stdout, _stderr, wait_thr|
         stdin.write(stdin_data)
         stdin.close
 
-        timer = Thread.new do
-          sleep RUBOCOP_TIMEOUT_SECONDS
-          timed_out = true
-          Process.kill('-KILL', wait_thr.pid)
-        rescue Errno::ESRCH
-          nil
+        timer = if timeout_seconds && timeout_seconds > 0
+          Thread.new do
+            sleep timeout_seconds
+            timed_out = true
+            Process.kill('-KILL', wait_thr.pid)
+          rescue Errno::ESRCH
+            nil
+          end
         end
 
         output = stdout.read
         wait_thr.value
-        timer.kill
+        timer&.kill
       end
 
-      raise "RuboCop timed out after #{RUBOCOP_TIMEOUT_SECONDS} seconds" if timed_out
+      raise "RuboCop timed out after #{timeout_seconds} seconds" if timed_out
 
       output
     end
@@ -856,48 +884,46 @@ module Mbeditor
       candidate.exist? ? ".rubocop.yml" : nil
     end
 
+    PROBE_MUTEX = Mutex.new
+    private_constant :PROBE_MUTEX
+
     def rubocop_available?
-      # Key on the configured rubocop command so the cache is invalidated if the
-      # command changes (e.g., between test cases or after reconfiguration).
-      key   = Mbeditor.configuration.rubocop_command.to_s
-      cache = self.class.instance_variable_get(:@rubocop_available_cache) ||
-              self.class.instance_variable_set(:@rubocop_available_cache, {})
-      return cache[key] if cache.key?(key)
-      cache[key] = begin
+      key = Mbeditor.configuration.rubocop_command.to_s
+      probe_cached(:@rubocop_available_cache, key) do
         _out, _err, status = Open3.capture3(*rubocop_command, "--version")
         status.success?
-      rescue StandardError
-        false
       end
     end
 
     def haml_lint_available?
-      # Key on the resolved command array so workspace-local bin/haml-lint is
-      # respected without re-running the probe on every request.
-      cmd   = haml_lint_command
-      key   = cmd.join(" ")
-      cache = self.class.instance_variable_get(:@haml_lint_available_cache) ||
-              self.class.instance_variable_set(:@haml_lint_available_cache, {})
-      return cache[key] if cache.key?(key)
-      cache[key] = begin
+      cmd = haml_lint_command
+      key = cmd.join(" ")
+      probe_cached(:@haml_lint_available_cache, key) do
         _out, _err, status = Open3.capture3(*cmd, "--version")
         status.success?
-      rescue StandardError
-        false
       end
     end
 
     def git_available?
-      # Key on workspace path so different directories get their own probe result.
-      key   = workspace_root.to_s
-      cache = self.class.instance_variable_get(:@git_available_cache) ||
-              self.class.instance_variable_set(:@git_available_cache, {})
-      return cache[key] if cache.key?(key)
-      cache[key] = begin
+      key = workspace_root.to_s
+      probe_cached(:@git_available_cache, key) do
         _out, _err, status = Open3.capture3("git", "-C", key, "rev-parse", "--is-inside-work-tree")
         status.success?
-      rescue StandardError
-        false
+      end
+    end
+
+    def probe_cached(ivar, key, &block)
+      PROBE_MUTEX.synchronize do
+        cache = self.class.instance_variable_get(ivar) ||
+                self.class.instance_variable_set(ivar, {})
+        unless cache.key?(key)
+          cache[key] = begin
+            block.call
+          rescue StandardError
+            false
+          end
+        end
+        cache[key]
       end
     end
 
@@ -952,8 +978,13 @@ module Mbeditor
     end
 
     def parse_porcelain_status(output)
-      output.lines.map do |line|
-        { status: line[0..1].strip, path: line[3..].to_s.strip }
+      output.lines.filter_map do |line|
+        next if line.length < 4
+
+        path = line[3..].to_s.strip
+        next if path.blank?
+
+        { status: line[0..1].strip, path: path }
       end
     end
 
@@ -970,66 +1001,11 @@ module Mbeditor
       end
     end
 
-    def parse_numstat(output)
-      (output || "").lines.each_with_object({}) do |line, map|
-        parts = line.strip.split("\t", 3)
-        next if parts.length < 3 || parts[0] == "-"
-
-        map[parts[2].strip] = { added: parts[0].to_i, removed: parts[1].to_i }
-      end
-    end
-
-    def parse_git_log(output)
-      output.split("\x1e").filter_map do |entry|
-        fields = entry.strip.split("\x1f", 4)
-        next unless fields.length == 4
-
-        {
-          hash: fields[0],
-          title: fields[1],
-          author: fields[2],
-          date: fields[3]
-        }
-      end
-    end
-
     def monaco_worker_file
       engine_path = Mbeditor::Engine.root.join("public", "monaco_worker.js")
       return engine_path if engine_path.file?
 
       Rails.root.join("public", "monaco_worker.js")
-    end
-
-    # Returns [merge_base_sha, ref_name] of the first candidate base branch found,
-    # or [nil, nil] if none can be determined. Candidates are tried in preference order:
-    # origin/develop → origin/main → origin/master → develop → main → master.
-    # Skips refs that ARE the current branch and refs where the merge-base equals HEAD
-    # (meaning the current branch is behind or at the same point as that ref).
-    def find_branch_base(repo, current_branch)
-      candidates = %w[origin/develop origin/main origin/master develop main master]
-      head_sha_out, = Open3.capture3("git", "-C", repo, "rev-parse", "HEAD")
-      head_sha = head_sha_out.strip
-
-      candidates.each do |ref|
-        short = ref.delete_prefix("origin/")
-        next if short == current_branch || ref == current_branch
-
-        _o, _e, st = Open3.capture3("git", "-C", repo, "rev-parse", "--verify", "--quiet", ref)
-        next unless st.success?
-
-        base_out, _e, base_st = Open3.capture3("git", "-C", repo, "merge-base", "HEAD", ref)
-        next unless base_st.success?
-
-        sha = base_out.strip
-        next unless sha.match?(/\A[0-9a-f]{40}\z/)
-        next if sha == head_sha # branch is at/behind this ref — no unique commits
-
-        return [sha, ref]
-      end
-
-      [nil, nil]
-    rescue StandardError
-      [nil, nil]
     end
 
     def resolve_monaco_asset_path(asset_path)

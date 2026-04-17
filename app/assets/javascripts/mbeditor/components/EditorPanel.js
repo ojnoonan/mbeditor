@@ -1183,6 +1183,22 @@ var EditorPanel = function EditorPanel(_ref) {
         renderer.html = function (token) {
           return '<pre>' + escapeHtml(typeof token === 'object' ? token.text : token) + '</pre>';
         };
+        // Sanitize link/image hrefs to block javascript: and data: schemes.
+        var _origLink = renderer.link.bind(renderer);
+        var _origImage = renderer.image.bind(renderer);
+        var SAFE_HREF_SCHEME = /^(https?:|mailto:|#|\/)/i;
+        var safeHref = function(href) {
+          if (!href) return href;
+          return SAFE_HREF_SCHEME.test(href.trim()) ? href : '#';
+        };
+        renderer.link = function(token) {
+          if (token && typeof token === 'object') { token = Object.assign({}, token, { href: safeHref(token.href) }); }
+          return _origLink(token);
+        };
+        renderer.image = function(token) {
+          if (token && typeof token === 'object') { token = Object.assign({}, token, { href: safeHref(token.href) }); }
+          return _origImage(token);
+        };
         setMarkup(window.marked.parse(markdownContent, { renderer: renderer }));
       })();
     }
@@ -1218,11 +1234,10 @@ var EditorPanel = function EditorPanel(_ref) {
   }
 
   if (isImage) {
-    var basePath = (window.MBEDITOR_BASE_PATH || '/mbeditor').replace(/\/$/, '');
     return React.createElement(
       'div',
       { className: 'monaco-container', style: { display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1e1e1e' } },
-      React.createElement('img', { src: basePath + '/raw?path=' + encodeURIComponent(tab.path), style: { maxWidth: '90%', maxHeight: '90%', objectFit: 'contain' }, alt: tab.name })
+      React.createElement('img', { src: window.mbeditorBasePath() + '/raw?path=' + encodeURIComponent(tab.path), style: { maxWidth: '90%', maxHeight: '90%', objectFit: 'contain' }, alt: tab.name })
     );
   }
 

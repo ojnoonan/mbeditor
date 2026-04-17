@@ -92,6 +92,12 @@ module Mbeditor
         end
       end
 
+      # Guard against a truncated final block (no TAB content line emitted).
+      if current["sha"] && !current.key?("content")
+        current["content"] = ""
+        results << current.dup
+      end
+
       results
     end
   end

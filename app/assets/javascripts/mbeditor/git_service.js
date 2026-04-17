@@ -1,8 +1,4 @@
 var GitService = (function () {
-  function basePath() {
-    return (window.MBEDITOR_BASE_PATH || '/mbeditor').replace(/\/$/, '');
-  }
-
   function applyGitInfo(data) {
     var files = data.workingTree || data.files || [];
     EditorStore.setState({
@@ -14,7 +10,7 @@ var GitService = (function () {
   }
 
   function fetchInfo() {
-    return axios.get(basePath() + '/git_info')
+    return axios.get(window.mbeditorBasePath() + '/git_info')
       .then(function(res) {
         if (res.data && res.data.ok) {
           applyGitInfo(res.data);
@@ -33,7 +29,7 @@ var GitService = (function () {
     return fetchInfo().then(function(data) {
       if (data && data.ok) return data;
 
-      return axios.get(basePath() + '/git_status')
+      return axios.get(window.mbeditorBasePath() + '/git_status')
       .then(function(res) {
         if (res.data.ok) {
           EditorStore.setState({
@@ -63,31 +59,31 @@ var GitService = (function () {
     if (baseSha) query += '&base=' + encodeURIComponent(baseSha);
     if (headSha) query += '&head=' + encodeURIComponent(headSha);
     
-    return axios.get(basePath() + '/git/diff' + query).then(function(res) {
+    return axios.get(window.mbeditorBasePath() + '/git/diff' + query).then(function(res) {
       return res.data;
     });
   }
 
   function fetchBlame(path) {
-    return axios.get(basePath() + '/git/blame?file=' + encodeURIComponent(path)).then(function(res) {
+    return axios.get(window.mbeditorBasePath() + '/git/blame?file=' + encodeURIComponent(path)).then(function(res) {
       return res.data;
     });
   }
 
   function fetchFileHistory(path) {
-    return axios.get(basePath() + '/git/file_history?file=' + encodeURIComponent(path)).then(function(res) {
+    return axios.get(window.mbeditorBasePath() + '/git/file_history?file=' + encodeURIComponent(path)).then(function(res) {
       return res.data;
     });
   }
 
   function fetchCommitGraph() {
-    return axios.get(basePath() + '/git/commit_graph').then(function(res) {
+    return axios.get(window.mbeditorBasePath() + '/git/commit_graph').then(function(res) {
       return res.data;
     });
   }
 
   function fetchCommitDetail(sha) {
-    return axios.get(basePath() + '/git/commit_detail?sha=' + encodeURIComponent(sha)).then(function(res) {
+    return axios.get(window.mbeditorBasePath() + '/git/commit_detail?sha=' + encodeURIComponent(sha)).then(function(res) {
       return res.data;
     });
   }

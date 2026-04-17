@@ -14,8 +14,19 @@ var GitPanel = function GitPanel(_ref) {
   var _s1 = useState(true);  var localExpanded  = _s1[0]; var setLocalExpanded  = _s1[1];
   var _s2 = useState(true);  var branchExpanded = _s2[0]; var setBranchExpanded = _s2[1];
   var _s3 = useState(true);  var historyExpanded= _s3[0]; var setHistoryExpanded= _s3[1];
-  // { [hash]: true|false }
-  var _s4 = useState({});    var expandedCommits = _s4[0]; var setExpandedCommits = _s4[1];
+
+  // { [hash]: true|false } — persisted to localStorage keyed by root path so
+  // users don't need to re-expand commits on every page load.
+  var _lsKey = 'mbeditor_expanded_commits_' + (window.MBEDITOR_BASE_PATH || '');
+  var _lsInitial = (function() {
+    try { return JSON.parse(localStorage.getItem(_lsKey)) || {}; } catch(e) { return {}; }
+  })();
+  var _s4 = useState(_lsInitial); var expandedCommits = _s4[0]; var setExpandedCommits = _s4[1];
+
+  // Persist expandedCommits whenever it changes.
+  useEffect(function() {
+    try { localStorage.setItem(_lsKey, JSON.stringify(expandedCommits)); } catch(e) {}
+  }, [expandedCommits]);
   // { [hash]: { loading, files: [{status,path}], error } }
   var _s5 = useState({});    var commitFiles = _s5[0]; var setCommitFiles = _s5[1];
   var _s6 = useState(false); var refreshing = _s6[0]; var setRefreshing = _s6[1];
@@ -55,8 +66,7 @@ var GitPanel = function GitPanel(_ref) {
     setRedmineLoading(true);
     setRedmineIssue(null);
     setRedmineError(null);
-    var basePath = (window.MBEDITOR_BASE_PATH || '/mbeditor').replace(/\/$/, '');
-    axios.get(basePath + '/redmine/issue/' + redmineTicketId)
+    axios.get(window.mbeditorBasePath() + '/redmine/issue/' + redmineTicketId)
       .then(function (res) {
         setRedmineIssue(res.data);
         setRedmineLoading(false);

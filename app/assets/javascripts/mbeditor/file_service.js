@@ -2,6 +2,10 @@
 // The server uses this header to silence editor logs and guard non-GET requests.
 axios.defaults.headers.common['X-Mbeditor-Client'] = '1';
 
+// Cap all API calls at 30 s so a hung Rails server never blocks the UI forever.
+// The ping endpoint overrides this with a tighter 4 s timeout per-request.
+axios.defaults.timeout = 30000;
+
 // Surface pending-migration errors as a dismissible banner instead of silently failing.
 axios.interceptors.response.use(null, function(error) {
   if (error.response && error.response.data && error.response.data.pending_migration_error) {
@@ -28,16 +32,12 @@ axios.interceptors.response.use(null, function(error) {
 });
 
 var FileService = (function () {
-  function basePath() {
-    return (window.MBEDITOR_BASE_PATH || '/mbeditor').replace(/\/$/, '');
-  }
-
   function getWorkspace() {
-    return axios.get(basePath() + '/workspace').then(function(res) { return res.data; });
+    return axios.get(window.mbeditorBasePath() + '/workspace').then(function(res) { return res.data; });
   }
 
   function getTree() {
-    return axios.get(basePath() + '/files').then(function(res) { return res.data; });
+    return axios.get(window.mbeditorBasePath() + '/files').then(function(res) { return res.data; });
   }
 
   function getFile(path, options) {
@@ -45,72 +45,72 @@ var FileService = (function () {
     if (options && options.allowMissing) {
       params.allow_missing = '1';
     }
-    return axios.get(basePath() + '/file', { params: params }).then(function(res) { return res.data; });
+    return axios.get(window.mbeditorBasePath() + '/file', { params: params }).then(function(res) { return res.data; });
   }
 
   function saveFile(path, code) {
-    return axios.post(basePath() + '/file', { path: path, code: code }).then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/file', { path: path, code: code }).then(function(res) { return res.data; });
   }
 
   function createFile(path, code) {
-    return axios.post(basePath() + '/create_file', { path: path, code: code || '' }).then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/create_file', { path: path, code: code || '' }).then(function(res) { return res.data; });
   }
 
   function createDir(path) {
-    return axios.post(basePath() + '/create_dir', { path: path }).then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/create_dir', { path: path }).then(function(res) { return res.data; });
   }
 
   function renamePath(path, newPath) {
-    return axios.patch(basePath() + '/rename', { path: path, new_path: newPath }).then(function(res) { return res.data; });
+    return axios.patch(window.mbeditorBasePath() + '/rename', { path: path, new_path: newPath }).then(function(res) { return res.data; });
   }
 
   function deletePath(path) {
-    return axios.delete(basePath() + '/delete', { data: { path: path } }).then(function(res) { return res.data; });
+    return axios.delete(window.mbeditorBasePath() + '/delete', { data: { path: path } }).then(function(res) { return res.data; });
   }
 
   function lintFile(path, code) {
-    return axios.post(basePath() + '/lint', { path: path, code: code }).then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/lint', { path: path, code: code }).then(function(res) { return res.data; });
   }
 
   function quickFixOffense(path, code, copName) {
-    return axios.post(basePath() + '/quick_fix', { path: path, code: code, cop_name: copName }).then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/quick_fix', { path: path, code: code, cop_name: copName }).then(function(res) { return res.data; });
   }
 
   function formatFile(path, code) {
-    return axios.post(basePath() + '/format', { path: path, code: code }).then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/format', { path: path, code: code }).then(function(res) { return res.data; });
   }
 
   function runTests(path) {
-    return axios.post(basePath() + '/test', { path: path }).then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/test', { path: path }).then(function(res) { return res.data; });
   }
 
   function ping() {
-    return axios.get(basePath() + '/ping', { timeout: 4000 }).then(function(res) { return res.data; });
+    return axios.get(window.mbeditorBasePath() + '/ping', { timeout: 4000 }).then(function(res) { return res.data; });
   }
 
   function getState() {
-    return axios.get(basePath() + '/state').then(function(res) { return res.data; });
+    return axios.get(window.mbeditorBasePath() + '/state').then(function(res) { return res.data; });
   }
 
   function saveState(state) {
-    return axios.post(basePath() + '/state', { state: state }).then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/state', { state: state }).then(function(res) { return res.data; });
   }
 
   function getBranchState(branch) {
-    return axios.get(basePath() + '/branch_state', { params: { branch: branch } }).then(function(res) { return res.data; });
+    return axios.get(window.mbeditorBasePath() + '/branch_state', { params: { branch: branch } }).then(function(res) { return res.data; });
   }
 
   function saveBranchState(branch, state) {
-    return axios.post(basePath() + '/branch_state', { branch: branch, state: state }).then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/branch_state', { branch: branch, state: state }).then(function(res) { return res.data; });
   }
 
   function pruneBranchStates() {
-    return axios.post(basePath() + '/prune_branch_states').then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/prune_branch_states').then(function(res) { return res.data; });
   }
 
   function getDefinition(symbol, language, extraOptions) {
     var config = Object.assign({ params: { symbol: symbol, language: language }, timeout: 5000 }, extraOptions || {});
-    return axios.get(basePath() + '/definition', config).then(function(res) { return res.data; });
+    return axios.get(window.mbeditorBasePath() + '/definition', config).then(function(res) { return res.data; });
   }
 
   return {

@@ -20,6 +20,7 @@ var EditorStore = (function () {
   };
 
   var _listeners = [];
+  var _statusTimer = null;
 
   function getState() { return _state; }
 
@@ -42,6 +43,9 @@ var EditorStore = (function () {
   // Subscribe to changes in a specific subset of state keys.
   // The listener is only called when at least one of the watched keys changes
   // by reference (===), preventing unnecessary re-renders for unrelated updates.
+  // IMPORTANT: all state updates MUST produce a new object reference for any
+  // nested value (use Object.assign / spread — never mutate in place), otherwise
+  // subscribeToSlice will not detect the change.
   function subscribeToSlice(keys, fn) {
     var prev = {};
     keys.forEach(function(k) { prev[k] = _state[k]; });
@@ -57,9 +61,13 @@ var EditorStore = (function () {
   function setStatus(text, kind) {
     kind = kind || "info";
     setState({ statusMessage: { text: text, kind: kind } });
-    // Auto-clear after 4s for non-error messages
+    if (_statusTimer !== null) {
+      clearTimeout(_statusTimer);
+      _statusTimer = null;
+    }
     if (kind !== "error") {
-      setTimeout(function () {
+      _statusTimer = setTimeout(function () {
+        _statusTimer = null;
         if (_state.statusMessage.text === text) {
           setState({ statusMessage: { text: "", kind: "info" } });
         }

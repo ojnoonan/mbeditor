@@ -254,7 +254,10 @@ module Mbeditor
       open3_singleton = class << Open3; self; end
 
       git_service_singleton.alias_method :__original_current_branch_for_test, :current_branch
+      git_service_singleton.alias_method :__original_find_branch_base_for_test, :find_branch_base
       open3_singleton.alias_method :__original_capture3_for_test, :capture3
+
+      base_sha = 'b' * 40
 
       git_status_ok = Object.new
       def git_status_ok.success?
@@ -265,16 +268,14 @@ module Mbeditor
         'feature/my-work'
       end
 
+      GitService.define_singleton_method(:find_branch_base) do |_repo_path, _branch, **|
+        [base_sha, 'origin/develop']
+      end
+
       Open3.define_singleton_method(:capture3) do |*args|
         command = args.map(&:to_s)
 
-        if command.include?('rev-parse') && command.include?('HEAD')
-          ["#{'a' * 40}\n", '', git_status_ok]
-        elsif command.include?('rev-parse') && command.include?('--verify') && command.include?('origin/develop')
-          ['', '', git_status_ok]
-        elsif command.include?('merge-base') && command.include?('origin/develop')
-          ["#{'b' * 40}\n", '', git_status_ok]
-        elsif command.include?('diff') && command.last == "#{'b' * 40}..HEAD"
+        if command.include?('diff') && command.last == "#{base_sha}..HEAD"
           ["diff --git a/foo b/foo\n", '', git_status_ok]
         elsif command.include?('rev-parse') && command.include?('@{u}')
           raise 'expected branch base diff, but attempted upstream fallback'
@@ -289,6 +290,8 @@ module Mbeditor
     ensure
       git_service_singleton.alias_method :current_branch, :__original_current_branch_for_test
       git_service_singleton.remove_method :__original_current_branch_for_test
+      git_service_singleton.alias_method :find_branch_base, :__original_find_branch_base_for_test
+      git_service_singleton.remove_method :__original_find_branch_base_for_test
       open3_singleton.alias_method :capture3, :__original_capture3_for_test
       open3_singleton.remove_method :__original_capture3_for_test
     end

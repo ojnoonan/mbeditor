@@ -95,6 +95,7 @@ module Mbeditor
         fake_response.define_singleton_method(:body) { issue_body }
         fake_http = Object.new
         fake_http.define_singleton_method(:use_ssl=) { |_value| }
+        fake_http.define_singleton_method(:verify_mode=) { |_value| }
         fake_http.define_singleton_method(:open_timeout=) { |_value| }
         fake_http.define_singleton_method(:read_timeout=) { |_value| }
         fake_http.define_singleton_method(:request) do |request|
@@ -127,6 +128,7 @@ module Mbeditor
         fake_response.define_singleton_method(:body) { '' }
         fake_http = Object.new
         fake_http.define_singleton_method(:use_ssl=) { |_value| }
+        fake_http.define_singleton_method(:verify_mode=) { |_value| }
         fake_http.define_singleton_method(:open_timeout=) { |_value| }
         fake_http.define_singleton_method(:read_timeout=) { |_value| }
         fake_http.define_singleton_method(:request) do |request|

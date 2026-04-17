@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "mbeditor/version"
 require "mbeditor/configuration"
 require "mbeditor/engine"

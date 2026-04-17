@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "mbeditor/rack/silence_ping_request"
 require "mbeditor/rack/handle_pending_migrations"
 
@@ -24,6 +26,31 @@ module Mbeditor
     config.after_initialize do
       Mbeditor::RubyDefinitionService.cache_path =
         Rails.root.join("tmp", "mbeditor_ruby_defs.json").to_s
+
+      cfg = Mbeditor.configuration
+
+      if cfg.workspace_root.present? && !File.directory?(cfg.workspace_root.to_s)
+        raise ArgumentError, "[mbeditor] config.workspace_root is set to '#{cfg.workspace_root}' but that path is not a directory"
+      end
+
+      if cfg.redmine_enabled
+        require "uri"
+        if cfg.redmine_url.blank?
+          Rails.logger.warn("[mbeditor] redmine_enabled is true but redmine_url is not configured")
+        else
+          begin
+            uri = URI.parse(cfg.redmine_url.to_s)
+            unless %w[http https].include?(uri.scheme)
+              Rails.logger.warn("[mbeditor] redmine_url must use http or https scheme")
+            end
+          rescue URI::InvalidURIError
+            Rails.logger.warn("[mbeditor] redmine_url is not a valid URI")
+          end
+        end
+        if cfg.redmine_api_key.blank?
+          Rails.logger.warn("[mbeditor] redmine_enabled is true but redmine_api_key is not configured")
+        end
+      end
     end
 
     initializer "mbeditor.assets.precompile" do |app|

@@ -137,8 +137,8 @@ module Mbeditor
     end
 
     def test_parse_porcelain_incomplete_final_block_is_silently_dropped
-      # The last block has no TAB content line — should be excluded from results,
-      # not appended with missing fields.
+      # The last block has no TAB content line — should be appended with empty content
+      # rather than silently dropped, so callers always get one entry per line.
       output = "#{SHA1} 1 1 1\n" \
                "author Alice\n" \
                "author-mail <alice@example.com>\n" \
@@ -153,8 +153,10 @@ module Mbeditor
 
       result = parse(output)
 
-      assert_equal 1, result.length, 'incomplete final block must not be appended'
+      assert_equal 2, result.length, 'incomplete final block should be appended with empty content'
       assert_equal 'the only complete line', result[0]['content']
+      assert_equal '', result[1]['content'], 'truncated block should have empty content'
+      assert_equal SHA2, result[1]['sha']
     end
 
     def test_parse_porcelain_empty_output_returns_empty_array
