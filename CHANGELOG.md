@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9] - 2026-04-21
+
+### Added
+- Search responses now include a total result count; background counting runs for the first page to populate it without blocking.
+- Editor preferences expanded with line height, letter spacing, cursor style, and auto-closing bracket/quote settings.
+
+### Fixed
+- Multi-line tab indentation corrected; added regression test to prevent recurrence.
+- 8 correctness, security, and reliability fixes surfaced by ultrareview.
+
 ## [0.3.8] - 2026-04-16
 
 ### Fixed
