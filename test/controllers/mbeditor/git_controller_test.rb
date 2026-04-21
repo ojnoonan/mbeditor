@@ -148,6 +148,7 @@ module Mbeditor
       open3_singleton = class << Open3; self; end
 
       git_service_singleton.alias_method :__original_current_branch_for_test, :current_branch
+      git_service_singleton.alias_method :__original_find_branch_base_for_test, :find_branch_base
       open3_singleton.alias_method :__original_capture3_for_test, :capture3
 
       git_status_ok = Object.new
@@ -157,6 +158,10 @@ module Mbeditor
 
       GitService.define_singleton_method(:current_branch) do |_repo_path|
         "feature/history-scope"
+      end
+
+      GitService.define_singleton_method(:find_branch_base) do |*|
+        [nil, nil]
       end
 
       Open3.define_singleton_method(:capture3) do |*args|
@@ -186,6 +191,8 @@ module Mbeditor
     ensure
       git_service_singleton.alias_method :current_branch, :__original_current_branch_for_test
       git_service_singleton.remove_method :__original_current_branch_for_test
+      git_service_singleton.alias_method :find_branch_base, :__original_find_branch_base_for_test
+      git_service_singleton.remove_method :__original_find_branch_base_for_test
       open3_singleton.alias_method :capture3, :__original_capture3_for_test
       open3_singleton.remove_method :__original_capture3_for_test
     end
