@@ -260,10 +260,6 @@ var TabManager = (function () {
     axios.get(window.mbeditorBasePath() + '/git/combined_diff', { params: { scope: scope || 'local' } })
       .then(function(res) {
         var data = res.data;
-        if (data && typeof data === 'object' && data.no_upstream) {
-          _updateTab(paneId, tabId, { combinedDiffText: '', combinedDiffNoUpstream: true, combinedDiffLoaded: true });
-          return;
-        }
         _updateTab(paneId, tabId, {
           combinedDiffText: typeof data === 'string' ? data : (data && data.diff) || '',
           combinedDiffLoaded: true

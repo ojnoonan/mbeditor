@@ -146,7 +146,7 @@ module Mbeditor
             out, _err, status = Open3.capture3("git", "-C", repo, "diff", "#{upstream}..HEAD")
             out = status.success? ? out : ""
           else
-            return render json: { no_upstream: true, diff: "" }, content_type: "application/json"
+            return render plain: "", content_type: "text/plain"
           end
         end
       end
