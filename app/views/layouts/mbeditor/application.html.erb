@@ -20,6 +20,10 @@
   <%= stylesheet_link_tag "fontawesome.min", media: "all", preload_links_header: false %>
   <%= stylesheet_link_tag "mbeditor/application", media: "all", preload_links_header: false %>
 
+  <!-- ── ActionCable (deferred — sets window.ActionCable for WebSocket service) ── -->
+  <% if defined?(ActionCable::Channel::Base) %>
+  <script defer src="<%= asset_path('actioncable.js') %>"></script>
+  <% end %>
   <!-- ── Vendor JS (deferred — only needed inside Monaco callback) ── -->
   <script defer src="<%= asset_path('react.min.js') %>"></script>
   <script defer src="<%= asset_path('react-dom.min.js') %>"></script>

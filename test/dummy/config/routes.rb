@@ -5,6 +5,7 @@ Rails.application.routes.draw do
   post   "login",  to: "sessions#create"
   delete "logout", to: "sessions#destroy"
 
+  mount ActionCable.server => '/cable'
   mount Mbeditor::Engine => "/mbeditor"
   root to: redirect("/mbeditor")
 end

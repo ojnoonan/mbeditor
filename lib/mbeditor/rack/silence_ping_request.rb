@@ -17,7 +17,7 @@ module Mbeditor
         path = normalized_request_path(env)
         if root_request?(env, path)
           @app.call(env)
-        elsif mbeditor_request?(path) || editor_asset_request?(env, path)
+        elsif mbeditor_request?(path) || cable_request?(path) || editor_asset_request?(env, path)
           Rails.logger.silence { @app.call(env) }
         else
           @app.call(env)
@@ -30,6 +30,9 @@ module Mbeditor
         path.start_with?("/mbeditor/")
       end
 
+      def cable_request?(path)
+        path == "/cable" || path.start_with?("/cable/")
+      end
       # Silence asset pipeline requests that belong to the editor:
       # - /assets/mbeditor/... is always an editor asset (CSS/JS bundle)
       # - other /assets/... requests are silenced only when the browser is

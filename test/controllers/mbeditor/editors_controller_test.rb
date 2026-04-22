@@ -111,6 +111,13 @@ module Mbeditor
       assert_includes [true, false], json["blameAvailable"]
     end
 
+    test "workspace includes actionCableEnabled flag" do
+      get "/mbeditor/workspace"
+      assert_response :ok
+      assert json.key?("actionCableEnabled"), "actionCableEnabled missing from workspace response"
+      assert_includes [true, false], json["actionCableEnabled"]
+    end
+
     test "workspace gitAvailable is false when workspace_root is not a git repo" do
       Dir.mktmpdir("mbeditor_nongit_") do |non_git_dir|
         Mbeditor.configure { |c| c.workspace_root = non_git_dir }

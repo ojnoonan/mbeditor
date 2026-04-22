@@ -68,6 +68,23 @@ var EditorPanel = function EditorPanel(_ref) {
   var editorReady = _useState10[0];
   var setEditorReady = _useState10[1];
 
+  var _useState11 = useState(false);
+  var _useState12 = _slicedToArray(_useState11, 2);
+  var methodsOpen = _useState12[0];
+  var setMethodsOpen = _useState12[1];
+
+  var _useState13 = useState([]);
+  var _useState14 = _slicedToArray(_useState13, 2);
+  var methodsList = _useState14[0];
+  var setMethodsList = _useState14[1];
+
+  var _useState15 = useState(null);
+  var _useState16 = _slicedToArray(_useState15, 2);
+  var methodsDropdownPos = _useState16[0];
+  var setMethodsDropdownPos = _useState16[1];
+
+  var methodsBtnRef = useRef(null);
+
   var onFormatRef = useRef(onFormat);
   onFormatRef.current = onFormat;
 
@@ -514,6 +531,46 @@ var EditorPanel = function EditorPanel(_ref) {
       editor.restoreViewState(tab.viewState);
     }
 
+    // Restore the find widget state from the previous editor (when persistFindState is on).
+    if (editorPrefs.persistFindState !== false && window.__mbeditorFindState && window.__mbeditorFindState.searchString) {
+      var _savedFind = window.__mbeditorFindState;
+      if (_savedFind.isRevealed) {
+        // Open the widget first (setTimeout so layout is ready), then re-apply the
+        // saved query — actions.find may seed from the selection and overwrite it.
+        setTimeout(function() {
+          try {
+            editor.trigger('', 'actions.find', null);
+            setTimeout(function() {
+              try {
+                var _fc0 = editor.getContribution('editor.contrib.findController');
+                if (_fc0 && _fc0.getState) {
+                  _fc0.getState().change({
+                    searchString: _savedFind.searchString,
+                    isRegex: !!_savedFind.isRegex,
+                    matchCase: !!_savedFind.matchCase,
+                    wholeWord: !!_savedFind.wholeWord
+                  }, false);
+                }
+              } catch (e) {}
+            }, 0);
+          } catch (e) {}
+        }, 0);
+      } else {
+        // Widget was closed — just seed the state silently so Ctrl+F pre-fills it.
+        try {
+          var _fc0 = editor.getContribution('editor.contrib.findController');
+          if (_fc0 && _fc0.getState) {
+            _fc0.getState().change({
+              searchString: _savedFind.searchString,
+              isRegex: !!_savedFind.isRegex,
+              matchCase: !!_savedFind.matchCase,
+              wholeWord: !!_savedFind.wholeWord
+            }, false);
+          }
+        } catch (e) {}
+      }
+    }
+
     monacoRef.current = editor;
     window.__mbeditorActiveEditor = editor;
     setEditorReady(true);
@@ -643,6 +700,26 @@ var EditorPanel = function EditorPanel(_ref) {
       if (_me) {
         _me.aviBase = aviBaseRef.current;
         _me.aviMax = aviMaxRef.current;
+      }
+      // Save the current find widget state so it can be restored on next tab switch.
+      // Only overwrite the global state when there is an actual search string — this
+      // prevents a blank/fresh editor from clobbering the shared query.
+      if (editorPrefs.persistFindState !== false) {
+        try {
+          var _fc = editor.getContribution('editor.contrib.findController');
+          if (_fc && _fc.getState) {
+            var _fs = _fc.getState();
+            if (_fs.searchString) {
+              window.__mbeditorFindState = {
+                searchString: _fs.searchString,
+                isRegex: _fs.isRegex,
+                matchCase: _fs.matchCase,
+                wholeWord: _fs.wholeWord,
+                isRevealed: _fs.isRevealed
+              };
+            }
+          }
+        } catch (e) {}
       }
       if (window.__mbeditorActiveEditor === editor) {
         window.__mbeditorActiveEditor = null;
@@ -1172,6 +1249,9 @@ var EditorPanel = function EditorPanel(_ref) {
   var ext = parts.length > 1 ? parts.pop().toLowerCase() : '';
   var isImage = tab.isImage || IMAGE_EXTENSIONS.includes(ext);
   var isMarkdown = ['md', 'markdown'].includes(ext);
+  var fileBaseName = (tab.path || '').split('/').pop().toLowerCase();
+  var isRubyFile = ext === 'rb' || ext === 'ruby' || ext === 'gemspec' ||
+    fileBaseName === 'gemfile' || fileBaseName === 'gemfile.lock' || fileBaseName === 'rakefile';
 
   useEffect(function () {
     if (isMarkdown && window.marked) {
@@ -1203,6 +1283,36 @@ var EditorPanel = function EditorPanel(_ref) {
       })();
     }
   }, [markdownContent, isMarkdown]);
+
+  // Click-outside handler to close the methods dropdown
+  useEffect(function() {
+    if (!methodsOpen) return;
+    function handleClickOutside(e) {
+      var btn = methodsBtnRef.current;
+      // Close if click is not on the button (the dropdown uses onMouseDown with preventDefault)
+      if (btn && !btn.contains(e.target)) {
+        setMethodsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return function() { document.removeEventListener('mousedown', handleClickOutside); };
+  }, [methodsOpen]);
+
+  // Parse all method definitions from the current Monaco model
+  function parseRubyMethods(model) {
+    var methods = [];
+    var lineCount = model.getLineCount();
+    var DEF_RE = /^\s*def\s+(self\.)?([a-zA-Z_][a-zA-Z0-9_?!=]*)/;
+    for (var i = 1; i <= lineCount; i++) {
+      var line = model.getLineContent(i);
+      var m = DEF_RE.exec(line);
+      if (m) {
+        var selfPrefix = m[1] ? 'self.' : '';
+        methods.push({ line: i, name: selfPrefix + m[2] });
+      }
+    }
+    return methods;
+  }
 
   if (tab.fileNotFound) {
     return React.createElement(
@@ -1282,6 +1392,28 @@ var EditorPanel = function EditorPanel(_ref) {
         React.createElement('i', { className: 'fas fa-history', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
         !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, 'History')
       ),
+      isRubyFile && React.createElement(
+        'button',
+        {
+          ref: methodsBtnRef,
+          className: 'ide-icon-btn' + (methodsOpen ? ' active' : ''),
+          onClick: function() {
+            var nextOpen = !methodsOpen;
+            if (nextOpen) {
+              var model = monacoRef.current && monacoRef.current.getModel();
+              setMethodsList(model ? parseRubyMethods(model) : []);
+              if (methodsBtnRef.current) {
+                var rect = methodsBtnRef.current.getBoundingClientRect();
+                setMethodsDropdownPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+              }
+            }
+            setMethodsOpen(nextOpen);
+          },
+          title: 'Jump to Method'
+        },
+        React.createElement('i', { className: 'fas fa-list-ul', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
+        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, 'Methods')
+      ),
       gitAvailable && React.createElement(
         'button',
         {
@@ -1306,6 +1438,35 @@ var EditorPanel = function EditorPanel(_ref) {
       )
     ),
     React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } }),
+    methodsOpen && methodsDropdownPos && React.createElement(
+      'div',
+      {
+        className: 'ide-methods-dropdown',
+        style: { position: 'fixed', top: methodsDropdownPos.top + 'px', right: methodsDropdownPos.right + 'px', left: 'auto', zIndex: 9900 }
+      },
+      methodsList.length === 0
+        ? React.createElement('div', { className: 'ide-methods-dropdown-empty' }, 'No methods found')
+        : methodsList.map(function(m) {
+            return React.createElement(
+              'div',
+              {
+                key: m.line,
+                className: 'ide-methods-dropdown-item',
+                onMouseDown: function(e) {
+                  e.preventDefault();
+                  setMethodsOpen(false);
+                  if (monacoRef.current) {
+                    monacoRef.current.revealLineInCenter(m.line);
+                    monacoRef.current.setPosition({ lineNumber: m.line, column: 1 });
+                    monacoRef.current.focus();
+                  }
+                }
+              },
+              React.createElement('span', { className: 'ide-methods-dropdown-line' }, m.line),
+              m.name
+            );
+          })
+    ),
     React.createElement('div', { ref: vimStatusRef, className: 'vim-statusbar', style: { display: editorPrefs.vimMode ? 'flex' : 'none', height: '22px', alignItems: 'center', padding: '0 10px', fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace", fontSize: '12px', background: 'var(--ide-statusbar-bg, #1e1e2e)', color: 'var(--ide-statusbar-fg, #9cdcfe)', borderTop: '1px solid var(--ide-border, #3e3e3e)', flexShrink: 0, userSelect: 'none', letterSpacing: '0.02em' } })
   );
 };

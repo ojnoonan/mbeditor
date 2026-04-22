@@ -1,6 +1,13 @@
 /* ── Mini Browser Editor Global Styles ──────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
+/* Suppress all focus outlines / coloured glows inside the IDE shell */
+#mbeditor-root *:focus,
+#mbeditor-root *:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 html, body, #mbeditor-root {
   margin: 0; padding: 0;
   width: 100%; height: 100%;
@@ -822,6 +829,14 @@ html, body, #mbeditor-root {
   padding-left: 8px;
 }
 
+.statusbar-eol-btn {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+  padding: 0 6px;
+}
+
 /* ── Search Panel ─────────────────────────────────────────── */
 .search-panel {
   padding: 8px;
@@ -840,27 +855,63 @@ html, body, #mbeditor-root {
 }
 
 .search-input-shell {
-  flex: 1;
+  flex-shrink: 0;
   position: relative;
   display: flex;
   align-items: center;
   min-width: 0;
 }
 
+/* The input grows to fill; right padding makes room for adornments */
 .search-input-shell .search-input {
-  padding-right: 24px;
+  padding-right: 88px; /* 3 × 22px buttons + 4px clear + gaps */
 }
 
-/* search-clear-btn sits absolutely inside the input shell */
-.search-input-shell .search-clear-btn {
+/* Adornment container — absolutely positioned inside the shell */
+.search-input-adornments {
   position: absolute;
   right: 4px;
-  width: 16px;
-  height: 16px;
-  font-size: 10px;
-  color: var(--ide-text-muted);
-  background: transparent;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 1px;
 }
+
+/* Each small icon button inside the input */
+.search-adornment-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ide-text-muted);
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.1s, background 0.1s, border-color 0.1s;
+}
+
+.search-adornment-btn:hover {
+  color: var(--ide-text);
+  background: var(--ide-hover-bg);
+}
+
+.search-adornment-btn.active {
+  color: var(--ide-accent-fg);
+  background: rgba(88, 166, 255, 0.15);
+  border-color: var(--ide-accent-fg);
+}
+
+.search-adornment-clear {
+  font-size: 10px;
+}
+
+/* ── old .search-options-row / .search-option-btn removed ── */
 
 /* Use .search-panel ancestor for higher specificity than button:not(.pico-btn) */
 .search-panel .search-btn {
@@ -903,11 +954,50 @@ html, body, #mbeditor-root {
   box-sizing: border-box;
 }
 .search-input::placeholder { color: var(--ide-text-muted); }
-.search-input:focus { border-color: var(--ide-accent-fg); }
+.search-input:focus { border-color: var(--ide-border-input); }
+
+/* ── Results area wrapper (positions the loading overlay) ── */
+.search-results-area {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 
 .search-results {
   flex: 1;
   overflow-y: auto;
+  transition: filter 0.15s;
+}
+
+.search-results.search-results-blurred {
+  filter: blur(2px);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Centered circular loading overlay */
+.search-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.search-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--ide-border-input);
+  border-top-color: var(--ide-accent-fg);
+  border-radius: 50%;
+  animation: search-spin 0.7s linear infinite;
+}
+
+@keyframes search-spin {
+  to { transform: rotate(360deg); }
 }
 
 .search-result-item {
@@ -1442,6 +1532,55 @@ html, body, #mbeditor-root {
   flex-shrink: 1;
   min-width: 0;
 }
+
+.ide-methods-dropdown {
+  background: #252526;
+  border: 1px solid #454545;
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.55);
+  min-width: 200px;
+  max-width: 340px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.ide-methods-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+  color: #ccc;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ide-methods-dropdown-item:hover {
+  background: #094771;
+  color: #fff;
+}
+
+.ide-methods-dropdown-line {
+  color: #858585;
+  font-size: 11px;
+  min-width: 28px;
+  text-align: right;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.ide-methods-dropdown-empty {
+  padding: 8px 12px;
+  color: #858585;
+  font-size: 12px;
+  font-style: italic;
+}
+
+
 
 .project-action-btn {
   width: 24px;

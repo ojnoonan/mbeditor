@@ -2,6 +2,7 @@
 //= require mbeditor/editor_store
 //= require mbeditor/file_icon
 //= require mbeditor/file_service
+//= require mbeditor/websocket_service
 //= require mbeditor/git_service
 //= require mbeditor/search_service
 //= require mbeditor/tab_manager

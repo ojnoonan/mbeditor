@@ -61,7 +61,8 @@ var DEFAULT_EDITOR_PREFS = {
   vimMode: false,
   fileTreeTypeahead: true,
   quickOpenShowFolders: false,
-  tabDisplayMode: 'scroll'
+  tabDisplayMode: 'scroll',
+  persistFindState: true
 };
 
 var SidebarActionButton = function SidebarActionButton(_ref) {
@@ -196,7 +197,25 @@ var MbeditorApp = function MbeditorApp() {
   var searchOffsetRef       = useRef(0);
   var searchLoadingMoreRef  = useRef(false);
 
+  var _useStateRx = useState(false);
+  var _useStateRx2 = _slicedToArray(_useStateRx, 2);
+  var searchUseRegex = _useStateRx2[0];
+  var setSearchUseRegex = _useStateRx2[1];
+
+  var _useStateMC = useState(false);
+  var _useStateMC2 = _slicedToArray(_useStateMC, 2);
+  var searchMatchCase = _useStateMC2[0];
+  var setSearchMatchCase = _useStateMC2[1];
+
+  var _useStateWW = useState(false);
+  var _useStateWW2 = _slicedToArray(_useStateWW, 2);
+  var searchWholeWord = _useStateWW2[0];
+  var setSearchWholeWord = _useStateWW2[1];
+
   var searchQueryRef = useRef('');
+  var searchUseRegexRef = useRef(false);
+  var searchMatchCaseRef = useRef(false);
+  var searchWholeWordRef = useRef(false);
   var searchResultsContainerRef = useRef(null);
 
   var _useState8 = useState("explorer");
@@ -665,6 +684,9 @@ var MbeditorApp = function MbeditorApp() {
       if (workspace && typeof workspace.testAvailable === 'boolean') {
         setTestAvailable(workspace.testAvailable);
       }
+      if (workspace && typeof workspace.actionCableEnabled === 'boolean') {
+        WebSocketService.connect(workspace.actionCableEnabled);
+      }
     });
 
     // Helper: load tab content for a set of panes and restore them into EditorStore
@@ -990,11 +1012,33 @@ var MbeditorApp = function MbeditorApp() {
     if (offers.length > 0) setDraftRestoreOffer(offers);
   }, [serverOnline]);
 
+  // WebSocket push — when the server broadcasts files_changed, refresh the tree
+  // and git status immediately (same work as the 10s poll below does).
+  useEffect(function () {
+    function handleFilesChanged() {
+      if (document.hidden) return;
+      GitService.fetchStatus()["catch"](function () {});
+      FileService.getTree().then(function (data) {
+        var newData = data || [];
+        setTreeData(function (prevData) {
+          if (JSON.stringify(newData) === JSON.stringify(prevData)) return prevData;
+          SearchService.buildIndex(newData);
+          return newData;
+        });
+      })["catch"](function () {});
+    }
+    WebSocketService.onFilesChanged(handleFilesChanged);
+    return function () { WebSocketService.offFilesChanged(handleFilesChanged); };
+  }, []);
+
   // Auto-refresh the file tree every 10s to pick up external changes (new files, deletions, etc.)
+  // When an ActionCable WebSocket is connected this acts only as a safety-net fallback —
+  // the WebSocket push above handles immediate invalidation after mbeditor mutations.
   // Uses functional setTreeData to skip the re-render when nothing has changed.
   useEffect(function () {
     var intervalId = setInterval(function () {
       if (document.hidden) return;
+      if (WebSocketService.isConnected()) return; // WebSocket is handling refreshes
       // Refresh tree and check for git branch changes (to trigger per-branch tab state swap)
       GitService.fetchStatus()["catch"](function () {});
       FileService.getTree().then(function (data) {
@@ -1198,6 +1242,12 @@ var MbeditorApp = function MbeditorApp() {
   var activeFileCommit = _useState32[0];
   var setActiveFileCommit = _useState32[1];
 
+  // EOL indicator — tracks current line-ending style of the active file
+  var _useState31e = useState(null);
+  var _useState31e2 = _slicedToArray(_useState31e, 2);
+  var activeEOL = _useState31e2[0];
+  var setActiveEOL = _useState31e2[1];
+
   useEffect(function () {
     if (!gitAvailable || !activeTab || activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCommitGraph || !activeTab.path || activeTab.path.indexOf('diff://') === 0 || activeTab.path.indexOf('combined-diff://') === 0) {
       setActiveFileCommit(null);
@@ -1215,6 +1265,22 @@ var MbeditorApp = function MbeditorApp() {
       setActiveFileCommit(null);
     });
   }, [activeTab ? activeTab.id : null, gitAvailable]);
+
+  // Update EOL indicator whenever active tab or its content changes
+  useEffect(function () {
+    if (!activeTab || typeof activeTab.content !== 'string' ||
+        activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCommitGraph || activeTab.isPreview) {
+      setActiveEOL(null);
+      return;
+    }
+    if (activeTab.content.indexOf('\r\n') !== -1) {
+      setActiveEOL('CRLF');
+    } else if (activeTab.content.indexOf('\r') !== -1) {
+      setActiveEOL('CR');
+    } else {
+      setActiveEOL('LF');
+    }
+  }, [activeTab ? activeTab.id : null, activeTab ? activeTab.content : null]);
 
   useEffect(function () {
     if (!activeTab || typeof activeTab.content !== 'string') return;
@@ -1379,6 +1445,21 @@ var MbeditorApp = function MbeditorApp() {
     if (!draggedTab) return;
     TabManager.moveTabToPane(draggedTab.sourcePaneId, targetPaneId, draggedTab.tabId);
     clearDragState();
+  };
+
+  var handleChangeEOL = function handleChangeEOL(newEOL) {
+    var ed = window.__mbeditorActiveEditor;
+    if (!ed || !window.monaco) return;
+    var model = ed.getModel();
+    if (!model || !activeTab || !focusedPane) return;
+    var seq = newEOL === 'CRLF'
+      ? window.monaco.editor.EndOfLineSequence.CRLF
+      : window.monaco.editor.EndOfLineSequence.LF;
+    model.setEOL(seq);
+    var newContent = model.getValue();
+    TabManager.markDirty(focusedPane.id, activeTab.path, newContent);
+    setActiveEOL(newEOL);
+    EditorStore.setStatus('Line endings changed to ' + newEOL, 'info');
   };
 
   var handleFormat = function handleFormat() {
@@ -1578,7 +1659,7 @@ var MbeditorApp = function MbeditorApp() {
     searchQueryRef.current = q;
     EditorStore.setState({ searchResults: [], searchHasMore: false });
     EditorStore.setStatus("Searching project...", "info");
-    SearchService.projectSearch(q, 0, SearchService.PAGE_SIZE).then(function (res) {
+    SearchService.projectSearch(q, 0, SearchService.PAGE_SIZE, { regex: searchUseRegexRef.current, matchCase: searchMatchCaseRef.current, wholeWord: searchWholeWordRef.current }).then(function (res) {
       if (searchRequestIdRef.current !== requestId) return;
       var hasMore = !!(res && res.hasMore);
       setSearchHasMore(hasMore); searchHasMoreRef.current = hasMore;
@@ -1596,7 +1677,7 @@ var MbeditorApp = function MbeditorApp() {
     if (!q || searchLoadingMoreRef.current || !searchHasMoreRef.current) return;
     searchLoadingMoreRef.current = true;
     var offset = searchOffsetRef.current;
-    SearchService.projectSearch(q, offset, SearchService.PAGE_SIZE).then(function(res) {
+    SearchService.projectSearch(q, offset, SearchService.PAGE_SIZE, { regex: searchUseRegexRef.current, matchCase: searchMatchCaseRef.current, wholeWord: searchWholeWordRef.current }).then(function(res) {
       if (searchQueryRef.current !== q) { searchLoadingMoreRef.current = false; return; }
       var hasMore = !!(res && res.hasMore);
       searchHasMoreRef.current = hasMore;
@@ -1613,6 +1694,33 @@ var MbeditorApp = function MbeditorApp() {
     if (!val) { clearSearch(); return; }
     setSearchQuery(val);
     _debouncedSearch(val);
+  };
+
+  var handleSearchRegexToggle = function handleSearchRegexToggle() {
+    var next = !searchUseRegexRef.current;
+    searchUseRegexRef.current = next;
+    setSearchUseRegex(next);
+    if (searchQueryRef.current) {
+      _debouncedSearch(searchQueryRef.current);
+    }
+  };
+
+  var handleSearchMatchCaseToggle = function handleSearchMatchCaseToggle() {
+    var next = !searchMatchCaseRef.current;
+    searchMatchCaseRef.current = next;
+    setSearchMatchCase(next);
+    if (searchQueryRef.current) {
+      _debouncedSearch(searchQueryRef.current);
+    }
+  };
+
+  var handleSearchWholeWordToggle = function handleSearchWholeWordToggle() {
+    var next = !searchWholeWordRef.current;
+    searchWholeWordRef.current = next;
+    setSearchWholeWord(next);
+    if (searchQueryRef.current) {
+      _debouncedSearch(searchQueryRef.current);
+    }
   };
 
   var clearSearch = function clearSearch() {
@@ -2564,32 +2672,57 @@ var MbeditorApp = function MbeditorApp() {
           { className: "search-panel" },
           React.createElement(
             "div",
-            { className: "search-input-wrap" },
+            { className: "search-input-shell" },
+            React.createElement("input", {
+              className: "search-input",
+              placeholder: "Find in files…",
+              value: searchQuery,
+              onChange: handleSearchChange
+            }),
             React.createElement(
               "div",
-              { className: "search-input-shell" },
-              React.createElement("input", {
-                className: "search-input",
-                placeholder: "Find in files…",
-                value: searchQuery,
-                onChange: handleSearchChange
-              }),
+              { className: "search-input-adornments" },
+              React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className: "search-adornment-btn" + (searchMatchCase ? " active" : ""),
+                  onClick: handleSearchMatchCaseToggle,
+                  title: "Match Case"
+                },
+                React.createElement("i", { className: "codicon codicon-case-sensitive" })
+              ),
+              React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className: "search-adornment-btn" + (searchWholeWord ? " active" : ""),
+                  onClick: handleSearchWholeWordToggle,
+                  title: "Match Whole Word"
+                },
+                React.createElement("i", { className: "codicon codicon-whole-word" })
+              ),
+              React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className: "search-adornment-btn" + (searchUseRegex ? " active" : ""),
+                  onClick: handleSearchRegexToggle,
+                  title: "Use Regular Expression"
+                },
+                React.createElement("i", { className: "codicon codicon-regex" })
+              ),
               searchQuery && React.createElement(
                 "button",
                 {
                   type: "button",
-                  className: "search-clear-btn",
+                  className: "search-adornment-btn search-adornment-clear",
                   onClick: clearSearch,
                   title: "Clear search",
                   "aria-label": "Clear search"
                 },
                 React.createElement("i", { className: "fas fa-times" })
               )
-            ),
-            React.createElement(
-              "button",
-              { type: "submit", className: "search-btn", disabled: searchLoading, title: searchLoading ? "Searching..." : "Search" },
-              React.createElement("i", { className: searchLoading ? "fas fa-spinner fa-spin" : "fas fa-search" })
             )
           ),
           (function() {
@@ -2608,38 +2741,47 @@ var MbeditorApp = function MbeditorApp() {
                   ? (total + (searchHasMore ? '+' : '') + " result" + (total !== 1 ? "s" : ""))
                   : "No results"
               ),
-              hasAny && React.createElement(
+              React.createElement(
                 "div",
-                {
-                  className: "search-results",
-                  ref: searchResultsContainerRef,
-                  onScroll: handleSearchResultsScroll
-                },
-                allResults.map(function(res, i) {
-                  var fileName = res.file.split('/').pop();
-                  return React.createElement(
-                    "div",
-                    {
-                      key: i,
-                      className: "search-result-item",
-                      onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line); }; })(res)
-                    },
-                    React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
-                    React.createElement(
-                      "div", { className: "search-result-body" },
+                { className: "search-results-area" },
+                hasAny && React.createElement(
+                  "div",
+                  {
+                    className: "search-results" + (searchLoading ? " search-results-blurred" : ""),
+                    ref: searchResultsContainerRef,
+                    onScroll: handleSearchResultsScroll
+                  },
+                  allResults.map(function(res, i) {
+                    var fileName = res.file.split('/').pop();
+                    return React.createElement(
+                      "div",
+                      {
+                        key: i,
+                        className: "search-result-item",
+                        onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line); }; })(res)
+                      },
+                      React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
                       React.createElement(
-                        "div", { className: "search-result-file" },
-                        fileName,
-                        React.createElement("span", { className: "search-result-line-num" }, " ", res.file, ":", res.line)
-                      ),
-                      React.createElement("div", { className: "search-result-text" }, res.text)
-                    )
-                  );
-                }),
-                searchHasMore && React.createElement(
-                  "div", { className: "search-loading-more" },
-                  React.createElement("i", { className: "fas fa-spinner fa-spin" }),
-                  " Loading more\u2026"
+                        "div", { className: "search-result-body" },
+                        React.createElement(
+                          "div", { className: "search-result-file" },
+                          fileName,
+                          React.createElement("span", { className: "search-result-line-num" }, " ", res.file, ":", res.line)
+                        ),
+                        React.createElement("div", { className: "search-result-text" }, res.text)
+                      )
+                    );
+                  }),
+                  searchHasMore && React.createElement(
+                    "div", { className: "search-loading-more" },
+                    React.createElement("i", { className: "fas fa-spinner fa-spin" }),
+                    " Loading more\u2026"
+                  )
+                ),
+                searchLoading && React.createElement(
+                  "div",
+                  { className: "search-loading-overlay" },
+                  React.createElement("div", { className: "search-loading-spinner" })
                 )
               )
             );
@@ -3228,6 +3370,17 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
 
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Persist find state across files'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: editorPrefs.persistFindState !== false,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { persistFindState: v }); }); }
+                      })
+                    ),
+
                     /* ── RuboCop ─────────────────────────────────── */
                     React.createElement('div', { className: 'ide-settings-section-header' }, 'RuboCop'),
                     React.createElement(
@@ -3537,6 +3690,16 @@ var MbeditorApp = function MbeditorApp() {
         "div",
         { className: "statusbar-msg " + state.statusMessage.kind },
         state.statusMessage.text
+      ),
+      activeEOL && React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "statusbar-btn statusbar-eol-btn",
+          title: "Line endings: " + activeEOL + " — click to change",
+          onClick: function() { handleChangeEOL(activeEOL === 'CRLF' ? 'LF' : 'CRLF'); }
+        },
+        activeEOL
       ),
       React.createElement(
         "div",

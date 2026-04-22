@@ -38,7 +38,8 @@ module Mbeditor
         gitAvailable: git_available?,
         blameAvailable: git_blame_available?,
         redmineEnabled: Mbeditor.configuration.redmine_enabled == true,
-        testAvailable: test_available?
+        testAvailable: test_available?,
+        actionCableEnabled: defined?(ActionCable::Channel::Base) ? true : false
       }
     end
 
@@ -206,6 +207,7 @@ module Mbeditor
       return render_file_too_large(content.bytesize) if content.bytesize > MAX_OPEN_FILE_SIZE_BYTES
 
       File.write(path, content)
+      broadcast_files_changed
       render json: { ok: true, path: relative_path(path) }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -223,6 +225,7 @@ module Mbeditor
 
       FileUtils.mkdir_p(File.dirname(path))
       File.write(path, content)
+      broadcast_files_changed
 
       render json: { ok: true, type: "file", path: relative_path(path), name: File.basename(path) }
     rescue StandardError => e
@@ -237,6 +240,7 @@ module Mbeditor
       return render json: { error: "Path already exists" }, status: :unprocessable_content if File.exist?(path)
 
       FileUtils.mkdir_p(path)
+      broadcast_files_changed
       render json: { ok: true, type: "folder", path: relative_path(path), name: File.basename(path) }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -253,6 +257,7 @@ module Mbeditor
 
       FileUtils.mkdir_p(File.dirname(new_path))
       FileUtils.mv(old_path, new_path)
+      broadcast_files_changed
 
       render json: {
         ok: true,
@@ -274,9 +279,11 @@ module Mbeditor
 
       if File.directory?(path)
         FileUtils.rm_rf(path)
+        broadcast_files_changed
         render json: { ok: true, type: "folder", path: relative_path(path) }
       else
         File.delete(path)
+        broadcast_files_changed
         render json: { ok: true, type: "file", path: relative_path(path) }
       end
     rescue StandardError => e
@@ -312,20 +319,23 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
-    # GET /mbeditor/search?q=...&offset=0&limit=50
+    # GET /mbeditor/search?q=...&offset=0&limit=50&regex=false&match_case=false&whole_word=false
     def search
-      query  = params[:q].to_s.strip
-      offset = [params[:offset].to_i, 0].max
-      limit  = [[params[:limit].to_i > 0 ? params[:limit].to_i : 50, 200].min, 1].max
-      needed = offset + limit + 1   # collect one extra to detect has_more
+      query      = params[:q].to_s.strip
+      offset     = [params[:offset].to_i, 0].max
+      limit      = [[params[:limit].to_i > 0 ? params[:limit].to_i : 50, 200].min, 1].max
+      use_regex  = params[:regex] == 'true'
+      match_case = params[:match_case] == 'true'
+      whole_word = params[:whole_word] == 'true'
+      needed     = offset + limit + 1   # collect one extra to detect has_more
 
       return render json: [] if query.blank?
       return render json: { error: "Query too long" }, status: :bad_request if query.length > 500
 
       # On first page, count total matches in parallel with fetching results.
-      count_thread = offset == 0 ? Thread.new { count_search_results(query) } : nil
+      count_thread = offset == 0 ? Thread.new { count_search_results(query, use_regex: use_regex, match_case: match_case, whole_word: whole_word) } : nil
 
-      results   = stream_search_results(query, needed)
+      results   = stream_search_results(query, needed, use_regex: use_regex, match_case: match_case, whole_word: whole_word)
       has_more  = results.length > offset + limit
       response  = { results: results[offset, limit] || [], has_more: has_more }
       if count_thread
@@ -666,6 +676,14 @@ module Mbeditor
 
     private
 
+    def broadcast_files_changed
+      return unless defined?(ActionCable.server)
+
+      ActionCable.server.broadcast("mbeditor_editor", { type: "files_changed" })
+    rescue StandardError
+      # Never let a broadcast failure affect the HTTP response
+    end
+
     def sanitize_branch_name(branch)
       return nil if branch.blank?
       str = branch.to_s.strip
@@ -701,11 +719,14 @@ module Mbeditor
     # Stream search results using popen so we can stop reading early once we
     # have collected `limit` matches (avoids buffering the entire rg/grep output
     # in memory when searching large codebases for common tokens).
-    def stream_search_results(query, limit)
+    def stream_search_results(query, limit, use_regex: false, match_case: false, whole_word: false)
       results = []
 
       if RG_AVAILABLE
         args = ["rg", "--json", "--no-ignore"]
+        args << "-F" unless use_regex
+        args << "--ignore-case" unless match_case
+        args << "--word-regexp" if whole_word
         excluded_paths.each { |p| args << "--glob=!#{p}" }
         args += ["--", query, workspace_root.to_s]
 
@@ -730,7 +751,10 @@ module Mbeditor
           end
         end
       else
-        args = ["grep", "-rn", "-F"]
+        base_flags = use_regex ? "-E" : "-F"
+        args = ["grep", "-rn", base_flags]
+        args << "-i" unless match_case
+        args << "-w" if whole_word
         excluded_dirnames.select { |d| d.match?(/\A[\w.\/-]+\z/) }.each { |d| args << "--exclude-dir=#{d}" }
         args += [query, workspace_root.to_s]
 
@@ -761,17 +785,23 @@ module Mbeditor
 
     # Count total matching lines across the workspace using rg --count (or grep -c).
     # Fast: rg just counts without extracting context. Runs in a background thread.
-    def count_search_results(query)
+    def count_search_results(query, use_regex: false, match_case: false, whole_word: false)
       total = 0
       if RG_AVAILABLE
         args = ["rg", "--count", "--no-ignore"]
+        args << "-F" unless use_regex
+        args << "--ignore-case" unless match_case
+        args << "--word-regexp" if whole_word
         excluded_paths.each { |p| args << "--glob=!#{p}" }
         args += ["--", query, workspace_root.to_s]
         IO.popen(args, err: File::NULL) do |io|
           io.each_line { |line| total += line.strip.split(":").last.to_i rescue 0 }
         end
       else
-        args = ["grep", "-rc", "-F"]
+        base_flags = use_regex ? "-E" : "-F"
+        args = ["grep", "-rc", base_flags]
+        args << "-i" unless match_case
+        args << "-w" if whole_word
         excluded_dirnames.each { |d| args << "--exclude-dir=#{d}" }
         args += [query, workspace_root.to_s]
         IO.popen(args, err: File::NULL) do |io|

@@ -31,6 +31,24 @@
     'or': true, not: true, require: true, include: true, extend: true
   };
 
+  // Ruby core / Kernel built-in methods that should never trigger a
+  // definition lookup — ctrl+click or F12 on these is a no-op.
+  var RUBY_CORE_METHODS = {
+    puts: true, print: true, p: true, pp: true, warn: true, printf: true,
+    fail: true, require_relative: true, prepend: true,
+    attr_accessor: true, attr_reader: true, attr_writer: true,
+    lambda: true, proc: true, 'loop': true, sleep: true,
+    exit: true, abort: true, rand: true, srand: true, gets: true,
+    sprintf: true, format: true, open: true,
+    Integer: true, Float: true, String: true, Array: true, Hash: true,
+    Rational: true, Complex: true,
+    readline: true, readlines: true,
+    system: true, exec: true, fork: true, spawn: true,
+    freeze: true, frozen: true, dup: true, clone: true, object_id: true,
+    respond_to: true, send: true, public_send: true, method: true,
+    tap: true, itself: true
+  };
+
   var globalsRegistered = false;
 
   function leadingWhitespace(line) {
@@ -287,6 +305,7 @@
         var wordInfo = model.getWordAtPosition(position);
         if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
         if (RUBY_KEYWORDS[wordInfo.word]) return;
+        if (RUBY_CORE_METHODS[wordInfo.word]) return;
         if (typeof FileService === 'undefined' || !FileService.getDefinition) return;
 
         event.event.preventDefault();
@@ -315,6 +334,7 @@
           var wordInfo = model.getWordAtPosition(pos);
           if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
           if (RUBY_KEYWORDS[wordInfo.word]) return;
+          if (RUBY_CORE_METHODS[wordInfo.word]) return;
           if (typeof FileService === 'undefined' || !FileService.getDefinition) return;
 
           FileService.getDefinition(wordInfo.word, 'ruby').then(function(data) {
@@ -707,6 +727,7 @@
         var word = wordInfo.word;
         if (!word || word.length < 2) return null;
         if (RUBY_KEYWORDS[word]) return null;
+        if (RUBY_CORE_METHODS[word]) return null;
         if (typeof FileService === 'undefined' || !FileService.getDefinition) return null;
 
         var currentFile = model._mbeditorPath || null;

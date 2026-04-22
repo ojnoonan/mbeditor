@@ -2,6 +2,7 @@
 
 require "mbeditor/rack/silence_ping_request"
 require "mbeditor/rack/handle_pending_migrations"
+require "mbeditor/cable_log_filter"
 
 module Mbeditor
   class Engine < ::Rails::Engine
@@ -24,6 +25,15 @@ module Mbeditor
     end
 
     config.after_initialize do
+      # Silence ActionCable framework logs for Mbeditor channels (subscription
+      # confirmations, streaming notices, action invocations, disconnect messages).
+      # We wrap the existing ActionCable logger in a filter proxy rather than
+      # replacing it, so the host app's non-Mbeditor channel logs are unaffected.
+      if defined?(ActionCable)
+        original_logger = ActionCable.server.config.logger || Rails.logger
+        ActionCable.server.config.logger = Mbeditor::CableLogFilter.new(original_logger)
+      end
+
       Mbeditor::RubyDefinitionService.cache_path =
         Rails.root.join("tmp", "mbeditor_ruby_defs.json").to_s
 

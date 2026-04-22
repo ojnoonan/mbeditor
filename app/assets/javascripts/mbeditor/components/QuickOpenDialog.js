@@ -132,10 +132,12 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     // JS sort is stable in modern engines so MiniSearch relevance score order is the tiebreaker
     // when match relevance is equal.
     filtered.sort(function(a, b) {
+      var aRelevance = getMatchRelevance(a, query);
+      var bRelevance = getMatchRelevance(b, query);
+      if (aRelevance !== bRelevance) return aRelevance - bRelevance;
       var aPriority = getFilePriority(a.path) + (a.type === 'dir' ? 100 : 0);
       var bPriority = getFilePriority(b.path) + (b.type === 'dir' ? 100 : 0);
-      if (aPriority !== bPriority) return aPriority - bPriority;
-      return getMatchRelevance(a, query) - getMatchRelevance(b, query);
+      return aPriority - bPriority;
     });
     setResults(filtered.slice(0, 200));
     setSelectedIndex(0);

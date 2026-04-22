@@ -43,7 +43,7 @@ var SearchService = (function () {
   // Returns merged results; MiniSearch scored entries come first.
   function searchFiles(query) {
     if (!query) return [];
-    var msResults = _miniSearch.search(query, { prefix: true, fuzzy: 0.2 });
+    var msResults = _miniSearch.search(query, { prefix: true, fuzzy: false, combineWith: 'AND' });
     // Substring fallback — catch anything MiniSearch missed
     var q = query.toLowerCase();
     var msIds = new Set(msResults.map(function(r) { return r.id; }));
@@ -59,13 +59,17 @@ var SearchService = (function () {
   // Fetch one page of project-wide full-text search results.
   // offset=0 replaces the EditorStore results list; offset>0 appends.
   // The server includes total_count only on offset=0 (fast rg --count pass).
-  function projectSearch(query, offset, limit) {
+  // options.regex=true enables regex mode on the server.
+  function projectSearch(query, offset, limit, options) {
     if (!query) return Promise.resolve({ results: [], hasMore: false, totalCount: 0 });
     var off = (typeof offset === 'number') ? offset : 0;
     var lim = (typeof limit  === 'number') ? limit  : SEARCH_PAGE_SIZE;
+    var useRegex = !!(options && options.regex);
+    var matchCase = !!(options && options.matchCase);
+    var wholeWord = !!(options && options.wholeWord);
 
     return axios.get(window.mbeditorBasePath() + '/search', {
-      params: { q: query, offset: off, limit: lim }
+      params: { q: query, offset: off, limit: lim, regex: useRegex ? 'true' : 'false', match_case: matchCase ? 'true' : 'false', whole_word: wholeWord ? 'true' : 'false' }
     }).then(function(res) {
         var data = res.data;
         var results    = Array.isArray(data) ? data : (data && data.results || []);

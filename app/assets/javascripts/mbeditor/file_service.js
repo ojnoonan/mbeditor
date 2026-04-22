@@ -93,6 +93,9 @@ var FileService = (function () {
   }
 
   function saveState(state) {
+    if (WebSocketService.isConnected() && WebSocketService.perform('save_state', { state: state })) {
+      return Promise.resolve({ ok: true });
+    }
     return axios.post(window.mbeditorBasePath() + '/state', { state: state }).then(function(res) { return res.data; });
   }
 
@@ -101,6 +104,9 @@ var FileService = (function () {
   }
 
   function saveBranchState(branch, state) {
+    if (WebSocketService.isConnected() && WebSocketService.perform('save_branch_state', { branch: branch, state: state })) {
+      return Promise.resolve({ ok: true });
+    }
     return axios.post(window.mbeditorBasePath() + '/branch_state', { branch: branch, state: state }).then(function(res) { return res.data; });
   }
 
