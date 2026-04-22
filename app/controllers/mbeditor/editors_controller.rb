@@ -39,7 +39,7 @@ module Mbeditor
         blameAvailable: git_blame_available?,
         redmineEnabled: Mbeditor.configuration.redmine_enabled == true,
         testAvailable: test_available?,
-        actionCableEnabled: defined?(ActionCable::Channel::Base) ? true : false
+        actionCableEnabled: action_cable_enabled?
       }
     end
 
@@ -689,6 +689,23 @@ module Mbeditor
       str = branch.to_s.strip
       return nil if str.include?('..')
       str.match?(SAFE_BRANCH_NAME) ? str : nil
+    end
+
+    def action_cable_enabled?
+      return false unless defined?(ActionCable::Channel::Base)
+
+      mount_path = begin
+        ActionCable.server.config.mount_path
+      rescue StandardError
+        nil
+      end
+      mount_path = '/cable' if mount_path.blank?
+
+      Rails.application.routes.routes.any? do |route|
+        route.path.spec.to_s.start_with?(mount_path)
+      end
+    rescue StandardError
+      false
     end
 
     def allow_missing_file?

@@ -19,10 +19,38 @@ module Mbeditor
     # Tagged-logging compat — the block body still passes through the filter.
     def tagged(*tags, &block)
       if __getobj__.respond_to?(:tagged)
-        __getobj__.tagged(*tags) { block.call }
-      else
+        __getobj__.tagged(*tags, &block)
+      elsif block
         block.call
+      else
+        self
       end
+    end
+
+    # Rails/ActiveSupport logger compatibility. Some logger stacks call these
+    # methods even when the underlying logger is not TaggedLogging.
+    def current_tags
+      return __getobj__.current_tags if __getobj__.respond_to?(:current_tags)
+
+      []
+    end
+
+    def push_tags(*tags)
+      return __getobj__.push_tags(*tags) if __getobj__.respond_to?(:push_tags)
+
+      tags
+    end
+
+    def pop_tags(count = 1)
+      return __getobj__.pop_tags(count) if __getobj__.respond_to?(:pop_tags)
+
+      []
+    end
+
+    def clear_tags!
+      return __getobj__.clear_tags! if __getobj__.respond_to?(:clear_tags!)
+
+      nil
     end
   end
 end

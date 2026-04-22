@@ -11,6 +11,10 @@ var WebSocketService = (function () {
   var _subscription = null;
   var _connected = false;
   var _filesChangedCallbacks = [];
+  var _serverSupportsWs = false;
+  var _reconnectTimer = null;
+  var _lastCableAttemptAt = 0;
+  var RECONNECT_INTERVAL_MS = 30000;
 
   // ---------------------------------------------------------------------------
   // Internal helpers
@@ -20,14 +24,106 @@ var WebSocketService = (function () {
     return typeof window.ActionCable !== 'undefined';
   }
 
+  function _cableUrl() {
+    return window.MBEDITOR_CABLE_URL || '/cable';
+  }
+
   function _getConsumer() {
     // Reuse an existing consumer the host app may have already created (App.cable
     // is the Rails default).  Fall back to creating our own.
     if (typeof window.App !== 'undefined' && window.App.cable) {
       return window.App.cable;
     }
-    var cableUrl = window.MBEDITOR_CABLE_URL || '/cable';
-    return window.ActionCable.createConsumer(cableUrl);
+    return window.ActionCable.createConsumer(_cableUrl());
+  }
+
+  function _cleanupConsumer() {
+    if (_subscription) {
+      try { _subscription.unsubscribe(); } catch (e) { /* ignore */ }
+      _subscription = null;
+    }
+    if (_consumer && typeof _consumer.disconnect === 'function') {
+      try { _consumer.disconnect(); } catch (e) { /* ignore */ }
+    }
+    _consumer = null;
+    _connected = false;
+  }
+
+  function _isCableRelatedRejection(reason) {
+    var url = _cableUrl();
+    if (!reason) return false;
+
+    // Common browser shape: ErrorEvent with target/currentTarget = WebSocket.
+    var target = reason.target || reason.currentTarget;
+    if (target && typeof target.url === 'string' && target.url.indexOf(url) !== -1) {
+      return true;
+    }
+
+    // Some environments stringify this as "[object Event]"; only suppress if
+    // it happened right after a cable connection attempt.
+    var ageMs = Date.now() - _lastCableAttemptAt;
+    var reasonText = String(reason);
+    if (reasonText.indexOf('[object Event]') !== -1 && ageMs >= 0 && ageMs < 3000) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function _installUnhandledRejectionGuard() {
+    if (window.__mbeditorCableRejectionGuardInstalled) return;
+    window.__mbeditorCableRejectionGuardInstalled = true;
+    window.addEventListener('unhandledrejection', function (event) {
+      if (_isCableRelatedRejection(event.reason)) {
+        // Keep cable handshake failures internal; polling fallback remains active.
+        event.preventDefault();
+      }
+    });
+  }
+
+  function _scheduleReconnect() {
+    if (_reconnectTimer || !_serverSupportsWs) return;
+    _reconnectTimer = setTimeout(function () {
+      _reconnectTimer = null;
+      _attemptConnect();
+    }, RECONNECT_INTERVAL_MS);
+  }
+
+  function _attemptConnect() {
+    if (!_serverSupportsWs || !_isActionCableAvailable() || _connected || _subscription) {
+      return;
+    }
+
+    _lastCableAttemptAt = Date.now();
+
+    try {
+      _consumer = _getConsumer();
+      _subscription = _consumer.subscriptions.create(
+        { channel: 'Mbeditor::EditorChannel' },
+        {
+          connected: function () {
+            _connected = true;
+          },
+          disconnected: function () {
+            _cleanupConsumer();
+            _scheduleReconnect();
+          },
+          rejected: function () {
+            _cleanupConsumer();
+            _scheduleReconnect();
+          },
+          received: function (data) {
+            if (data && data.type === 'files_changed') {
+              _emitFilesChanged(data);
+            }
+          }
+        }
+      );
+    } catch (e) {
+      // Any setup error means we silently stay in polling-only mode for now.
+      _cleanupConsumer();
+      _scheduleReconnect();
+    }
   }
 
   function _emitFilesChanged(data) {
@@ -43,49 +139,22 @@ var WebSocketService = (function () {
   // Call once after the workspace response is received.
   // serverSupportsWs: boolean from workspace.actionCableEnabled
   function connect(serverSupportsWs) {
-    if (!serverSupportsWs || !_isActionCableAvailable()) {
+    _serverSupportsWs = !!serverSupportsWs;
+    if (!_serverSupportsWs || !_isActionCableAvailable()) {
       return; // polling remains the only refresh mechanism
     }
-
-    try {
-      _consumer = _getConsumer();
-      _subscription = _consumer.subscriptions.create(
-        { channel: 'Mbeditor::EditorChannel' },
-        {
-          connected: function () {
-            _connected = true;
-          },
-          disconnected: function () {
-            _connected = false;
-          },
-          rejected: function () {
-            _connected = false;
-            // Channel was rejected — unsubscribe so we stop trying.
-            if (_subscription) {
-              _subscription.unsubscribe();
-              _subscription = null;
-            }
-          },
-          received: function (data) {
-            if (data && data.type === 'files_changed') {
-              _emitFilesChanged(data);
-            }
-          }
-        }
-      );
-    } catch (e) {
-      // Any setup error means we silently stay in polling-only mode.
-      _connected = false;
-      _subscription = null;
-    }
+    _installUnhandledRejectionGuard();
+    _attemptConnect();
+    _scheduleReconnect();
   }
 
   function disconnect() {
-    if (_subscription) {
-      _subscription.unsubscribe();
-      _subscription = null;
+    _serverSupportsWs = false;
+    if (_reconnectTimer) {
+      clearTimeout(_reconnectTimer);
+      _reconnectTimer = null;
     }
-    _connected = false;
+    _cleanupConsumer();
   }
 
   // Returns true only when the WebSocket is currently live.

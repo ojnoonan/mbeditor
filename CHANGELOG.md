@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-04-22
+
+### Added
+- Documented optional Action Cable host-app setup and fallback behavior for realtime editor updates.
+
+### Changed
+- `bundle exec rake test` now includes `test/lib/**/*_test.rb` so release validation covers library-level regression tests.
+
+### Fixed
+- Action Cable availability detection now respects whether `/cable` is actually mounted, and websocket handshake failures fall back to polling without noisy console errors.
+- Circular loading indicators keep animating even when global reduced-motion styles are active in production.
+- `CableLogFilter` now remains compatible with untagged logger stacks used outside full Action Cable setups.
+
 ## [0.4.2] - 2026-04-22
 
 ### Fixed

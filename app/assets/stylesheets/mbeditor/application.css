@@ -841,4 +841,23 @@
 @keyframes mbeditor-spin {
   to { transform: rotate(360deg); }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .mbeditor-spinner,
+  .editor-loading-spinner,
+  .search-loading-spinner {
+    animation-duration: 0.75s !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  .editor-loading-spinner {
+    animation-duration: 0.65s !important;
+  }
+
+  .search-loading-spinner {
+    animation-duration: 0.7s !important;
+  }
+}
+
 .cdiff-ctx  { color: var(--ide-text-muted); }

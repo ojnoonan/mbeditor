@@ -121,8 +121,26 @@ The gem keeps host/tooling responsibilities in the host app:
 - `haml_lint` gem (optional, required for HAML lint — add to your app's Gemfile if needed)
 - `git` installed in environment (for Git panel data)
 - `minitest` or `rspec` in the host app's bundle (required for the test runner)
+- `actioncable` framework/gem (optional, required only for realtime file-change push + websocket state saves)
 
 All lint and test tools are auto-detected at runtime. The engine gracefully disables features if the tools are not available. Neither `rubocop`, `haml_lint`, nor any test framework are runtime dependencies of the gem itself — they are discovered from the host app's environment.
+
+### Realtime via Action Cable (Optional)
+
+Mbeditor works without Action Cable. If Action Cable is unavailable, unreachable, or returns transient errors, the editor automatically falls back to polling.
+
+To enable realtime features in a host app:
+
+1. Ensure Action Cable is enabled in the host app (for apps that do not load it by default, add the framework/gem explicitly).
+2. Mount cable in host routes:
+
+```ruby
+mount ActionCable.server => '/cable'
+```
+
+3. Make Action Cable JavaScript available to the page (for asset-pipeline apps, `actioncable.js` is typically sufficient).
+
+If any of these are missing, mbeditor still runs in polling mode.
 
 ### Syntax Highlighting Support
 Monaco runtime assets are served from the engine route namespace (`/mbeditor/monaco-editor/*` and `/mbeditor/monaco_worker.js`).

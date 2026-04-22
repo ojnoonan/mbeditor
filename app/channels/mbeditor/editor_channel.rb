@@ -4,12 +4,14 @@ require "fileutils"
 require "pathname"
 
 module Mbeditor
-  class EditorChannel < ActionCable::Channel::Base
+  CableBaseClass = defined?(ActionCable::Channel::Base) ? ActionCable::Channel::Base : Object
+
+  class EditorChannel < CableBaseClass
     STATE_MAX_BYTES    = 1 * 1024 * 1024
     SAFE_BRANCH_NAME   = /\A[a-zA-Z0-9._\-\/]+\z/
 
     def subscribed
-      stream_from "mbeditor_editor"
+      stream_from "mbeditor_editor" if respond_to?(:stream_from)
     end
 
     def unsubscribed
