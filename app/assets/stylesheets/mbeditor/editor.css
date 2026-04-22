@@ -327,6 +327,18 @@ html, body, #mbeditor-root {
 .tab-bar::-webkit-scrollbar { height: 3px; }
 .tab-bar::-webkit-scrollbar-thumb { background: var(--ide-hover-bg); }
 
+/* Wrap (multi-row) tab layout */
+.tab-bar.tab-bar-wrap {
+  flex-wrap: wrap;
+  overflow-x: hidden;
+  overflow-y: visible;
+  height: auto;
+}
+.tab-bar.tab-bar-wrap .tab-item {
+  flex-shrink: 1;
+  flex-grow: 0;
+}
+
 .tab-item {
   display: flex;
   align-items: center;
@@ -792,7 +804,7 @@ html, body, #mbeditor-root {
 
 .statusbar-msg {
   margin-left: auto;
-  color: color-mix(in srgb, var(--ide-accent-text) 80%, transparent);
+  color: var(--ide-accent-text);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1682,6 +1694,70 @@ html, body, #mbeditor-root {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Draft restore dialog ───────────────────────────────────── */
+.ide-draft-restore-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ide-draft-restore-dialog {
+  background: var(--ide-panel-bg-alt);
+  border: 1px solid var(--ide-border-input);
+  border-radius: 8px;
+  padding: 20px 24px;
+  min-width: 320px;
+  max-width: 480px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  color: var(--ide-text);
+  font-size: 13px;
+}
+.ide-draft-restore-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: var(--ide-warning, #e5c07b);
+}
+.ide-draft-restore-body { margin-bottom: 8px; color: var(--ide-text-muted); }
+.ide-draft-restore-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px 0;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.ide-draft-restore-list li {
+  padding: 3px 0;
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--ide-accent-fg, #9cdcfe);
+}
+.ide-draft-restore-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.ide-draft-restore-btn {
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--ide-border-input);
+  background: var(--ide-input-bg);
+  color: var(--ide-text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.ide-draft-restore-btn:hover { background: var(--ide-hover-bg); }
+.ide-draft-restore-btn-primary {
+  background: var(--ide-accent);
+  color: var(--ide-accent-text);
+  border-color: var(--ide-accent);
+}
+.ide-draft-restore-btn-primary:hover { opacity: 0.9; }
 
 /* ── Settings panel ─────────────────────────────────────────── */
 .ide-settings-panel { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }

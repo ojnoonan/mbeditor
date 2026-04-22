@@ -94,6 +94,17 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     return 50;
   }
 
+  // Match relevance within a priority tier: exact basename > prefix > substring > other.
+  function getMatchRelevance(result, q) {
+    if (!q) return 3;
+    var name = (result.name || (result.path || '').split('/').pop() || '').toLowerCase();
+    var lq = q.toLowerCase();
+    if (name === lq)            return 0;
+    if (name.slice(0, lq.length) === lq) return 1;
+    if (name.indexOf(lq) >= 0)  return 2;
+    return 3;
+  }
+
   var getQuickOpenIcon = function getQuickOpenIcon(path, name, type) {
     if (type === 'dir') {
       return React.createElement('i', { className: 'fas fa-folder quick-open-result-icon quick-open-folder-icon', 'aria-hidden': 'true' });
@@ -117,11 +128,14 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     var res = SearchService.searchFiles(query);
     // Filter by type: always include files; include dirs only when showFolders is on
     var filtered = showFolders ? res : res.filter(function(r) { return r.type !== 'dir'; });
-    // Stable priority sort: controller > model > helper > concern > view > job > other > noise.
-    // JS sort is stable in modern engines, so relative order within the same tier
-    // (i.e. MiniSearch relevance score) is preserved.
+    // Sort: files always beat dirs; within the same tier exact basename > prefix > substring > other.
+    // JS sort is stable in modern engines so MiniSearch relevance score order is the tiebreaker
+    // when match relevance is equal.
     filtered.sort(function(a, b) {
-      return getFilePriority(a.path) - getFilePriority(b.path);
+      var aPriority = getFilePriority(a.path) + (a.type === 'dir' ? 100 : 0);
+      var bPriority = getFilePriority(b.path) + (b.type === 'dir' ? 100 : 0);
+      if (aPriority !== bPriority) return aPriority - bPriority;
+      return getMatchRelevance(a, query) - getMatchRelevance(b, query);
     });
     setResults(filtered.slice(0, 200));
     setSelectedIndex(0);

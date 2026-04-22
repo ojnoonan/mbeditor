@@ -578,17 +578,19 @@ module Mbeditor
       assert_equal [], json
     end
 
-    test "search response includes results, has_more and total_count keys" do
+    test "search response includes results and has_more; total_count is optional on first page" do
       get "/mbeditor/search", params: { q: "class" }
       assert_response :ok
       assert_kind_of Hash, json
       assert json.key?("results")
       assert json.key?("has_more")
-      assert json.key?("total_count"), "offset=0 response must include total_count"
       assert_kind_of Array, json["results"]
       assert_includes [true, false], json["has_more"]
-      assert_kind_of Integer, json["total_count"]
-      assert json["total_count"] >= json["results"].length
+      # total_count is returned only when the count thread finishes within the 100ms deadline
+      if json.key?("total_count")
+        assert_kind_of Integer, json["total_count"]
+        assert json["total_count"] >= json["results"].length
+      end
     end
 
     test "search omits total_count on subsequent pages" do
@@ -619,7 +621,7 @@ module Mbeditor
       files = json.fetch("results", []).map { |row| row["file"] }
       assert_includes files, "app/assets/site.css"
       assert_not_includes files, "public/assets/bundle.css"
-      assert json.key?("total_count"), "grep fallback must include total_count"
+      assert json.key?("total_count"), "grep fallback must include total_count when thread completes in time"
       assert json["total_count"] >= 1, "grep total_count must reflect at least the one matched file"
     ensure
       $VERBOSE = nil

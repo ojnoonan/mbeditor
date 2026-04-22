@@ -18,6 +18,7 @@ var TabBar = function TabBar(_ref) {
   var onHardenTab = _ref.onHardenTab;
   var onShowHistory = _ref.onShowHistory;
   var onRevealInExplorer = _ref.onRevealInExplorer;
+  var tabDisplayMode = _ref.tabDisplayMode || 'scroll';
 
   var containerRef = useRef(null);
 
@@ -87,8 +88,8 @@ var TabBar = function TabBar(_ref) {
     null,
     React.createElement(
     'div',
-    { className: 'tab-bar', ref: containerRef, onWheel: function (e) {
-        if (containerRef.current) {
+    { className: 'tab-bar tab-bar-' + tabDisplayMode, ref: containerRef, onWheel: function (e) {
+        if (tabDisplayMode !== 'wrap' && containerRef.current) {
           containerRef.current.scrollLeft += e.deltaY;
         }
       } },

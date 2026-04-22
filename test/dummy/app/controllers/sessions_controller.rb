@@ -7,7 +7,7 @@ class SessionsController < ApplicationController
     session[:authenticated] = true
     head :ok
   end
-
+  
   def destroy
     session.delete(:authenticated)
     head :ok

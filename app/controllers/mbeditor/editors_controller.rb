@@ -328,7 +328,12 @@ module Mbeditor
       results   = stream_search_results(query, needed)
       has_more  = results.length > offset + limit
       response  = { results: results[offset, limit] || [], has_more: has_more }
-      response[:total_count] = count_thread.value if count_thread
+      if count_thread
+        # Give the count thread up to 100 ms; omit total_count when it hasn't finished yet
+        # so the first page is never blocked by the counting subprocess.
+        count_thread.join(0.1)
+        response[:total_count] = count_thread.value unless count_thread.alive?
+      end
 
       render json: response
     rescue StandardError => e

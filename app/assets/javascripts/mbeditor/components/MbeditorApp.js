@@ -60,7 +60,8 @@ var DEFAULT_EDITOR_PREFS = {
   prettierBracketSpacing: true,
   vimMode: false,
   fileTreeTypeahead: true,
-  quickOpenShowFolders: false
+  quickOpenShowFolders: false,
+  tabDisplayMode: 'scroll'
 };
 
 var SidebarActionButton = function SidebarActionButton(_ref) {
@@ -416,6 +417,36 @@ var MbeditorApp = function MbeditorApp() {
   var resizeRafRef = useRef(null);
   var prevGitBranchRef = useRef(null);
   var isSwitchingBranchRef = useRef(false);
+
+  // ── Draft backup helpers ─────────────────────────────────────────────────
+  var draftWriteTimerRef = useRef({});
+  var serverOnlineRef = useRef(true);
+
+  var _draftKey = function _draftKey(path) {
+    var base = typeof window.mbeditorBasePath === 'function' ? window.mbeditorBasePath() : '';
+    return 'mbeditor_draft\x00' + base + '\x00' + path;
+  };
+  var _saveDraftNow = function _saveDraftNow(path, content) {
+    try { localStorage.setItem(_draftKey(path), JSON.stringify({ content: content, ts: Date.now() })); } catch (e) {}
+  };
+  var _clearDraft = function _clearDraft(path) {
+    try { localStorage.removeItem(_draftKey(path)); } catch (e) {}
+  };
+  var _loadDraft = function _loadDraft(path) {
+    try { return JSON.parse(localStorage.getItem(_draftKey(path))); } catch (e) { return null; }
+  };
+  var _scheduleDraftWrite = function _scheduleDraftWrite(path, content) {
+    if (draftWriteTimerRef.current[path]) clearTimeout(draftWriteTimerRef.current[path]);
+    draftWriteTimerRef.current[path] = setTimeout(function () {
+      delete draftWriteTimerRef.current[path];
+      _saveDraftNow(path, content);
+    }, 500);
+  };
+
+  var _useState_dro = useState(null);
+  var _useState_dro2 = _slicedToArray(_useState_dro, 2);
+  var draftRestoreOffer = _useState_dro2[0];
+  var setDraftRestoreOffer = _useState_dro2[1];
 
   var clamp = function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
@@ -937,6 +968,28 @@ var MbeditorApp = function MbeditorApp() {
     return function () { clearTimeout(timeoutId); };
   }, []);
 
+  // On reconnect: scan open dirty tabs for newer localStorage drafts and offer restore.
+  useEffect(function () {
+    if (!serverOnline) {
+      serverOnlineRef.current = false;
+      return;
+    }
+    if (serverOnlineRef.current) return; // was already online — no transition
+    serverOnlineRef.current = true;
+    var st = EditorStore.getState();
+    var offers = [];
+    st.panes.forEach(function (pane) {
+      pane.tabs.forEach(function (tab) {
+        if (!tab.dirty || !tab.path || tab.path.startsWith('mbeditor://')) return;
+        var draft = _loadDraft(tab.path);
+        if (draft && draft.content !== tab.content) {
+          offers.push({ paneId: pane.id, tabId: tab.id, path: tab.path, name: tab.name, draftContent: draft.content });
+        }
+      });
+    });
+    if (offers.length > 0) setDraftRestoreOffer(offers);
+  }, [serverOnline]);
+
   // Auto-refresh the file tree every 10s to pick up external changes (new files, deletions, etc.)
   // Uses functional setTreeData to skip the re-render when nothing has changed.
   useEffect(function () {
@@ -1248,6 +1301,7 @@ var MbeditorApp = function MbeditorApp() {
       });
       EditorStore.setState({ panes: newPanes });
       EditorStore.setStatus("Saved", "success");
+      _clearDraft(tab.path);
       
       // Hot reload for Markdown: sync preview tab after save
       if (/\.(md|markdown)$/i.test(tab.path)) {
@@ -1302,16 +1356,21 @@ var MbeditorApp = function MbeditorApp() {
     var pane2 = EditorStore.getState().panes.find(function (p) {
       return p.id === 2;
     });
-    if (!pane2 || pane2.tabs.length === 0) {
-      dragSplitWidthRef.current = 50;
-      setPane1Width(50);
-    } else {
-      dragSplitWidthRef.current = pane1Width;
-    }
+    var alreadySplit = pane2 && pane2.tabs.length > 0;
+    // Only set the split ref; do NOT pre-split the view width here.
+    // Pane 2 appears as a drop zone only when the cursor actually hovers
+    // over the right-half editor content, keeping the tab bar intact.
+    dragSplitWidthRef.current = alreadySplit ? pane1Width : 50;
     setDraggedTab({ sourcePaneId: sourcePaneId, tabId: tabId });
   };
 
   var clearDragState = function clearDragState() {
+    // If pane 2 is still empty after the drag, restore pane 1 to full width.
+    var pane2 = EditorStore.getState().panes.find(function (p) { return p.id === 2; });
+    if (!pane2 || pane2.tabs.length === 0) {
+      setPane1Width(100);
+      dragSplitWidthRef.current = 50;
+    }
     setDraggedTab(null);
     setDragOverPaneId(null);
   };
@@ -2062,6 +2121,7 @@ var MbeditorApp = function MbeditorApp() {
       tabs: tabs,
       activeId: activeId,
       paneId: paneId,
+      tabDisplayMode: editorPrefs.tabDisplayMode || 'scroll',
       onSelect: function (id) {
         // Sync explorer selection with the newly active tab so there's only one highlight
         var tab = tabs.find(function(t) { return t.id === id; });
@@ -2604,16 +2664,40 @@ var MbeditorApp = function MbeditorApp() {
             if (!draggedTab) return;
             e.preventDefault();
 
+            // If the cursor is over the tab bar, suppress the cross-pane split overlay
+            // so same-pane tab reordering within any tab bar is unaffected.
+            if (e.target && e.target.closest && e.target.closest('.tab-bar')) {
+              if (dragOverPaneId !== null) setDragOverPaneId(null);
+              e.dataTransfer.dropEffect = 'move';
+              return;
+            }
+
             var rect = e.currentTarget.getBoundingClientRect();
             var splitAtX = rect.left + rect.width * (dragSplitWidthRef.current / 100);
             var hoverPaneId = e.clientX >= splitAtX ? 2 : 1;
             var nextDropPane = hoverPaneId === draggedTab.sourcePaneId ? null : hoverPaneId;
 
-            e.dataTransfer.dropEffect = nextDropPane ? 'move' : 'none';
+            // When cursor first enters the right-half content area and pane 2 is empty,
+            // apply the 50% split width so the drop zone becomes visible.
+            if (nextDropPane === 2) {
+              var pane2Empty = EditorStore.getState().panes.find(function(p) { return p.id === 2; });
+              if (!pane2Empty || pane2Empty.tabs.length === 0) {
+                setPane1Width(50);
+              }
+            }
+
+            e.dataTransfer.dropEffect = 'move';
             if (dragOverPaneId !== nextDropPane) setDragOverPaneId(nextDropPane);
           },
           onDropCapture: function (e) {
             if (!draggedTab) return;
+
+            // If dropping onto a tab bar element, let the tab item's own onDrop
+            // bubble-phase handler manage the reorder — don't intercept here.
+            if (e.target && e.target.closest && e.target.closest('.tab-bar')) {
+              return;
+            }
+
             e.preventDefault();
 
             var rect = e.currentTarget.getBoundingClientRect();
@@ -2628,10 +2712,12 @@ var MbeditorApp = function MbeditorApp() {
           }
         },
         state.panes.map(function (pane, idx) {
-          if (pane.id === 2 && pane.tabs.length === 0 && !draggedTab) return null; // Show pane 2 while dragging to allow drop-to-split
+          // Show empty pane 2 as a drop zone only when the cursor is actively hovering
+          // over its half of the editor content (dragOverPaneId === 2).
+          if (pane.id === 2 && pane.tabs.length === 0 && dragOverPaneId !== 2) return null;
 
           // Dynamic width distribution
-          var isSplit = state.panes[1].tabs.length > 0 || !!draggedTab;
+          var isSplit = state.panes[1].tabs.length > 0 || dragOverPaneId === 2;
           var flexBasis = '100%';
           if (isSplit) flexBasis = pane.id === 1 ? pane1Width + "%" : 100 - pane1Width + "%";
 
@@ -3110,6 +3196,18 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Tab bar layout'),
+                      React.createElement(
+                        'select', {
+                          value: editorPrefs.tabDisplayMode || 'scroll',
+                          onChange: function(e) { var v = e.target.value; setEditorPrefs(function(p) { return Object.assign({}, p, { tabDisplayMode: v }); }); }
+                        },
+                        React.createElement('option', { value: 'scroll' }, 'Scroll'),
+                        React.createElement('option', { value: 'wrap' }, 'Wrap (multi-row)')
+                      )
+                    ),
+                    React.createElement(
                       'label', { className: 'ide-settings-row ide-settings-row-check' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Quick Open: show folders'),
                       React.createElement('input', {
@@ -3206,8 +3304,10 @@ var MbeditorApp = function MbeditorApp() {
                     var valNorm = val.replace(/\r\n/g, '\n');
                     if (valNorm === cleanNorm) {
                       TabManager.markClean(pane.id, pActiveTab.id, val);
+                      _clearDraft(pActiveTab.path);
                     } else {
                       TabManager.markDirty(pane.id, pActiveTab.id, val);
+                      _scheduleDraftWrite(pActiveTab.path, val);
                     }
                   }
                 });
@@ -3409,12 +3509,22 @@ var MbeditorApp = function MbeditorApp() {
           state.gitInfo.behind
         )
       ),
-      !serverOnline && React.createElement(
-        "div",
-        { className: "statusbar-offline" },
-        React.createElement("i", { className: "fas fa-exclamation-triangle" }),
-        " Server offline"
-      ),
+      !serverOnline && (function () {
+        var dirtyCount = state.panes.reduce(function (acc, p) {
+          return acc + p.tabs.filter(function (t) { return t.dirty; }).length;
+        }, 0);
+        return React.createElement(
+          "div",
+          {
+            className: "statusbar-offline",
+            title: dirtyCount > 0 ? dirtyCount + " unsaved file" + (dirtyCount !== 1 ? "s" : "") + " — changes are backed up locally" : "Server offline"
+          },
+          React.createElement("i", { className: "fas fa-exclamation-triangle" }),
+          dirtyCount > 0
+            ? " Offline \u2014 " + dirtyCount + " unsaved"
+            : " Server offline"
+        );
+      })(),
       activeFileCommit && React.createElement(
         "div",
         { className: "statusbar-file-commit", title: activeFileCommit.title + " — " + activeFileCommit.author },
@@ -3549,6 +3659,63 @@ var MbeditorApp = function MbeditorApp() {
       onSelectFolder: handleOpenFolderInExplorer,
       onClose: function () { return setQuickOpen(false); }
     }),
+    draftRestoreOffer && React.createElement(
+      "div",
+      {
+        className: "ide-draft-restore-overlay",
+        role: "dialog",
+        "aria-modal": "true",
+        "aria-label": "Restore unsaved drafts"
+      },
+      React.createElement(
+        "div",
+        { className: "ide-draft-restore-dialog" },
+        React.createElement("div", { className: "ide-draft-restore-title" },
+          React.createElement("i", { className: "fas fa-save", style: { marginRight: 8 } }),
+          "Unsaved drafts found"
+        ),
+        React.createElement("div", { className: "ide-draft-restore-body" },
+          draftRestoreOffer.length + " file" + (draftRestoreOffer.length !== 1 ? "s have" : " has") + " locally backed-up drafts from when the server was offline:"
+        ),
+        React.createElement(
+          "ul",
+          { className: "ide-draft-restore-list" },
+          draftRestoreOffer.map(function (o) {
+            return React.createElement("li", { key: o.path }, o.name || o.path);
+          })
+        ),
+        React.createElement(
+          "div",
+          { className: "ide-draft-restore-actions" },
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "ide-draft-restore-btn ide-draft-restore-btn-primary",
+              onClick: function () {
+                draftRestoreOffer.forEach(function (offer) {
+                  TabManager.markDirty(offer.paneId, offer.tabId, offer.draftContent);
+                });
+                setDraftRestoreOffer(null);
+              }
+            },
+            "Restore all"
+          ),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "ide-draft-restore-btn",
+              onClick: function () {
+                draftRestoreOffer.forEach(function (offer) { _clearDraft(offer.path); });
+                setDraftRestoreOffer(null);
+              }
+            },
+            "Discard drafts"
+          )
+        )
+      )
+    ),
     contextMenu && React.createElement(
       React.Fragment,
       null,
