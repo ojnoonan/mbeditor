@@ -86,12 +86,12 @@ module Mbeditor
       JS
 
       find(".search-input").set("README")
-      assert_selector ".search-btn i.fa-spin", wait: 5
-      assert_selector ".search-clear-btn", wait: 5
+      assert_selector ".search-loading-overlay", wait: 5
+      assert_selector ".search-adornment-clear", wait: 5
 
-      find(".search-clear-btn").click
+      find(".search-adornment-clear").click
       assert_equal "", find(".search-input").value
-      assert_no_selector ".search-btn i.fa-spin", wait: 5
+      assert_no_selector ".search-loading-overlay", wait: 5
     end
 
     test "server-online heartbeat shows no offline indicator" do
