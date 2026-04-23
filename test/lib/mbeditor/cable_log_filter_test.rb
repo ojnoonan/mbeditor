@@ -27,6 +27,17 @@ module Mbeditor
       assert_equal ['regular message'], logger.messages
     end
 
+    test 'suppresses cable websocket lifecycle request log lines' do
+      logger = PlainLogger.new
+      filter = CableLogFilter.new(logger)
+
+      filter.info('Finished "/cable" [WebSocket] for 127.0.0.1 at 2026-04-23 10:41:34 +1000')
+      filter.info('Started "/cable" [WebSocket] for 127.0.0.1 at 2026-04-23 10:41:34 +1000')
+      filter.info('normal action cable message')
+
+      assert_equal ['normal action cable message'], logger.messages
+    end
+
     test 'current_tags returns empty array when underlying logger is untagged' do
       logger = PlainLogger.new
       filter = CableLogFilter.new(logger)

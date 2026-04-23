@@ -9,6 +9,7 @@ module Mbeditor
   # Non-Mbeditor ActionCable messages pass through unchanged.
   class CableLogFilter < SimpleDelegator
     SUPPRESS_PATTERN = /Mbeditor::|mbeditor_editor/
+    CABLE_WEBSOCKET_REQUEST_PATTERN = /(?:Started|Finished) "\/cable(?:\/[^\"]*)?" \[WebSocket\]/
 
     # Provides no-op tagged logging APIs for plain Ruby formatters.
     class UntaggedFormatter < SimpleDelegator
@@ -57,10 +58,14 @@ module Mbeditor
     %w[debug info warn error fatal unknown].each do |level|
       define_method(level) do |message = nil, &block|
         msg = message.nil? && block ? block.call : message.to_s
-        return if msg.match?(SUPPRESS_PATTERN)
+        return if suppress_message?(msg)
 
         super(message, &block)
       end
+    end
+
+    def suppress_message?(message)
+      message.match?(SUPPRESS_PATTERN) || message.match?(CABLE_WEBSOCKET_REQUEST_PATTERN)
     end
 
     # Tagged-logging compat — the block body still passes through the filter.

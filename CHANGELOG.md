@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2026-04-23
+
+### Fixed
+- Suppressed Action Cable websocket request lifecycle noise (`Started/Finished "/cable" [WebSocket] ...`) in development logs via `CableLogFilter`.
+- Added regression coverage to ensure websocket lifecycle request logs stay filtered while regular Action Cable logs continue to pass through.
+
 ## [0.4.4] - 2026-04-23
 
 ### Fixed
