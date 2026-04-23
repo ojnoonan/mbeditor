@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `CableLogFilter` now preserves Action Cable and Action Pack tagged-logger compatibility by supporting formatter-level `current_tags` access and no-op tag operations for untagged or nil formatters.
 - Added regression coverage for formatter-tag compatibility paths to prevent `current_tags` runtime errors.
+- System test Cuprite driver configuration now applies explicit startup timeout options through `driven_by` to avoid intermittent Ferrum browser bootstrap timeouts in CI.
 
 ## [0.4.3] - 2026-04-22
 

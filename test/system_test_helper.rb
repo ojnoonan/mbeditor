@@ -8,15 +8,19 @@ require "capybara/cuprite"
 require "minitest/reporters"
 Minitest::Reporters.use! Minitest::Reporters::ProgressReporter.new
 
+MBEDITOR_CUPRITE_OPTIONS = {
+  headless: true,
+  timeout: 15,
+  process_timeout: ENV.fetch("MBEDITOR_CUPRITE_PROCESS_TIMEOUT", "120").to_i,
+  browser_options: {
+    "no-sandbox": nil,
+    "disable-dev-shm-usage": nil,
+    "disable-gpu": nil
+  }
+}.freeze
+
 Capybara.register_driver(:cuprite) do |app|
-  browser_options = { 'no-sandbox': nil, 'disable-dev-shm-usage': nil, 'disable-gpu': nil }
-  Capybara::Cuprite::Driver.new(
-    app,
-    headless: true,
-    timeout: 15,
-    process_timeout: 60,
-    browser_options: browser_options
-  )
+  Capybara::Cuprite::Driver.new(app, **MBEDITOR_CUPRITE_OPTIONS)
 end
 Capybara.default_driver       = :cuprite
 Capybara.javascript_driver    = :cuprite

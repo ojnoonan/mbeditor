@@ -4,7 +4,7 @@ require "system_test_helper"
 
 module Mbeditor
   class EditorSystemTest < ActionDispatch::SystemTestCase
-    driven_by :cuprite
+    driven_by :cuprite, options: MBEDITOR_CUPRITE_OPTIONS.dup
 
     def setup
       @workspace = Dir.mktmpdir("mbeditor_sys_")
