@@ -30,7 +30,7 @@ var EditorPanel = function EditorPanel(_ref) {
   var testLoading = _ref.testLoading;
   var testInlineVisible = _ref.testInlineVisible;
   var editorPrefs = _ref.editorPrefs || {};
-  var monacoReady = _ref.monacoReady !== false;
+  var monacoReady = _ref.monacoReady !== false; // undefined means Monaco already loaded (legacy callers)
 
   var editorRef = useRef(null);
   var monacoRef = useRef(null);

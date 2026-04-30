@@ -123,6 +123,10 @@
               console.error("Failed to mount: MbeditorApp or MbeditorRuntime is undefined.");
             }
           };
+          appScript.onerror = function() {
+            console.error('Mbeditor: failed to load application.js');
+            document.getElementById('mbeditor-root').innerHTML = '<div style="padding:2rem;font-family:sans-serif;color:#c00">Editor failed to load. Please refresh the page.</div>';
+          };
           document.body.appendChild(appScript);
 
           // Load Monaco in parallel — resolves the promise when done.

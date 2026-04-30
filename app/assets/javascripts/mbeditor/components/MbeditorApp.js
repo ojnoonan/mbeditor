@@ -662,8 +662,9 @@ var MbeditorApp = function MbeditorApp() {
     // Resolve monacoReady when the __monacoReady promise settles.
     // This lets EditorPanel defer monaco.editor.create() until Monaco is loaded
     // while the rest of the UI (file tree, tabs, sidebar) renders immediately.
+    var _mrMounted = true;
     if (window.__monacoReady && typeof window.__monacoReady.then === 'function') {
-      window.__monacoReady.then(function() { setMonacoReady(true); });
+      window.__monacoReady.then(function() { if (_mrMounted) setMonacoReady(true); });
     } else {
       // Fallback: Monaco was already loaded synchronously (e.g. tests / old path).
       setMonacoReady(true);
@@ -954,6 +955,7 @@ var MbeditorApp = function MbeditorApp() {
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
     return function () {
+      _mrMounted = false;
       unsubscribe();
       unsubBranch();
       if (resizeRafRef.current) {
