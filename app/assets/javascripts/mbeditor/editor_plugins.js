@@ -51,6 +51,33 @@
 
   var globalsRegistered = false;
 
+  // Enumerate window for user-defined (non-native) globals and return a TypeScript
+  // declaration string.  Sprockets exposes every top-level var/function as a window
+  // property before Monaco initialises, so scanning window at registration time
+  // captures components, services, and helpers without any manual listing.
+  function buildWindowGlobalsShim() {
+    var alreadyDeclared = { React: 1, ReactDOM: 1, PropTypes: 1, MaterialUI: 1 };
+    var lines = [];
+    try {
+      var keys = Object.keys(window);
+      for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        if (alreadyDeclared[key]) continue;
+        if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key)) continue;
+        var value;
+        try { value = window[key]; } catch (e) { continue; }
+        if (value === null || value === undefined) continue;
+        if (typeof value === 'function') {
+          try {
+            if (/\[native code\]/.test(Function.prototype.toString.call(value))) continue;
+          } catch (e) { continue; }
+        }
+        lines.push('declare var ' + key + ': any;');
+      }
+    } catch (e) {}
+    return lines.join('\n');
+  }
+
   function leadingWhitespace(line) {
     var match = line.match(/^\s*/);
     return match ? match[0] : '';
@@ -453,6 +480,32 @@
         jsx: monaco.languages.typescript.JsxEmit.React,
         noUnusedLocals: true
       });
+    }
+
+    // Declare globals that the sprockets asset pipeline injects at runtime so
+    // checkJs doesn't flag them as undefined.  `interface Window` augmentation
+    // covers `window.myAppGlobal` access patterns.  For app-specific component
+    // names not listed here, add `/* global MyComponent */` at the top of the
+    // file — TypeScript's checkJs mode respects that directive.
+    if (monaco.languages.typescript && monaco.languages.typescript.javascriptDefaults) {
+      monaco.languages.typescript.javascriptDefaults.addExtraLib(
+        [
+          'declare var React: any;',
+          'declare var ReactDOM: any;',
+          'declare var PropTypes: any;',
+          'declare var MaterialUI: any;',
+          'interface Window { [key: string]: any; }'
+        ].join('\n'),
+        'inmemory://mbeditor/sprockets-globals.d.ts'
+      );
+
+      var dynamicShim = buildWindowGlobalsShim();
+      if (dynamicShim) {
+        monaco.languages.typescript.javascriptDefaults.addExtraLib(
+          dynamicShim,
+          'inmemory://mbeditor/window-globals.d.ts'
+        );
+      }
     }
 
     // TypeScript: enable JSX for .tsx files and catch unused locals.

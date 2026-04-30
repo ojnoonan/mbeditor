@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-04-30
+
+### Added
+- **Large file pagination** — files over 5 MB now open in read-only paginated mode (500 lines per page) instead of showing an error. A bar below the toolbar shows the current line range, total line count, and file size, with Prev/Next navigation. The backend streams only the requested line slice via `File.foreach` so arbitrarily large files never load fully into memory.
+- **JSON auto pretty-print** — `.json` files are automatically formatted with 2-space indentation when opened. Invalid JSON falls back to raw display with Monaco's built-in error markers. The formatted content is set as the editor baseline so the file does not appear dirty after opening.
+
 ## [0.5.0] - 2026-04-30
 
 ### Added

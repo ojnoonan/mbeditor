@@ -396,6 +396,65 @@ module Mbeditor
              "Expected Monaco to flag 'UndefinedComponent' as undefined"
     end
 
+    test "monaco does not flag user-defined window globals as undefined" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      # FileService is set on window by mbeditor's own JS before Monaco initialises —
+      # same pattern as a sprockets-loaded component (e.g. LinkComponent).
+      # It is NOT in the static shim, so only the dynamic window scan can declare it.
+      page.execute_script(<<~'JS')
+        window.__mbeditorActiveEditor.setValue(
+          'FileService.getFile("x.js"); var y = TrulyUndefinedGlobal;'
+        );
+      JS
+
+      assert wait_for_monaco_marker(matching: /TrulyUndefinedGlobal/),
+             "Checker should flag TrulyUndefinedGlobal (confirms worker ran)"
+
+      messages = page.evaluate_script(<<~'JS')
+        (function () {
+          var model = window.__mbeditorActiveEditor.getModel();
+          return window.monaco.editor.getModelMarkers({ resource: model.uri })
+            .map(function(m) { return m.message; });
+        })()
+      JS
+      fs_errors = Array(messages).select { |m| m.match?(/FileService/) }
+      assert_empty fs_errors,
+                   "Expected no FileService errors (window global), got: #{fs_errors.inspect}"
+    end
+
+    test "monaco does not flag React or sprockets globals as undefined" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      # Mix a genuine undefined (TrulyUndefinedVar) with React so we know
+      # when the checker has actually run before asserting React is clean.
+      page.execute_script(<<~'JS')
+        window.__mbeditorActiveEditor.setValue(
+          'const { useState } = React; var x = TrulyUndefinedVar;'
+        );
+      JS
+
+      assert wait_for_monaco_marker(matching: /TrulyUndefinedVar/),
+             "Checker should flag TrulyUndefinedVar (confirms worker ran)"
+
+      messages = page.evaluate_script(<<~'JS')
+        (function () {
+          var model = window.__mbeditorActiveEditor.getModel();
+          return window.monaco.editor.getModelMarkers({ resource: model.uri })
+            .map(function(m) { return m.message; });
+        })()
+      JS
+      react_errors = Array(messages).select { |m| m.match?(/\bReact\b/) }
+      assert_empty react_errors,
+                   "Expected no React errors (sprockets global), got: #{react_errors.inspect}"
+    end
+
     test "monaco warns about unused local variable in javascript" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
