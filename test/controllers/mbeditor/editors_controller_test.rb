@@ -520,6 +520,87 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # show — chunked/paginated reading (start_line param)
+    # ---------------------------------------------------------------------------
+
+    test "show with start_line returns first N lines" do
+      paged_file = File.join(@workspace, "paged.txt")
+      File.write(paged_file, (1..10).map { |i| "line#{i}\n" }.join)
+
+      get "/mbeditor/file", params: { path: "paged.txt", start_line: 0, line_count: 3 }
+      assert_response :ok
+      body = json
+      assert_equal "line1\nline2\nline3\n", body["content"]
+      assert_equal 10, body["total_lines"]
+      assert_equal 3,  body["line_count"]
+      assert_equal 0,  body["start_line"]
+      assert body["truncated"]
+    ensure
+      File.delete(paged_file) if File.exist?(paged_file)
+    end
+
+    test "show with start_line returns lines from offset" do
+      paged_file = File.join(@workspace, "paged2.txt")
+      File.write(paged_file, (1..10).map { |i| "line#{i}\n" }.join)
+
+      get "/mbeditor/file", params: { path: "paged2.txt", start_line: 2, line_count: 3 }
+      assert_response :ok
+      body = json
+      assert_equal "line3\nline4\nline5\n", body["content"]
+      assert_equal 10, body["total_lines"]
+      assert_equal 3,  body["line_count"]
+      assert_equal 2,  body["start_line"]
+      assert body["truncated"]
+    ensure
+      File.delete(paged_file) if File.exist?(paged_file)
+    end
+
+    test "show with start_line bypasses 5MB size cap" do
+      big_file = File.join(@workspace, "bigpaged.txt")
+      # Write just enough lines to test; the file doesn't need to actually exceed 5 MB
+      # — we verify that start_line mode returns 200 even for a file over the limit
+      File.open(big_file, "wb") do |f|
+        f.write("x" * (Mbeditor::EditorsController::MAX_OPEN_FILE_SIZE_BYTES + 1))
+      end
+
+      get "/mbeditor/file", params: { path: "bigpaged.txt", start_line: 0, line_count: 5 }
+      assert_response :ok
+      body = json
+      assert body["truncated"]
+    ensure
+      File.delete(big_file) if File.exist?(big_file)
+    end
+
+    test "show clamps line_count to 5000" do
+      paged_file = File.join(@workspace, "paged3.txt")
+      # 6000 lines
+      File.write(paged_file, (1..6000).map { |i| "line#{i}\n" }.join)
+
+      get "/mbeditor/file", params: { path: "paged3.txt", start_line: 0, line_count: 9999 }
+      assert_response :ok
+      body = json
+      assert_equal 5000, body["line_count"]
+      assert_equal 6000, body["total_lines"]
+    ensure
+      File.delete(paged_file) if File.exist?(paged_file)
+    end
+
+    test "show with start_line past end of file returns empty content" do
+      paged_file = File.join(@workspace, "paged4.txt")
+      File.write(paged_file, (1..5).map { |i| "line#{i}\n" }.join)
+
+      get "/mbeditor/file", params: { path: "paged4.txt", start_line: 100, line_count: 10 }
+      assert_response :ok
+      body = json
+      assert_equal "", body["content"]
+      assert_equal 0,  body["line_count"]
+      assert_equal 5,  body["total_lines"]
+      assert body["truncated"]
+    ensure
+      File.delete(paged_file) if File.exist?(paged_file)
+    end
+
+    # ---------------------------------------------------------------------------
     # save — symlink path traversal
     # ---------------------------------------------------------------------------
 
