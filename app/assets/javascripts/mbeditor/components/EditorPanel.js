@@ -1526,7 +1526,7 @@ var EditorPanel = function EditorPanel(_ref) {
           style: { padding: '2px 8px', fontSize: '12px' },
           disabled: pageStartLine === 0,
           onClick: function() {
-            var newStart = Math.max(0, pageStartLine - pageLineCount);
+            var newStart = Math.max(0, pageStartLine - 500);
             FileService.getFileChunk(tab.path, newStart, 500).then(function(data) {
               var sl = data.start_line || 0;
               var lc = data.line_count || 0;
@@ -1538,6 +1538,16 @@ var EditorPanel = function EditorPanel(_ref) {
               setPageTotalBytes(tb);
               if (monacoRef.current) {
                 monacoRef.current.setValue(data.content || '');
+                var _paginatedEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+                if (_paginatedEntry) {
+                  var _newBase = monacoRef.current.getModel().getAlternativeVersionId();
+                  aviBaseRef.current = _newBase;
+                  aviMaxRef.current  = _newBase;
+                  _paginatedEntry.cleanVersionId = _newBase;
+                  _paginatedEntry.aviBase = _newBase;
+                  _paginatedEntry.aviMax  = _newBase;
+                }
+                EditorStore.setState({ canUndo: false, canRedo: false });
                 monacoRef.current.updateOptions({ readOnly: true });
               }
             }).catch(function(err) {
@@ -1571,6 +1581,16 @@ var EditorPanel = function EditorPanel(_ref) {
               setPageTotalBytes(tb);
               if (monacoRef.current) {
                 monacoRef.current.setValue(data.content || '');
+                var _paginatedEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+                if (_paginatedEntry) {
+                  var _newBase = monacoRef.current.getModel().getAlternativeVersionId();
+                  aviBaseRef.current = _newBase;
+                  aviMaxRef.current  = _newBase;
+                  _paginatedEntry.cleanVersionId = _newBase;
+                  _paginatedEntry.aviBase = _newBase;
+                  _paginatedEntry.aviMax  = _newBase;
+                }
+                EditorStore.setState({ canUndo: false, canRedo: false });
                 monacoRef.current.updateOptions({ readOnly: true });
               }
             }).catch(function(err) {
