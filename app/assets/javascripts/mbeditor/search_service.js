@@ -7,10 +7,13 @@ var SearchService = (function () {
   var _searchCache   = new Map(); // key -> { data, expiresAt }
 
   function _cacheKey(query, options, offset) {
-    var regex     = !!(options && options.regex);
-    var matchCase = !!(options && options.matchCase);
-    var wholeWord = !!(options && options.wholeWord);
-    return query + '|' + (regex ? 'r' : '') + (matchCase ? 'c' : '') + (wholeWord ? 'w' : '') + '|' + (offset || 0);
+    return JSON.stringify([
+      query,
+      !!options.regex,
+      !!options.matchCase,
+      !!options.wholeWord,
+      offset || 0
+    ]);
   }
 
   function _cacheGet(key) {
@@ -24,7 +27,7 @@ var SearchService = (function () {
   }
 
   function _cacheSet(key, data) {
-    // Evict oldest entry if at capacity
+    // FIFO approximation: evict oldest-inserted entry if at capacity (Map preserves insertion order, hits don't move to back)
     if (_searchCache.size >= CACHE_MAX_SIZE && !_searchCache.has(key)) {
       var oldest = _searchCache.keys().next().value;
       _searchCache.delete(oldest);
