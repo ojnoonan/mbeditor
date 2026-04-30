@@ -219,13 +219,13 @@ var TabManager = (function () {
             dirty: false,
             loading: false,
             truncated: true,
-            startLine: data.start_line,
-            lineCount: data.line_count,
-            totalLines: data.total_lines,
-            totalBytes: data.total_bytes
+            startLine: data.start_line || 0,
+            lineCount: data.line_count || 0,
+            totalLines: data.total_lines || 0,
+            totalBytes: data.total_bytes || 0
           });
         }).catch(function(chunkErr) {
-          EditorStore.setStatus("Failed to load file: " + ((chunkErr.response && chunkErr.response.data && chunkErr.response.data.error) || chunkErr.message), "error");
+          EditorStore.setStatus("Failed to load large file: " + ((chunkErr.response && chunkErr.response.data && chunkErr.response.data.error) || chunkErr.message), "error");
           closeTab(paneId, path);
         });
         return;
