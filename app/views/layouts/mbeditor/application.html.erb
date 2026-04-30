@@ -69,11 +69,16 @@
       }
     };
 
-    // Load Prettier scripts in parallel with define temporarily hidden so their
-    // UMD wrapper sets window.prettier / window.prettierPlugins instead of
-    // registering as AMD modules via Monaco's loader.  Then load Monaco and the
-    // app once all Prettier scripts are ready.
+    // Hide window.define before deferred vendor scripts (React, ReactDOM, etc.) execute
+    // so their UMD wrappers set window globals instead of registering as AMD modules.
+    // Prettier is loaded lazily on first Format action via window.loadPrettierPlugins().
     (function() {
+      var _define = window.define;
+      window.define = undefined;
+
+      // Expose lazy Prettier loader — called on first Format action.
+      // Temporarily hides window.define so Prettier's UMD wrapper sets
+      // window.prettier / window.prettierPlugins instead of using AMD.
       var prettierScripts = [
         '<%= asset_path("prettier-standalone.js") %>',
         '<%= asset_path("prettier-plugin-babel.js") %>',
@@ -83,77 +88,89 @@
         '<%= asset_path("prettier-plugin-markdown.js") %>'
       ];
 
-      var _define = window.define;
-      window.define = undefined;
-      var pending = prettierScripts.length;
-
-      function onAllPrettierLoaded() {
-        // Deferred vendor scripts (React, ReactDOM, etc.) run before DOMContentLoaded.
-        // Restoring window.define before they execute would cause them to register
-        // as AMD modules instead of setting window globals, so wait for DOMContentLoaded first.
-        function proceed() {
-          // Store mbeditor's React/ReactDOM under a private namespace so the
-          // app bundle can use them without touching window.React / window.ReactDOM.
-          window.MbeditorRuntime = {
-            React:    window.React,
-            ReactDOM: window.ReactDOM
-          };
-          // Restore whatever the host app had before our deferred scripts ran.
-          window.React    = window._mbeditorHostReact;
-          window.ReactDOM = window._mbeditorHostReactDOM;
-
-          window.define = _define;
-
-          // Expose a promise that resolves when Monaco finishes loading.
-          // EditorPanel awaits this before calling monaco.editor.create().
-          var _monacoResolve;
-          window.__monacoReady = new Promise(function(resolve) { _monacoResolve = resolve; });
-
-          // Load application.js immediately — React mounts before Monaco is ready.
-          // EditorPanel will show a skeleton until window.__monacoReady resolves.
-          var appScript = document.createElement('script');
-          appScript.src = '<%= asset_path("mbeditor/application.js") %>';
-          appScript.onload = function() {
-            var root = document.getElementById('mbeditor-root');
-            var _R  = window.MbeditorRuntime.React;
-            var _RD = window.MbeditorRuntime.ReactDOM;
-            if (window.MbeditorApp && _R && _RD) {
-              _RD.render(_R.createElement(window.MbeditorApp), root);
-            } else {
-              console.error("Failed to mount: MbeditorApp or MbeditorRuntime is undefined.");
-            }
-          };
-          appScript.onerror = function() {
-            console.error('Mbeditor: failed to load application.js');
-            document.getElementById('mbeditor-root').innerHTML = '<div style="padding:2rem;font-family:sans-serif;color:#c00">Editor failed to load. Please refresh the page.</div>';
-          };
-          document.body.appendChild(appScript);
-
-          // Load Monaco in parallel — resolves the promise when done.
-          require(['vs/editor/editor.main'], function() {
-            // Register custom themes from the vendored bundle
-            if (window.MBEDITOR_CUSTOM_THEMES && window.monaco) {
-              Object.keys(window.MBEDITOR_CUSTOM_THEMES).forEach(function(id) {
-                window.monaco.editor.defineTheme(id, window.MBEDITOR_CUSTOM_THEMES[id]);
-              });
-            }
-            _monacoResolve();
+      window.loadPrettierPlugins = function() {
+        if (window._prettierLoadPromise) return window._prettierLoadPromise;
+        window._prettierLoadPromise = new Promise(function(resolve, reject) {
+          var savedDefine = window.define;
+          window.define = undefined;
+          var pending = prettierScripts.length;
+          prettierScripts.forEach(function(src) {
+            var s = document.createElement('script');
+            s.src = src;
+            s.onload = function() {
+              if (--pending === 0) {
+                window.define = savedDefine;
+                resolve();
+              }
+            };
+            s.onerror = function() {
+              window.define = savedDefine;
+              reject(new Error('Failed to load Prettier: ' + src));
+            };
+            document.head.appendChild(s);
           });
-        }
+        });
+        return window._prettierLoadPromise;
+      };
 
-        if (window._mbeditorDOMReady) {
-          proceed();
-        } else {
-          document.addEventListener('DOMContentLoaded', proceed, { once: true });
-        }
+      // Deferred vendor scripts (React, ReactDOM, etc.) run before DOMContentLoaded.
+      // Restoring window.define before they execute would cause them to register
+      // as AMD modules instead of setting window globals, so wait for DOMContentLoaded first.
+      function proceed() {
+        // Store mbeditor's React/ReactDOM under a private namespace so the
+        // app bundle can use them without touching window.React / window.ReactDOM.
+        window.MbeditorRuntime = {
+          React:    window.React,
+          ReactDOM: window.ReactDOM
+        };
+        // Restore whatever the host app had before our deferred scripts ran.
+        window.React    = window._mbeditorHostReact;
+        window.ReactDOM = window._mbeditorHostReactDOM;
+
+        window.define = _define;
+
+        // Expose a promise that resolves when Monaco finishes loading.
+        // EditorPanel awaits this before calling monaco.editor.create().
+        var _monacoResolve;
+        window.__monacoReady = new Promise(function(resolve) { _monacoResolve = resolve; });
+
+        // Load application.js immediately — React mounts before Monaco is ready.
+        // EditorPanel will show a skeleton until window.__monacoReady resolves.
+        var appScript = document.createElement('script');
+        appScript.src = '<%= asset_path("mbeditor/application.js") %>';
+        appScript.onload = function() {
+          var root = document.getElementById('mbeditor-root');
+          var _R  = window.MbeditorRuntime.React;
+          var _RD = window.MbeditorRuntime.ReactDOM;
+          if (window.MbeditorApp && _R && _RD) {
+            _RD.render(_R.createElement(window.MbeditorApp), root);
+          } else {
+            console.error("Failed to mount: MbeditorApp or MbeditorRuntime is undefined.");
+          }
+        };
+        appScript.onerror = function() {
+          console.error('Mbeditor: failed to load application.js');
+          document.getElementById('mbeditor-root').innerHTML = '<div style="padding:2rem;font-family:sans-serif;color:#c00">Editor failed to load. Please refresh the page.</div>';
+        };
+        document.body.appendChild(appScript);
+
+        // Load Monaco in parallel — resolves the promise when done.
+        require(['vs/editor/editor.main'], function() {
+          // Register custom themes from the vendored bundle
+          if (window.MBEDITOR_CUSTOM_THEMES && window.monaco) {
+            Object.keys(window.MBEDITOR_CUSTOM_THEMES).forEach(function(id) {
+              window.monaco.editor.defineTheme(id, window.MBEDITOR_CUSTOM_THEMES[id]);
+            });
+          }
+          _monacoResolve();
+        });
       }
 
-      prettierScripts.forEach(function(src) {
-        var s = document.createElement('script');
-        s.src = src;
-        s.onload = function() { if (--pending === 0) onAllPrettierLoaded(); };
-        document.head.appendChild(s);
-      });
+      if (window._mbeditorDOMReady) {
+        proceed();
+      } else {
+        document.addEventListener('DOMContentLoaded', proceed, { once: true });
+      }
     })();
   </script>
 </body>

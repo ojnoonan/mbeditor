@@ -1574,38 +1574,51 @@ var MbeditorApp = function MbeditorApp() {
     };
     var parserName = formatMap[ext];
 
-    if (parserName && window.prettier && window.prettierPlugins) {
+    if (parserName) {
       setLoading(function (prev) {
         return _extends({}, prev, { format: true });
       });
       EditorStore.setStatus("Formatting with Prettier...", "info");
-      window.prettier.format(activeTab.content, {
-        parser: parserName,
-        plugins: Object.values(window.prettierPlugins),
-        printWidth: editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80,
-        tabWidth: editorPrefs.prettierTabWidth != null ? editorPrefs.prettierTabWidth : 2,
-        useTabs: !!editorPrefs.prettierUseTabs,
-        semi: editorPrefs.prettierSemi !== false,
-        singleQuote: !!editorPrefs.prettierSingleQuote,
-        trailingComma: editorPrefs.prettierTrailingComma || 'all',
-        bracketSpacing: editorPrefs.prettierBracketSpacing !== false
-      }).then(function (formatted) {
-        var newPanes = EditorStore.getState().panes.map(function (p) {
-          if (p.id === focusedPane.id) return _extends({}, p, { tabs: p.tabs.map(function (t) {
-              return t.id === activeTab.id ? _extends({}, t, { content: formatted, dirty: true, externalContentVersion: (t.externalContentVersion || 0) + 1 }) : t;
-            }) });
-          return p;
+      var doFormat = function doFormat() {
+        return window.prettier.format(activeTab.content, {
+          parser: parserName,
+          plugins: Object.values(window.prettierPlugins),
+          printWidth: editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80,
+          tabWidth: editorPrefs.prettierTabWidth != null ? editorPrefs.prettierTabWidth : 2,
+          useTabs: !!editorPrefs.prettierUseTabs,
+          semi: editorPrefs.prettierSemi !== false,
+          singleQuote: !!editorPrefs.prettierSingleQuote,
+          trailingComma: editorPrefs.prettierTrailingComma || 'all',
+          bracketSpacing: editorPrefs.prettierBracketSpacing !== false
+        }).then(function (formatted) {
+          var newPanes = EditorStore.getState().panes.map(function (p) {
+            if (p.id === focusedPane.id) return _extends({}, p, { tabs: p.tabs.map(function (t) {
+                return t.id === activeTab.id ? _extends({}, t, { content: formatted, dirty: true, externalContentVersion: (t.externalContentVersion || 0) + 1 }) : t;
+              }) });
+            return p;
+          });
+          EditorStore.setState({ panes: newPanes });
+          EditorStore.setStatus("Formatted (Unsaved)", "success");
+          GitService.fetchStatus();
+        })["catch"](function (err) {
+          EditorStore.setStatus("Prettier Formatter failed: " + err.message, "error");
+        })["finally"](function () {
+          setLoading(function (prev) {
+            return _extends({}, prev, { format: false });
+          });
         });
-        EditorStore.setState({ panes: newPanes });
-        EditorStore.setStatus("Formatted (Unsaved)", "success");
-        GitService.fetchStatus();
-      })["catch"](function (err) {
-        EditorStore.setStatus("Prettier Formatter failed: " + err.message, "error");
-      })["finally"](function () {
-        setLoading(function (prev) {
-          return _extends({}, prev, { format: false });
+      };
+      if (window.prettier && window.prettierPlugins) {
+        doFormat();
+      } else if (window.loadPrettierPlugins) {
+        window.loadPrettierPlugins().then(doFormat)["catch"](function (err) {
+          EditorStore.setStatus("Failed to load Prettier: " + err.message, "error");
+          setLoading(function (prev) { return _extends({}, prev, { format: false }); });
         });
-      });
+      } else {
+        EditorStore.setStatus("Prettier is not available.", "warning");
+        setLoading(function (prev) { return _extends({}, prev, { format: false }); });
+      }
       return;
     }
 

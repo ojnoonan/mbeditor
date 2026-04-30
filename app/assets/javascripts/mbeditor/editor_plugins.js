@@ -62,6 +62,9 @@
 
   function rubyIndentUnit(model) {
     var options = model.getOptions ? model.getOptions() : null;
+    if (options && options.insertSpaces === false) {
+      return '\t';
+    }
     var tabSize = options && options.tabSize ? options.tabSize : 4;
     return new Array(tabSize + 1).join(' ');
   }
@@ -350,6 +353,45 @@
       });
     }
 
+    // Unused method dimming — grey out `def method_name` for methods with no
+    // call-sites anywhere in the workspace.
+    var unusedDecIds = [];
+    var unusedTimer = null;
+    var unusedSaveDisposable = null;
+
+    if (language === 'ruby' && typeof FileService !== 'undefined' && FileService.getUnusedMethods) {
+      function refreshUnused() {
+        var path = model._mbeditorPath;
+        if (!path) return;
+        FileService.getUnusedMethods(path).then(function(data) {
+          var unused = data && Array.isArray(data.unused) ? data.unused : [];
+          var newDecs = unused.map(function(m) {
+            var lineContent = model.getLineContent(m.line);
+            var defIdx = lineContent.indexOf('def ');
+            if (defIdx < 0) return null;
+            var nameCol = defIdx + 5; // 1-based column of method name
+            return {
+              range: new monaco.Range(m.line, nameCol, m.line, nameCol + m.name.length),
+              options: {
+                inlineClassName: 'mbeditor-unused-def',
+                stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+              }
+            };
+          }).filter(Boolean);
+          unusedDecIds = editor.deltaDecorations(unusedDecIds, newDecs);
+        }).catch(function() {});
+      }
+
+      // Initial check after a short delay (server cache may not be warm yet).
+      unusedTimer = setTimeout(refreshUnused, 3000);
+
+      // Re-check after each save event (model content stops changing).
+      unusedSaveDisposable = model.onDidChangeContent(function() {
+        clearTimeout(unusedTimer);
+        unusedTimer = setTimeout(refreshUnused, 5000);
+      });
+    }
+
     var contentDisposable = model.onDidChangeContent(function (event) {
       if (suppressInternalEdit) return;
       if (event.isUndoing || event.isRedoing) return;
@@ -381,6 +423,9 @@
         if (gotoMouseDisposable) gotoMouseDisposable.dispose();
         if (gotoActionDisposable) gotoActionDisposable.dispose();
         contentDisposable.dispose();
+        if (unusedSaveDisposable) unusedSaveDisposable.dispose();
+        clearTimeout(unusedTimer);
+        if (unusedDecIds.length > 0) { editor.deltaDecorations(unusedDecIds, []); }
       }
     };
   }
@@ -390,6 +435,14 @@
     if (!monaco || !monaco.languages) return;
 
     globalsRegistered = true;
+
+    // CSS for greyed-out unused method names (applied via decoration inlineClassName).
+    if (!document.getElementById('mbeditor-unused-style')) {
+      var unusedStyle = document.createElement('style');
+      unusedStyle.id = 'mbeditor-unused-style';
+      unusedStyle.textContent = '.mbeditor-unused-def { opacity: 0.35; }';
+      document.head.appendChild(unusedStyle);
+    }
 
     monaco.languages.setLanguageConfiguration('ruby', {
       comments: { lineComment: '#', blockComment: ['=begin', '=end'] },
@@ -730,6 +783,34 @@
         if (RUBY_CORE_METHODS[word]) return null;
         if (typeof FileService === 'undefined' || !FileService.getDefinition) return null;
 
+        // Uppercase first letter → likely a module/class name.
+        // Look up the module's exposed methods via /module_members.
+        if (/^[A-Z]/.test(word) && FileService.getModuleMembers) {
+          var modKey = '__mod__' + word;
+          var modCached = hoverCache[modKey];
+          if (modCached && (Date.now() - modCached.ts) < HOVER_CACHE_TTL_MS) {
+            return modCached.result || null;
+          }
+          var modController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+          if (modController && token && token.onCancellationRequested) {
+            token.onCancellationRequested(function() { modController.abort(); });
+          }
+          return FileService.getModuleMembers(word, modController ? { signal: modController.signal } : {}).then(function(data) {
+            if (token && token.isCancellationRequested) return null;
+            if (!data || !data.methods || data.methods.length === 0) {
+              hoverCache[modKey] = { ts: Date.now(), result: null };
+              return null;
+            }
+            var lines = ['**' + data.name + '**  `' + (data.file || '') + '`\n'];
+            data.methods.slice(0, 20).forEach(function(m) {
+              lines.push('- `' + (m.signature || m.name) + '`');
+            });
+            var result = { contents: [{ value: lines.join('\n') }] };
+            hoverCache[modKey] = { ts: Date.now(), result: result };
+            return result;
+          }).catch(function() { return null; });
+        }
+
         var currentFile = model._mbeditorPath || null;
 
         // Return cached result immediately if still fresh.
@@ -800,6 +881,69 @@
         ]
       };
     }
+
+    // Include-aware completion provider for Ruby.
+    // Suggests methods from modules included/extended/prepended in the current file,
+    // with Notepad++-style snippet tab stops for method parameters.
+    var includesCache = {};
+    var INCLUDES_CACHE_TTL_MS = 30000;
+
+    function parseMethodParams(signature) {
+      var m = /\(([^)]+)\)/.exec(signature || '');
+      if (!m) return [];
+      return m[1].split(',').map(function(p) {
+        return p.trim().replace(/^[*&]+/, '').replace(/\s*=.*$/, '').trim();
+      }).filter(function(p) { return p.length > 0; });
+    }
+
+    monaco.languages.registerCompletionItemProvider('ruby', {
+      triggerCharacters: ['.'],
+      provideCompletionItems: function(model, position) {
+        var path = model._mbeditorPath;
+        if (!path || typeof FileService === 'undefined' || !FileService.getFileIncludes) {
+          return { suggestions: [] };
+        }
+
+        var lineUpToCursor = model.getValueInRange({
+          startLineNumber: position.lineNumber, startColumn: 1,
+          endLineNumber: position.lineNumber, endColumn: position.column
+        });
+        var isDot = lineUpToCursor.slice(-1) === '.';
+
+        function buildSuggestions(data) {
+          var suggestions = [];
+          (data.includes || []).forEach(function(mod) {
+            (mod.methods || []).forEach(function(m) {
+              var params = parseMethodParams(m.signature);
+              var snippet = params.length > 0
+                ? m.name + '(' + params.map(function(p, i) {
+                    return '${' + (i + 1) + ':' + p + '}';
+                  }).join(', ') + ')$0'
+                : m.name + '$0';
+              suggestions.push({
+                label: m.name,
+                kind: monaco.languages.CompletionItemKind.Method,
+                detail: mod.name + (mod.file ? '  ' + mod.file : ''),
+                insertText: snippet,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                sortText: (isDot ? '0' : '1') + m.name
+              });
+            });
+          });
+          return { suggestions: suggestions };
+        }
+
+        var cached = includesCache[path];
+        if (cached && (Date.now() - cached.ts) < INCLUDES_CACHE_TTL_MS) {
+          return buildSuggestions(cached.data);
+        }
+
+        return FileService.getFileIncludes(path).then(function(result) {
+          includesCache[path] = { ts: Date.now(), data: result };
+          return buildSuggestions(result);
+        }).catch(function() { return { suggestions: [] }; });
+      }
+    });
 
     // Vim-style fold-marker folding provider.
     // Recognises {{{ (open) and }}} (close) anywhere in a line, matching the

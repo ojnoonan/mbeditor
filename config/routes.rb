@@ -21,6 +21,9 @@ Mbeditor::Engine.routes.draw do
   get    'search',          to: 'editors#search'
   post   'replace_in_files', to: 'editors#replace_in_files'
   get    'definition',      to: 'editors#definition'
+  get    'module_members',  to: 'editors#module_members'
+  get    'file_includes',   to: 'editors#file_includes'
+  get    'unused_methods',  to: 'editors#unused_methods'
   get    'git_info',        to: 'editors#git_info'
   get    'git_status',      to: 'editors#git_status'
   get    'manifest.webmanifest',            to: 'editors#pwa_manifest',   format: false

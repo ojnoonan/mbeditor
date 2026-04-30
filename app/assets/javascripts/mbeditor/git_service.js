@@ -1,12 +1,16 @@
 var GitService = (function () {
   function applyGitInfo(data) {
     var files = data.workingTree || data.files || [];
-    EditorStore.setState({
-      gitFiles: files,
+    var current = EditorStore.getState().gitFiles;
+    var stateUpdate = {
       gitBranch: data.branch || "",
       gitInfo: data,
       gitInfoError: null
-    });
+    };
+    if (JSON.stringify(files) !== JSON.stringify(current)) {
+      stateUpdate.gitFiles = files;
+    }
+    EditorStore.setState(stateUpdate);
   }
 
   function fetchInfo() {

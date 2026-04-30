@@ -520,7 +520,7 @@ var FileTreeMemo = React.memo(FileTree, function(prev, next) {
     prev.activePath === next.activePath &&
     prev.selectedPaths === next.selectedPaths &&
     prev.anchorPath === next.anchorPath &&
-    prev.gitFiles === next.gitFiles &&
+    JSON.stringify(prev.gitFiles) === JSON.stringify(next.gitFiles) &&
     prev.expandedDirs === next.expandedDirs &&
     prev.pendingCreate === next.pendingCreate &&
     prev.pendingRename === next.pendingRename;

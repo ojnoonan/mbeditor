@@ -181,6 +181,21 @@ var FileService = (function () {
     prefetchCache.delete(path);
   }
 
+  function getModuleMembers(name, extraOptions) {
+    var config = Object.assign({ params: { name: name }, timeout: 8000 }, extraOptions || {});
+    return axios.get(window.mbeditorBasePath() + '/module_members', config).then(function(res) { return res.data; });
+  }
+
+  function getFileIncludes(path, extraOptions) {
+    var config = Object.assign({ params: { path: path }, timeout: 15000 }, extraOptions || {});
+    return axios.get(window.mbeditorBasePath() + '/file_includes', config).then(function(res) { return res.data; });
+  }
+
+  function getUnusedMethods(path, extraOptions) {
+    var config = Object.assign({ params: { path: path }, timeout: 30000 }, extraOptions || {});
+    return axios.get(window.mbeditorBasePath() + '/unused_methods', config).then(function(res) { return res.data; });
+  }
+
   return {
     getWorkspace: getWorkspace,
     getTree: getTree,
@@ -203,6 +218,9 @@ var FileService = (function () {
     getDefinition: getDefinition,
     prefetch: prefetch,
     getPrefetched: getPrefetched,
-    cancelPrefetch: cancelPrefetch
+    cancelPrefetch: cancelPrefetch,
+    getModuleMembers: getModuleMembers,
+    getFileIncludes: getFileIncludes,
+    getUnusedMethods: getUnusedMethods
   };
 })();

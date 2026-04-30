@@ -47,6 +47,9 @@ var SearchService = (function () {
   // Flat doc list kept in sync with _miniSearch so we can do substring lookups.
   var _allDocs = [];
 
+  // Tracks the in-flight projectSearch request so stale requests can be aborted.
+  var _searchController = null;
+
   function buildIndex(treeData) {
     // Capture the tree data immediately so a subsequent refresh doesn't
     // clobber us before the idle callback fires.
@@ -119,9 +122,15 @@ var SearchService = (function () {
       return Promise.resolve(cached);
     }
 
+    if (_searchController) { _searchController.abort(); }
+    var controller = new AbortController();
+    _searchController = controller;
+
     return axios.get(window.mbeditorBasePath() + '/search', {
-      params: { q: query, offset: off, limit: lim, regex: useRegex ? 'true' : 'false', match_case: matchCase ? 'true' : 'false', whole_word: wholeWord ? 'true' : 'false' }
+      params: { q: query, offset: off, limit: lim, regex: useRegex ? 'true' : 'false', match_case: matchCase ? 'true' : 'false', whole_word: wholeWord ? 'true' : 'false' },
+      signal: controller.signal
     }).then(function(res) {
+        _searchController = null;
         var data = res.data;
         var results    = Array.isArray(data) ? data : (data && data.results || []);
         var hasMore    = !Array.isArray(data) && !!(data && data.has_more);
@@ -139,6 +148,9 @@ var SearchService = (function () {
         return payload;
       })
       .catch(function(err) {
+        if (axios.isCancel(err) || (err && err.name === 'CanceledError')) {
+          return { results: [], hasMore: false, totalCount: null };
+        }
         EditorStore.setStatus("Search failed: " + err.message, "error");
         return { results: [], hasMore: false, totalCount: null };
       });

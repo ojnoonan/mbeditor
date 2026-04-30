@@ -46,7 +46,12 @@ module Mbeditor
 
     # GET /mbeditor/files — recursive file tree
     def files
-      tree = build_tree(workspace_root.to_s)
+      root = workspace_root.to_s
+      cached = cached_file_tree(root)
+      return render json: cached if cached
+
+      tree = build_tree(root)
+      store_file_tree(root, tree)
       render json: tree
     end
 
@@ -320,6 +325,77 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
+    # GET /mbeditor/module_members?name=ArticlesHelper
+    # Returns methods defined in the workspace file that defines the named module/class.
+    def module_members
+      name = params[:name].to_s.strip
+      return render json: { error: "Invalid name" }, status: :bad_request \
+        unless name.match?(/\A[A-Z][a-zA-Z0-9_]*\z/)
+
+      file = RubyDefinitionService.module_defined_in(
+        workspace_root, name,
+        excluded_dirnames: excluded_dirnames,
+        excluded_paths:    excluded_paths
+      )
+      return render json: { name: name, methods: [] } unless file
+
+      defs    = RubyDefinitionService.defs_in_file(file)
+      methods = defs.flat_map do |method_name, entries|
+        entries.map { |e| { name: method_name, line: e[:line], signature: e[:signature], file: relative_path(file) } }
+      end
+      render json: { name: name, file: relative_path(file), methods: methods }
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
+    # GET /mbeditor/file_includes?path=app/models/article.rb
+    # Returns included/extended/prepended module names and their methods.
+    def file_includes
+      path = resolve_path(params[:path])
+      return render json: { error: "Forbidden" }, status: :forbidden unless path
+
+      # Ensure workspace is scanned so include_calls are populated in the cache.
+      # Fast no-op on subsequent calls (mtime checks only).
+      RubyDefinitionService.scan(workspace_root,
+                                 excluded_dirnames: excluded_dirnames,
+                                 excluded_paths:    excluded_paths)
+
+      module_names = RubyDefinitionService.includes_in_file(path)
+      includes = module_names.filter_map do |mod_name|
+        mod_file = RubyDefinitionService.module_defined_in(
+          workspace_root, mod_name,
+          excluded_dirnames: excluded_dirnames,
+          excluded_paths:    excluded_paths
+        )
+        next unless mod_file
+
+        defs    = RubyDefinitionService.defs_in_file(mod_file)
+        methods = defs.flat_map do |method_name, entries|
+          entries.map { |e| { name: method_name, line: e[:line], signature: e[:signature] } }
+        end
+        { name: mod_name, file: relative_path(mod_file), methods: methods }
+      end
+      render json: { includes: includes }
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
+    # GET /mbeditor/unused_methods?path=app/models/article.rb
+    # Returns method names defined in the file that have no call-sites in the workspace.
+    def unused_methods
+      path = resolve_path(params[:path])
+      return render json: { error: "Forbidden" }, status: :forbidden unless path
+
+      unused = UnusedMethodsService.call(
+        workspace_root, path,
+        excluded_dirnames: excluded_dirnames,
+        excluded_paths:    excluded_paths
+      )
+      render json: { unused: unused }
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
     # GET /mbeditor/search?q=...&offset=0&limit=50&regex=false&match_case=false&whole_word=false
     def search
       query      = params[:q].to_s.strip
@@ -462,63 +538,84 @@ module Mbeditor
     # GET /mbeditor/git_info
     def git_info
       repo = workspace_root.to_s
+      cached = cached_git_info(repo)
+      return render json: cached if cached
+
       branch = GitService.current_branch(repo)
       unless branch
         return render json: { ok: false, error: "Unable to determine current branch" }, status: :unprocessable_content
       end
-      working_output, _err, working_status = Open3.capture3("git", "-C", repo, "status", "--porcelain")
+
+      # Wave 1: all independent git reads run in parallel
+      status_t   = Thread.new { Open3.capture3("git", "-C", repo, "status", "--porcelain") }
+      numstat_t  = Thread.new { Open3.capture3("git", "-C", repo, "diff", "--numstat", "HEAD") }
+      upstream_t = Thread.new { Open3.capture3("git", "-C", repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}") }
+      base_t     = Thread.new { GitService.find_branch_base(repo, branch) }
+
+      working_output, _err, working_status = status_t.value
       working_tree = working_status.success? ? parse_porcelain_status(working_output) : []
 
-      # Annotate each working-tree file with added/removed line counts
-      numstat_out, = Open3.capture3("git", "-C", repo, "diff", "--numstat", "HEAD")
-      numstat_map  = GitService.parse_numstat(numstat_out)
+      numstat_out = numstat_t.value.first
+      numstat_map = GitService.parse_numstat(numstat_out)
       working_tree = working_tree.map { |f| f.merge(numstat_map.fetch(f[:path], {})) }
 
-      upstream_output, _err, upstream_status = Open3.capture3("git", "-C", repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+      upstream_output, _err, upstream_status = upstream_t.value
       upstream_branch = upstream_status.success? ? upstream_output.strip : nil
       upstream_branch = nil unless upstream_branch&.match?(%r{\A[\w./-]+\z})
 
-      ahead_count = 0
-      behind_count = 0
-      unpushed_files = []
-      unpushed_commits = []
-
       # Determine the branch's fork point relative to a base branch (develop/main/master).
       # This ensures History and Changes only show work unique to this branch.
-      base_sha, base_ref = GitService.find_branch_base(repo, branch)
+      base_sha, base_ref = base_t.value
 
-      if upstream_branch.present?
-        counts_output, _err, counts_status = Open3.capture3("git", "-C", repo, "rev-list", "--left-right", "--count", "HEAD...#{upstream_branch}")
+      ahead_count    = 0
+      behind_count   = 0
+      unpushed_files = []
+      unpushed_commits = []
+      diff_base = base_sha || upstream_branch
+
+      # Wave 2: conditional parallel reads that depend on Wave 1 results
+      wave2 = {}
+      wave2[:counts]    = Thread.new { Open3.capture3("git", "-C", repo, "rev-list", "--left-right", "--count", "HEAD...#{upstream_branch}") } if upstream_branch.present?
+      wave2[:unp_log]   = Thread.new { Open3.capture3("git", "-C", repo, "log", "#{upstream_branch}..HEAD", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e") } if upstream_branch.present?
+      wave2[:diff_name] = Thread.new { Open3.capture3("git", "-C", repo, "diff", "--name-status", "#{diff_base}..HEAD") } if diff_base.present?
+      wave2[:diff_num]  = Thread.new { Open3.capture3("git", "-C", repo, "diff", "--numstat", "#{diff_base}..HEAD") } if diff_base.present?
+      wave2[:branch_log] = Thread.new do
+        if base_sha
+          Open3.capture3("git", "-C", repo, "log", "--first-parent", "#{base_sha}..HEAD",
+                         "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
+        else
+          Open3.capture3("git", "-C", repo, "log", "--first-parent", branch, "-n", "100",
+                         "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
+        end
+      end
+
+      wave2.each_value(&:join)
+
+      if (ct = wave2[:counts])
+        counts_output, _err, counts_status = ct.value
         if counts_status.success?
           ahead_str, behind_str = counts_output.strip.split("\t", 2)
-          ahead_count = ahead_str.to_i
+          ahead_count  = ahead_str.to_i
           behind_count = behind_str.to_i
         end
+      end
 
-        unpushed_log_output, _err, unpushed_log_status = Open3.capture3("git", "-C", repo, "log", "#{upstream_branch}..HEAD", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
+      if (ul = wave2[:unp_log])
+        unpushed_log_output, _err, unpushed_log_status = ul.value
         unpushed_commits = GitService.parse_git_log(unpushed_log_output) if unpushed_log_status.success?
       end
 
-      # "Changes in Branch" — use the merge-base against the base branch when available
-      # so that files changed in develop (and merged into this branch) are excluded.
-      diff_base = base_sha || upstream_branch
-      if diff_base.present?
-        unpushed_output, _err, unpushed_status = Open3.capture3("git", "-C", repo, "diff", "--name-status", "#{diff_base}..HEAD")
-        if unpushed_status.success?
-          unpushed_files   = parse_name_status(unpushed_output)
-          unp_numstat_out, = Open3.capture3("git", "-C", repo, "diff", "--numstat", "#{diff_base}..HEAD")
-          unp_numstat_map  = GitService.parse_numstat(unp_numstat_out)
-          unpushed_files   = unpushed_files.map { |f| f.merge(unp_numstat_map.fetch(f[:path], {})) }
+      if (dn = wave2[:diff_name]) && (dnum = wave2[:diff_num])
+        diff_name_out, _err, diff_name_status = dn.value
+        if diff_name_status.success?
+          unpushed_files  = parse_name_status(diff_name_out)
+          unp_numstat_out = dnum.value.first
+          unp_numstat_map = GitService.parse_numstat(unp_numstat_out)
+          unpushed_files  = unpushed_files.map { |f| f.merge(unp_numstat_map.fetch(f[:path], {})) }
         end
       end
 
-      branch_log_output, _err, branch_log_status = if base_sha
-        Open3.capture3("git", "-C", repo, "log", "--first-parent", "#{base_sha}..HEAD",
-                       "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
-      else
-        Open3.capture3("git", "-C", repo, "log", "--first-parent", branch, "-n", "100",
-                       "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
-      end
+      branch_log_output, _err, branch_log_status = wave2[:branch_log].value
       branch_commits = branch_log_status.success? ? GitService.parse_git_log(branch_log_output) : []
 
       redmine_ticket_id = nil
@@ -537,7 +634,7 @@ module Mbeditor
         end
       end
 
-      render json: {
+      payload = {
         ok: true,
         branch: branch,
         upstreamBranch: upstream_branch,
@@ -550,6 +647,8 @@ module Mbeditor
         branchBaseRef: base_ref,
         redmineTicketId: redmine_ticket_id
       }
+      store_git_info(repo, payload)
+      render json: payload
     rescue StandardError => e
       render json: { ok: false, error: e.message }, status: :unprocessable_content
     end
@@ -635,7 +734,7 @@ module Mbeditor
         return render json: { markers: markers }
       end
 
-      cmd = rubocop_command + ["--no-server", "--cache", "false", "--stdin", filename, "--format", "json", "--no-color", "--force-exclusion"]
+      cmd = rubocop_command + ["--no-server", "--stdin", filename, "--format", "json", "--no-color", "--force-exclusion"]
       env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
       output = run_with_timeout(env, cmd, stdin_data: code)
 
@@ -696,7 +795,7 @@ module Mbeditor
         f.flush
         tmpfile = f.path
 
-        cmd = rubocop_command + ["--no-server", "--cache", "false", "-A", "--no-color", tmpfile]
+        cmd = rubocop_command + ["--no-server", "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
         _out, _err, status = Open3.capture3(env, *cmd)
 
@@ -759,7 +858,7 @@ module Mbeditor
         f.flush
         tmpfile = f.path
 
-        cmd = rubocop_command + ["--no-server", "--cache", "false", "-A", "--no-color", tmpfile]
+        cmd = rubocop_command + ["--no-server", "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
         _out, _err, status = Open3.capture3(env, *cmd)
         unless status.success? || status.exitstatus == 1
@@ -776,6 +875,10 @@ module Mbeditor
     private
 
     def broadcast_files_changed
+      root = workspace_root.to_s
+      invalidate_file_tree_cache(root)
+      invalidate_git_info_cache(root)
+
       return unless defined?(ActionCable.server)
 
       ActionCable.server.broadcast("mbeditor_editor", { type: "files_changed" })
@@ -1065,8 +1168,10 @@ module Mbeditor
       candidate.exist? ? ".rubocop.yml" : nil
     end
 
-    PROBE_MUTEX = Mutex.new
-    private_constant :PROBE_MUTEX
+    PROBE_MUTEX     = Mutex.new
+    GIT_INFO_MUTEX  = Mutex.new
+    FILE_TREE_MUTEX = Mutex.new
+    private_constant :PROBE_MUTEX, :GIT_INFO_MUTEX, :FILE_TREE_MUTEX
 
     def rubocop_available?
       key = Mbeditor.configuration.rubocop_command.to_s
@@ -1090,6 +1195,56 @@ module Mbeditor
       probe_cached(:@git_available_cache, key) do
         _out, _err, status = Open3.capture3("git", "-C", key, "rev-parse", "--is-inside-work-tree")
         status.success?
+      end
+    end
+
+    def cached_git_info(repo, ttl: 5)
+      GIT_INFO_MUTEX.synchronize do
+        cache = self.class.instance_variable_get(:@git_info_cache) || {}
+        entry = cache[repo]
+        return entry[:data] if entry && (Process.clock_gettime(Process::CLOCK_MONOTONIC) - entry[:ts]) < ttl
+      end
+      nil
+    end
+
+    def store_git_info(repo, data)
+      GIT_INFO_MUTEX.synchronize do
+        cache = self.class.instance_variable_get(:@git_info_cache) || {}
+        cache[repo] = { ts: Process.clock_gettime(Process::CLOCK_MONOTONIC), data: data }
+        self.class.instance_variable_set(:@git_info_cache, cache)
+      end
+    end
+
+    def invalidate_git_info_cache(repo)
+      GIT_INFO_MUTEX.synchronize do
+        cache = self.class.instance_variable_get(:@git_info_cache) || {}
+        cache.delete(repo)
+        self.class.instance_variable_set(:@git_info_cache, cache)
+      end
+    end
+
+    def cached_file_tree(root, ttl: 15)
+      FILE_TREE_MUTEX.synchronize do
+        cache = self.class.instance_variable_get(:@file_tree_cache) || {}
+        entry = cache[root]
+        return entry[:data] if entry && (Process.clock_gettime(Process::CLOCK_MONOTONIC) - entry[:ts]) < ttl
+      end
+      nil
+    end
+
+    def store_file_tree(root, data)
+      FILE_TREE_MUTEX.synchronize do
+        cache = self.class.instance_variable_get(:@file_tree_cache) || {}
+        cache[root] = { ts: Process.clock_gettime(Process::CLOCK_MONOTONIC), data: data }
+        self.class.instance_variable_set(:@file_tree_cache, cache)
+      end
+    end
+
+    def invalidate_file_tree_cache(root)
+      FILE_TREE_MUTEX.synchronize do
+        cache = self.class.instance_variable_get(:@file_tree_cache) || {}
+        cache.delete(root)
+        self.class.instance_variable_set(:@file_tree_cache, cache)
       end
     end
 
