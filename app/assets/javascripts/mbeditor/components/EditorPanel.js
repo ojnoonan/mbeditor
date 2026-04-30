@@ -489,7 +489,7 @@ var EditorPanel = function EditorPanel(_ref) {
       // Evict the LRU model if the cache is at capacity before creating a new one.
       TabManager.evictLruModel();
       modelObj = window.monaco.editor.createModel(tab.content, language);
-      window.__mbeditorModels[tab.path] = { model: modelObj, aviBase: null, aviMax: null, lastAccessed: Date.now() };
+      window.__mbeditorModels[tab.path] = { model: modelObj, aviBase: null, aviMax: null, lastAccessed: Date.now(), cleanVersionId: null };
       _modelEntry = window.__mbeditorModels[tab.path];
     }
 
@@ -650,6 +650,8 @@ var EditorPanel = function EditorPanel(_ref) {
     } else {
       aviBaseRef.current = avi;
       aviMaxRef.current = avi;
+      // Record the clean baseline for dirty-state tracking on initial model creation.
+      _modelEntry.cleanVersionId = avi;
     }
     EditorStore.setState({ canUndo: avi > aviBaseRef.current, canRedo: avi < aviMaxRef.current });
 
@@ -665,20 +667,15 @@ var EditorPanel = function EditorPanel(_ref) {
 
       var val = editor.getValue();
 
-      // Belt-and-suspenders: when undoing, directly check if content matches the
-      // saved clean state. This guarantees the dirty flag clears on full undo even
-      // if the latestContentRef comparison path misses an event.
-      if (e.isUndoing) {
-        var _st = EditorStore.getState();
-        var _pane = _st.panes.find(function(p) { return p.id === paneId; });
-        var _tab = _pane && _pane.tabs.find(function(t) { return t.id === tab.id; });
-        if (_tab && _tab.dirty) {
-          var _cleanNorm = ((_tab.cleanContent) || '').replace(/\r\n/g, '\n');
-          var _valNorm = val.replace(/\r\n/g, '\n');
-          if (_valNorm === _cleanNorm) {
-            TabManager.markClean(paneId, tab.id, val);
-          }
-        }
+      // Dirty-state tracking via alternativeVersionId — O(1), no string comparison.
+      // AVI decrements on undo so it returns to cleanVersionId after a full undo.
+      var _entry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+      var _cleanAvi = _entry && _entry.cleanVersionId;
+      var isDirty = _cleanAvi === null || _cleanAvi === undefined || currentAvi !== _cleanAvi;
+      if (isDirty) {
+        TabManager.markDirty(paneId, tab.id, val);
+      } else {
+        TabManager.markClean(paneId, tab.id, val);
       }
 
       var currentContent = latestContentRef.current;

@@ -1410,6 +1410,11 @@ var MbeditorApp = function MbeditorApp() {
         return p;
       });
       EditorStore.setState({ panes: newPanes });
+      // Reset the AVI clean baseline so undo past this save point shows dirty correctly.
+      var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+      if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
+        _modelEntry.cleanVersionId = _modelEntry.model.getAlternativeVersionId();
+      }
       EditorStore.setStatus("Saved", "success");
       _clearDraft(tab.path);
       SearchService.invalidate();
@@ -1452,6 +1457,13 @@ var MbeditorApp = function MbeditorApp() {
         });
       });
       EditorStore.setState({ panes: newPanes });
+      // Reset AVI clean baselines for all saved files so undo past save shows dirty correctly.
+      dirtyTabs.forEach(function(tab) {
+        var _me = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+        if (_me && _me.model && !_me.model.isDisposed()) {
+          _me.cleanVersionId = _me.model.getAlternativeVersionId();
+        }
+      });
       EditorStore.setStatus("All files saved", "success");
       SearchService.invalidate();
       GitService.fetchStatus();
@@ -3603,17 +3615,15 @@ var MbeditorApp = function MbeditorApp() {
                   onRunTest: handleRunTest,
                   onShowHistory: function(path) { setHistoryPanelPath(path); },
                   onContentChange: function onContentChange(val) {
+                    // Dirty/clean state is now set in EditorPanel via AVI comparison.
+                    // onContentChange only needs to handle draft persistence.
                     var st = EditorStore.getState();
                     var cp = st.panes.find(function(p) { return p.id === pane.id; });
                     var ct = cp && cp.tabs.find(function(t) { return t.id === pActiveTab.id; });
-                    var cleanNorm = ((ct && ct.cleanContent) || '').replace(/\r\n/g, '\n');
-                    var valNorm = val.replace(/\r\n/g, '\n');
-                    if (valNorm === cleanNorm) {
-                      TabManager.markClean(pane.id, pActiveTab.id, val);
-                      _clearDraft(pActiveTab.path);
-                    } else {
-                      TabManager.markDirty(pane.id, pActiveTab.id, val);
+                    if (ct && ct.dirty) {
                       _scheduleDraftWrite(pActiveTab.path, val);
+                    } else {
+                      _clearDraft(pActiveTab.path);
                     }
                   }
                 });
