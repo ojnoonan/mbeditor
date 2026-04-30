@@ -170,24 +170,26 @@ module Mbeditor
         return render json: { error: "Not found" }, status: :not_found
       end
 
-      start_line = params[:start_line]&.to_i
-      line_count  = [params[:line_count]&.to_i || 500, 5000].min
+      start_line = params[:start_line] ? params[:start_line].to_i : nil
+      line_count  = params.key?(:line_count) ? params[:line_count].to_i : 500
+      line_count  = [line_count, 5000].min
 
       if start_line
+        total_bytes = File.size(path)
         chunk = []
         total_lines = 0
-        File.foreach(path) do |line|
+        File.foreach(path, encoding: "UTF-8", invalid: :replace, undef: :replace) do |line|
           chunk << line if total_lines >= start_line && chunk.length < line_count
           total_lines += 1
         end
         return render json: {
           path:        relative_path(path),
           content:     chunk.join,
-          truncated:   true,
+          truncated:   total_lines > start_line + chunk.length,
           start_line:  start_line,
           line_count:  chunk.length,
           total_lines: total_lines,
-          total_bytes: File.size(path)
+          total_bytes: total_bytes
         }
       end
 

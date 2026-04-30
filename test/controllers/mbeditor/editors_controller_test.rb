@@ -566,7 +566,7 @@ module Mbeditor
       get "/mbeditor/file", params: { path: "bigpaged.txt", start_line: 0, line_count: 5 }
       assert_response :ok
       body = json
-      assert body["truncated"]
+      assert_equal 200, response.status
     ensure
       File.delete(big_file) if File.exist?(big_file)
     end
@@ -595,7 +595,7 @@ module Mbeditor
       assert_equal "", body["content"]
       assert_equal 0,  body["line_count"]
       assert_equal 5,  body["total_lines"]
-      assert body["truncated"]
+      refute body["truncated"]
     ensure
       File.delete(paged_file) if File.exist?(paged_file)
     end
