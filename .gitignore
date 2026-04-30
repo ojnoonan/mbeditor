@@ -13,3 +13,5 @@
 Gemfile.lock
 gemfiles/*.lock
 /node_modules/
+/.worktrees/
+/.superpowers/
