@@ -1,4 +1,46 @@
 var TabManager = (function () {
+  var MAX_MODELS = 15;
+
+  // Evict the least-recently-used Monaco model that is not currently open in
+  // any pane. Call this before creating a new model entry.
+  function _evictLruModel() {
+    if (!window.__mbeditorModels) return;
+    var keys = Object.keys(window.__mbeditorModels);
+    if (keys.length < MAX_MODELS) return; // room available — evict one to make room for one new entry
+
+    // Collect the set of paths currently open in any pane.
+    var state = EditorStore.getState();
+    var openPaths = {};
+    state.panes.forEach(function(pane) {
+      pane.tabs.forEach(function(tab) {
+        openPaths[tab.path] = true;
+      });
+    });
+
+    // Find the eviction candidate: oldest lastAccessed that is not open.
+    var candidate = null;
+    var candidateTime = Infinity;
+    keys.forEach(function(path) {
+      if (openPaths[path]) return; // skip currently-open files
+      var entry = window.__mbeditorModels[path];
+      var t = entry.lastAccessed || 0; // || 0 treats pre-existing entries (no lastAccessed) as oldest, so they evict first
+      if (t < candidateTime) {
+        candidateTime = t;
+        candidate = path;
+      }
+    });
+
+    // If every cached model is currently open in a pane, skip eviction — never evict an active file.
+    // The cache may temporarily exceed MAX_MODELS; this is acceptable.
+    if (candidate) {
+      var entry = window.__mbeditorModels[candidate];
+      if (entry.model && !entry.model.isDisposed()) {
+        entry.model.dispose();
+      }
+      delete window.__mbeditorModels[candidate];
+    }
+  }
+
   function _isImagePath(path) {
     return /\.(png|jpe?g|gif|svg|ico|webp|bmp|avif)$/i.test(path || "");
   }
@@ -137,7 +179,17 @@ var TabManager = (function () {
       return;
     }
 
-    FileService.getFile(path, { allowMissing: true }).then(function(data) {
+    // Use a prefetched result if available (hover-prefetch hit), otherwise fetch normally.
+    var prefetchPromise = FileService.getPrefetched(path);
+    var filePromise = prefetchPromise || FileService.getFile(path, { allowMissing: true });
+
+    filePromise.then(function(data) {
+      // getPrefetched can resolve to null if the in-flight request failed/was aborted.
+      // In that case fall back to a fresh fetch.
+      if (!data) return FileService.getFile(path, { allowMissing: true });
+      return data;
+    }).then(function(data) {
+      if (!data) { closeTab(paneId, path); return; }
       var loadedContent = typeof data.content === 'string' ? data.content : "";
       var fileNotFound = data && data.missing === true;
       _updateTab(paneId, path, {
@@ -497,6 +549,7 @@ var TabManager = (function () {
     clearGotoLine: clearGotoLine,
     closeAllTabsInPane: closeAllTabsInPane,
     closeAllTabs: closeAllTabs,
-    syncMarkdownPreview: _syncMarkdownPreviewContent
+    syncMarkdownPreview: _syncMarkdownPreviewContent,
+    evictLruModel: _evictLruModel
   };
 })();

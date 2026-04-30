@@ -31,6 +31,12 @@ axios.interceptors.response.use(null, function(error) {
   return Promise.reject(error);
 });
 
+// Prefetch cache: path -> { controller: AbortController, promise: Promise<{content,language}>, resolvedAt: number|null }
+// Entries are consumed once (getPrefetched deletes them) or cancelled on mouseleave.
+// Settled entries that are never consumed expire after 30 s (TTL).
+var prefetchCache = new Map();
+var PREFETCH_TTL_MS = 30000;
+
 var FileService = (function () {
   function getWorkspace() {
     return axios.get(window.mbeditorBasePath() + '/workspace').then(function(res) { return res.data; });
@@ -119,6 +125,62 @@ var FileService = (function () {
     return axios.get(window.mbeditorBasePath() + '/definition', config).then(function(res) { return res.data; });
   }
 
+  // Prefetch file content and store in prefetchCache. Uses native fetch + AbortController
+  // so the in-flight request can be cancelled on mouseleave without touching axios.
+  function prefetch(path) {
+    if (prefetchCache.has(path)) return; // already in-flight or cached
+
+    // Evict stale settled entries before adding a new one
+    var now = Date.now();
+    prefetchCache.forEach(function(entry, key) {
+      if (entry.resolvedAt !== null && now - entry.resolvedAt > PREFETCH_TTL_MS) {
+        prefetchCache.delete(key);
+      }
+    });
+
+    var controller = new AbortController();
+    var entry = { controller: controller, promise: null, resolvedAt: null };
+    // allow_missing=1 so a 404 resolves to { missing:true } instead of rejecting
+    var url = window.mbeditorBasePath() + '/file?path=' + encodeURIComponent(path) + '&allow_missing=1';
+    entry.promise = fetch(url, {
+      signal: controller.signal,
+      headers: { 'X-Mbeditor-Client': '1' }
+    }).then(function(res) {
+      if (!res.ok) throw new Error('prefetch failed: ' + res.status);
+      return res.json();
+    }).then(function(data) {
+      entry.resolvedAt = Date.now();
+      return data;
+    }).catch(function(err) {
+      // Remove from cache on failure/abort so a real open falls back to a fresh fetch
+      prefetchCache.delete(path);
+      return null;
+    });
+    prefetchCache.set(path, entry);
+  }
+
+  // Returns a Promise for the cached result and removes the entry (consume-once),
+  // or returns null if no prefetch is in-flight / completed for this path.
+  // Settled entries older than PREFETCH_TTL_MS are treated as expired.
+  function getPrefetched(path) {
+    var entry = prefetchCache.get(path);
+    if (!entry) return null;
+    if (entry.resolvedAt !== null && Date.now() - entry.resolvedAt > PREFETCH_TTL_MS) {
+      prefetchCache.delete(path);
+      return null;
+    }
+    prefetchCache.delete(path);
+    return entry.promise;
+  }
+
+  // Abort any in-flight prefetch for path and remove it from the cache.
+  function cancelPrefetch(path) {
+    var entry = prefetchCache.get(path);
+    if (!entry) return;
+    entry.controller.abort();
+    prefetchCache.delete(path);
+  }
+
   return {
     getWorkspace: getWorkspace,
     getTree: getTree,
@@ -138,6 +200,9 @@ var FileService = (function () {
     getBranchState: getBranchState,
     saveBranchState: saveBranchState,
     pruneBranchStates: pruneBranchStates,
-    getDefinition: getDefinition
+    getDefinition: getDefinition,
+    prefetch: prefetch,
+    getPrefetched: getPrefetched,
+    cancelPrefetch: cancelPrefetch
   };
 })();

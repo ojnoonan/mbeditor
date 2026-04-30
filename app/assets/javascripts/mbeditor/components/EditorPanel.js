@@ -30,6 +30,7 @@ var EditorPanel = function EditorPanel(_ref) {
   var testLoading = _ref.testLoading;
   var testInlineVisible = _ref.testInlineVisible;
   var editorPrefs = _ref.editorPrefs || {};
+  var monacoReady = _ref.monacoReady !== false; // undefined means Monaco already loaded (legacy callers)
 
   var editorRef = useRef(null);
   var monacoRef = useRef(null);
@@ -132,7 +133,7 @@ var EditorPanel = function EditorPanel(_ref) {
 
   useEffect(function () {
     if (tab.isPreview) return;
-    if (!editorRef.current || !window.monaco) return;
+    if (!monacoReady || !editorRef.current || !window.monaco) return;
 
     if (window.MbeditorEditorPlugins && window.MbeditorEditorPlugins.registerGlobalExtensions) {
       window.MbeditorEditorPlugins.registerGlobalExtensions(window.monaco);
@@ -478,13 +479,17 @@ var EditorPanel = function EditorPanel(_ref) {
     if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
       modelObj = _modelEntry.model;
       _reusingModel = true;
+      // Update access timestamp so LRU eviction knows this model was recently used.
+      _modelEntry.lastAccessed = Date.now();
       // Re-apply language in case it changed (e.g. file renamed)
       if (modelObj.getLanguageId() !== language) {
         window.monaco.editor.setModelLanguage(modelObj, language);
       }
     } else {
+      // Evict the LRU model if the cache is at capacity before creating a new one.
+      TabManager.evictLruModel();
       modelObj = window.monaco.editor.createModel(tab.content, language);
-      window.__mbeditorModels[tab.path] = { model: modelObj, aviBase: null, aviMax: null };
+      window.__mbeditorModels[tab.path] = { model: modelObj, aviBase: null, aviMax: null, lastAccessed: Date.now(), cleanVersionId: null };
       _modelEntry = window.__mbeditorModels[tab.path];
     }
 
@@ -645,6 +650,8 @@ var EditorPanel = function EditorPanel(_ref) {
     } else {
       aviBaseRef.current = avi;
       aviMaxRef.current = avi;
+      // Record the clean baseline for dirty-state tracking on initial model creation.
+      _modelEntry.cleanVersionId = avi;
     }
     EditorStore.setState({ canUndo: avi > aviBaseRef.current, canRedo: avi < aviMaxRef.current });
 
@@ -660,20 +667,15 @@ var EditorPanel = function EditorPanel(_ref) {
 
       var val = editor.getValue();
 
-      // Belt-and-suspenders: when undoing, directly check if content matches the
-      // saved clean state. This guarantees the dirty flag clears on full undo even
-      // if the latestContentRef comparison path misses an event.
-      if (e.isUndoing) {
-        var _st = EditorStore.getState();
-        var _pane = _st.panes.find(function(p) { return p.id === paneId; });
-        var _tab = _pane && _pane.tabs.find(function(t) { return t.id === tab.id; });
-        if (_tab && _tab.dirty) {
-          var _cleanNorm = ((_tab.cleanContent) || '').replace(/\r\n/g, '\n');
-          var _valNorm = val.replace(/\r\n/g, '\n');
-          if (_valNorm === _cleanNorm) {
-            TabManager.markClean(paneId, tab.id, val);
-          }
-        }
+      // Dirty-state tracking via alternativeVersionId — O(1), no string comparison.
+      // AVI decrements on undo so it returns to cleanVersionId after a full undo.
+      var _entry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+      var _cleanAvi = _entry && _entry.cleanVersionId;
+      var isDirty = _cleanAvi === null || _cleanAvi === undefined || currentAvi !== _cleanAvi;
+      if (isDirty) {
+        TabManager.markDirty(paneId, tab.id, val);
+      } else {
+        TabManager.markClean(paneId, tab.id, val);
       }
 
       var currentContent = latestContentRef.current;
@@ -734,7 +736,7 @@ var EditorPanel = function EditorPanel(_ref) {
       editor.setModel(null);
       editor.dispose();
     };
-  }, [tab.id, tab.isPreview]); // re-run ONLY on tab switch, not on content change (Monaco handles its own content state)
+  }, [tab.id, tab.isPreview, monacoReady]); // re-run on tab switch or when Monaco becomes ready
 
   // Listen for external content changes (e.g. after Format/Load)
   // Only applies when externalContentVersion advances — prevents stale typing-originated
@@ -1361,6 +1363,16 @@ var EditorPanel = function EditorPanel(_ref) {
     var parts = path.split('/');
     if (parts.length <= 3) return path;
     return '\u2026/' + parts.slice(-2).join('/');
+  }
+
+  // While Monaco is still loading, show a lightweight skeleton so the UI is
+  // visible immediately without calling monaco.editor.create() too early.
+  if (!monacoReady) {
+    return React.createElement(
+      'div',
+      { className: 'monaco-container monaco-loading-skeleton', style: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888', fontSize: '13px' } },
+      'Loading editor…'
+    );
   }
 
   // Always render the same wrapper structure so the editorRef div is never

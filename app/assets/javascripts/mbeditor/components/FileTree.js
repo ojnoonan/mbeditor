@@ -51,6 +51,8 @@ var FileTree = function FileTree(_ref) {
   var containerRef = useRef(null);
   var typeaheadBufferRef = useRef('');
   var typeaheadTimerRef = useRef(null);
+  var hoverTimerRef = useRef(null);
+  var hoverPathRef = useRef(null);
   // Ref that always points to the latest onNodeSelect prop, avoiding stale closures in the effect.
   var onNodeSelectRef = useRef(onNodeSelect);
   onNodeSelectRef.current = onNodeSelect;
@@ -130,6 +132,12 @@ var FileTree = function FileTree(_ref) {
       }, 0);
     }
   }, [pendingCreate, pendingRename]);
+
+  // Clear any pending hover timer when the component unmounts to prevent
+  // a prefetch from firing against an unmounted component.
+  useEffect(function() {
+    return function() { clearTimeout(hoverTimerRef.current); };
+  }, []);
 
   var toggleFolder = function toggleFolder(path, e) {
     e.stopPropagation();
@@ -440,6 +448,20 @@ var FileTree = function FileTree(_ref) {
                 e.stopPropagation();
                 onFileDoubleClick(node.path, node.name);
               }
+            },
+            onMouseEnter: function () {
+              if (isFolder) return;
+              clearTimeout(hoverTimerRef.current);
+              hoverTimerRef.current = setTimeout(function () {
+                hoverPathRef.current = node.path;
+                FileService.prefetch(node.path);
+              }, 200);
+            },
+            onMouseLeave: function () {
+              if (isFolder) return;
+              clearTimeout(hoverTimerRef.current);
+              FileService.cancelPrefetch(hoverPathRef.current);
+              hoverPathRef.current = null;
             },
             onContextMenu: function (e) {
               e.preventDefault();

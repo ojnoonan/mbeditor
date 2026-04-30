@@ -218,6 +218,21 @@ var MbeditorApp = function MbeditorApp() {
   var searchWholeWordRef = useRef(false);
   var searchResultsContainerRef = useRef(null);
 
+  var _useStateRM = useState(false);
+  var _useStateRM2 = _slicedToArray(_useStateRM, 2);
+  var replaceMode = _useStateRM2[0];
+  var setReplaceMode = _useStateRM2[1];
+
+  var _useStateRQ = useState('');
+  var _useStateRQ2 = _slicedToArray(_useStateRQ, 2);
+  var replaceQuery = _useStateRQ2[0];
+  var setReplaceQuery = _useStateRQ2[1];
+
+  var _useStateRL = useState(false);
+  var _useStateRL2 = _slicedToArray(_useStateRL, 2);
+  var replaceLoading = _useStateRL2[0];
+  var setReplaceLoading = _useStateRL2[1];
+
   var _useState8 = useState("explorer");
 
   var _useState82 = _slicedToArray(_useState8, 2);
@@ -467,6 +482,16 @@ var MbeditorApp = function MbeditorApp() {
   var draftRestoreOffer = _useState_dro2[0];
   var setDraftRestoreOffer = _useState_dro2[1];
 
+  var _useStateMR = useState(false);
+  var _useStateMR2 = _slicedToArray(_useStateMR, 2);
+  var monacoReady = _useStateMR2[0];
+  var setMonacoReady = _useStateMR2[1];
+
+  var _useStateZen = useState(false);
+  var _useStateZen2 = _slicedToArray(_useStateZen, 2);
+  var zenMode = _useStateZen2[0];
+  var setZenMode = _useStateZen2[1];
+
   var clamp = function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
   };
@@ -653,6 +678,17 @@ var MbeditorApp = function MbeditorApp() {
   useEffect(function () {
     // Subscribe to EditorStore
     var unsubscribe = EditorStore.subscribe(setState);
+
+    // Resolve monacoReady when the __monacoReady promise settles.
+    // This lets EditorPanel defer monaco.editor.create() until Monaco is loaded
+    // while the rest of the UI (file tree, tabs, sidebar) renders immediately.
+    var _mrMounted = true;
+    if (window.__monacoReady && typeof window.__monacoReady.then === 'function') {
+      window.__monacoReady.then(function() { if (_mrMounted) setMonacoReady(true); });
+    } else {
+      // Fallback: Monaco was already loaded synchronously (e.g. tests / old path).
+      setMonacoReady(true);
+    }
 
     // Initial load
     Promise.all([FileService.getWorkspace()["catch"](function () {
@@ -873,6 +909,12 @@ var MbeditorApp = function MbeditorApp() {
         e.preventDefault();
         toggleGitPanel();
       }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Z') {
+        if (!e.target || !e.target.closest || !e.target.closest('.monaco-editor')) {
+          e.preventDefault();
+          toggleZenMode();
+        }
+      }
       if (e.key === 'Escape') {
         setContextMenu(null);
         setShowHelp(false);
@@ -939,6 +981,7 @@ var MbeditorApp = function MbeditorApp() {
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
     return function () {
+      _mrMounted = false;
       unsubscribe();
       unsubBranch();
       if (resizeRafRef.current) {
@@ -1117,7 +1160,13 @@ var MbeditorApp = function MbeditorApp() {
       EditorStore.setStatus("Saving " + tab.name + "...", "info");
       FileService.saveFile(tab.path, tab.content).then(function () {
         EditorStore.setStatus("Saved", "success");
+        SearchService.invalidate();
         GitService.fetchStatus();
+        // Reset the AVI clean baseline so undo past this save point shows dirty correctly.
+        var _closeEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+        if (_closeEntry && _closeEntry.model && !_closeEntry.model.isDisposed()) {
+          _closeEntry.cleanVersionId = _closeEntry.model.getAlternativeVersionId();
+        }
         TabManager.closeTab(closingPaneId, tab.id);
       })["catch"](function (err) {
         EditorStore.setStatus("Save failed: " + err.message, "error");
@@ -1366,14 +1415,20 @@ var MbeditorApp = function MbeditorApp() {
         return p;
       });
       EditorStore.setState({ panes: newPanes });
+      // Reset the AVI clean baseline so undo past this save point shows dirty correctly.
+      var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+      if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
+        _modelEntry.cleanVersionId = _modelEntry.model.getAlternativeVersionId();
+      }
       EditorStore.setStatus("Saved", "success");
       _clearDraft(tab.path);
-      
+      SearchService.invalidate();
+
       // Hot reload for Markdown: sync preview tab after save
       if (/\.(md|markdown)$/i.test(tab.path)) {
         TabManager.syncMarkdownPreview(tab.path, tab.content);
       }
-      
+
       GitService.fetchStatus();
     })["catch"](function (err) {
       EditorStore.setStatus("Save failed: " + err.message, "error");
@@ -1407,7 +1462,15 @@ var MbeditorApp = function MbeditorApp() {
         });
       });
       EditorStore.setState({ panes: newPanes });
+      // Reset AVI clean baselines for all saved files so undo past save shows dirty correctly.
+      dirtyTabs.forEach(function(tab) {
+        var _me = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+        if (_me && _me.model && !_me.model.isDisposed()) {
+          _me.cleanVersionId = _me.model.getAlternativeVersionId();
+        }
+      });
       EditorStore.setStatus("All files saved", "success");
+      SearchService.invalidate();
       GitService.fetchStatus();
     })["catch"](function (err) {
       EditorStore.setStatus("Failed to save some files", "error");
@@ -1741,6 +1804,59 @@ var MbeditorApp = function MbeditorApp() {
     _debouncedSearch(searchQuery);
   };
 
+  var handleReplaceAll = function handleReplaceAll() {
+    if (!searchQuery.trim()) {
+      EditorStore.setStatus("Enter a search query first", "error");
+      return;
+    }
+    var matchCount = (state.searchResults || []).length;
+    var confirmMsg = "Replace all occurrences of \"" + searchQuery + "\" with \"" + replaceQuery + "\"?";
+    if (matchCount > 0) {
+      confirmMsg += " (" + matchCount + (searchHasMore ? "+" : "") + " match" + (matchCount !== 1 ? "es" : "") + " across files)";
+    }
+    if (!window.confirm(confirmMsg)) return;
+
+    setReplaceLoading(true);
+    EditorStore.setStatus("Replacing…", "info");
+    SearchService.replaceInFiles(searchQuery, replaceQuery, {
+      regex: searchUseRegexRef.current,
+      matchCase: searchMatchCaseRef.current,
+      wholeWord: searchWholeWordRef.current
+    }).then(function(data) {
+      var count   = data.replaced_count || 0;
+      var files   = data.files_affected || [];
+      var errors  = data.errors || [];
+      var msg = "Replaced " + count + " occurrence" + (count !== 1 ? "s" : "") + " in " + files.length + " file" + (files.length !== 1 ? "s" : "");
+      if (errors.length) msg += " (" + errors.length + " error" + (errors.length !== 1 ? "s" : "") + ")";
+      EditorStore.setStatus(msg, errors.length ? "warning" : "success");
+
+      // Invalidate search cache so next search reflects the new content.
+      SearchService.invalidate();
+
+      // Update any open Monaco models whose content changed.
+      if (files.length && window.__mbeditorModels) {
+        files.forEach(function(relPath) {
+          var model = window.__mbeditorModels[relPath];
+          if (!model) return;
+          FileService.getFile(relPath).then(function(res) {
+            if (res && res.content != null && !model.isDisposed()) {
+              model.setValue(res.content);
+            }
+          }).catch(function() {});
+        });
+      }
+
+      // Refresh search results to reflect replacements.
+      if (searchQueryRef.current) {
+        _debouncedSearch(searchQueryRef.current);
+      }
+    }).catch(function(err) {
+      EditorStore.setStatus("Replace failed: " + (err.message || String(err)), "error");
+    }).finally(function() {
+      setReplaceLoading(false);
+    });
+  };
+
   // Load more results when the user scrolls near the bottom of the list.
   var handleSearchResultsScroll = function handleSearchResultsScroll(e) {
     var el = e.currentTarget;
@@ -1753,6 +1869,22 @@ var MbeditorApp = function MbeditorApp() {
     setShowGitPanel(function (prev) {
       if (!prev) GitService.fetchInfo();
       return !prev;
+    });
+  };
+
+  var toggleZenMode = function toggleZenMode() {
+    setZenMode(function (prev) {
+      var next = !prev;
+      // After React re-renders the new layout, call layout() on all visible Monaco editors
+      // so they fill the reclaimed space correctly.
+      setTimeout(function () {
+        if (window.monaco && window.monaco.editor) {
+          window.monaco.editor.getEditors().forEach(function(ed) {
+            if (typeof ed.layout === 'function') ed.layout();
+          });
+        }
+      }, 50);
+      return next;
     });
   };
 
@@ -2404,7 +2536,7 @@ var MbeditorApp = function MbeditorApp() {
       { className: "ide-body", id: "ide-body-container" },
       React.createElement(
         "div",
-        { className: "ide-sidebar" + (sidebarCollapsed ? " ide-sidebar-collapsed" : ""), style: { width: (sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth) + "px" } },
+        { className: "ide-sidebar" + (sidebarCollapsed ? " ide-sidebar-collapsed" : ""), style: { width: (sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth) + "px", display: zenMode ? 'none' : undefined } },
         sidebarCollapsed
           ? React.createElement(
               "div",
@@ -2712,6 +2844,16 @@ var MbeditorApp = function MbeditorApp() {
                 },
                 React.createElement("i", { className: "codicon codicon-regex" })
               ),
+              React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className: "search-adornment-btn" + (replaceMode ? " active" : ""),
+                  onClick: function() { setReplaceMode(function(p) { return !p; }); },
+                  title: "Toggle Replace"
+                },
+                React.createElement("i", { className: "codicon codicon-replace" })
+              ),
               searchQuery && React.createElement(
                 "button",
                 {
@@ -2723,6 +2865,33 @@ var MbeditorApp = function MbeditorApp() {
                 },
                 React.createElement("i", { className: "fas fa-times" })
               )
+            )
+          ),
+          replaceMode && React.createElement(
+            "div",
+            { className: "search-replace-row" },
+            React.createElement("input", {
+              className: "search-input search-replace-input",
+              placeholder: "Replace with…",
+              value: replaceQuery,
+              onChange: function(e) { setReplaceQuery(e.target.value); },
+              disabled: replaceLoading
+            }),
+            React.createElement(
+              "button",
+              {
+                type: "button",
+                className: "search-replace-all-btn",
+                onClick: handleReplaceAll,
+                disabled: !searchQuery.trim() || replaceLoading,
+                title: "Replace All"
+              },
+              replaceLoading
+                ? React.createElement("i", { className: "fas fa-spinner fa-spin" })
+                : React.createElement(React.Fragment, null,
+                    React.createElement("i", { className: "codicon codicon-replace-all" }),
+                    " Replace All"
+                  )
             )
           ),
           (function() {
@@ -3445,22 +3614,21 @@ var MbeditorApp = function MbeditorApp() {
                   testLoading: testLoading,
                   testInlineVisible: testInlineVisible,
                   editorPrefs: editorPrefs,
+                  monacoReady: monacoReady,
                   onFormat: function() { onFormatRef.current(); },
                   onSave: function() { handleSave(pane.id, pActiveTab); },
                   onRunTest: handleRunTest,
                   onShowHistory: function(path) { setHistoryPanelPath(path); },
                   onContentChange: function onContentChange(val) {
+                    // Dirty/clean state is now set in EditorPanel via AVI comparison.
+                    // onContentChange only needs to handle draft persistence.
                     var st = EditorStore.getState();
                     var cp = st.panes.find(function(p) { return p.id === pane.id; });
                     var ct = cp && cp.tabs.find(function(t) { return t.id === pActiveTab.id; });
-                    var cleanNorm = ((ct && ct.cleanContent) || '').replace(/\r\n/g, '\n');
-                    var valNorm = val.replace(/\r\n/g, '\n');
-                    if (valNorm === cleanNorm) {
-                      TabManager.markClean(pane.id, pActiveTab.id, val);
-                      _clearDraft(pActiveTab.path);
-                    } else {
-                      TabManager.markDirty(pane.id, pActiveTab.id, val);
+                    if (ct && ct.dirty) {
                       _scheduleDraftWrite(pActiveTab.path, val);
+                    } else {
+                      _clearDraft(pActiveTab.path);
                     }
                   }
                 });
@@ -3577,6 +3745,10 @@ var MbeditorApp = function MbeditorApp() {
                             React.createElement("td", null, "Toggle git panel")
                           ),
                           React.createElement("tr", null,
+                            React.createElement("td", null, React.createElement("kbd", null, "Ctrl+Shift+Z")),
+                            React.createElement("td", null, "Toggle zen / focus mode")
+                          ),
+                          React.createElement("tr", null,
                             React.createElement("td", null, React.createElement("kbd", null, "Ctrl+Z\u00a0/\u00a0Ctrl+Y")),
                             React.createElement("td", null, "Undo / Redo")
                           )
@@ -3617,14 +3789,14 @@ var MbeditorApp = function MbeditorApp() {
       ),
 
       // Right-side Git panel (children of ide-body, alongside sidebar and ide-main)
-      showGitPanel && React.createElement("div", {
+      showGitPanel && !zenMode && React.createElement("div", {
         className: "panel-divider gitpanel-divider " + (activeResizeMode === 'gitpanel' ? 'active' : ''),
         onMouseDown: startGitPanelResize,
         role: "separator",
         "aria-orientation": "vertical",
         "aria-label": "Resize git panel"
       }),
-      showGitPanel && React.createElement(
+      showGitPanel && !zenMode && React.createElement(
         "div",
         { className: "ide-git-right-panel", style: { width: gitPanelWidth + "px" } },
         React.createElement(window.GitPanel || GitPanel, {
@@ -3700,6 +3872,16 @@ var MbeditorApp = function MbeditorApp() {
           onClick: function() { handleChangeEOL(activeEOL === 'CRLF' ? 'LF' : 'CRLF'); }
         },
         activeEOL
+      ),
+      zenMode && React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "statusbar-btn statusbar-zen-btn",
+          title: "Zen mode active — click or press Ctrl+Shift+Z to exit",
+          onClick: toggleZenMode
+        },
+        "ZEN"
       ),
       React.createElement(
         "div",

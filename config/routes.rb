@@ -19,6 +19,7 @@ Mbeditor::Engine.routes.draw do
   post   'branch_state',    to: 'editors#save_branch_state'
   post   'prune_branch_states', to: 'editors#prune_branch_states'
   get    'search',          to: 'editors#search'
+  post   'replace_in_files', to: 'editors#replace_in_files'
   get    'definition',      to: 'editors#definition'
   get    'git_info',        to: 'editors#git_info'
   get    'git_status',      to: 'editors#git_status'

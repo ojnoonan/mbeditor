@@ -1122,6 +1122,109 @@ module Mbeditor
       Mbeditor.configure { |c| c.allowed_environments = %i[test development] }
     end
 
+    # ---------------------------------------------------------------------------
+    # replace_in_files (POST /replace_in_files)
+    # ---------------------------------------------------------------------------
+
+    test "replace_in_files replaces content across matching files" do
+      File.write(File.join(@workspace, "app", "models", "user.rb"), "class User\n  ROLE = 'admin'\nend\n")
+      post "/mbeditor/replace_in_files", params: { query: "admin", replacement: "superuser" }, as: :json
+      assert_response :ok
+      assert_equal 1, json["replaced_count"]
+      assert_includes json["files_affected"], "app/models/user.rb"
+      assert_equal [], json["errors"]
+      assert_includes File.read(File.join(@workspace, "app", "models", "user.rb")), "superuser"
+    end
+
+    test "replace_in_files replaces across multiple files" do
+      File.write(File.join(@workspace, "app", "models", "user.rb"), "NEEDLE\n")
+      File.write(File.join(@workspace, "README.md"), "NEEDLE\n")
+      post "/mbeditor/replace_in_files", params: { query: "NEEDLE", replacement: "PIN" }, as: :json
+      assert_response :ok
+      assert json["replaced_count"] >= 2
+      assert json["files_affected"].length >= 2
+    end
+
+    test "replace_in_files returns 400 for blank query" do
+      post "/mbeditor/replace_in_files", params: { query: "", replacement: "x" }, as: :json
+      assert_response :bad_request
+      assert_match(/required/i, json["error"])
+    end
+
+    test "replace_in_files returns 400 for query longer than 500 chars" do
+      post "/mbeditor/replace_in_files", params: { query: "a" * 501, replacement: "x" }, as: :json
+      assert_response :bad_request
+      assert_match(/too long/i, json["error"])
+    end
+
+    test "replace_in_files is case-insensitive by default" do
+      File.write(File.join(@workspace, "app", "models", "user.rb"), "class ADMIN\nend\n")
+      post "/mbeditor/replace_in_files", params: { query: "admin", replacement: "superuser", match_case: "false" }, as: :json
+      assert_response :ok
+      assert_equal 1, json["replaced_count"]
+      assert_includes File.read(File.join(@workspace, "app", "models", "user.rb")), "superuser"
+    end
+
+    test "replace_in_files respects match_case=true" do
+      File.write(File.join(@workspace, "app", "models", "user.rb"), "admin\nADMIN\n")
+      post "/mbeditor/replace_in_files", params: { query: "admin", replacement: "superuser", match_case: "true" }, as: :json
+      assert_response :ok
+      content = File.read(File.join(@workspace, "app", "models", "user.rb"))
+      assert_includes content, "superuser"
+      assert_includes content, "ADMIN"  # uppercase should be untouched
+    end
+
+    test "replace_in_files returns empty result when query has no matches" do
+      File.write(File.join(@workspace, "README.md"), "# Hello World\n")
+      post "/mbeditor/replace_in_files", params: { query: "ZZZNOTFOUND", replacement: "x" }, as: :json
+      assert_response :ok
+      assert_equal 0, json["replaced_count"]
+      assert_equal [], json["files_affected"]
+    end
+
+    test "replace_in_files with whole_word=true only replaces whole words" do
+      File.write(File.join(@workspace, "app", "models", "user.rb"), "admin administrator superadmin\n")
+      post "/mbeditor/replace_in_files",
+           params: { query: "admin", replacement: "root", whole_word: "true" },
+           as: :json
+      assert_response :ok
+      content = File.read(File.join(@workspace, "app", "models", "user.rb"))
+      assert_includes content, "root"
+      assert_includes content, "administrator"  # substring — must NOT be replaced
+      assert_includes content, "superadmin"     # substring — must NOT be replaced
+      assert_equal 1, json["replaced_count"]
+    end
+
+    test "replace_in_files returns 422 when too many files matched" do
+      # Stub MAX_REPLACE_FILES to 0 so any match exceeds the cap
+      original = Mbeditor::EditorsController::MAX_REPLACE_FILES
+      $VERBOSE = nil
+      Mbeditor::EditorsController.send(:remove_const, :MAX_REPLACE_FILES)
+      Mbeditor::EditorsController.const_set(:MAX_REPLACE_FILES, 0)
+      $VERBOSE = true
+
+      File.write(File.join(@workspace, "README.md"), "hello\n")
+      post "/mbeditor/replace_in_files", params: { query: "hello", replacement: "world" }, as: :json
+      assert_response :unprocessable_entity
+      assert_match(/too many files/i, json["error"])
+    ensure
+      $VERBOSE = nil
+      Mbeditor::EditorsController.send(:remove_const, :MAX_REPLACE_FILES)
+      Mbeditor::EditorsController.const_set(:MAX_REPLACE_FILES, original)
+      $VERBOSE = true
+    end
+
+    test "replace_in_files with regex=true performs regex replacement" do
+      File.write(File.join(@workspace, "app", "models", "user.rb"), "foo123 foo456\n")
+      post "/mbeditor/replace_in_files",
+           params: { query: "foo\\d+", replacement: "bar", regex: "true", match_case: "true" },
+           as: :json
+      assert_response :ok
+      content = File.read(File.join(@workspace, "app", "models", "user.rb"))
+      assert_equal "bar bar\n", content
+      assert_equal 2, json["replaced_count"]
+    end
+
     private
 
     def json
