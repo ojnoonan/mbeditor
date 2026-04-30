@@ -207,6 +207,29 @@ var TabManager = (function () {
       }
     }).catch(function(err) {
       if (path.startsWith('diff://')) return; // diff tabs handle their own loading
+      if (err.response && err.response.status === 413) {
+        FileService.getFileChunk(path, 0, 500).then(function(data) {
+          var loadedContent = typeof data.content === 'string' ? data.content : "";
+          _updateTab(paneId, path, {
+            content: loadedContent,
+            cleanContent: loadedContent,
+            externalContentVersion: 1,
+            isImage: false,
+            fileNotFound: false,
+            dirty: false,
+            loading: false,
+            truncated: true,
+            startLine: data.start_line,
+            lineCount: data.line_count,
+            totalLines: data.total_lines,
+            totalBytes: data.total_bytes
+          });
+        }).catch(function(chunkErr) {
+          EditorStore.setStatus("Failed to load file: " + ((chunkErr.response && chunkErr.response.data && chunkErr.response.data.error) || chunkErr.message), "error");
+          closeTab(paneId, path);
+        });
+        return;
+      }
       EditorStore.setStatus("Failed to load file: " + ((err.response && err.response.data && err.response.data.error) || err.message), "error");
       closeTab(paneId, path);
     });
