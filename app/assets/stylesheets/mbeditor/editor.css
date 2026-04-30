@@ -837,6 +837,12 @@ html, body, #mbeditor-root {
   padding: 0 6px;
 }
 
+.statusbar-zen-btn {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
 /* ── Search Panel ─────────────────────────────────────────── */
 .search-panel {
   padding: 8px;

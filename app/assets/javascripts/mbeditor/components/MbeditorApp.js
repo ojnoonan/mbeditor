@@ -895,8 +895,10 @@ var MbeditorApp = function MbeditorApp() {
         toggleGitPanel();
       }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Z') {
-        e.preventDefault();
-        toggleZenMode();
+        if (!e.target || !e.target.closest || !e.target.closest('.monaco-editor')) {
+          e.preventDefault();
+          toggleZenMode();
+        }
       }
       if (e.key === 'Escape') {
         setContextMenu(null);
@@ -1791,13 +1793,9 @@ var MbeditorApp = function MbeditorApp() {
       // After React re-renders the new layout, call layout() on all visible Monaco editors
       // so they fill the reclaimed space correctly.
       setTimeout(function () {
-        if (window.__mbeditorActiveEditor && typeof window.__mbeditorActiveEditor.layout === 'function') {
-          window.__mbeditorActiveEditor.layout();
-        }
-        // Also layout any secondary pane editor registered on the window
-        if (window.__mbeditorEditors && Array.isArray(window.__mbeditorEditors)) {
-          window.__mbeditorEditors.forEach(function (ed) {
-            if (ed && typeof ed.layout === 'function') ed.layout();
+        if (window.monaco && window.monaco.editor) {
+          window.monaco.editor.getEditors().forEach(function(ed) {
+            if (typeof ed.layout === 'function') ed.layout();
           });
         }
       }, 50);
