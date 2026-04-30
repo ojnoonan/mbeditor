@@ -1134,6 +1134,7 @@ var MbeditorApp = function MbeditorApp() {
       EditorStore.setStatus("Saving " + tab.name + "...", "info");
       FileService.saveFile(tab.path, tab.content).then(function () {
         EditorStore.setStatus("Saved", "success");
+        SearchService.invalidate();
         GitService.fetchStatus();
         TabManager.closeTab(closingPaneId, tab.id);
       })["catch"](function (err) {
