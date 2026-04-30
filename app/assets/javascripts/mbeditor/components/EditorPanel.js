@@ -86,6 +86,27 @@ var EditorPanel = function EditorPanel(_ref) {
 
   var methodsBtnRef = useRef(null);
 
+  // Local pagination state — initialized from tab props; updated on page navigation
+  var _useState17 = useState(tab.startLine || 0);
+  var _useState18 = _slicedToArray(_useState17, 2);
+  var pageStartLine = _useState18[0];
+  var setPageStartLine = _useState18[1];
+
+  var _useState19 = useState(tab.lineCount || 0);
+  var _useState20 = _slicedToArray(_useState19, 2);
+  var pageLineCount = _useState20[0];
+  var setPageLineCount = _useState20[1];
+
+  var _useState21 = useState(tab.totalLines || 0);
+  var _useState22 = _slicedToArray(_useState21, 2);
+  var pageTotalLines = _useState22[0];
+  var setPageTotalLines = _useState22[1];
+
+  var _useState23 = useState(tab.totalBytes || 0);
+  var _useState24 = _slicedToArray(_useState23, 2);
+  var pageTotalBytes = _useState24[0];
+  var setPageTotalBytes = _useState24[1];
+
   var onFormatRef = useRef(onFormat);
   onFormatRef.current = onFormat;
 
@@ -94,6 +115,12 @@ var EditorPanel = function EditorPanel(_ref) {
 
   var vimStatusRef = useRef(null);
   var vimModeObjRef = useRef(null);
+
+  function humanSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
 
   var clearTestZones = function clearTestZones(editor) {
     if (!editor) return;
@@ -578,6 +605,10 @@ var EditorPanel = function EditorPanel(_ref) {
 
     monacoRef.current = editor;
     window.__mbeditorActiveEditor = editor;
+    // Apply read-only for paginated (truncated) files
+    if (tab.truncated) {
+      editor.updateOptions({ readOnly: true });
+    }
     setEditorReady(true);
 
     // Stash the workspace-relative path on the model so code-action providers
@@ -916,6 +947,21 @@ var EditorPanel = function EditorPanel(_ref) {
       }
     }
   }, [markers, tab.id]);
+
+  // Sync pagination state when tab changes (different file or fresh load)
+  useEffect(function () {
+    setPageStartLine(tab.startLine || 0);
+    setPageLineCount(tab.lineCount || 0);
+    setPageTotalLines(tab.totalLines || 0);
+    setPageTotalBytes(tab.totalBytes || 0);
+  }, [tab.id]);
+
+  // Apply read-only mode based on tab.truncated whenever the editor or truncated flag changes
+  useEffect(function () {
+    if (monacoRef.current) {
+      monacoRef.current.updateOptions({ readOnly: !!tab.truncated });
+    }
+  }, [tab.truncated, editorReady]);
 
   // Reset blame + test decorations when file path changes
   useEffect(function () {
@@ -1454,6 +1500,85 @@ var EditorPanel = function EditorPanel(_ref) {
         },
         !testLoading && React.createElement('i', { className: 'fas fa-flask', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
         !editorPrefs.toolbarIconOnly && !testLoading && React.createElement('span', { className: 'ide-toolbar-label' }, 'Test')
+      )
+    ),
+    tab.truncated && React.createElement(
+      'div',
+      {
+        className: 'ide-pagination-bar',
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '4px 10px',
+          background: 'var(--ide-toolbar-bg, #252526)',
+          borderBottom: '1px solid var(--ide-border, #3e3e3e)',
+          fontSize: '12px',
+          color: 'var(--ide-toolbar-fg, #ccc)',
+          flexShrink: 0,
+          userSelect: 'none'
+        }
+      },
+      React.createElement(
+        'button',
+        {
+          className: 'ide-icon-btn',
+          style: { padding: '2px 8px', fontSize: '12px' },
+          disabled: pageStartLine === 0,
+          onClick: function() {
+            var newStart = Math.max(0, pageStartLine - pageLineCount);
+            FileService.getFileChunk(tab.path, newStart, 500).then(function(data) {
+              var sl = data.start_line || 0;
+              var lc = data.line_count || 0;
+              var tl = data.total_lines || pageTotalLines;
+              var tb = data.total_bytes || pageTotalBytes;
+              setPageStartLine(sl);
+              setPageLineCount(lc);
+              setPageTotalLines(tl);
+              setPageTotalBytes(tb);
+              if (monacoRef.current) {
+                monacoRef.current.setValue(data.content || '');
+                monacoRef.current.updateOptions({ readOnly: true });
+              }
+            }).catch(function(err) {
+              EditorStore.setStatus('Failed to load page: ' + (err && err.message || 'Unknown error'), 'error');
+            });
+          }
+        },
+        '← Prev'
+      ),
+      React.createElement(
+        'span',
+        { style: { flex: 1, textAlign: 'center' } },
+        'Lines ' + (pageStartLine + 1) + '–' + (pageStartLine + pageLineCount) + ' of ' + pageTotalLines + ' (' + humanSize(pageTotalBytes) + ')'
+      ),
+      React.createElement(
+        'button',
+        {
+          className: 'ide-icon-btn',
+          style: { padding: '2px 8px', fontSize: '12px' },
+          disabled: pageStartLine + pageLineCount >= pageTotalLines,
+          onClick: function() {
+            var newStart = pageStartLine + pageLineCount;
+            FileService.getFileChunk(tab.path, newStart, 500).then(function(data) {
+              var sl = data.start_line || 0;
+              var lc = data.line_count || 0;
+              var tl = data.total_lines || pageTotalLines;
+              var tb = data.total_bytes || pageTotalBytes;
+              setPageStartLine(sl);
+              setPageLineCount(lc);
+              setPageTotalLines(tl);
+              setPageTotalBytes(tb);
+              if (monacoRef.current) {
+                monacoRef.current.setValue(data.content || '');
+                monacoRef.current.updateOptions({ readOnly: true });
+              }
+            }).catch(function(err) {
+              EditorStore.setStatus('Failed to load page: ' + (err && err.message || 'Unknown error'), 'error');
+            });
+          }
+        },
+        'Next →'
       )
     ),
     React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } }),
