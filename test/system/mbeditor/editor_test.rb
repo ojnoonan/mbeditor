@@ -109,6 +109,7 @@ module Mbeditor
       page.execute_script(<<~'JS')
         var editor = window.__mbeditorActiveEditor;
         editor.setValue(["class Demo", "    def call", "end"].join("\n"));
+        editor.getModel().updateOptions({ insertSpaces: true, tabSize: 4 });
         editor.setPosition({ lineNumber: 2, column: editor.getModel().getLineMaxColumn(2) });
         editor.focus();
         window.MbeditorEditorPlugins.runRubyEnter(editor);

@@ -999,7 +999,7 @@ var MbeditorApp = function MbeditorApp() {
     // Capture-phase listener for Ctrl+Shift+Z so it fires before Monaco's
     // own keybinding handler (which intercepts in the bubble phase).
     var onZenCapture = function(e) {
-      if (e.ctrlKey && !e.metaKey && e.shiftKey && e.key === 'Z') {
+      if (e.ctrlKey && !e.metaKey && e.shiftKey && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         e.stopPropagation();
         toggleZenMode();
