@@ -12,6 +12,13 @@ var useRef = _React.useRef;
 var useEffect = _React.useEffect;
 var useMemo = _React.useMemo;
 
+function formatSize(bytes) {
+  if (typeof bytes !== 'number' || bytes < 0) return '';
+  if (bytes < 1024)        return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
 var FileTree = function FileTree(_ref) {
   var items = _ref.items;
   var onSelect = _ref.onSelect;
@@ -477,7 +484,7 @@ var FileTree = function FileTree(_ref) {
           ),
           React.createElement(
             'div',
-            { className: 'tree-item-name', title: node.path },
+            { className: 'tree-item-name', title: node.type === 'file' && node.size != null ? node.path + ' — ' + formatSize(node.size) : node.path },
             node.name
           ),
           statusMeta && React.createElement(
