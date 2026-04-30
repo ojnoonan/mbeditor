@@ -1438,6 +1438,29 @@ html, body, #mbeditor-root {
   gap: 8px;
 }
 
+/* Open-editors panel: height is controlled by the --open-editors-height CSS variable
+   set inline from React state (default 140px ≈ 5-6 items), drag-resizable via the
+   .open-editors-resize-handle strip below. */
+.ide-sidebar-fixed .collapsible-content {
+  max-height: var(--open-editors-height, 140px);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.ide-sidebar-fixed .collapsible-content::-webkit-scrollbar { width: 6px; }
+.ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-track { background: transparent; }
+.ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 3px; }
+
+.open-editors-resize-handle {
+  height: 4px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  background: transparent;
+  transition: background 0.15s;
+}
+.open-editors-resize-handle:hover {
+  background: var(--ide-border);
+}
+
 .open-editors-group-header {
   font-size: 10px;
   padding-left: 8px;

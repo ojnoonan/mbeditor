@@ -374,7 +374,8 @@
               range: new monaco.Range(m.line, nameCol, m.line, nameCol + m.name.length),
               options: {
                 inlineClassName: 'mbeditor-unused-def',
-                stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+                stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+                hoverMessage: { value: '**Unused method** — `' + m.name + '` is never called in this application.' }
               }
             };
           }).filter(Boolean);
@@ -435,6 +436,34 @@
     if (!monaco || !monaco.languages) return;
 
     globalsRegistered = true;
+
+    // JavaScript: enable semantic checking (off by default in Monaco) and JSX support.
+    // checkJs catches undefined variables, noUnusedLocals catches dead assignments.
+    if (monaco.languages.typescript && monaco.languages.typescript.javascriptDefaults) {
+      monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+        noSemanticValidation: false,
+        noSyntaxValidation: false,
+        noSuggestionDiagnostics: false
+      });
+      monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
+        target: monaco.languages.typescript.ScriptTarget.ES2020,
+        allowNonTsExtensions: true,
+        allowJs: true,
+        checkJs: true,
+        jsx: monaco.languages.typescript.JsxEmit.React,
+        noUnusedLocals: true
+      });
+    }
+
+    // TypeScript: enable JSX for .tsx files and catch unused locals.
+    if (monaco.languages.typescript && monaco.languages.typescript.typescriptDefaults) {
+      monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+        target: monaco.languages.typescript.ScriptTarget.ES2020,
+        allowNonTsExtensions: true,
+        jsx: monaco.languages.typescript.JsxEmit.React,
+        noUnusedLocals: true
+      });
+    }
 
     // CSS for greyed-out unused method names (applied via decoration inlineClassName).
     if (!document.getElementById('mbeditor-unused-style')) {

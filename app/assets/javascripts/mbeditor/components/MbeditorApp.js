@@ -62,7 +62,8 @@ var DEFAULT_EDITOR_PREFS = {
   fileTreeTypeahead: true,
   quickOpenShowFolders: false,
   tabDisplayMode: 'scroll',
-  persistFindState: true
+  persistFindState: true,
+  showDotFiles: false
 };
 
 var SidebarActionButton = function SidebarActionButton(_ref) {
@@ -447,10 +448,16 @@ var MbeditorApp = function MbeditorApp() {
   var contextMenu = _useState232[0];
   var setContextMenu = _useState232[1];
 
+  var _useState24 = useState(140);
+  var _useState242 = _slicedToArray(_useState24, 2);
+  var openEditorsHeight = _useState242[0];
+  var setOpenEditorsHeight = _useState242[1];
+
   var resizeSessionRef = useRef(null);
   var resizeRafRef = useRef(null);
   var prevGitBranchRef = useRef(null);
   var isSwitchingBranchRef = useRef(false);
+  var stateRestoredRef = useRef(false);
 
   // ── Draft backup helpers ─────────────────────────────────────────────────
   var draftWriteTimerRef = useRef({});
@@ -494,6 +501,12 @@ var MbeditorApp = function MbeditorApp() {
 
   var clamp = function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
+  };
+
+  var filterDotFiles = function filterDotFiles(nodes) {
+    return nodes.filter(function(n) { return n.name[0] !== '.'; }).map(function(n) {
+      return n.children ? Object.assign({}, n, { children: filterDotFiles(n.children) }) : n;
+    });
   };
 
   var normalizeRelativePath = function normalizeRelativePath(input) {
@@ -801,6 +814,10 @@ var MbeditorApp = function MbeditorApp() {
       if (typeof savedState.gitPanelWidth === 'number') {
         setGitPanelWidth(savedState.gitPanelWidth);
       }
+      if (typeof savedState.openEditorsHeight === 'number') {
+        setOpenEditorsHeight(savedState.openEditorsHeight);
+      }
+      stateRestoredRef.current = true;
 
       // Load pane state for current branch; fall back to legacy global state panes
       var branchStatePromise = branch
@@ -909,12 +926,7 @@ var MbeditorApp = function MbeditorApp() {
         e.preventDefault();
         toggleGitPanel();
       }
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Z') {
-        if (!e.target || !e.target.closest || !e.target.closest('.monaco-editor')) {
-          e.preventDefault();
-          toggleZenMode();
-        }
-      }
+      // Ctrl+Shift+Z is handled in capture phase below so Monaco cannot swallow it.
       if (e.key === 'Escape') {
         setContextMenu(null);
         setShowHelp(false);
@@ -928,6 +940,7 @@ var MbeditorApp = function MbeditorApp() {
       // Throttle via rAF — skip if a frame is already queued to avoid paint thrashing
       if (resizeRafRef.current) return;
       var clientX = e.clientX;
+      var clientY = e.clientY;
       resizeRafRef.current = requestAnimationFrame(function () {
         resizeRafRef.current = null;
         var s = resizeSessionRef.current;
@@ -961,6 +974,12 @@ var MbeditorApp = function MbeditorApp() {
           var nextWidth = rect.right - clientX;
           setGitPanelWidth(clamp(nextWidth, GIT_PANEL_MIN_WIDTH, 600));
         }
+
+        if (s.mode === 'openeditors') {
+          var delta = clientY - s.startY;
+          var nextHeight = Math.max(60, Math.min(400, s.startHeight + delta));
+          setOpenEditorsHeight(nextHeight);
+        }
       });
     };
 
@@ -977,7 +996,18 @@ var MbeditorApp = function MbeditorApp() {
       document.body.style.userSelect = '';
     };
 
+    // Capture-phase listener for Ctrl+Shift+Z so it fires before Monaco's
+    // own keybinding handler (which intercepts in the bubble phase).
+    var onZenCapture = function(e) {
+      if (e.ctrlKey && !e.metaKey && e.shiftKey && e.key === 'Z') {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleZenMode();
+      }
+    };
+
     window.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keydown', onZenCapture, true);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
     return function () {
@@ -989,6 +1019,7 @@ var MbeditorApp = function MbeditorApp() {
         resizeRafRef.current = null;
       }
       window.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keydown', onZenCapture, true);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
       document.body.style.cursor = '';
@@ -1223,6 +1254,8 @@ var MbeditorApp = function MbeditorApp() {
 
   // Persist state when panes, focusedPaneId, or collapsedSections changes
   useEffect(function () {
+    // Don't overwrite server state with React defaults before the initial load completes.
+    if (!stateRestoredRef.current) return;
     // debounce explicitly using setTimeout to avoid spamming the backend
     var timeoutId = setTimeout(function () {
       var st = EditorStore.getState();
@@ -1254,12 +1287,12 @@ var MbeditorApp = function MbeditorApp() {
         FileService.saveBranchState(currentBranch, { panes: lightweightPanes, focusedPaneId: st.focusedPaneId })["catch"](function () {});
       }
       // Also persist to global state (prefs + panes as legacy fallback)
-      FileService.saveState({ panes: lightweightPanes, focusedPaneId: st.focusedPaneId, collapsedSections: collapsedSections, expandedDirs: expandedDirs, showGitPanel: showGitPanel, gitPanelWidth: gitPanelWidth, editorPrefs: editorPrefs, activeSidebarTab: activeSidebarTab, sidebarCollapsed: sidebarCollapsed });
+      FileService.saveState({ panes: lightweightPanes, focusedPaneId: st.focusedPaneId, collapsedSections: collapsedSections, expandedDirs: expandedDirs, showGitPanel: showGitPanel, gitPanelWidth: gitPanelWidth, editorPrefs: editorPrefs, activeSidebarTab: activeSidebarTab, sidebarCollapsed: sidebarCollapsed, openEditorsHeight: openEditorsHeight });
     }, 1000);
     return function () {
       return clearTimeout(timeoutId);
     };
-  }, [state.panes, state.focusedPaneId, collapsedSections, expandedDirs, showGitPanel, gitPanelWidth, editorPrefs, activeSidebarTab, sidebarCollapsed]);
+  }, [state.panes, state.focusedPaneId, collapsedSections, expandedDirs, showGitPanel, gitPanelWidth, editorPrefs, activeSidebarTab, sidebarCollapsed, openEditorsHeight]);
 
   useEffect(function() {
     document.documentElement.setAttribute('data-theme', editorPrefs.theme || 'vs-dark');
@@ -2019,6 +2052,15 @@ var MbeditorApp = function MbeditorApp() {
     document.body.style.userSelect = 'none';
   };
 
+  var startOpenEditorsResize = function startOpenEditorsResize(e) {
+    if (collapsedSections.openEditors) return;
+    e.preventDefault();
+    resizeSessionRef.current = { mode: 'openeditors', startY: e.clientY, startHeight: openEditorsHeight };
+    setActiveResizeMode('openeditors');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  };
+
   var toggleSidebarCollapsed = function toggleSidebarCollapsed() {
     setSidebarCollapsed(function (prev) { return !prev; });
   };
@@ -2619,7 +2661,7 @@ var MbeditorApp = function MbeditorApp() {
           { className: "ide-sidebar-content" },
           React.createElement(
             "div",
-            { className: "ide-sidebar-fixed" },
+            { className: "ide-sidebar-fixed", style: { '--open-editors-height': openEditorsHeight + 'px' } },
             state.panes.flatMap(function (p) {
               return p.tabs;
             }).length > 0 && React.createElement(
@@ -2729,6 +2771,10 @@ var MbeditorApp = function MbeditorApp() {
             )
           )
           ),
+          state.panes.flatMap(function (p) { return p.tabs; }).length > 0 && React.createElement(
+            "div",
+            { className: "open-editors-resize-handle", onMouseDown: startOpenEditorsResize }
+          ),
           React.createElement(
             "div",
             { className: "ide-sidebar-scrollable" },
@@ -2788,7 +2834,7 @@ var MbeditorApp = function MbeditorApp() {
               )
             },
             React.createElement(FileTree, {
-              items: treeData,
+              items: editorPrefs.showDotFiles ? treeData : filterDotFiles(treeData || []),
               onSelect: handleSoftOpenFile,
               activePath: editorPrefs.autoRevealInExplorer !== false ? (activeTab && activeTab.path) : null,
               selectedPaths: selectedPaths,
@@ -3105,12 +3151,17 @@ var MbeditorApp = function MbeditorApp() {
                       'label', { className: 'ide-settings-row ide-settings-row-half' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Font size'),
                       React.createElement('input', {
+                        key: String(editorPrefs.fontSize || 13),
                         type: 'number', min: '8', max: '32', step: '1',
                         className: 'ide-settings-input',
-                        value: editorPrefs.fontSize || 13,
+                        defaultValue: editorPrefs.fontSize || 13,
                         onChange: function(e) {
                           var v = parseInt(e.target.value, 10);
                           if (v >= 8 && v <= 32) setEditorPrefs(function(p) { return Object.assign({}, p, { fontSize: v }); });
+                        },
+                        onBlur: function(e) {
+                          var v = parseInt(e.target.value, 10);
+                          if (isNaN(v) || v < 8 || v > 32) e.target.value = String(editorPrefs.fontSize || 13);
                         }
                       })
                     ),
@@ -3128,12 +3179,17 @@ var MbeditorApp = function MbeditorApp() {
                       'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Row height in pixels. 0 = auto (roughly font size × 1.5)' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Line height (0=auto)'),
                       React.createElement('input', {
+                        key: String(editorPrefs.lineHeight != null ? editorPrefs.lineHeight : 0),
                         type: 'number', min: '0', max: '100', step: '1',
                         className: 'ide-settings-input',
-                        value: editorPrefs.lineHeight != null ? editorPrefs.lineHeight : 0,
+                        defaultValue: editorPrefs.lineHeight != null ? editorPrefs.lineHeight : 0,
                         onChange: function(e) {
                           var v = parseInt(e.target.value, 10);
                           if (!isNaN(v) && v >= 0 && v <= 100) setEditorPrefs(function(p) { return Object.assign({}, p, { lineHeight: v }); });
+                        },
+                        onBlur: function(e) {
+                          var v = parseInt(e.target.value, 10);
+                          if (isNaN(v) || v < 0 || v > 100) e.target.value = String(editorPrefs.lineHeight != null ? editorPrefs.lineHeight : 0);
                         }
                       })
                     ),
@@ -3141,12 +3197,17 @@ var MbeditorApp = function MbeditorApp() {
                       'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Extra space between characters in pixels. 0 = default' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Letter spacing (px)'),
                       React.createElement('input', {
+                        key: String(editorPrefs.letterSpacing != null ? editorPrefs.letterSpacing : 0),
                         type: 'number', min: '-5', max: '20', step: '0.5',
                         className: 'ide-settings-input',
-                        value: editorPrefs.letterSpacing != null ? editorPrefs.letterSpacing : 0,
+                        defaultValue: editorPrefs.letterSpacing != null ? editorPrefs.letterSpacing : 0,
                         onChange: function(e) {
                           var v = parseFloat(e.target.value);
                           if (!isNaN(v) && v >= -5 && v <= 20) setEditorPrefs(function(p) { return Object.assign({}, p, { letterSpacing: v }); });
+                        },
+                        onBlur: function(e) {
+                          var v = parseFloat(e.target.value);
+                          if (isNaN(v) || v < -5 || v > 20) e.target.value = String(editorPrefs.letterSpacing != null ? editorPrefs.letterSpacing : 0);
                         }
                       })
                     ),
@@ -3157,12 +3218,17 @@ var MbeditorApp = function MbeditorApp() {
                       'label', { className: 'ide-settings-row ide-settings-row-half' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Tab size'),
                       React.createElement('input', {
+                        key: String(editorPrefs.tabSize || 4),
                         type: 'number', min: '1', max: '8', step: '1',
                         className: 'ide-settings-input',
-                        value: editorPrefs.tabSize || 4,
+                        defaultValue: editorPrefs.tabSize || 4,
                         onChange: function(e) {
                           var v = parseInt(e.target.value, 10);
                           if (v >= 1 && v <= 8) setEditorPrefs(function(p) { return Object.assign({}, p, { tabSize: v }); });
+                        },
+                        onBlur: function(e) {
+                          var v = parseInt(e.target.value, 10);
+                          if (isNaN(v) || v < 1 || v > 8) e.target.value = String(editorPrefs.tabSize || 4);
                         }
                       })
                     ),
@@ -3444,12 +3510,17 @@ var MbeditorApp = function MbeditorApp() {
                       'label', { className: 'ide-settings-row ide-settings-row-half' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Print width'),
                       React.createElement('input', {
+                        key: String(editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80),
                         type: 'number', min: '40', max: '200', step: '1',
                         className: 'ide-settings-input',
-                        value: editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80,
+                        defaultValue: editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80,
                         onChange: function(e) {
                           var v = parseInt(e.target.value, 10);
                           if (v >= 40 && v <= 200) setEditorPrefs(function(p) { return Object.assign({}, p, { prettierPrintWidth: v }); });
+                        },
+                        onBlur: function(e) {
+                          var v = parseInt(e.target.value, 10);
+                          if (isNaN(v) || v < 40 || v > 200) e.target.value = String(editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80);
                         }
                       })
                     ),
@@ -3517,6 +3588,16 @@ var MbeditorApp = function MbeditorApp() {
                         className: 'ide-settings-checkbox',
                         checked: !!(editorPrefs.fileTreeTypeahead !== false),
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { fileTreeTypeahead: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Show dotfiles'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: !!(editorPrefs.showDotFiles),
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { showDotFiles: v }); }); }
                       })
                     ),
                     React.createElement(

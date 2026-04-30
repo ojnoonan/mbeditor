@@ -669,13 +669,15 @@ var EditorPanel = function EditorPanel(_ref) {
 
       // Dirty-state tracking via alternativeVersionId — O(1), no string comparison.
       // AVI decrements on undo so it returns to cleanVersionId after a full undo.
+      // Skip entirely when cleanVersionId is null — file is mid-load, not yet settled.
       var _entry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
       var _cleanAvi = _entry && _entry.cleanVersionId;
-      var isDirty = _cleanAvi === null || _cleanAvi === undefined || currentAvi !== _cleanAvi;
-      if (isDirty) {
-        TabManager.markDirty(paneId, tab.id, val);
-      } else {
-        TabManager.markClean(paneId, tab.id, val);
+      if (_cleanAvi !== null && _cleanAvi !== undefined) {
+        if (currentAvi !== _cleanAvi) {
+          TabManager.markDirty(paneId, tab.id, val);
+        } else {
+          TabManager.markClean(paneId, tab.id, val);
+        }
       }
 
       var currentContent = latestContentRef.current;
@@ -762,12 +764,17 @@ var EditorPanel = function EditorPanel(_ref) {
     if (!vNorm) {
       // If the editor is currently completely empty, treat it as an initial load.
       // setValue clears the undo stack which is correct for initial load.
+      // Null cleanVersionId before setValue so the synchronous onDidChangeContent
+      // fires during setValue and skips the dirty check (cleanVersionId is null).
+      var _initEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+      if (_initEntry) _initEntry.cleanVersionId = null;
       editor.setValue(tab.content);
       // Reset the AVI baseline: setValue clears the undo stack so anything before
       // this point is no longer reachable. Also clear the canUndo/canRedo display.
       var newBase = model.getAlternativeVersionId();
       aviBaseRef.current = newBase;
       aviMaxRef.current = newBase;
+      if (_initEntry) _initEntry.cleanVersionId = newBase;
       EditorStore.setState({ canUndo: false, canRedo: false });
     } else {
       // Keep undo stack for formats or replaces by using executeEdits

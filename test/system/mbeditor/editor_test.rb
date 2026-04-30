@@ -229,6 +229,188 @@ module Mbeditor
       end
     end
 
+    # ── New feature tests ────────────────────────────────────────────────────────
+
+    test "Ctrl+Shift+Z toggles zen mode hiding the sidebar" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      # Sidebar visible initially — style.display is empty string (not 'none')
+      sidebar_initially_visible = page.evaluate_script(
+        "document.querySelector('.ide-sidebar') && document.querySelector('.ide-sidebar').style.display !== 'none'"
+      )
+      assert sidebar_initially_visible, "Sidebar should be visible before zen mode"
+
+      find("body").send_keys([:control, :shift, "z"])
+
+      assert_selector ".statusbar-zen-btn", wait: 5
+      sidebar_hidden = page.evaluate_script("document.querySelector('.ide-sidebar').style.display === 'none'")
+      assert sidebar_hidden, "Sidebar should be hidden in zen mode"
+
+      find(".statusbar-zen-btn").click
+      assert_no_selector ".statusbar-zen-btn", wait: 5
+      sidebar_restored = page.evaluate_script("document.querySelector('.ide-sidebar').style.display !== 'none'")
+      assert sidebar_restored, "Sidebar should be visible after exiting zen mode"
+    end
+
+    test "search panel toggle reveals replace input row" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      find(".ide-sidebar-tab", text: "SEARCH").click
+
+      assert_no_selector ".search-replace-row"
+
+      find("button[title='Toggle Replace']").click
+      assert_selector ".search-replace-row", wait: 5
+      assert_selector ".search-replace-input", wait: 5
+
+      find("button[title='Toggle Replace']").click
+      assert_no_selector ".search-replace-row", wait: 5
+    end
+
+    test "file tab dirty dot clears after undoing all edits" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      all(".tree-item-name", text: "README.md").first.click
+      assert_selector ".monaco-editor", wait: 10
+
+      # No dirty dot initially
+      assert_no_selector ".tab-item.active .tab-dirty-dot"
+
+      # Type a character to dirty the model
+      page.execute_script(<<~'JS')
+        window.__mbeditorActiveEditor.focus();
+        window.__mbeditorActiveEditor.trigger('keyboard', 'type', { text: 'x' });
+      JS
+
+      assert_selector ".tab-item.active .tab-dirty-dot", wait: 5
+
+      # Undo the edit — AVI returns to cleanVersionId
+      page.execute_script("window.__mbeditorActiveEditor.trigger('keyboard', 'undo', {})")
+
+      assert_no_selector ".tab-item.active .tab-dirty-dot", wait: 5
+    end
+
+    test "LRU eviction keeps Monaco model count at or below 15" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      all(".tree-item-name", text: "README.md").first.click
+      assert_selector ".monaco-editor", wait: 10
+
+      model_count = page.evaluate_script(<<~'JS')
+        (function () {
+          if (!window.monaco || !window.__mbeditorModels || !window.TabManager) return null;
+          var MAX = 15;
+          for (var i = 0; i < 20; i++) {
+            var uri = window.monaco.Uri.parse('inmemory://lru_cap_' + i + '.rb');
+            if (!window.monaco.editor.getModel(uri)) {
+              window.monaco.editor.createModel('# ' + i, 'ruby', uri);
+            }
+            var m = window.monaco.editor.getModel(uri);
+            window.__mbeditorModels['lru_cap_' + i + '.rb'] = {
+              model: m,
+              lastAccessed: Date.now() - (20 - i) * 1000,
+              cleanVersionId: m.getAlternativeVersionId()
+            };
+            if (Object.keys(window.__mbeditorModels).length > MAX) {
+              window.TabManager.evictLruModel();
+            }
+          }
+          return Object.keys(window.__mbeditorModels).length;
+        })()
+      JS
+
+      assert_operator model_count.to_i, :<=, 15, "Expected ≤ 15 cached models, got #{model_count}"
+    end
+
+    test "hovering a file tree item for 200 ms triggers prefetch" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      page.execute_script(<<~'JS')
+        window.__prefetchPaths = [];
+        var _origPrefetch = FileService.prefetch;
+        FileService.prefetch = function (path) {
+          window.__prefetchPaths.push(path);
+          return _origPrefetch.call(this, path);
+        };
+      JS
+
+      find(".tree-item-name", text: "README.md").hover
+      sleep 0.35  # 200 ms debounce + margin
+
+      prefetch_paths = page.evaluate_script("window.__prefetchPaths || []")
+      assert_operator prefetch_paths.length, :>, 0, "Expected FileService.prefetch to be called on hover"
+    end
+
+    test "repeated search query uses client-side cache instead of network" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      find(".ide-sidebar-tab", text: "SEARCH").click
+
+      page.execute_script(<<~'JS')
+        window.__searchNetworkCount = 0;
+        var _origGet = window.axios.get;
+        window.axios.get = function (url, config) {
+          if (typeof url === 'string' && url.indexOf('/search') !== -1) {
+            window.__searchNetworkCount++;
+          }
+          return _origGet.apply(this, arguments);
+        };
+        SearchService.invalidate();
+      JS
+
+      find(".search-input").set("User")
+      sleep 0.8  # Debounce + first network request
+
+      count_after_first = page.evaluate_script("window.__searchNetworkCount")
+      assert_operator count_after_first, :>=, 1, "Expected at least one network request for first search"
+
+      # Clear and reissue the same query — should be served from cache
+      find(".search-input").set("")
+      find(".search-input").set("User")
+      sleep 0.8
+
+      count_after_second = page.evaluate_script("window.__searchNetworkCount")
+      assert_equal count_after_first, count_after_second,
+                   "Second identical search should use cache with no new network request"
+    end
+
+    test "monaco flags undefined variable used in jsx" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      page.execute_script(<<~'JS')
+        window.__mbeditorActiveEditor.setValue(
+          'function App() { return React.createElement(UndefinedComponent, null); }'
+        );
+      JS
+
+      assert wait_for_monaco_marker(matching: /UndefinedComponent/),
+             "Expected Monaco to flag 'UndefinedComponent' as undefined"
+    end
+
+    test "monaco warns about unused local variable in javascript" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      page.execute_script(<<~'JS')
+        window.__mbeditorActiveEditor.setValue(
+          'function App() { var unusedThing = 42; return null; }'
+        );
+      JS
+
+      assert wait_for_monaco_marker(matching: /unusedThing/),
+             "Expected Monaco to warn about unused variable 'unusedThing'"
+    end
+
     private
 
     def active_editor_value
@@ -255,6 +437,24 @@ module Mbeditor
           return model ? model.getLanguageId() : null;
         })()
       JS
+    end
+
+    def wait_for_monaco_marker(matching:, timeout: 10)
+      deadline = Time.now + timeout
+      loop do
+        messages = page.evaluate_script(<<~JS)
+          (function () {
+            var editor = window.__mbeditorActiveEditor;
+            var model = editor && editor.getModel && editor.getModel();
+            if (!model) return [];
+            return window.monaco.editor.getModelMarkers({ resource: model.uri })
+              .map(function(m) { return m.message; });
+          })()
+        JS
+        return true if Array(messages).any? { |msg| msg.match?(matching) }
+        return false if Time.now >= deadline
+        sleep 0.2
+      end
     end
 
     def wait_for_editor_value(expected, timeout: Capybara.default_max_wait_time)

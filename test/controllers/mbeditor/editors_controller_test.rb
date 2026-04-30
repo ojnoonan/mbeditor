@@ -142,11 +142,11 @@ module Mbeditor
       assert_includes names, "app"
     end
 
-    test "files excludes configured excluded_paths" do
+    test "files shows excluded_paths in the explorer (only search excludes them)" do
       get "/mbeditor/files"
       assert_response :ok
       names = json.map { |n| n["name"] }
-      assert_not_includes names, "tmp"
+      assert_includes names, "tmp"
     end
 
     # ---------------------------------------------------------------------------

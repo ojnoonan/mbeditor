@@ -75,7 +75,9 @@ module Mbeditor
 
     # POST /mbeditor/state — save workspace state
     def save_state
-      payload = params[:state].to_json
+      raw = params[:state]
+      raw = raw.to_unsafe_h if raw.respond_to?(:to_unsafe_h)
+      payload = raw.to_json
       return render json: { error: "State payload too large" }, status: :content_too_large if payload.bytesize > STATE_MAX_BYTES
 
       path = workspace_root.join("tmp", "mbeditor_workspace.json")
@@ -1039,8 +1041,6 @@ module Mbeditor
       entries.filter_map do |name|
         full = File.join(dir, name)
         rel = relative_path(full)
-
-        next if excluded_path?(rel, name)
 
         if File.directory?(full)
           { name: name, type: "folder", path: rel, children: build_tree(full, depth: depth + 1) }
