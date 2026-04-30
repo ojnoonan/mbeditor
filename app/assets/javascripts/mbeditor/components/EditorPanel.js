@@ -479,13 +479,17 @@ var EditorPanel = function EditorPanel(_ref) {
     if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
       modelObj = _modelEntry.model;
       _reusingModel = true;
+      // Update access timestamp so LRU eviction knows this model was recently used.
+      _modelEntry.lastAccessed = Date.now();
       // Re-apply language in case it changed (e.g. file renamed)
       if (modelObj.getLanguageId() !== language) {
         window.monaco.editor.setModelLanguage(modelObj, language);
       }
     } else {
+      // Evict the LRU model if the cache is at capacity before creating a new one.
+      TabManager.evictLruModel();
       modelObj = window.monaco.editor.createModel(tab.content, language);
-      window.__mbeditorModels[tab.path] = { model: modelObj, aviBase: null, aviMax: null };
+      window.__mbeditorModels[tab.path] = { model: modelObj, aviBase: null, aviMax: null, lastAccessed: Date.now() };
       _modelEntry = window.__mbeditorModels[tab.path];
     }
 
