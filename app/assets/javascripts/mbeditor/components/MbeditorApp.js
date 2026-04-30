@@ -1385,12 +1385,13 @@ var MbeditorApp = function MbeditorApp() {
       EditorStore.setState({ panes: newPanes });
       EditorStore.setStatus("Saved", "success");
       _clearDraft(tab.path);
-      
+      SearchService.invalidate();
+
       // Hot reload for Markdown: sync preview tab after save
       if (/\.(md|markdown)$/i.test(tab.path)) {
         TabManager.syncMarkdownPreview(tab.path, tab.content);
       }
-      
+
       GitService.fetchStatus();
     })["catch"](function (err) {
       EditorStore.setStatus("Save failed: " + err.message, "error");
@@ -1425,6 +1426,7 @@ var MbeditorApp = function MbeditorApp() {
       });
       EditorStore.setState({ panes: newPanes });
       EditorStore.setStatus("All files saved", "success");
+      SearchService.invalidate();
       GitService.fetchStatus();
     })["catch"](function (err) {
       EditorStore.setStatus("Failed to save some files", "error");

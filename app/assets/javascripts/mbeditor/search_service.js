@@ -1,6 +1,41 @@
 var SearchService = (function () {
   var SEARCH_PAGE_SIZE = 50;
 
+  // --- Result cache ---
+  var CACHE_TTL      = 30000; // 30 seconds
+  var CACHE_MAX_SIZE = 20;
+  var _searchCache   = new Map(); // key -> { data, expiresAt }
+
+  function _cacheKey(query, options, offset) {
+    var regex     = !!(options && options.regex);
+    var matchCase = !!(options && options.matchCase);
+    var wholeWord = !!(options && options.wholeWord);
+    return query + '|' + (regex ? 'r' : '') + (matchCase ? 'c' : '') + (wholeWord ? 'w' : '') + '|' + (offset || 0);
+  }
+
+  function _cacheGet(key) {
+    var entry = _searchCache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      _searchCache.delete(key);
+      return null;
+    }
+    return entry.data;
+  }
+
+  function _cacheSet(key, data) {
+    // Evict oldest entry if at capacity
+    if (_searchCache.size >= CACHE_MAX_SIZE && !_searchCache.has(key)) {
+      var oldest = _searchCache.keys().next().value;
+      _searchCache.delete(oldest);
+    }
+    _searchCache.set(key, { data: data, expiresAt: Date.now() + CACHE_TTL });
+  }
+
+  function invalidate() {
+    _searchCache.clear();
+  }
+
   var _miniSearch = new MiniSearch({
     fields: ['path', 'name'],           // indexed fields
     storeFields: ['path', 'name', 'type'] // returned fields (type: 'file'|'dir')
@@ -68,6 +103,19 @@ var SearchService = (function () {
     var matchCase = !!(options && options.matchCase);
     var wholeWord = !!(options && options.wholeWord);
 
+    // Check cache before hitting the network
+    var key = _cacheKey(query, options, off);
+    var cached = _cacheGet(key);
+    if (cached) {
+      if (off === 0) {
+        EditorStore.setState({ searchResults: cached.results, searchHasMore: cached.hasMore });
+      } else {
+        var prevResults = EditorStore.getState().searchResults || [];
+        EditorStore.setState({ searchResults: prevResults.concat(cached.results), searchHasMore: cached.hasMore });
+      }
+      return Promise.resolve(cached);
+    }
+
     return axios.get(window.mbeditorBasePath() + '/search', {
       params: { q: query, offset: off, limit: lim, regex: useRegex ? 'true' : 'false', match_case: matchCase ? 'true' : 'false', whole_word: wholeWord ? 'true' : 'false' }
     }).then(function(res) {
@@ -76,13 +124,16 @@ var SearchService = (function () {
         var hasMore    = !Array.isArray(data) && !!(data && data.has_more);
         var totalCount = (data && data.total_count != null) ? data.total_count : null;
 
+        var payload = { results: results, hasMore: hasMore, totalCount: totalCount };
+        _cacheSet(key, payload);
+
         if (off === 0) {
           EditorStore.setState({ searchResults: results, searchHasMore: hasMore });
         } else {
           var prev = EditorStore.getState().searchResults || [];
           EditorStore.setState({ searchResults: prev.concat(results), searchHasMore: hasMore });
         }
-        return { results: results, hasMore: hasMore, totalCount: totalCount };
+        return payload;
       })
       .catch(function(err) {
         EditorStore.setStatus("Search failed: " + err.message, "error");
@@ -113,6 +164,7 @@ var SearchService = (function () {
     searchFiles: searchFiles,
     projectSearch: projectSearch,
     fetchPage: fetchPage,
+    invalidate: invalidate,
     PAGE_SIZE: SEARCH_PAGE_SIZE
   };
 })();
