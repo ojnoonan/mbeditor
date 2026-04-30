@@ -54,6 +54,14 @@ var FileService = (function () {
     return axios.get(window.mbeditorBasePath() + '/file', { params: params }).then(function(res) { return res.data; });
   }
 
+  function getFileChunk(path, startLine, lineCount) {
+    if (lineCount === undefined) {
+      lineCount = 500;
+    }
+    var params = { path: path, start_line: startLine, line_count: lineCount };
+    return axios.get(window.mbeditorBasePath() + '/file', { params: params }).then(function(res) { return res.data; });
+  }
+
   function saveFile(path, code) {
     return axios.post(window.mbeditorBasePath() + '/file', { path: path, code: code }).then(function(res) { return res.data; });
   }
@@ -200,6 +208,7 @@ var FileService = (function () {
     getWorkspace: getWorkspace,
     getTree: getTree,
     getFile: getFile,
+    getFileChunk: getFileChunk,
     saveFile: saveFile,
     createFile: createFile,
     createDir: createDir,
