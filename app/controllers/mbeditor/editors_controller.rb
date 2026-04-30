@@ -337,7 +337,8 @@ module Mbeditor
                     workspace_root,
                     symbol,
                     excluded_dirnames: excluded_dirnames,
-                    excluded_paths: excluded_paths
+                    excluded_paths:    excluded_paths,
+                    included_dirs:     ruby_def_include_dirs
                   )
                   ri = RiDefinitionService.call(symbol)
                   workspace + ri
@@ -360,7 +361,8 @@ module Mbeditor
       file = RubyDefinitionService.module_defined_in(
         workspace_root, name,
         excluded_dirnames: excluded_dirnames,
-        excluded_paths:    excluded_paths
+        excluded_paths:    excluded_paths,
+        included_dirs:     ruby_def_include_dirs
       )
       return render json: { name: name, methods: [] } unless file
 
@@ -383,14 +385,16 @@ module Mbeditor
       # Fast no-op on subsequent calls (mtime checks only).
       RubyDefinitionService.scan(workspace_root,
                                  excluded_dirnames: excluded_dirnames,
-                                 excluded_paths:    excluded_paths)
+                                 excluded_paths:    excluded_paths,
+                                 included_dirs:     ruby_def_include_dirs)
 
       module_names = RubyDefinitionService.includes_in_file(path)
       includes = module_names.filter_map do |mod_name|
         mod_file = RubyDefinitionService.module_defined_in(
           workspace_root, mod_name,
           excluded_dirnames: excluded_dirnames,
-          excluded_paths:    excluded_paths
+          excluded_paths:    excluded_paths,
+          included_dirs:     ruby_def_include_dirs
         )
         next unless mod_file
 
@@ -1068,7 +1072,8 @@ module Mbeditor
         if File.directory?(full)
           { name: name, type: "folder", path: rel, children: build_tree(full, depth: depth + 1) }
         else
-          { name: name, type: "file", path: rel }
+          size = File.size(full) rescue nil
+          { name: name, type: "file", path: rel, size: size }
         end
       end
     rescue Errno::EACCES
@@ -1081,6 +1086,10 @@ module Mbeditor
 
     def excluded_dirnames
       excluded_paths.filter { |path| !path.include?("/") }
+    end
+
+    def ruby_def_include_dirs
+      Array(Mbeditor.configuration.ruby_def_include_dirs).map(&:to_s).reject(&:blank?)
     end
 
     def excluded_path?(relative_path, name)
