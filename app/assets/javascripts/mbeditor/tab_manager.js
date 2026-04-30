@@ -6,7 +6,7 @@ var TabManager = (function () {
   function _evictLruModel() {
     if (!window.__mbeditorModels) return;
     var keys = Object.keys(window.__mbeditorModels);
-    if (keys.length < MAX_MODELS) return;
+    if (keys.length < MAX_MODELS) return; // room available — evict one to make room for one new entry
 
     // Collect the set of paths currently open in any pane.
     var state = EditorStore.getState();
@@ -23,13 +23,15 @@ var TabManager = (function () {
     keys.forEach(function(path) {
       if (openPaths[path]) return; // skip currently-open files
       var entry = window.__mbeditorModels[path];
-      var t = entry.lastAccessed || 0;
+      var t = entry.lastAccessed || 0; // || 0 treats pre-existing entries (no lastAccessed) as oldest, so they evict first
       if (t < candidateTime) {
         candidateTime = t;
         candidate = path;
       }
     });
 
+    // If every cached model is currently open in a pane, skip eviction — never evict an active file.
+    // The cache may temporarily exceed MAX_MODELS; this is acceptable.
     if (candidate) {
       var entry = window.__mbeditorModels[candidate];
       if (entry.model && !entry.model.isDisposed()) {
