@@ -142,6 +142,22 @@ module Mbeditor
       assert_includes names, "app"
     end
 
+    test "files includes size for file entries but not folders" do
+      get "/mbeditor/files"
+      assert_response :ok
+
+      files   = json.select { |n| n["type"] == "file" }
+      folders = json.select { |n| n["type"] == "folder" }
+
+      assert files.any?,   "expected at least one file at root"
+      assert folders.any?, "expected at least one folder at root"
+
+      files.each   { |f| assert f.key?("size"),    "file #{f["name"]} missing size key" }
+      folders.each { |d| assert_not d.key?("size"), "folder #{d["name"]} should not have size key" }
+      files.each   { |f| assert_kind_of Integer, f["size"] }
+      files.each   { |f| assert f["size"] >= 0 }
+    end
+
     test "files shows excluded_paths in the explorer (only search excludes them)" do
       get "/mbeditor/files"
       assert_response :ok

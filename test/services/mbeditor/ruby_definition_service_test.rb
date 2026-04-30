@@ -208,6 +208,46 @@ module Mbeditor
     end
 
     # -------------------------------------------------------------------------
+    # included_dirs filtering
+    # -------------------------------------------------------------------------
+
+    test "only scans files within included_dirs" do
+      write_rb("app/models/user.rb",        "class User\n  def the_method\n  end\nend\n")
+      write_rb("db/migrate/20240101_foo.rb", "class Foo\n  def the_method\n  end\nend\n")
+      write_rb("spec/models/user_spec.rb",   "class UserSpec\n  def the_method\n  end\nend\n")
+
+      results = call("the_method", included_dirs: %w[app/models])
+      assert_equal 1, results.length
+      assert_equal "app/models/user.rb", results[0][:file]
+    end
+
+    test "empty included_dirs scans the whole workspace" do
+      write_rb("app/models/user.rb", "class User\n  def the_method\n  end\nend\n")
+      write_rb("lib/util.rb",        "module Util\n  def the_method\n  end\nend\n")
+
+      results = call("the_method", included_dirs: [])
+      assert results.length >= 2, "expected both files to be found"
+    end
+
+    test "non-existent included_dirs falls back to scanning workspace root" do
+      write_rb("app/models/user.rb", "class User\n  def the_method\n  end\nend\n")
+
+      results = call("the_method", included_dirs: %w[app/nonexistent])
+      assert results.any?, "expected fallback scan to find the method"
+    end
+
+    test "module_defined_in respects included_dirs" do
+      write_rb("app/concerns/searchable.rb", "module Searchable; end\n")
+      write_rb("lib/searchable.rb",          "module Searchable; end\n")
+
+      result = RubyDefinitionService.module_defined_in(
+        @workspace, "Searchable",
+        included_dirs: %w[app/concerns]
+      )
+      assert_equal File.join(@workspace, "app/concerns/searchable.rb"), result
+    end
+
+    # -------------------------------------------------------------------------
     # Malformed file does not crash the scan
     # -------------------------------------------------------------------------
 

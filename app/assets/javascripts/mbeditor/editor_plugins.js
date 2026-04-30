@@ -51,12 +51,16 @@
 
   var globalsRegistered = false;
 
-  // Enumerate window for user-defined (non-native) globals and return a TypeScript
-  // declaration string.  Sprockets exposes every top-level var/function as a window
-  // property before Monaco initialises, so scanning window at registration time
-  // captures components, services, and helpers without any manual listing.
+  // Enumerate window for user-defined globals and return a TypeScript declaration string.
+  // Sprockets exposes every top-level var/function as a window property before Monaco
+  // initialises, so scanning at registration time captures all components and helpers.
+  //
+  // Filter: keep only plain writable data properties (configurable, writable, no getter).
+  // Browser built-ins are either non-configurable or accessor properties (hasGet), so
+  // this reliably separates them from user-assigned globals without a native-code test
+  // (which only works for functions, not objects like `document` or `location`).
   function buildWindowGlobalsShim() {
-    var alreadyDeclared = { React: 1, ReactDOM: 1, PropTypes: 1, MaterialUI: 1 };
+    var alreadyDeclared = { React: 1, ReactDOM: 1, PropTypes: 1, MaterialUI: 1, $: 1, jQuery: 1 };
     var lines = [];
     try {
       var keys = Object.keys(window);
@@ -64,14 +68,12 @@
         var key = keys[i];
         if (alreadyDeclared[key]) continue;
         if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key)) continue;
+        var desc;
+        try { desc = Object.getOwnPropertyDescriptor(window, key); } catch (e) { continue; }
+        if (!desc || !desc.configurable || !desc.writable || desc.get) continue;
         var value;
         try { value = window[key]; } catch (e) { continue; }
         if (value === null || value === undefined) continue;
-        if (typeof value === 'function') {
-          try {
-            if (/\[native code\]/.test(Function.prototype.toString.call(value))) continue;
-          } catch (e) { continue; }
-        }
         lines.push('declare var ' + key + ': any;');
       }
     } catch (e) {}
@@ -322,6 +324,30 @@
         event.stopPropagation();
       });
 
+      // Navigate to a Ruby symbol: modules/classes go to their definition file,
+      // lowercase symbols go to their def line.
+      function navigateToWord(word) {
+        if (/^[A-Z]/.test(word) && typeof FileService !== 'undefined' && FileService.getModuleMembers) {
+          FileService.getModuleMembers(word).then(function(data) {
+            if (!data || !data.file) return;
+            var filename = data.file.split('/').pop();
+            if (typeof TabManager !== 'undefined' && TabManager.openTab) {
+              TabManager.openTab(data.file, filename, 1);
+            }
+          }).catch(function() {});
+          return;
+        }
+        if (typeof FileService === 'undefined' || !FileService.getDefinition) return;
+        FileService.getDefinition(word, 'ruby').then(function(data) {
+          var results = data && Array.isArray(data.results) ? data.results : [];
+          if (results.length === 0) return;
+          var r = results[0];
+          if (typeof TabManager !== 'undefined' && TabManager.openTab) {
+            TabManager.openTab(r.file, r.file.split('/').pop(), r.line);
+          }
+        }).catch(function() {});
+      }
+
       // Ctrl/Cmd+click — navigate to definition
       gotoMouseDisposable = editor.onMouseDown(function(event) {
         var ctrlOrCmd = event.event.ctrlKey || event.event.metaKey;
@@ -336,19 +362,9 @@
         if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
         if (RUBY_KEYWORDS[wordInfo.word]) return;
         if (RUBY_CORE_METHODS[wordInfo.word]) return;
-        if (typeof FileService === 'undefined' || !FileService.getDefinition) return;
 
         event.event.preventDefault();
-
-        FileService.getDefinition(wordInfo.word, 'ruby').then(function(data) {
-          var results = data && Array.isArray(data.results) ? data.results : [];
-          if (results.length === 0) return;
-          var r = results[0];
-          var filename = r.file.split('/').pop();
-          if (typeof TabManager !== 'undefined' && TabManager.openTab) {
-            TabManager.openTab(r.file, filename, r.line);
-          }
-        }).catch(function() {});
+        navigateToWord(wordInfo.word);
       });
 
       // F12 — go to definition from keyboard
@@ -365,17 +381,7 @@
           if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
           if (RUBY_KEYWORDS[wordInfo.word]) return;
           if (RUBY_CORE_METHODS[wordInfo.word]) return;
-          if (typeof FileService === 'undefined' || !FileService.getDefinition) return;
-
-          FileService.getDefinition(wordInfo.word, 'ruby').then(function(data) {
-            var results = data && Array.isArray(data.results) ? data.results : [];
-            if (results.length === 0) return;
-            var r = results[0];
-            var filename = r.file.split('/').pop();
-            if (typeof TabManager !== 'undefined' && TabManager.openTab) {
-              TabManager.openTab(r.file, filename, r.line);
-            }
-          }).catch(function() {});
+          navigateToWord(wordInfo.word);
         }
       });
     }
@@ -494,6 +500,8 @@
           'declare var ReactDOM: any;',
           'declare var PropTypes: any;',
           'declare var MaterialUI: any;',
+          'declare var $: any;',
+          'declare var jQuery: any;',
           'interface Window { [key: string]: any; }'
         ].join('\n'),
         'inmemory://mbeditor/sprockets-globals.d.ts'
@@ -506,6 +514,38 @@
           'inmemory://mbeditor/window-globals.d.ts'
         );
       }
+
+      // Downgrade "declared but never read" (TS6133) from Error to Warning.
+      // TypeScript has no built-in way to emit this as a warning, so we intercept
+      // the marker set after the worker fires and re-apply with lower severity.
+      // JS files use owner 'javascript', TS files use 'typescript'.
+      var WARN_CODES = { '6133': true };
+      var TS_OWNERS = ['javascript', 'typescript'];
+      var _severityPatchActive = false;
+      monaco.editor.onDidChangeMarkers(function(uris) {
+        if (_severityPatchActive) return;
+        _severityPatchActive = true;
+        try {
+          uris.forEach(function(uri) {
+            var model = monaco.editor.getModel(uri);
+            if (!model) return;
+            TS_OWNERS.forEach(function(owner) {
+              var markers = monaco.editor.getModelMarkers({ resource: uri, owner: owner });
+              var needsPatch = markers.some(function(m) {
+                return m.severity === monaco.MarkerSeverity.Error && WARN_CODES[String(m.code)];
+              });
+              if (!needsPatch) return;
+              monaco.editor.setModelMarkers(model, owner, markers.map(function(m) {
+                return (m.severity === monaco.MarkerSeverity.Error && WARN_CODES[String(m.code)])
+                  ? Object.assign({}, m, { severity: monaco.MarkerSeverity.Warning })
+                  : m;
+              }));
+            });
+          });
+        } finally {
+          _severityPatchActive = false;
+        }
+      });
     }
 
     // TypeScript: enable JSX for .tsx files and catch unused locals.

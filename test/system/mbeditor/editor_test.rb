@@ -467,8 +467,9 @@ module Mbeditor
         );
       JS
 
-      assert wait_for_monaco_marker(matching: /unusedThing/),
-             "Expected Monaco to warn about unused variable 'unusedThing'"
+      # severity 4 = Monaco MarkerSeverity.Warning (not 8 = Error)
+      assert wait_for_monaco_marker(matching: /unusedThing/, severity: 4),
+             "Expected Monaco to show 'unusedThing' as a Warning (severity 4), not an Error"
     end
 
     private
@@ -499,20 +500,26 @@ module Mbeditor
       JS
     end
 
-    def wait_for_monaco_marker(matching:, timeout: 10)
+    # Polls until a Monaco marker whose message matches +matching+ appears (or timeout).
+    # Pass +severity:+ to additionally require a specific Monaco MarkerSeverity value
+    # (4 = Warning, 8 = Error). Returns the marker hash on success, nil on timeout.
+    def wait_for_monaco_marker(matching:, severity: nil, timeout: 10)
       deadline = Time.now + timeout
       loop do
-        messages = page.evaluate_script(<<~JS)
+        markers = page.evaluate_script(<<~JS)
           (function () {
             var editor = window.__mbeditorActiveEditor;
             var model = editor && editor.getModel && editor.getModel();
             if (!model) return [];
             return window.monaco.editor.getModelMarkers({ resource: model.uri })
-              .map(function(m) { return m.message; });
+              .map(function(m) { return { message: m.message, severity: m.severity }; });
           })()
         JS
-        return true if Array(messages).any? { |msg| msg.match?(matching) }
-        return false if Time.now >= deadline
+        found = Array(markers).find do |m|
+          m["message"].match?(matching) && (severity.nil? || m["severity"] == severity)
+        end
+        return found if found
+        return nil if Time.now >= deadline
         sleep 0.2
       end
     end
