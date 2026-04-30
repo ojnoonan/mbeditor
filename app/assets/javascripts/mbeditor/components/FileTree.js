@@ -51,6 +51,7 @@ var FileTree = function FileTree(_ref) {
   var containerRef = useRef(null);
   var typeaheadBufferRef = useRef('');
   var typeaheadTimerRef = useRef(null);
+  var hoverTimerRef = useRef(null);
   // Ref that always points to the latest onNodeSelect prop, avoiding stale closures in the effect.
   var onNodeSelectRef = useRef(onNodeSelect);
   onNodeSelectRef.current = onNodeSelect;
@@ -440,6 +441,18 @@ var FileTree = function FileTree(_ref) {
                 e.stopPropagation();
                 onFileDoubleClick(node.path, node.name);
               }
+            },
+            onMouseEnter: function () {
+              if (isFolder) return;
+              clearTimeout(hoverTimerRef.current);
+              hoverTimerRef.current = setTimeout(function () {
+                FileService.prefetch(node.path);
+              }, 200);
+            },
+            onMouseLeave: function () {
+              if (isFolder) return;
+              clearTimeout(hoverTimerRef.current);
+              FileService.cancelPrefetch(node.path);
             },
             onContextMenu: function (e) {
               e.preventDefault();

@@ -179,7 +179,17 @@ var TabManager = (function () {
       return;
     }
 
-    FileService.getFile(path, { allowMissing: true }).then(function(data) {
+    // Use a prefetched result if available (hover-prefetch hit), otherwise fetch normally.
+    var prefetchPromise = FileService.getPrefetched(path);
+    var filePromise = prefetchPromise || FileService.getFile(path, { allowMissing: true });
+
+    filePromise.then(function(data) {
+      // getPrefetched can resolve to null if the in-flight request failed/was aborted.
+      // In that case fall back to a fresh fetch.
+      if (!data) return FileService.getFile(path, { allowMissing: true });
+      return data;
+    }).then(function(data) {
+      if (!data) { closeTab(paneId, path); return; }
       var loadedContent = typeof data.content === 'string' ? data.content : "";
       var fileNotFound = data && data.missing === true;
       _updateTab(paneId, path, {

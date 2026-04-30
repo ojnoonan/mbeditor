@@ -31,6 +31,10 @@ axios.interceptors.response.use(null, function(error) {
   return Promise.reject(error);
 });
 
+// Prefetch cache: path -> { controller: AbortController, promise: Promise<{content,language}> }
+// Entries are consumed once (getPrefetched deletes them) or cancelled on mouseleave.
+var prefetchCache = new Map();
+
 var FileService = (function () {
   function getWorkspace() {
     return axios.get(window.mbeditorBasePath() + '/workspace').then(function(res) { return res.data; });
@@ -119,6 +123,46 @@ var FileService = (function () {
     return axios.get(window.mbeditorBasePath() + '/definition', config).then(function(res) { return res.data; });
   }
 
+  // Prefetch file content and store in prefetchCache. Uses native fetch + AbortController
+  // so the in-flight request can be cancelled on mouseleave without touching axios.
+  function prefetch(path) {
+    if (prefetchCache.has(path)) return; // already in-flight or cached
+    var controller = new AbortController();
+    var url = window.mbeditorBasePath() + '/file?path=' + encodeURIComponent(path) + '&allow_missing=1';
+    var promise = fetch(url, {
+      signal: controller.signal,
+      headers: { 'X-Mbeditor-Client': '1' }
+    }).then(function(res) {
+      if (!res.ok) throw new Error('prefetch failed: ' + res.status);
+      return res.json();
+    }).then(function(data) {
+      // Resolve to the same shape as getFile() returns
+      return data;
+    }).catch(function(err) {
+      // Remove from cache on failure/abort so a real open falls back to a fresh fetch
+      prefetchCache.delete(path);
+      return null;
+    });
+    prefetchCache.set(path, { controller: controller, promise: promise });
+  }
+
+  // Returns a Promise for the cached result and removes the entry (consume-once),
+  // or returns null if no prefetch is in-flight / completed for this path.
+  function getPrefetched(path) {
+    var entry = prefetchCache.get(path);
+    if (!entry) return null;
+    prefetchCache.delete(path);
+    return entry.promise;
+  }
+
+  // Abort any in-flight prefetch for path and remove it from the cache.
+  function cancelPrefetch(path) {
+    var entry = prefetchCache.get(path);
+    if (!entry) return;
+    try { entry.controller.abort(); } catch (e) {}
+    prefetchCache.delete(path);
+  }
+
   return {
     getWorkspace: getWorkspace,
     getTree: getTree,
@@ -138,6 +182,9 @@ var FileService = (function () {
     getBranchState: getBranchState,
     saveBranchState: saveBranchState,
     pruneBranchStates: pruneBranchStates,
-    getDefinition: getDefinition
+    getDefinition: getDefinition,
+    prefetch: prefetch,
+    getPrefetched: getPrefetched,
+    cancelPrefetch: cancelPrefetch
   };
 })();
