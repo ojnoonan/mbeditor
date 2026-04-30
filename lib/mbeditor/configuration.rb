@@ -6,7 +6,8 @@ module Mbeditor
                   :redmine_enabled, :redmine_url, :redmine_api_key, :redmine_ticket_source,
                   :test_framework, :test_command, :test_timeout,
                   :authenticate_with,
-                  :lint_timeout, :base_branch_candidates, :git_timeout
+                  :lint_timeout, :base_branch_candidates, :git_timeout,
+                  :ruby_def_include_dirs
 
     def initialize
       @allowed_environments = [:development]
@@ -22,7 +23,8 @@ module Mbeditor
       @test_timeout     = 60  # seconds
       @lint_timeout     = 15  # seconds for RuboCop/haml-lint subprocesses
       @base_branch_candidates = %w[origin/develop origin/main origin/master develop main master]
-      @git_timeout      = nil # seconds; nil disables (no timeout on git subprocesses)
+      @git_timeout            = nil # seconds; nil disables (no timeout on git subprocesses)
+      @ruby_def_include_dirs  = %w[app/models app/controllers app/helpers app/concerns]
     end
   end
 end
