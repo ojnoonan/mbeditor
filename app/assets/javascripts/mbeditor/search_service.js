@@ -162,12 +162,34 @@ var SearchService = (function () {
     });
   }
 
+  // POST /replace_in_files — replace query with replacement across all matching files.
+  // options: { regex, matchCase, wholeWord }
+  // Returns a promise resolving to { replaced_count, files_affected, errors }.
+  function replaceInFiles(query, replacement, options) {
+    var useRegex   = !!(options && options.regex);
+    var matchCase  = !!(options && options.matchCase);
+    var wholeWord  = !!(options && options.wholeWord);
+
+    return axios.post(window.mbeditorBasePath() + '/replace_in_files', {
+      query:       query,
+      replacement: replacement,
+      regex:       useRegex   ? 'true' : 'false',
+      match_case:  matchCase  ? 'true' : 'false',
+      whole_word:  wholeWord  ? 'true' : 'false'
+    }, {
+      headers: { 'X-Mbeditor-Client': '1' }
+    }).then(function(res) {
+      return res.data;
+    });
+  }
+
   return {
     buildIndex: buildIndex,
     searchFiles: searchFiles,
     projectSearch: projectSearch,
     fetchPage: fetchPage,
     invalidate: invalidate,
+    replaceInFiles: replaceInFiles,
     PAGE_SIZE: SEARCH_PAGE_SIZE
   };
 })();

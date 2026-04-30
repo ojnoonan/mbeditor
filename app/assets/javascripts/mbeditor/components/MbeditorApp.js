@@ -218,6 +218,21 @@ var MbeditorApp = function MbeditorApp() {
   var searchWholeWordRef = useRef(false);
   var searchResultsContainerRef = useRef(null);
 
+  var _useStateRM = useState(false);
+  var _useStateRM2 = _slicedToArray(_useStateRM, 2);
+  var replaceMode = _useStateRM2[0];
+  var setReplaceMode = _useStateRM2[1];
+
+  var _useStateRQ = useState('');
+  var _useStateRQ2 = _slicedToArray(_useStateRQ, 2);
+  var replaceQuery = _useStateRQ2[0];
+  var setReplaceQuery = _useStateRQ2[1];
+
+  var _useStateRL = useState(false);
+  var _useStateRL2 = _slicedToArray(_useStateRL, 2);
+  var replaceLoading = _useStateRL2[0];
+  var setReplaceLoading = _useStateRL2[1];
+
   var _useState8 = useState("explorer");
 
   var _useState82 = _slicedToArray(_useState8, 2);
@@ -1772,6 +1787,59 @@ var MbeditorApp = function MbeditorApp() {
     _debouncedSearch(searchQuery);
   };
 
+  var handleReplaceAll = function handleReplaceAll() {
+    if (!searchQuery.trim()) {
+      EditorStore.setStatus("Enter a search query first", "error");
+      return;
+    }
+    var matchCount = (state.searchResults || []).length;
+    var confirmMsg = "Replace all occurrences of \"" + searchQuery + "\" with \"" + replaceQuery + "\"?";
+    if (matchCount > 0) {
+      confirmMsg += " (" + matchCount + (searchHasMore ? "+" : "") + " match" + (matchCount !== 1 ? "es" : "") + " across files)";
+    }
+    if (!window.confirm(confirmMsg)) return;
+
+    setReplaceLoading(true);
+    EditorStore.setStatus("Replacing…", "info");
+    SearchService.replaceInFiles(searchQuery, replaceQuery, {
+      regex: searchUseRegexRef.current,
+      matchCase: searchMatchCaseRef.current,
+      wholeWord: searchWholeWordRef.current
+    }).then(function(data) {
+      var count   = data.replaced_count || 0;
+      var files   = data.files_affected || [];
+      var errors  = data.errors || [];
+      var msg = "Replaced " + count + " occurrence" + (count !== 1 ? "s" : "") + " in " + files.length + " file" + (files.length !== 1 ? "s" : "");
+      if (errors.length) msg += " (" + errors.length + " error" + (errors.length !== 1 ? "s" : "") + ")";
+      EditorStore.setStatus(msg, errors.length ? "warning" : "success");
+
+      // Invalidate search cache so next search reflects the new content.
+      SearchService.invalidate();
+
+      // Update any open Monaco models whose content changed.
+      if (files.length && window.__mbeditorModels) {
+        files.forEach(function(relPath) {
+          var model = window.__mbeditorModels[relPath];
+          if (!model) return;
+          FileService.getFile(relPath).then(function(res) {
+            if (res && res.content != null && !model.isDisposed()) {
+              model.setValue(res.content);
+            }
+          }).catch(function() {});
+        });
+      }
+
+      // Refresh search results to reflect replacements.
+      if (searchQueryRef.current) {
+        _debouncedSearch(searchQueryRef.current);
+      }
+    }).catch(function(err) {
+      EditorStore.setStatus("Replace failed: " + (err.message || String(err)), "error");
+    }).finally(function() {
+      setReplaceLoading(false);
+    });
+  };
+
   // Load more results when the user scrolls near the bottom of the list.
   var handleSearchResultsScroll = function handleSearchResultsScroll(e) {
     var el = e.currentTarget;
@@ -2759,6 +2827,16 @@ var MbeditorApp = function MbeditorApp() {
                 },
                 React.createElement("i", { className: "codicon codicon-regex" })
               ),
+              React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className: "search-adornment-btn" + (replaceMode ? " active" : ""),
+                  onClick: function() { setReplaceMode(function(p) { return !p; }); },
+                  title: "Toggle Replace"
+                },
+                React.createElement("i", { className: "codicon codicon-replace" })
+              ),
               searchQuery && React.createElement(
                 "button",
                 {
@@ -2770,6 +2848,33 @@ var MbeditorApp = function MbeditorApp() {
                 },
                 React.createElement("i", { className: "fas fa-times" })
               )
+            )
+          ),
+          replaceMode && React.createElement(
+            "div",
+            { className: "search-replace-row" },
+            React.createElement("input", {
+              className: "search-input search-replace-input",
+              placeholder: "Replace with…",
+              value: replaceQuery,
+              onChange: function(e) { setReplaceQuery(e.target.value); },
+              disabled: replaceLoading
+            }),
+            React.createElement(
+              "button",
+              {
+                type: "button",
+                className: "search-replace-all-btn",
+                onClick: handleReplaceAll,
+                disabled: !searchQuery.trim() || replaceLoading,
+                title: "Replace All"
+              },
+              replaceLoading
+                ? React.createElement("i", { className: "fas fa-spinner fa-spin" })
+                : React.createElement(React.Fragment, null,
+                    React.createElement("i", { className: "codicon codicon-replace-all" }),
+                    " Replace All"
+                  )
             )
           ),
           (function() {

@@ -350,6 +350,79 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
+    # POST /mbeditor/replace_in_files
+    # Replaces a string/pattern across all matching files in the workspace.
+    # Returns { replaced_count:, files_affected:[], errors:[] }
+    def replace_in_files
+      query       = params[:query].to_s.strip
+      replacement = params[:replacement].to_s
+      use_regex   = params[:regex] == 'true'
+      match_case  = params[:match_case] == 'true'
+      whole_word  = params[:whole_word] == 'true'
+
+      return render json: { error: "Query is required" }, status: :bad_request if query.blank?
+      return render json: { error: "Query too long" }, status: :bad_request if query.length > 500
+
+      # Collect all unique file paths that have at least one match.
+      # Use a large limit to get all matching files; stream_search_results handles deduplication by file internally.
+      raw_results = stream_search_results(query, 10_000, use_regex: use_regex, match_case: match_case, whole_word: whole_word)
+      unique_files = raw_results.map { |r| r[:file] }.uniq
+
+      replaced_count = 0
+      files_affected = []
+      errors = []
+
+      # Build the Ruby Regexp to use for gsub
+      begin
+        pattern = if use_regex
+          flags = match_case ? 0 : Regexp::IGNORECASE
+          Regexp.new(whole_word ? "\\b(?:#{query})\\b" : query, flags)
+        else
+          flags = match_case ? 0 : Regexp::IGNORECASE
+          Regexp.new(whole_word ? "\\b#{Regexp.escape(query)}\\b" : Regexp.escape(query), flags)
+        end
+      rescue RegexpError => e
+        return render json: { error: "Invalid regex: #{e.message}" }, status: :bad_request
+      end
+
+      unique_files.each do |rel_path|
+        full_path = resolve_path(rel_path)
+        unless full_path
+          errors << { file: rel_path, error: "Forbidden" }
+          next
+        end
+        unless File.file?(full_path)
+          errors << { file: rel_path, error: "File not found" }
+          next
+        end
+        if File.size(full_path) > MAX_OPEN_FILE_SIZE_BYTES
+          errors << { file: rel_path, error: "File too large" }
+          next
+        end
+
+        begin
+          original = File.binread(full_path)
+          content  = original.dup.force_encoding("UTF-8")
+          count_before = content.scan(pattern).length
+          new_content  = content.gsub(pattern, replacement)
+          count_after  = new_content.scan(pattern).length
+          delta = count_before - count_after
+
+          if delta > 0
+            File.binwrite(full_path, new_content.encode("UTF-8", invalid: :replace, undef: :replace))
+            replaced_count += delta
+            files_affected << rel_path
+          end
+        rescue StandardError => e
+          errors << { file: rel_path, error: e.message }
+        end
+      end
+
+      render json: { replaced_count: replaced_count, files_affected: files_affected, errors: errors }
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
     # GET /mbeditor/git_status
     def git_status
       output, _err, status = Open3.capture3("git", "-C", workspace_root.to_s, "status", "--porcelain")
