@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-30
+
+### Added
+- **Zen / focus mode** — `Cmd+Shift+Z` hides the sidebar and git panel for a distraction-free editing experience.
+- **Bulk find-and-replace** — search and replace across all workspace files in one operation.
+- **File content prefetch on hover** — opening a file from the tree is now instant; content is fetched while hovering the row.
+- **Client-side search cache** — search results are cached client-side for 30 s and invalidated automatically on save.
+- **Monaco model cache with LRU eviction** — in-memory Monaco models are capped at 15 and evicted in LRU order to keep memory use bounded.
+
+### Changed
+- **Faster initial render** — Monaco startup is now decoupled from the React mount lifecycle, cutting time-to-first-edit.
+- **Robust dirty-state tracking** — dirty state is now driven by Monaco's `alternativeVersionId`; `cleanVersionId` is reset correctly on save-on-close so re-opened tabs start clean.
+
+### Fixed
+- ActionCable reconnect logic hardened; regression tests added to confirm websocket lifecycle log filtering still works after reconnect.
+- Bulk replace: fixed a security issue and a correctness bug in the replacement pipeline; added covering tests.
+
 ## [0.4.5] - 2026-04-23
 
 ### Fixed
