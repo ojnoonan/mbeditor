@@ -467,6 +467,11 @@ var MbeditorApp = function MbeditorApp() {
   var draftRestoreOffer = _useState_dro2[0];
   var setDraftRestoreOffer = _useState_dro2[1];
 
+  var _useStateMR = useState(false);
+  var _useStateMR2 = _slicedToArray(_useStateMR, 2);
+  var monacoReady = _useStateMR2[0];
+  var setMonacoReady = _useStateMR2[1];
+
   var clamp = function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
   };
@@ -653,6 +658,16 @@ var MbeditorApp = function MbeditorApp() {
   useEffect(function () {
     // Subscribe to EditorStore
     var unsubscribe = EditorStore.subscribe(setState);
+
+    // Resolve monacoReady when the __monacoReady promise settles.
+    // This lets EditorPanel defer monaco.editor.create() until Monaco is loaded
+    // while the rest of the UI (file tree, tabs, sidebar) renders immediately.
+    if (window.__monacoReady && typeof window.__monacoReady.then === 'function') {
+      window.__monacoReady.then(function() { setMonacoReady(true); });
+    } else {
+      // Fallback: Monaco was already loaded synchronously (e.g. tests / old path).
+      setMonacoReady(true);
+    }
 
     // Initial load
     Promise.all([FileService.getWorkspace()["catch"](function () {
@@ -3445,6 +3460,7 @@ var MbeditorApp = function MbeditorApp() {
                   testLoading: testLoading,
                   testInlineVisible: testInlineVisible,
                   editorPrefs: editorPrefs,
+                  monacoReady: monacoReady,
                   onFormat: function() { onFormatRef.current(); },
                   onSave: function() { handleSave(pane.id, pActiveTab); },
                   onRunTest: handleRunTest,

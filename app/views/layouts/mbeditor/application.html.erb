@@ -104,7 +104,28 @@
 
           window.define = _define;
 
-          // Wait for Monaco to load before initializing application scripts
+          // Expose a promise that resolves when Monaco finishes loading.
+          // EditorPanel awaits this before calling monaco.editor.create().
+          var _monacoResolve;
+          window.__monacoReady = new Promise(function(resolve) { _monacoResolve = resolve; });
+
+          // Load application.js immediately — React mounts before Monaco is ready.
+          // EditorPanel will show a skeleton until window.__monacoReady resolves.
+          var appScript = document.createElement('script');
+          appScript.src = '<%= asset_path("mbeditor/application.js") %>';
+          appScript.onload = function() {
+            var root = document.getElementById('mbeditor-root');
+            var _R  = window.MbeditorRuntime.React;
+            var _RD = window.MbeditorRuntime.ReactDOM;
+            if (window.MbeditorApp && _R && _RD) {
+              _RD.render(_R.createElement(window.MbeditorApp), root);
+            } else {
+              console.error("Failed to mount: MbeditorApp or MbeditorRuntime is undefined.");
+            }
+          };
+          document.body.appendChild(appScript);
+
+          // Load Monaco in parallel — resolves the promise when done.
           require(['vs/editor/editor.main'], function() {
             // Register custom themes from the vendored bundle
             if (window.MBEDITOR_CUSTOM_THEMES && window.monaco) {
@@ -112,19 +133,7 @@
                 window.monaco.editor.defineTheme(id, window.MBEDITOR_CUSTOM_THEMES[id]);
               });
             }
-            var appScript = document.createElement('script');
-            appScript.src = '<%= asset_path("mbeditor/application.js") %>';
-            appScript.onload = function() {
-              var root = document.getElementById('mbeditor-root');
-              var _R  = window.MbeditorRuntime.React;
-              var _RD = window.MbeditorRuntime.ReactDOM;
-              if (window.MbeditorApp && _R && _RD) {
-                _RD.render(_R.createElement(window.MbeditorApp), root);
-              } else {
-                console.error("Failed to mount: MbeditorApp or MbeditorRuntime is undefined.");
-              }
-            };
-            document.body.appendChild(appScript);
+            _monacoResolve();
           });
         }
 

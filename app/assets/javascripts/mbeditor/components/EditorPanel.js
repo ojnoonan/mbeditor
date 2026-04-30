@@ -30,6 +30,7 @@ var EditorPanel = function EditorPanel(_ref) {
   var testLoading = _ref.testLoading;
   var testInlineVisible = _ref.testInlineVisible;
   var editorPrefs = _ref.editorPrefs || {};
+  var monacoReady = _ref.monacoReady !== false;
 
   var editorRef = useRef(null);
   var monacoRef = useRef(null);
@@ -132,7 +133,7 @@ var EditorPanel = function EditorPanel(_ref) {
 
   useEffect(function () {
     if (tab.isPreview) return;
-    if (!editorRef.current || !window.monaco) return;
+    if (!monacoReady || !editorRef.current || !window.monaco) return;
 
     if (window.MbeditorEditorPlugins && window.MbeditorEditorPlugins.registerGlobalExtensions) {
       window.MbeditorEditorPlugins.registerGlobalExtensions(window.monaco);
@@ -734,7 +735,7 @@ var EditorPanel = function EditorPanel(_ref) {
       editor.setModel(null);
       editor.dispose();
     };
-  }, [tab.id, tab.isPreview]); // re-run ONLY on tab switch, not on content change (Monaco handles its own content state)
+  }, [tab.id, tab.isPreview, monacoReady]); // re-run on tab switch or when Monaco becomes ready
 
   // Listen for external content changes (e.g. after Format/Load)
   // Only applies when externalContentVersion advances — prevents stale typing-originated
@@ -1361,6 +1362,16 @@ var EditorPanel = function EditorPanel(_ref) {
     var parts = path.split('/');
     if (parts.length <= 3) return path;
     return '\u2026/' + parts.slice(-2).join('/');
+  }
+
+  // While Monaco is still loading, show a lightweight skeleton so the UI is
+  // visible immediately without calling monaco.editor.create() too early.
+  if (!monacoReady) {
+    return React.createElement(
+      'div',
+      { className: 'monaco-container monaco-loading-skeleton', style: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888', fontSize: '13px' } },
+      'Loading editor…'
+    );
   }
 
   // Always render the same wrapper structure so the editorRef div is never
