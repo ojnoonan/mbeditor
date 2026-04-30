@@ -472,6 +472,11 @@ var MbeditorApp = function MbeditorApp() {
   var monacoReady = _useStateMR2[0];
   var setMonacoReady = _useStateMR2[1];
 
+  var _useStateZen = useState(false);
+  var _useStateZen2 = _slicedToArray(_useStateZen, 2);
+  var zenMode = _useStateZen2[0];
+  var setZenMode = _useStateZen2[1];
+
   var clamp = function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
   };
@@ -888,6 +893,10 @@ var MbeditorApp = function MbeditorApp() {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'G') {
         e.preventDefault();
         toggleGitPanel();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Z') {
+        e.preventDefault();
+        toggleZenMode();
       }
       if (e.key === 'Escape') {
         setContextMenu(null);
@@ -1776,6 +1785,26 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
+  var toggleZenMode = function toggleZenMode() {
+    setZenMode(function (prev) {
+      var next = !prev;
+      // After React re-renders the new layout, call layout() on all visible Monaco editors
+      // so they fill the reclaimed space correctly.
+      setTimeout(function () {
+        if (window.__mbeditorActiveEditor && typeof window.__mbeditorActiveEditor.layout === 'function') {
+          window.__mbeditorActiveEditor.layout();
+        }
+        // Also layout any secondary pane editor registered on the window
+        if (window.__mbeditorEditors && Array.isArray(window.__mbeditorEditors)) {
+          window.__mbeditorEditors.forEach(function (ed) {
+            if (ed && typeof ed.layout === 'function') ed.layout();
+          });
+        }
+      }, 50);
+      return next;
+    });
+  };
+
   var startGitPanelResize = function startGitPanelResize(e) {
     e.preventDefault();
     resizeSessionRef.current = { mode: 'gitpanel' };
@@ -2424,7 +2453,7 @@ var MbeditorApp = function MbeditorApp() {
       { className: "ide-body", id: "ide-body-container" },
       React.createElement(
         "div",
-        { className: "ide-sidebar" + (sidebarCollapsed ? " ide-sidebar-collapsed" : ""), style: { width: (sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth) + "px" } },
+        { className: "ide-sidebar" + (sidebarCollapsed ? " ide-sidebar-collapsed" : ""), style: { width: (sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth) + "px", display: zenMode ? 'none' : undefined } },
         sidebarCollapsed
           ? React.createElement(
               "div",
@@ -3598,6 +3627,10 @@ var MbeditorApp = function MbeditorApp() {
                             React.createElement("td", null, "Toggle git panel")
                           ),
                           React.createElement("tr", null,
+                            React.createElement("td", null, React.createElement("kbd", null, "Ctrl+Shift+Z")),
+                            React.createElement("td", null, "Toggle zen / focus mode")
+                          ),
+                          React.createElement("tr", null,
                             React.createElement("td", null, React.createElement("kbd", null, "Ctrl+Z\u00a0/\u00a0Ctrl+Y")),
                             React.createElement("td", null, "Undo / Redo")
                           )
@@ -3638,14 +3671,14 @@ var MbeditorApp = function MbeditorApp() {
       ),
 
       // Right-side Git panel (children of ide-body, alongside sidebar and ide-main)
-      showGitPanel && React.createElement("div", {
+      showGitPanel && !zenMode && React.createElement("div", {
         className: "panel-divider gitpanel-divider " + (activeResizeMode === 'gitpanel' ? 'active' : ''),
         onMouseDown: startGitPanelResize,
         role: "separator",
         "aria-orientation": "vertical",
         "aria-label": "Resize git panel"
       }),
-      showGitPanel && React.createElement(
+      showGitPanel && !zenMode && React.createElement(
         "div",
         { className: "ide-git-right-panel", style: { width: gitPanelWidth + "px" } },
         React.createElement(window.GitPanel || GitPanel, {
@@ -3721,6 +3754,16 @@ var MbeditorApp = function MbeditorApp() {
           onClick: function() { handleChangeEOL(activeEOL === 'CRLF' ? 'LF' : 'CRLF'); }
         },
         activeEOL
+      ),
+      zenMode && React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "statusbar-btn statusbar-zen-btn",
+          title: "Zen mode active — click or press Ctrl+Shift+Z to exit",
+          onClick: toggleZenMode
+        },
+        "ZEN"
       ),
       React.createElement(
         "div",
