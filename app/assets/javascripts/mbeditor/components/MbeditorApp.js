@@ -1162,6 +1162,11 @@ var MbeditorApp = function MbeditorApp() {
         EditorStore.setStatus("Saved", "success");
         SearchService.invalidate();
         GitService.fetchStatus();
+        // Reset the AVI clean baseline so undo past this save point shows dirty correctly.
+        var _closeEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+        if (_closeEntry && _closeEntry.model && !_closeEntry.model.isDisposed()) {
+          _closeEntry.cleanVersionId = _closeEntry.model.getAlternativeVersionId();
+        }
         TabManager.closeTab(closingPaneId, tab.id);
       })["catch"](function (err) {
         EditorStore.setStatus("Save failed: " + err.message, "error");
