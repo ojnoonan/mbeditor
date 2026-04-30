@@ -1182,6 +1182,49 @@ module Mbeditor
       assert_equal [], json["files_affected"]
     end
 
+    test "replace_in_files with whole_word=true only replaces whole words" do
+      File.write(File.join(@workspace, "app", "models", "user.rb"), "admin administrator superadmin\n")
+      post "/mbeditor/replace_in_files",
+           params: { query: "admin", replacement: "root", whole_word: "true" },
+           as: :json
+      assert_response :ok
+      content = File.read(File.join(@workspace, "app", "models", "user.rb"))
+      assert_includes content, "root"
+      assert_includes content, "administrator"  # substring — must NOT be replaced
+      assert_includes content, "superadmin"     # substring — must NOT be replaced
+      assert_equal 1, json["replaced_count"]
+    end
+
+    test "replace_in_files returns 422 when too many files matched" do
+      # Stub MAX_REPLACE_FILES to 0 so any match exceeds the cap
+      original = Mbeditor::EditorsController::MAX_REPLACE_FILES
+      $VERBOSE = nil
+      Mbeditor::EditorsController.send(:remove_const, :MAX_REPLACE_FILES)
+      Mbeditor::EditorsController.const_set(:MAX_REPLACE_FILES, 0)
+      $VERBOSE = true
+
+      File.write(File.join(@workspace, "README.md"), "hello\n")
+      post "/mbeditor/replace_in_files", params: { query: "hello", replacement: "world" }, as: :json
+      assert_response :unprocessable_entity
+      assert_match(/too many files/i, json["error"])
+    ensure
+      $VERBOSE = nil
+      Mbeditor::EditorsController.send(:remove_const, :MAX_REPLACE_FILES)
+      Mbeditor::EditorsController.const_set(:MAX_REPLACE_FILES, original)
+      $VERBOSE = true
+    end
+
+    test "replace_in_files with regex=true performs regex replacement" do
+      File.write(File.join(@workspace, "app", "models", "user.rb"), "foo123 foo456\n")
+      post "/mbeditor/replace_in_files",
+           params: { query: "foo\\d+", replacement: "bar", regex: "true", match_case: "true" },
+           as: :json
+      assert_response :ok
+      content = File.read(File.join(@workspace, "app", "models", "user.rb"))
+      assert_equal "bar bar\n", content
+      assert_equal 2, json["replaced_count"]
+    end
+
     private
 
     def json
