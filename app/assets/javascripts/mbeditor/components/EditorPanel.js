@@ -515,7 +515,18 @@ var EditorPanel = function EditorPanel(_ref) {
     } else {
       // Evict the LRU model if the cache is at capacity before creating a new one.
       TabManager.evictLruModel();
-      modelObj = window.monaco.editor.createModel(tab.content, language);
+
+      // Pretty-print JSON content before initial load
+      var contentForModel = tab.content;
+      if (language === 'json' && contentForModel) {
+        try {
+          contentForModel = JSON.stringify(JSON.parse(contentForModel), null, 2);
+        } catch (_) {
+          // invalid JSON — use raw content; Monaco will show error markers
+        }
+      }
+
+      modelObj = window.monaco.editor.createModel(contentForModel, language);
       window.__mbeditorModels[tab.path] = { model: modelObj, aviBase: null, aviMax: null, lastAccessed: Date.now(), cleanVersionId: null };
       _modelEntry = window.__mbeditorModels[tab.path];
     }
@@ -799,7 +810,19 @@ var EditorPanel = function EditorPanel(_ref) {
       // fires during setValue and skips the dirty check (cleanVersionId is null).
       var _initEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
       if (_initEntry) _initEntry.cleanVersionId = null;
-      editor.setValue(tab.content);
+
+      // Pretty-print JSON content before initial load
+      var contentToSet = tab.content;
+      var modelLang = model.getLanguageId();
+      if (modelLang === 'json' && contentToSet) {
+        try {
+          contentToSet = JSON.stringify(JSON.parse(contentToSet), null, 2);
+        } catch (_) {
+          // invalid JSON — use raw content; Monaco will show error markers
+        }
+      }
+
+      editor.setValue(contentToSet);
       // Reset the AVI baseline: setValue clears the undo stack so anything before
       // this point is no longer reachable. Also clear the canUndo/canRedo display.
       var newBase = model.getAlternativeVersionId();
