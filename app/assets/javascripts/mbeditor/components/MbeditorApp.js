@@ -111,6 +111,44 @@ var SectionActionGroup = function SectionActionGroup(_ref2) {
   );
 };
 
+function FileReloadBanner(_ref) {
+  var pendingReloads = _ref.pendingReloads;
+  var onSaveAndReload = _ref.onSaveAndReload;
+  var onDiscardAndReload = _ref.onDiscardAndReload;
+  var onKeepMine = _ref.onKeepMine;
+  if (!pendingReloads || pendingReloads.length === 0) return null;
+  return React.createElement(
+    'div', { className: 'mb-file-reload-banner' },
+    pendingReloads.map(function (r) {
+      return React.createElement(
+        'div', { key: r.paneId + ':' + r.tabId, className: 'mb-file-reload-item' },
+        React.createElement(
+          'span', { className: 'mb-file-reload-msg' },
+          React.createElement('i', { className: 'fas fa-sync-alt' }),
+          '  ',
+          React.createElement('strong', null, r.name),
+          '  was updated externally'
+        ),
+        React.createElement(
+          'div', { className: 'mb-file-reload-actions' },
+          React.createElement('button', {
+            className: 'mb-btn mb-btn-sm mb-btn-primary',
+            onClick: function () { onSaveAndReload(r); }
+          }, 'Save & Reload'),
+          React.createElement('button', {
+            className: 'mb-btn mb-btn-sm mb-btn-warning',
+            onClick: function () { onDiscardAndReload(r); }
+          }, 'Discard & Reload'),
+          React.createElement('button', {
+            className: 'mb-btn mb-btn-sm',
+            onClick: function () { onKeepMine(r); }
+          }, 'Keep Mine')
+        )
+      );
+    })
+  );
+}
+
 var MbeditorApp = function MbeditorApp() {
   var _useState = useState(EditorStore.getState());
 
@@ -1471,6 +1509,64 @@ var MbeditorApp = function MbeditorApp() {
       });
     });
   };
+
+  function dismissPendingReload(reload) {
+    EditorStore.setState({
+      pendingReloads: EditorStore.getState().pendingReloads.filter(function (r) {
+        return !(r.paneId === reload.paneId && r.tabId === reload.tabId);
+      })
+    });
+  }
+
+  function handleSaveAndReload(reload) {
+    var st = EditorStore.getState();
+    var pane = st.panes.find(function (p) { return p.id === reload.paneId; });
+    var tab = pane && pane.tabs.find(function (t) { return t.id === reload.tabId; });
+    if (!tab) { dismissPendingReload(reload); return; }
+    FileService.saveFile(tab.path, tab.content).then(function () {
+      EditorStore.setState({
+        panes: EditorStore.getState().panes.map(function (p) {
+          if (p.id !== reload.paneId) return p;
+          return Object.assign({}, p, {
+            tabs: p.tabs.map(function (t) {
+              if (t.id !== reload.tabId) return t;
+              return Object.assign({}, t, {
+                content: reload.serverContent,
+                dirty: false,
+                externalContentVersion: (t.externalContentVersion || 0) + 1
+              });
+            })
+          });
+        })
+      });
+      dismissPendingReload(reload);
+    })["catch"](function () {
+      EditorStore.setStatus('Save failed — cannot reload', 'error');
+    });
+  }
+
+  function handleDiscardAndReload(reload) {
+    EditorStore.setState({
+      panes: EditorStore.getState().panes.map(function (p) {
+        if (p.id !== reload.paneId) return p;
+        return Object.assign({}, p, {
+          tabs: p.tabs.map(function (t) {
+            if (t.id !== reload.tabId) return t;
+            return Object.assign({}, t, {
+              content: reload.serverContent,
+              dirty: false,
+              externalContentVersion: (t.externalContentVersion || 0) + 1
+            });
+          })
+        });
+      })
+    });
+    dismissPendingReload(reload);
+  }
+
+  function handleKeepMine(reload) {
+    dismissPendingReload(reload);
+  }
 
   var handleSaveAll = function handleSaveAll() {
     var dirtyTabs = state.panes.flatMap(function (p) {
