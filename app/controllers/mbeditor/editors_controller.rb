@@ -1071,10 +1071,14 @@ module Mbeditor
         rel = relative_path(full)
 
         if File.directory?(full)
-          { name: name, type: "folder", path: rel, children: build_tree(full, depth: depth + 1) }
+          node = { name: name, type: "folder", path: rel, children: build_tree(full, depth: depth + 1) }
+          node[:excluded] = true if excluded_path?(rel, name)
+          node
         else
           size = File.size(full) rescue nil
-          { name: name, type: "file", path: rel, size: size }
+          node = { name: name, type: "file", path: rel, size: size }
+          node[:excluded] = true if excluded_path?(rel, name)
+          node
         end
       end
     rescue Errno::EACCES
