@@ -730,8 +730,8 @@ module Mbeditor
 
     # GET /mbeditor/manifest.webmanifest — PWA manifest
     def pwa_manifest
-      _mount = request.script_name.to_s.gsub(%r{(^/+|/+$)}, "")
-      base = _mount.empty? ? "" : "/#{_mount}"
+      raw  = root_path.chomp("/")
+      base = raw.start_with?("/") || raw.empty? ? raw : "/#{raw}"
       manifest = {
         name: "Mbeditor — #{Rails.root.basename}",
         short_name: "Mbeditor",

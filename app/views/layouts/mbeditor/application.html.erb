@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#1e1e2e" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <% _mount = request.script_name.to_s.gsub(%r{(^/+|/+$)}, ''); pwa_base = _mount.empty? ? '' : "/#{_mount}" %>
+  <% _raw_base = root_path.chomp('/'); pwa_base = (_raw_base.start_with?('/') || _raw_base.empty?) ? _raw_base : "/#{_raw_base}" %>
   <link rel="manifest" href="<%= "#{pwa_base}/manifest.webmanifest" %>" />
   <script>
     if ('serviceWorker' in navigator) {
