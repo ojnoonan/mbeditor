@@ -481,8 +481,7 @@
         allowJs: true,
         checkJs: true,
         jsx: monaco.languages.typescript.JsxEmit.React,
-        noUnusedLocals: false,
-        noImplicitAny: false
+        noUnusedLocals: true
       });
     }
 
@@ -564,8 +563,7 @@
         target: monaco.languages.typescript.ScriptTarget.ES2020,
         allowNonTsExtensions: true,
         jsx: monaco.languages.typescript.JsxEmit.React,
-        noUnusedLocals: false,
-        noImplicitAny: false
+        noUnusedLocals: true
       });
     }
 
