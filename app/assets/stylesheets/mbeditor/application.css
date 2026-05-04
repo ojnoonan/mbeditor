@@ -861,3 +861,50 @@
 }
 
 .cdiff-ctx  { color: var(--ide-text-muted); }
+
+/* ── File Reload Banner ─────────────────────────────────────────── */
+.mb-file-reload-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex-shrink: 0;
+}
+
+.mb-file-reload-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 12px;
+  background: #2a2600;
+  border-bottom: 1px solid #5a5000;
+  font-size: 12px;
+  color: #e3d286;
+  gap: 12px;
+}
+
+.mb-file-reload-msg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mb-file-reload-actions {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.mb-btn-warning {
+  background: #6b4500;
+  color: #ffd88a;
+  border: 1px solid #8a5900;
+}
+
+.mb-btn-warning:hover {
+  background: #8a5900;
+}
