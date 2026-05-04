@@ -189,6 +189,16 @@ var FileService = (function () {
     prefetchCache.delete(path);
   }
 
+  function getJsDefinition(symbol, extraOptions) {
+    var config = Object.assign({ params: { symbol: symbol }, timeout: 5000 }, extraOptions || {});
+    return axios.get(window.mbeditorBasePath() + '/js_definition', config).then(function(res) { return res.data; });
+  }
+
+  function getJsMembers(symbol, extraOptions) {
+    var config = Object.assign({ params: { symbol: symbol }, timeout: 5000 }, extraOptions || {});
+    return axios.get(window.mbeditorBasePath() + '/js_members', config).then(function(res) { return res.data; });
+  }
+
   function getModuleMembers(name, extraOptions) {
     var config = Object.assign({ params: { name: name }, timeout: 8000 }, extraOptions || {});
     return axios.get(window.mbeditorBasePath() + '/module_members', config).then(function(res) { return res.data; });
@@ -225,6 +235,8 @@ var FileService = (function () {
     saveBranchState: saveBranchState,
     pruneBranchStates: pruneBranchStates,
     getDefinition: getDefinition,
+    getJsDefinition: getJsDefinition,
+    getJsMembers: getJsMembers,
     prefetch: prefetch,
     getPrefetched: getPrefetched,
     cancelPrefetch: cancelPrefetch,

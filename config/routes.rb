@@ -21,6 +21,8 @@ Mbeditor::Engine.routes.draw do
   get    'search',          to: 'editors#search'
   post   'replace_in_files', to: 'editors#replace_in_files'
   get    'definition',      to: 'editors#definition'
+  get    'js_definition',   to: 'editors#js_definition'
+  get    'js_members',      to: 'editors#js_members'
   get    'module_members',  to: 'editors#module_members'
   get    'file_includes',   to: 'editors#file_includes'
   get    'unused_methods',  to: 'editors#unused_methods'

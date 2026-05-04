@@ -51,6 +51,12 @@
 
   var globalsRegistered = false;
 
+  // JS global discovery: populated as definitions are found via hover/goto.
+  // Persists for the page lifetime so each symbol is only declared once.
+  var discoveredJsGlobals = {};
+  var jsHoverCache = {};
+  var jsMembersCache = {};
+
   // Enumerate window for user-defined globals and return a TypeScript declaration string.
   // Sprockets exposes every top-level var/function as a window property before Monaco
   // initialises, so scanning at registration time captures all components and helpers.
@@ -75,6 +81,36 @@
       }
     } catch (e) {}
     return lines.join('\n');
+  }
+
+  // Declare a discovered global in Monaco's extra libs so the TS2304 warning disappears.
+  // Calling addExtraLib with the same URI replaces the previous content in-place.
+  function addDiscoveredGlobal(name) {
+    if (discoveredJsGlobals[name]) return;
+    discoveredJsGlobals[name] = true;
+    var mts = window.monaco && window.monaco.languages && window.monaco.languages.typescript;
+    if (!mts) return;
+    var decls = Object.keys(discoveredJsGlobals)
+      .map(function(k) { return 'declare var ' + k + ': any;'; }).join('\n');
+    mts.javascriptDefaults.addExtraLib(decls, 'inmemory://mbeditor/discovered-globals.d.ts');
+  }
+
+  // Navigate to the first workspace definition of a JS symbol.
+  // Returns a Promise<boolean> — true if a definition was found and opened.
+  function navigateToJsWord(editor, word) {
+    if (typeof FileService === 'undefined' || !FileService.getJsDefinition) return Promise.resolve(false);
+    return FileService.getJsDefinition(word)
+      .then(function(data) {
+        var results = data && data.results;
+        if (!results || !results.length) return false;
+        var r = results[0];
+        addDiscoveredGlobal(word);
+        if (typeof TabManager !== 'undefined' && TabManager.openTab) {
+          TabManager.openTab(r.file, r.file.split('/').pop(), r.line);
+        }
+        return true;
+      })
+      .catch(function() { return false; });
   }
 
   function leadingWhitespace(line) {
@@ -231,6 +267,8 @@
     var emmetTabDisposable = null;
     var gotoMouseDisposable = null;
     var gotoActionDisposable = null;
+    var jsGotoMouseDisposable = null;
+    var jsGotoActionDisposable = null;
 
     // Emmet Tab expansion — active for markup and stylesheet languages
     var EMMET_MARKUP_LANGS = { html: true, xml: true, erb: true, 'html.erb': true, haml: true };
@@ -383,6 +421,42 @@
       });
     }
 
+    if (language === 'javascript') {
+      // Ctrl/Cmd+click — look up workspace definition; fall back to Monaco's built-in.
+      jsGotoMouseDisposable = editor.onMouseDown(function(event) {
+        var ctrlOrCmd = event.event.ctrlKey || event.event.metaKey;
+        if (!ctrlOrCmd) return;
+        if (!event.target || event.target.type !== 6) return;
+        var position = event.target.position;
+        if (!position) return;
+        var wordInfo = model.getWordAtPosition(position);
+        if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
+        event.event.preventDefault();
+        navigateToJsWord(editor, wordInfo.word).then(function(found) {
+          if (!found) editor.trigger('', 'editor.action.revealDefinition', null);
+        });
+      });
+
+      // F12 — go to JS definition from keyboard
+      jsGotoActionDisposable = editor.addAction({
+        id: 'mbeditor.gotoJsDefinition',
+        label: 'Go to JS Definition',
+        keybindings: [window.monaco.KeyCode.F12],
+        precondition: 'editorLangId == javascript',
+        contextMenuGroupId: 'navigation',
+        contextMenuOrder: 1.5,
+        run: function(ed) {
+          var pos = ed.getPosition();
+          if (!pos) return;
+          var wordInfo = model.getWordAtPosition(pos);
+          if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
+          navigateToJsWord(ed, wordInfo.word).then(function(found) {
+            if (!found) ed.trigger('', 'editor.action.revealDefinition', null);
+          });
+        }
+      });
+    }
+
     // Unused method dimming — grey out `def method_name` for methods with no
     // call-sites anywhere in the workspace.
     var unusedDecIds = [];
@@ -453,6 +527,8 @@
         if (emmetTabDisposable) emmetTabDisposable.dispose();
         if (gotoMouseDisposable) gotoMouseDisposable.dispose();
         if (gotoActionDisposable) gotoActionDisposable.dispose();
+        if (jsGotoMouseDisposable) jsGotoMouseDisposable.dispose();
+        if (jsGotoActionDisposable) jsGotoActionDisposable.dispose();
         contentDisposable.dispose();
         if (unusedSaveDisposable) unusedSaveDisposable.dispose();
         clearTimeout(unusedTimer);
@@ -1074,6 +1150,92 @@
           includesCache[path] = { ts: Date.now(), data: result };
           return buildSuggestions(result);
         }).catch(function() { return { suggestions: [] }; });
+      }
+    });
+
+    // JS/JSX hover provider: looks up workspace definitions for window globals.
+    // Only fires for mixed-case identifiers (skips lowercase-only names that are
+    // almost always browser builtins or local vars).
+    var JS_HOVER_CACHE_TTL_MS = 60000;
+    monaco.languages.registerHoverProvider('javascript', {
+      provideHover: function(model, position, token) {
+        var wordInfo = model.getWordAtPosition(position);
+        if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return null;
+        var word = wordInfo.word;
+        if (!/[A-Z]/.test(word)) return null;
+        if (typeof FileService === 'undefined' || !FileService.getJsDefinition) return null;
+
+        var cached = jsHoverCache[word];
+        if (cached && (Date.now() - cached.ts) < JS_HOVER_CACHE_TTL_MS) {
+          return cached.value || null;
+        }
+
+        var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        if (controller && token && token.onCancellationRequested) {
+          token.onCancellationRequested(function() { controller.abort(); });
+        }
+        return FileService.getJsDefinition(word, controller ? { signal: controller.signal } : {})
+          .then(function(data) {
+            if (token && token.isCancellationRequested) return null;
+            var results = data && data.results;
+            if (!results || !results.length) {
+              jsHoverCache[word] = { ts: Date.now(), value: null };
+              return null;
+            }
+            addDiscoveredGlobal(word);
+            var r = results[0];
+            var fileRef = r.file + ':' + r.line;
+            var value = {
+              contents: [
+                { value: '```javascript\n' + r.snippet + '\n```', isTrusted: true },
+                { value: '<span style="opacity:0.55;font-size:0.9em;">' + fileRef + '</span>', isTrusted: true, supportHtml: true }
+              ]
+            };
+            jsHoverCache[word] = { ts: Date.now(), value: value };
+            return value;
+          }).catch(function() { return null; });
+      }
+    });
+
+    // JS/JSX member completion provider: suggests properties/methods of workspace globals after '.'.
+    // Only looks up PascalCase/mixed-case identifiers or previously discovered globals.
+    var JS_MEMBERS_CACHE_TTL_MS = 60000;
+    monaco.languages.registerCompletionItemProvider('javascript', {
+      triggerCharacters: ['.'],
+      provideCompletionItems: function(model, position) {
+        var line = model.getLineContent(position.lineNumber);
+        var col  = position.column - 2; // index of character just before the '.'
+        var end  = col;
+        while (col >= 0 && /[a-zA-Z0-9_$]/.test(line[col])) col--;
+        var symbol = line.slice(col + 1, end + 1);
+        if (!symbol || symbol.length < 2) return { suggestions: [] };
+        if (!discoveredJsGlobals[symbol] && !/^[A-Z]/.test(symbol)) return { suggestions: [] };
+        if (typeof FileService === 'undefined' || !FileService.getJsMembers) return { suggestions: [] };
+
+        var cached = jsMembersCache[symbol];
+        if (cached && (Date.now() - cached.ts) < JS_MEMBERS_CACHE_TTL_MS) {
+          return { suggestions: cached.suggestions };
+        }
+
+        return FileService.getJsMembers(symbol)
+          .then(function(data) {
+            var members = (data && data.members) || [];
+            var suggestions = members.map(function(m) {
+              return {
+                label: m.name,
+                kind: monaco.languages.CompletionItemKind.Method,
+                detail: symbol,
+                documentation: m.snippet,
+                insertText: m.name,
+                range: {
+                  startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
+                  startColumn: position.column, endColumn: position.column
+                }
+              };
+            });
+            jsMembersCache[symbol] = { ts: Date.now(), suggestions: suggestions };
+            return { suggestions: suggestions };
+          }).catch(function() { return { suggestions: [] }; });
       }
     });
 

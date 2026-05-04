@@ -422,6 +422,35 @@ Rails.application.config.after_initialize do
   # Written on every boot so they survive a tmp/ wipe.
   FileUtils.mkdir_p(sample_workspace.join("app", "assets", "javascripts"))
 
+  # globals_registry.js — defines the host-app globals that globals_test.js/jsx
+  # reference. This file is the definition target for Ctrl+Click / hover.
+  File.write(sample_workspace.join("app", "assets", "javascripts", "globals_registry.js"), <<~JS)
+    // Host-app global registry — definitions that mbeditor's Ctrl+Click resolves to.
+
+    window.ReactWindow = (function() {
+      var _ref = null;
+      return {
+        current:   function() { return _ref; },
+        setCurrent: function(r) { _ref = r; },
+        getConfig:  function() { return window.__appConfig || {}; }
+      };
+    })();
+
+    window.RequestMethods = {
+      all:       function() { return Object.keys(window.RequestMethods._registry); },
+      endpoints: function() { return Object.values(window.RequestMethods._registry); },
+      register:  function(name, url) { window.RequestMethods._registry[name] = url; },
+      _registry: {}
+    };
+
+    window.ModalStore = {
+      _stack: [],
+      open:        function(id, props) { window.ModalStore._stack.push({ id: id, props: props }); },
+      close:       function() { return window.ModalStore._stack.pop(); },
+      getInstance: function() { return window.ModalStore; }
+    };
+  JS
+
   # globals_test.js — verifies that host-app window globals (RequestMethods,
   # ReactWindow, ModalStore) are auto-detected and not flagged as undefined.
   # Also checks that JSDoc optional params don't produce false squiggles.

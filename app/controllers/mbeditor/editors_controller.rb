@@ -351,6 +351,34 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
+    # GET /mbeditor/js_definition?symbol=ReactWindow
+    # Searches workspace JS/JSX/TS/TSX files for global definitions of the named symbol.
+    def js_definition
+      symbol = params[:symbol].to_s.strip
+      return render json: { results: [] } if symbol.blank?
+      return render json: { error: "Invalid symbol" }, status: :bad_request \
+        unless symbol.match?(/\A[a-zA-Z_$][a-zA-Z0-9_$]{0,59}\z/)
+
+      results = JsDefinitionService.new(symbol, workspace_root).call
+      render json: { results: results }
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
+    # GET /mbeditor/js_members?symbol=ReactWindow
+    # Searches workspace JS/JSX/TS/TSX files for properties/methods of the named global.
+    def js_members
+      symbol = params[:symbol].to_s.strip
+      return render json: { members: [] } if symbol.blank?
+      return render json: { error: "Invalid symbol" }, status: :bad_request \
+        unless symbol.match?(/\A[a-zA-Z_$][a-zA-Z0-9_$]{0,59}\z/)
+
+      members = JsMembersService.new(symbol, workspace_root).call
+      render json: { symbol: symbol, members: members }
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
     # GET /mbeditor/module_members?name=ArticlesHelper
     # Returns methods defined in the workspace file that defines the named module/class.
     def module_members
