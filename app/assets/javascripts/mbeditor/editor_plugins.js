@@ -68,9 +68,6 @@
         var key = keys[i];
         if (alreadyDeclared[key]) continue;
         if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key)) continue;
-        var desc;
-        try { desc = Object.getOwnPropertyDescriptor(window, key); } catch (e) { continue; }
-        if (!desc || !desc.configurable || !desc.writable || desc.get) continue;
         var value;
         try { value = window[key]; } catch (e) { continue; }
         if (value === null || value === undefined) continue;
@@ -484,15 +481,16 @@
         allowJs: true,
         checkJs: true,
         jsx: monaco.languages.typescript.JsxEmit.React,
-        noUnusedLocals: true
+        noUnusedLocals: false,
+        noImplicitAny: false
       });
     }
 
-    // Declare globals that the sprockets asset pipeline injects at runtime so
-    // checkJs doesn't flag them as undefined.  `interface Window` augmentation
-    // covers `window.myAppGlobal` access patterns.  For app-specific component
-    // names not listed here, add `/* global MyComponent */` at the top of the
-    // file — TypeScript's checkJs mode respects that directive.
+    // Declare globals that are injected at runtime so checkJs doesn't flag them
+    // as undefined. The buildWindowGlobalsShim() function automatically detects
+    // window globals from the host application. Common Sprockets globals
+    // (React, ReactDOM, etc.) are declared explicitly. For additional globals
+    // not auto-detected, add `/* global MyComponent */` at the top of the file.
     if (monaco.languages.typescript && monaco.languages.typescript.javascriptDefaults) {
       monaco.languages.typescript.javascriptDefaults.addExtraLib(
         [
@@ -515,12 +513,18 @@
         );
       }
 
-      // Downgrade "declared but never read" (TS6133) from Error to Warning.
-      // TypeScript has no built-in way to emit this as a warning, so we intercept
+      // Downgrade certain TypeScript diagnostic codes from Error to Warning.
+      // TypeScript has no built-in way to emit these as warnings, so we intercept
       // the marker set after the worker fires and re-apply with lower severity.
-      // JS files use owner 'javascript', TS files use 'typescript'.
-      var WARN_CODES = { '6133': true };
-      var TS_OWNERS = ['javascript', 'typescript'];
+      //
+      // Patch markers after the TypeScript worker fires:
+      // - JS files: suppress TS2304 ("Cannot find name") entirely — host-app globals
+      //   injected at runtime are invisible to the language service, so these are
+      //   almost always false positives. TS2304 stays as an error in .ts files.
+      // - Both: downgrade TS6133 ("declared but never read") from Error to Warning.
+      var JS_SUPPRESS_CODES = { '2304': true };
+      var JS_WARN_CODES    = { '6133': true };
+      var TS_WARN_CODES    = { '6133': true };
       var _severityPatchActive = false;
       monaco.editor.onDidChangeMarkers(function(uris) {
         if (_severityPatchActive) return;
@@ -529,14 +533,20 @@
           uris.forEach(function(uri) {
             var model = monaco.editor.getModel(uri);
             if (!model) return;
-            TS_OWNERS.forEach(function(owner) {
-              var markers = monaco.editor.getModelMarkers({ resource: uri, owner: owner });
+            [
+              { owner: 'javascript', suppress: JS_SUPPRESS_CODES, warn: JS_WARN_CODES },
+              { owner: 'typescript', suppress: {},                 warn: TS_WARN_CODES }
+            ].forEach(function(entry) {
+              var markers = monaco.editor.getModelMarkers({ resource: uri, owner: entry.owner });
               var needsPatch = markers.some(function(m) {
-                return m.severity === monaco.MarkerSeverity.Error && WARN_CODES[String(m.code)];
+                var code = String(m.code);
+                return (m.severity === monaco.MarkerSeverity.Error && (entry.suppress[code] || entry.warn[code]));
               });
               if (!needsPatch) return;
-              monaco.editor.setModelMarkers(model, owner, markers.map(function(m) {
-                return (m.severity === monaco.MarkerSeverity.Error && WARN_CODES[String(m.code)])
+              monaco.editor.setModelMarkers(model, entry.owner, markers.filter(function(m) {
+                return !entry.suppress[String(m.code)];
+              }).map(function(m) {
+                return (m.severity === monaco.MarkerSeverity.Error && entry.warn[String(m.code)])
                   ? Object.assign({}, m, { severity: monaco.MarkerSeverity.Warning })
                   : m;
               }));
@@ -548,13 +558,14 @@
       });
     }
 
-    // TypeScript: enable JSX for .tsx files and catch unused locals.
+    // TypeScript: enable JSX for .tsx files.
     if (monaco.languages.typescript && monaco.languages.typescript.typescriptDefaults) {
       monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
         target: monaco.languages.typescript.ScriptTarget.ES2020,
         allowNonTsExtensions: true,
         jsx: monaco.languages.typescript.JsxEmit.React,
-        noUnusedLocals: true
+        noUnusedLocals: false,
+        noImplicitAny: false
       });
     }
 

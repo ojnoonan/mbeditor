@@ -35,7 +35,7 @@ var EditorPanel = function EditorPanel(_ref) {
   var editorRef = useRef(null);
   var monacoRef = useRef(null);
   var latestContentRef = useRef('');
-  var lastAppliedExternalVersionRef = useRef(-1);
+  var lastAppliedExternalVersionRef = useRef(0);
   var aviBaseRef = useRef(0);
   var aviMaxRef = useRef(0);
 
@@ -832,12 +832,19 @@ var EditorPanel = function EditorPanel(_ref) {
       EditorStore.setState({ canUndo: false, canRedo: false });
     } else {
       // Keep undo stack for formats or replaces by using executeEdits
+      var _extEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+      if (_extEntry) _extEntry.cleanVersionId = null;
       editor.pushUndoStop();
       editor.executeEdits("external", [{
         range: model.getFullModelRange(),
         text: tab.content
       }]);
       editor.pushUndoStop();
+      // Re-anchor the clean baseline so onDidChangeContent doesn't mark this
+      // externally-applied content as a dirty edit.
+      var _newExtAvi = model.getAlternativeVersionId();
+      if (_extEntry) _extEntry.cleanVersionId = _newExtAvi;
+      aviBaseRef.current = _newExtAvi;
     }
   }, [tab.content, tab.externalContentVersion]);
 

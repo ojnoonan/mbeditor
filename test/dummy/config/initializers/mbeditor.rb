@@ -418,10 +418,102 @@ Rails.application.config.after_initialize do
     end
   RUBY
 
-  # ── JSX lint test files ─────────────────────────────────────────────────────
-  # Written on every boot so they survive a tmp/ wipe.  Each file contains a
-  # deliberate syntax error to verify that JS/JSX linting catches it.
+  # ── JS/JSX test files ───────────────────────────────────────────────────────
+  # Written on every boot so they survive a tmp/ wipe.
   FileUtils.mkdir_p(sample_workspace.join("app", "assets", "javascripts"))
+
+  # globals_test.js — verifies that host-app window globals (RequestMethods,
+  # ReactWindow, ModalStore) are auto-detected and not flagged as undefined.
+  # Also checks that JSDoc optional params don't produce false squiggles.
+  File.write(sample_workspace.join("app", "assets", "javascripts", "globals_test.js"), <<~JS)
+    // Syntax-highlighting smoke test: globals and optional parameters.
+    //
+    // None of the globals below should show "Cannot find name" errors —
+    // they are auto-detected from window at editor load time.
+    // Optional @param calls with the argument omitted should be error-free.
+
+    // --- Globals injected by the host Rails app ---
+    var methods = RequestMethods.all();
+    var win     = ReactWindow.current();
+    var store   = ModalStore.getInstance();
+
+    // --- Optional parameter smoke tests ---
+
+    /**
+     * @param {string} message
+     * @param {string} [title]
+     */
+    function showAlert(message, title) {
+      return (title || "Alert") + ": " + message;
+    }
+
+    /**
+     * @param {Object} options
+     * @param {string} options.url
+     * @param {string} [options.method]
+     * @param {Object} [options.body]
+     */
+    function makeRequest(options) {
+      var method = options.method || "GET";
+      return fetch(options.url, { method: method, body: options.body });
+    }
+
+    showAlert("Hello");
+    showAlert("Hello", "World");
+    makeRequest({ url: "/api/data" });
+    makeRequest({ url: "/api/data", method: "POST", body: { key: "value" } });
+  JS
+
+  # globals_test.jsx — same checks in JSX: globals in component bodies,
+  # optional props without "missing argument" errors.
+  File.write(sample_workspace.join("app", "assets", "javascripts", "globals_test.jsx"), <<~JSX)
+    // Syntax-highlighting smoke test: JSX globals and optional props.
+    //
+    // ReactWindow, RequestMethods, and ModalStore should not show errors.
+    // Components with optional props should not produce missing-argument squiggles.
+
+    // --- Globals injected by the host Rails app ---
+    var config    = ReactWindow.getConfig();
+    var endpoints = RequestMethods.endpoints();
+    var openModal = ModalStore.open;
+
+    // --- React components with optional props ---
+
+    /**
+     * @param {{ title: string, subtitle?: string, onClose?: Function }} props
+     */
+    function Modal(props) {
+      return (
+        <div className="modal">
+          <h2>{props.title}</h2>
+          {props.subtitle && <p>{props.subtitle}</p>}
+          {props.onClose && <button onClick={props.onClose}>Close</button>}
+        </div>
+      );
+    }
+
+    /**
+     * @param {{ items: Array, loading?: boolean }} props
+     */
+    function ItemList(props) {
+      if (props.loading) {
+        return <div>Loading...</div>;
+      }
+      return (
+        <ul>
+          {props.items.map(function(item, idx) {
+            return <li key={idx}>{item.name}</li>;
+          })}
+        </ul>
+      );
+    }
+
+    // All four calls below should be error-free — optional props omitted intentionally
+    var a = <Modal title="Confirm" />;
+    var b = <Modal title="Info" subtitle="More detail" />;
+    var c = <ItemList items={[{ name: "First" }]} />;
+    var d = <ItemList items={[]} loading={true} />;
+  JSX
 
   File.write(sample_workspace.join("app", "assets", "javascripts", "missing_closing_tag.jsx"), <<~JSX)
     // Error: JSX element is never closed
