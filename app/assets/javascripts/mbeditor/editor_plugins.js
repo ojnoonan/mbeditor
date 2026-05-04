@@ -51,9 +51,10 @@
 
   var globalsRegistered = false;
 
-  // JS global discovery: populated as definitions are found via hover/goto.
+  // JS global discovery: populated as definitions are found via hover/goto/auto-resolve.
   // Persists for the page lifetime so each symbol is only declared once.
   var discoveredJsGlobals = {};
+  var attemptedJsGlobals  = {}; // symbols already looked up (found OR not found)
   var jsHoverCache = {};
   var jsMembersCache = {};
 
@@ -630,6 +631,31 @@
           });
         } finally {
           _severityPatchActive = false;
+        }
+
+        // Auto-resolve TS2304 ("Cannot find name 'X'") for JS files by
+        // looking up the symbol in the workspace. If found, addDiscoveredGlobal
+        // declares it via addExtraLib and Monaco re-validates, removing the warning.
+        if (typeof FileService !== 'undefined' && FileService.getJsDefinition) {
+          uris.forEach(function(uri) {
+            var model = monaco.editor.getModel(uri);
+            if (!model) return;
+            var markers = monaco.editor.getModelMarkers({ resource: uri, owner: 'javascript' });
+            markers.forEach(function(m) {
+              if (String(m.code) !== '2304') return;
+              // Extract symbol name from message: "Cannot find name 'ReactWindow'."
+              var match = m.message && m.message.match(/Cannot find name '([^']+)'/);
+              if (!match) return;
+              var sym = match[1];
+              if (attemptedJsGlobals[sym]) return;
+              attemptedJsGlobals[sym] = true;
+              FileService.getJsDefinition(sym)
+                .then(function(data) {
+                  if (data && data.results && data.results.length) addDiscoveredGlobal(sym);
+                })
+                .catch(function() {});
+            });
+          });
         }
       });
     }
