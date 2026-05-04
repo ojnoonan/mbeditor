@@ -1137,11 +1137,70 @@ var MbeditorApp = function MbeditorApp() {
           SearchService.buildIndex(newData);
           return newData;
         });
+        checkOpenTabsForExternalChanges();
       })["catch"](function () {});
     }
     WebSocketService.onFilesChanged(handleFilesChanged);
     return function () { WebSocketService.offFilesChanged(handleFilesChanged); };
   }, []);
+
+  function checkOpenTabsForExternalChanges() {
+    var st = EditorStore.getState();
+    var allTabs = st.panes.reduce(function (acc, p) {
+      return acc.concat(p.tabs.map(function (t) { return { paneId: p.id, tab: t }; }));
+    }, []);
+    var fileTabs = allTabs.filter(function (pt) {
+      var path = pt.tab.path || '';
+      return path &&
+        !path.startsWith('mbeditor://') &&
+        !path.startsWith('diff://') &&
+        !path.startsWith('combined-diff://') &&
+        !pt.tab.isCombinedDiff &&
+        !pt.tab.isSettings &&
+        !pt.tab.isImage &&
+        !pt.tab.isDiff &&
+        typeof pt.tab.content === 'string';
+    });
+    fileTabs.forEach(function (pt) {
+      FileService.getFile(pt.tab.path, { allowMissing: true }).then(function (data) {
+        if (!data || typeof data.content !== 'string') return;
+        var serverNorm = data.content.replace(/\r\n/g, '\n');
+        var tabNorm = (pt.tab.content || '').replace(/\r\n/g, '\n');
+        if (serverNorm === tabNorm) return;
+        if (!pt.tab.dirty) {
+          EditorStore.setState({
+            panes: EditorStore.getState().panes.map(function (p) {
+              if (p.id !== pt.paneId) return p;
+              return Object.assign({}, p, {
+                tabs: p.tabs.map(function (t) {
+                  if (t.id !== pt.tab.id) return t;
+                  return Object.assign({}, t, {
+                    content: data.content,
+                    externalContentVersion: (t.externalContentVersion || 0) + 1
+                  });
+                })
+              });
+            })
+          });
+        } else {
+          var existing = EditorStore.getState().pendingReloads.find(function (r) {
+            return r.paneId === pt.paneId && r.tabId === pt.tab.id;
+          });
+          if (!existing) {
+            EditorStore.setState({
+              pendingReloads: EditorStore.getState().pendingReloads.concat([{
+                paneId: pt.paneId,
+                tabId: pt.tab.id,
+                path: pt.tab.path,
+                name: pt.tab.name,
+                serverContent: data.content
+              }])
+            });
+          }
+        }
+      })["catch"](function () {});
+    });
+  }
 
   // Auto-refresh the file tree every 10s to pick up external changes (new files, deletions, etc.)
   // When an ActionCable WebSocket is connected this acts only as a safety-net fallback —
@@ -3871,6 +3930,12 @@ var MbeditorApp = function MbeditorApp() {
                 React.Fragment,
                 null,
                 renderTabBar(pane.id, pane.tabs, pane.activeTabId),
+                React.createElement(FileReloadBanner, {
+                  pendingReloads: (state.pendingReloads || []).filter(function (r) { return r.paneId === pane.id; }),
+                  onSaveAndReload: handleSaveAndReload,
+                  onDiscardAndReload: handleDiscardAndReload,
+                  onKeepMine: handleKeepMine
+                }),
                 React.createElement(
                   "div",
                   { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', visibility: activeResizeMode === 'pane' ? 'hidden' : 'visible' } },
