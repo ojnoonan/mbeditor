@@ -15,6 +15,7 @@ var EditorStore = (function () {
     searchResults: [],
     searchCapped: false,
     statusMessage: { text: "", kind: "info" },
+    pendingReloads: [],
     canUndo: false,
     canRedo: false,
   };
