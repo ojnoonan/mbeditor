@@ -1183,6 +1183,12 @@ var MbeditorApp = function MbeditorApp() {
             })
           });
         } else {
+          // Re-verify the tab still exists before queuing
+          var currentState = EditorStore.getState();
+          var stillExists = currentState.panes.some(function (p) {
+            return p.id === pt.paneId && p.tabs.some(function (t) { return t.id === pt.tab.id; });
+          });
+          if (!stillExists) return;
           var existing = EditorStore.getState().pendingReloads.find(function (r) {
             return r.paneId === pt.paneId && r.tabId === pt.tab.id;
           });
@@ -1265,6 +1271,13 @@ var MbeditorApp = function MbeditorApp() {
       setClosingTabId(id);
     } else {
       TabManager.closeTab(paneId, id);
+      EditorStore.setState({
+        pendingReloads: EditorStore.getState().pendingReloads.filter(function (r) {
+          return EditorStore.getState().panes.some(function (p) {
+            return p.tabs.some(function (t) { return t.id === r.tabId; });
+          });
+        })
+      });
     }
   };
 
@@ -1296,6 +1309,13 @@ var MbeditorApp = function MbeditorApp() {
           _closeEntry.cleanVersionId = _closeEntry.model.getAlternativeVersionId();
         }
         TabManager.closeTab(closingPaneId, tab.id);
+        EditorStore.setState({
+          pendingReloads: EditorStore.getState().pendingReloads.filter(function (r) {
+            return EditorStore.getState().panes.some(function (p) {
+              return p.tabs.some(function (t) { return t.id === r.tabId; });
+            });
+          })
+        });
       })["catch"](function (err) {
         EditorStore.setStatus("Save failed: " + err.message, "error");
       })["finally"](function () {
@@ -1307,6 +1327,13 @@ var MbeditorApp = function MbeditorApp() {
       });
     } else {
       TabManager.closeTab(closingPaneId, tab.id);
+      EditorStore.setState({
+        pendingReloads: EditorStore.getState().pendingReloads.filter(function (r) {
+          return EditorStore.getState().panes.some(function (p) {
+            return p.tabs.some(function (t) { return t.id === r.tabId; });
+          });
+        })
+      });
       setClosingTabId(null);
       setClosingPaneId(null);
     }
@@ -1590,7 +1617,7 @@ var MbeditorApp = function MbeditorApp() {
             tabs: p.tabs.map(function (t) {
               if (t.id !== reload.tabId) return t;
               return Object.assign({}, t, {
-                content: reload.serverContent,
+                content: tab.content,
                 dirty: false,
                 externalContentVersion: (t.externalContentVersion || 0) + 1
               });
