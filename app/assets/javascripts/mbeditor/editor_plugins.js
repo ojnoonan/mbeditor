@@ -517,11 +517,11 @@
       // the marker set after the worker fires and re-apply with lower severity.
       //
       // Patch markers after the TypeScript worker fires:
-      // - JS files: suppress TS2304 ("Cannot find name") entirely — host-app globals
-      //   injected at runtime are invisible to the language service, so these are
-      //   almost always false positives. TS2304 stays as an error in .ts files.
       // - Both: downgrade TS6133 ("declared but never read") from Error to Warning.
-      var JS_SUPPRESS_CODES = { '2304': true };
+      // Host-app globals are handled by the dynamic window shim and explicit
+      // addExtraLib declarations above — we do not suppress TS2304 globally so
+      // that genuinely undefined names are still flagged as errors.
+      var JS_SUPPRESS_CODES = {};
       var JS_WARN_CODES    = { '6133': true };
       var TS_WARN_CODES    = { '6133': true };
       var _severityPatchActive = false;
