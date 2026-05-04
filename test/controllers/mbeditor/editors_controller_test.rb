@@ -866,6 +866,16 @@ module Mbeditor
       assert_equal "/mbeditor/mbeditor-icon.svg", manifest.fetch("icons").first.fetch("src")
     end
 
+    test "manifest urls are absolute when SCRIPT_NAME lacks a leading slash" do
+      get "/mbeditor/manifest.webmanifest", headers: { "SCRIPT_NAME" => "mbeditor" }
+
+      assert_response :ok
+      manifest = JSON.parse(response.body)
+      assert manifest.fetch("start_url").start_with?("/"), "start_url must be an absolute path"
+      assert manifest.fetch("scope").start_with?("/"), "scope must be an absolute path"
+      assert manifest.fetch("icons").first.fetch("src").start_with?("/"), "icon src must be an absolute path"
+    end
+
     test "service worker avoids no-op fetch handler" do
       get "/mbeditor/sw.js"
 

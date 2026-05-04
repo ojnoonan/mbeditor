@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#1e1e2e" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <% pwa_base = request.script_name.to_s.sub(%r{/$}, '') %>
+  <% _mount = request.script_name.to_s.gsub(%r{(^/+|/+$)}, ''); pwa_base = _mount.empty? ? '' : "/#{_mount}" %>
   <link rel="manifest" href="<%= "#{pwa_base}/manifest.webmanifest" %>" />
   <script>
     if ('serviceWorker' in navigator) {
@@ -32,7 +32,7 @@
   <script defer src="<%= asset_path('minisearch.min.js') %>"></script>
   <script defer src="<%= asset_path('marked.min.js') %>"></script>
   <!-- ── Monaco loader (sync — inline body script calls require()) ── -->
-  <% base_path = request.script_name.to_s.sub(%r{/$}, '') %>
+  <% base_path = pwa_base %>
   <script>var require = { paths: { vs: '<%= json_escape("#{base_path}/monaco-editor/vs") %>', 'monaco-editor/esm/vs': '<%= json_escape("#{base_path}/monaco-editor/vs") %>', 'monaco-vim': '<%= json_escape(asset_path("monaco-vim.js").sub(/\.js$/, "")) %>' } };</script>
   <script src="<%= "#{base_path}/monaco-editor/vs/loader.js" %>"></script>
   <!-- ── Emmet + Extra themes (non-AMD, deferred — used inside Monaco callback) ── -->
