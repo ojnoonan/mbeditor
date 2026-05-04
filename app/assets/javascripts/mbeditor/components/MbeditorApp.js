@@ -1740,6 +1740,29 @@ var MbeditorApp = function MbeditorApp() {
     EditorStore.setStatus('Line endings changed to ' + newEOL, 'info');
   };
 
+  var handleRefreshWorkspace = function handleRefreshWorkspace() {
+    setLoading(function (prev) {
+      return _extends({}, prev, { refreshWorkspace: true });
+    });
+    GitService.fetchStatus()["catch"](function () {});
+    FileService.getTree().then(function (data) {
+      var newData = data || [];
+      setTreeData(function (prevData) {
+        if (JSON.stringify(newData) === JSON.stringify(prevData)) return prevData;
+        SearchService.buildIndex(newData);
+        return newData;
+      });
+      checkOpenTabsForExternalChanges();
+      EditorStore.setStatus("Workspace refreshed", "success");
+    })["catch"](function (err) {
+      EditorStore.setStatus("Failed to refresh workspace", "error");
+    })["finally"](function () {
+      setLoading(function (prev) {
+        return _extends({}, prev, { refreshWorkspace: false });
+      });
+    });
+  };
+
   var handleFormat = function handleFormat() {
     if (!activeTab) return;
 
@@ -2971,6 +2994,13 @@ var MbeditorApp = function MbeditorApp() {
               actions: React.createElement(
                 SectionActionGroup,
                 { ariaLabel: "Project actions" },
+                React.createElement(SidebarActionButton, {
+                  title: "Refresh workspace",
+                  iconClass: "fas fa-sync-alt",
+                  ariaBusy: !!loading.refreshWorkspace,
+                  onClick: handleRefreshWorkspace,
+                  disabled: !!loading.refreshWorkspace
+                }),
                 React.createElement(SidebarActionButton, {
                   title: "Collapse all folders",
                   iconClass: "fas fa-compress-alt",
