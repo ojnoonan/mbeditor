@@ -36,8 +36,14 @@ var EditorPanel = function EditorPanel(_ref) {
   var monacoRef = useRef(null);
   var latestContentRef = useRef('');
   var lastAppliedExternalVersionRef = useRef(0);
+  var conflictDecorationsRef = React.useRef([]);
+  var conflictBlocksRef = React.useRef([]);
   var aviBaseRef = useRef(0);
   var aviMaxRef = useRef(0);
+
+  var _conflictState = React.useState(0);
+  var conflictCount = _conflictState[0];
+  var setConflictCount = _conflictState[1];
 
   var _useState = useState('');
   var _useState2 = _slicedToArray(_useState, 2);
@@ -846,6 +852,54 @@ var EditorPanel = function EditorPanel(_ref) {
       if (_extEntry) _extEntry.cleanVersionId = _newExtAvi;
       aviBaseRef.current = _newExtAvi;
     }
+  }, [tab.content, tab.externalContentVersion]);
+
+  useEffect(function () {
+    var editor = monacoRef.current;
+    if (!editor || !window.monaco || typeof tab.content !== 'string') return;
+    var model = editor.getModel();
+    if (!model) return;
+
+    if (!ConflictParser.hasConflicts(tab.content)) {
+      conflictDecorationsRef.current = model.deltaDecorations(conflictDecorationsRef.current, []);
+      conflictBlocksRef.current = [];
+      setConflictCount(0);
+      return;
+    }
+
+    var blocks = ConflictParser.parse(tab.content);
+    conflictBlocksRef.current = blocks;
+    setConflictCount(blocks.length);
+
+    var decorations = [];
+    blocks.forEach(function (block) {
+      decorations.push({
+        range: new window.monaco.Range(block.startLine + 1, 1, block.startLine + 1, 1),
+        options: { isWholeLine: true, className: 'mb-conflict-marker-line' }
+      });
+      if (block.headEnd > block.startLine + 1) {
+        decorations.push({
+          range: new window.monaco.Range(block.startLine + 2, 1, block.headEnd, 1),
+          options: { isWholeLine: true, className: 'mb-conflict-head' }
+        });
+      }
+      decorations.push({
+        range: new window.monaco.Range(block.dividerLine + 1, 1, block.dividerLine + 1, 1),
+        options: { isWholeLine: true, className: 'mb-conflict-marker-line' }
+      });
+      if (block.endLine > block.dividerLine + 1) {
+        decorations.push({
+          range: new window.monaco.Range(block.dividerLine + 2, 1, block.endLine, 1),
+          options: { isWholeLine: true, className: 'mb-conflict-incoming' }
+        });
+      }
+      decorations.push({
+        range: new window.monaco.Range(block.endLine + 1, 1, block.endLine + 1, 1),
+        options: { isWholeLine: true, className: 'mb-conflict-marker-line' }
+      });
+    });
+
+    conflictDecorationsRef.current = model.deltaDecorations(conflictDecorationsRef.current, decorations);
   }, [tab.content, tab.externalContentVersion]);
 
   // Apply editorPrefs changes to a running editor without remounting
