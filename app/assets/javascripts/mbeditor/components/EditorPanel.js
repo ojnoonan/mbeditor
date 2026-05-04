@@ -45,6 +45,8 @@ var EditorPanel = function EditorPanel(_ref) {
   var conflictCount = _conflictState[0];
   var setConflictCount = _conflictState[1];
 
+  var currentConflictIndexRef = React.useRef(0);
+
   var _useState = useState('');
   var _useState2 = _slicedToArray(_useState, 2);
   var markup = _useState2[0];
@@ -1512,6 +1514,57 @@ var EditorPanel = function EditorPanel(_ref) {
     );
   }
 
+  function resolveConflict(blockIndex, resolution) {
+    var editor = monacoRef.current;
+    if (!editor || !window.monaco) return;
+    var blocks = conflictBlocksRef.current;
+    if (blockIndex < 0 || blockIndex >= blocks.length) return;
+    var block = blocks[blockIndex];
+    var model = editor.getModel();
+    if (!model) return;
+
+    var resolvedContent;
+    if (resolution === 'head') {
+      resolvedContent = block.headContent;
+    } else if (resolution === 'incoming') {
+      resolvedContent = block.incomingContent;
+    } else {
+      resolvedContent = block.headContent +
+        (block.headContent && block.incomingContent ? '\n' : '') +
+        block.incomingContent;
+    }
+
+    editor.pushUndoStop();
+    editor.executeEdits('conflict-resolve', [{
+      range: new window.monaco.Range(
+        block.startLine + 1, 1,
+        block.endLine + 1,
+        model.getLineMaxColumn(block.endLine + 1)
+      ),
+      text: resolvedContent
+    }]);
+    editor.pushUndoStop();
+
+    var newContent = editor.getValue();
+    EditorStore.setState({
+      panes: EditorStore.getState().panes.map(function (p) {
+        return Object.assign({}, p, {
+          tabs: p.tabs.map(function (t) {
+            if (t.path !== tab.path) return t;
+            return Object.assign({}, t, {
+              content: newContent,
+              dirty: true,
+              externalContentVersion: (t.externalContentVersion || 0) + 1
+            });
+          })
+        });
+      })
+    });
+
+    var remaining = conflictBlocksRef.current.length - 1;
+    currentConflictIndexRef.current = Math.min(currentConflictIndexRef.current, Math.max(0, remaining - 1));
+  }
+
   // Always render the same wrapper structure so the editorRef div is never
   // unmounted when gitAvailable changes (e.g. loaded async after workspace
   // call returns). The toolbar is conditionally included inside the wrapper.
@@ -1584,6 +1637,65 @@ var EditorPanel = function EditorPanel(_ref) {
         },
         !testLoading && React.createElement('i', { className: 'fas fa-flask', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
         !editorPrefs.toolbarIconOnly && !testLoading && React.createElement('span', { className: 'ide-toolbar-label' }, 'Test')
+      )
+    ),
+    conflictCount > 0 && React.createElement(
+      'div', { className: 'mb-conflict-banner' },
+      React.createElement(
+        'span', { className: 'mb-conflict-count' },
+        React.createElement('i', { className: 'fas fa-code-merge' }),
+        ' ',
+        conflictCount,
+        ' merge conflict',
+        conflictCount !== 1 ? 's' : ''
+      ),
+      React.createElement(
+        'div', { className: 'mb-conflict-nav' },
+        React.createElement('button', {
+          className: 'mb-btn mb-btn-sm',
+          title: 'Previous conflict',
+          onClick: function () {
+            var idx = Math.max(0, currentConflictIndexRef.current - 1);
+            currentConflictIndexRef.current = idx;
+            var b = conflictBlocksRef.current[idx];
+            if (b && monacoRef.current) {
+              monacoRef.current.revealLineInCenter(b.startLine + 1);
+              monacoRef.current.setPosition({ lineNumber: b.startLine + 1, column: 1 });
+            }
+          }
+        }, '↑ Prev'),
+        React.createElement('button', {
+          className: 'mb-btn mb-btn-sm',
+          title: 'Next conflict',
+          onClick: function () {
+            var blocks = conflictBlocksRef.current;
+            var idx = Math.min(blocks.length - 1, currentConflictIndexRef.current + 1);
+            currentConflictIndexRef.current = idx;
+            var b = blocks[idx];
+            if (b && monacoRef.current) {
+              monacoRef.current.revealLineInCenter(b.startLine + 1);
+              monacoRef.current.setPosition({ lineNumber: b.startLine + 1, column: 1 });
+            }
+          }
+        }, '↓ Next')
+      ),
+      React.createElement(
+        'div', { className: 'mb-conflict-actions' },
+        React.createElement('button', {
+          className: 'mb-btn mb-btn-sm mb-btn-success',
+          title: 'Accept current (HEAD) — keep your local changes',
+          onClick: function () { resolveConflict(currentConflictIndexRef.current, 'head'); }
+        }, 'Accept Current'),
+        React.createElement('button', {
+          className: 'mb-btn mb-btn-sm mb-btn-incoming',
+          title: 'Accept incoming — take the changes being merged in',
+          onClick: function () { resolveConflict(currentConflictIndexRef.current, 'incoming'); }
+        }, 'Accept Incoming'),
+        React.createElement('button', {
+          className: 'mb-btn mb-btn-sm',
+          title: 'Accept both — keep current above incoming',
+          onClick: function () { resolveConflict(currentConflictIndexRef.current, 'both'); }
+        }, 'Accept Both')
       )
     ),
     tab.truncated && React.createElement(
