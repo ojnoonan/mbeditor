@@ -100,12 +100,15 @@
   // Returns a Promise<boolean> — true if a definition was found and opened.
   function navigateToJsWord(editor, word) {
     if (typeof FileService === 'undefined' || !FileService.getJsDefinition) return Promise.resolve(false);
+    var currentPath = editor.getModel && editor.getModel() && editor.getModel()._mbeditorPath;
     return FileService.getJsDefinition(word)
       .then(function(data) {
         var results = data && data.results;
         if (!results || !results.length) return false;
         var r = results[0];
-        addDiscoveredGlobal(word);
+        // Only declare as a global when the definition lives in a different file.
+        // Locally-defined functions/classes must not get a duplicate declare var.
+        if (r.file !== currentPath) addDiscoveredGlobal(word);
         if (typeof TabManager !== 'undefined' && TabManager.openTab) {
           TabManager.openTab(r.file, r.file.split('/').pop(), r.line);
         }
@@ -649,9 +652,13 @@
               var sym = match[1];
               if (attemptedJsGlobals[sym]) return;
               attemptedJsGlobals[sym] = true;
+              var modelPath = model._mbeditorPath;
               FileService.getJsDefinition(sym)
                 .then(function(data) {
-                  if (data && data.results && data.results.length) addDiscoveredGlobal(sym);
+                  var results = data && data.results;
+                  if (results && results.length && results[0].file !== modelPath) {
+                    addDiscoveredGlobal(sym);
+                  }
                 })
                 .catch(function() {});
             });
@@ -1208,8 +1215,10 @@
               jsHoverCache[word] = { ts: Date.now(), value: null };
               return null;
             }
-            addDiscoveredGlobal(word);
             var r = results[0];
+            // Only declare as global when the definition is in a different file —
+            // locally-defined functions must not get a duplicate declare var.
+            if (r.file !== model._mbeditorPath) addDiscoveredGlobal(word);
             var fileRef = r.file + ':' + r.line;
             var value = {
               contents: [
