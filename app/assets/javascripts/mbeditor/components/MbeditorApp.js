@@ -2352,15 +2352,6 @@ var MbeditorApp = function MbeditorApp() {
     document.body.style.userSelect = 'none';
   };
 
-  var toggleSidebarCollapsed = function toggleSidebarCollapsed() {
-    setSidebarCollapsed(function (prev) { return !prev; });
-  };
-
-  var expandSidebarTo = function expandSidebarTo(tab) {
-    setActiveSidebarTab(tab);
-    setSidebarCollapsed(false);
-  };
-
   var handleActivityBarClick = function handleActivityBarClick(tab) {
     if (tab === 'settings') {
       openSettingsTab();

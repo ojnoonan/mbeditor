@@ -128,64 +128,6 @@ html, body, #mbeditor-root {
   font-family: monospace;
 }
 
-/* ── Collapsed sidebar icon strip ──────────────────────────── */
-.sidebar-icon-strip {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  height: 100%;
-  padding: 4px 0;
-}
-
-.sidebar-strip-top {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  flex: 1;
-}
-
-.sidebar-strip-bottom {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding-bottom: 4px;
-}
-
-.sidebar-strip-btn {
-  width: 36px;
-  height: 36px;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  color: var(--ide-text-muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 15px;
-  transition: background 0.12s ease, color 0.12s ease;
-}
-
-.sidebar-strip-btn:hover {
-  background: var(--ide-hover-bg);
-  color: var(--ide-text);
-}
-
-.sidebar-strip-btn.active {
-  color: var(--ide-accent-fg);
-  border-left: 2px solid var(--ide-accent-fg);
-}
-
-/* Visually groups Explorer + Search + Settings buttons in the collapsed strip */
-.sidebar-nav-group {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--ide-border);
-  border-radius: 4px;
-  overflow: hidden;
-}
 
 .panel-divider {
   flex-shrink: 0;
@@ -199,13 +141,6 @@ html, body, #mbeditor-root {
   border-right: 1px solid var(--ide-border);
 }
 
-.ide-sidebar-collapsed + .sidebar-divider {
-  cursor: default;
-}
-
-.ide-sidebar-collapsed + .sidebar-divider:hover {
-  background: var(--ide-panel-bg-alt);
-}
 
 .pane-divider {
   width: 4px;
@@ -232,33 +167,6 @@ html, body, #mbeditor-root {
   gap: 6px;
 }
 
-.ide-sidebar-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--ide-border);
-  flex-shrink: 0;
-}
-
-.ide-sidebar-tab {
-  flex: 1;
-  padding: 5px 0;
-  font-size: 11px;
-  text-align: center;
-  cursor: pointer;
-  color: var(--ide-text-muted);
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  transition: color 0.15s, background 0.15s;
-}
-
-.ide-sidebar-tab.ide-sidebar-tab-icon {
-  flex: 0 0 auto;
-  padding: 5px 10px;
-  font-size: 14px;
-}
-
-.ide-sidebar-tab:hover { color: var(--ide-text); background: var(--ide-input-bg); }
-.ide-sidebar-tab.active { color: var(--ide-accent-fg); border-bottom: 2px solid var(--ide-accent-fg); }
 
 .ide-sidebar-content {
   flex: 1;
@@ -2211,14 +2119,6 @@ textarea {
   margin: 0;
   border: none;
   border-radius: 3px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.sidebar-strip-btn {
-  padding: 0;
-  margin: 0;
-  border: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
