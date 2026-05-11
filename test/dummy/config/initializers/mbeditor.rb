@@ -32,6 +32,9 @@ Mbeditor.configure do |config|
   config.test_timeout   = 30
 
   # No authentication required for the dummy development server.
+
+  # Surface related Rails files (views, helpers, custom JS) in the Rails panel.
+  config.related_files_custom_paths = ['app/assets/javascripts']
 end
 
 # Override RedmineService#call in the dummy app to return fixture data so that
@@ -252,6 +255,91 @@ Rails.application.config.after_initialize do
       end
     end
   RUBY
+
+  # ── Rails panel demo files ──────────────────────────────────────────────────
+  # Written on every boot so the Rails panel shows views, helper, and custom JS
+  # when theme_controller.rb is open.
+  # theme_controller.rb uses "theme" as the base name (not "themes"), so the
+  # related-files service looks for app/views/theme/, app/helpers/theme_helper.rb,
+  # and custom_paths/{theme}/ to match.
+  FileUtils.mkdir_p(sample_workspace.join("app", "views", "theme"))
+  FileUtils.mkdir_p(sample_workspace.join("app", "helpers"))
+  FileUtils.mkdir_p(sample_workspace.join("app", "assets", "javascripts", "theme"))
+
+  File.write(sample_workspace.join("app", "views", "theme", "index.html.erb"), <<~ERB)
+    <h1>Themes</h1>
+    <% @themes.each do |theme| %>
+      <div class="theme-card"><%= theme.name %></div>
+    <% end %>
+    <%= link_to "New Theme", new_theme_path %>
+  ERB
+
+  File.write(sample_workspace.join("app", "views", "theme", "show.html.erb"), <<~ERB)
+    <h1><%= @theme.name %></h1>
+    <p>Preview: <span class="theme-preview" data-theme="<%= @theme.key %>"></span></p>
+    <%= link_to "Edit", edit_theme_path(@theme) %> |
+    <%= link_to "Back", themes_path %>
+  ERB
+
+  File.write(sample_workspace.join("app", "views", "theme", "edit.html.erb"), <<~ERB)
+    <h1>Edit Theme</h1>
+    <%= render "form", theme: @theme %>
+    <%= link_to "Show", @theme %> |
+    <%= link_to "Back", themes_path %>
+  ERB
+
+  File.write(sample_workspace.join("app", "views", "theme", "_form.html.erb"), <<~ERB)
+    <%= form_with model: theme do |f| %>
+      <div class="field">
+        <%= f.label :name %><%= f.text_field :name %>
+      </div>
+      <div class="field">
+        <%= f.label :key %><%= f.text_field :key %>
+      </div>
+      <%= f.submit %>
+    <% end %>
+  ERB
+
+  File.write(sample_workspace.join("app", "helpers", "theme_helper.rb"), <<~RUBY)
+    module ThemeHelper
+      def theme_badge(theme_key)
+        content_tag :span, theme_key, class: "badge badge-theme badge-\#{theme_key}"
+      end
+
+      def current_theme_class
+        session[:theme].presence || "light"
+      end
+    end
+  RUBY
+
+  File.write(sample_workspace.join("app", "assets", "javascripts", "theme", "theme_switcher.js"), <<~JS)
+    // Theme switcher — applies the selected theme class to <html> and persists it.
+    var ThemeSwitcher = (function() {
+      var STORAGE_KEY = "app-theme";
+      var VALID_THEMES = ["light", "dark", "system"];
+
+      function apply(theme) {
+        if (!VALID_THEMES.includes(theme)) return;
+        document.documentElement.dataset.theme = theme;
+        localStorage.setItem(STORAGE_KEY, theme);
+      }
+
+      function current() {
+        return localStorage.getItem(STORAGE_KEY) || "light";
+      }
+
+      function init() {
+        apply(current());
+        document.querySelectorAll("[data-theme-toggle]").forEach(function(btn) {
+          btn.addEventListener("click", function() { apply(btn.dataset.themeToggle); });
+        });
+      }
+
+      return { apply: apply, current: current, init: init };
+    })();
+
+    document.addEventListener("DOMContentLoaded", ThemeSwitcher.init);
+  JS
 
   # ── Feature demo files ──────────────────────────────────────────────────────
   # Written on every boot.  Each file demonstrates one of the new editor

@@ -84,6 +84,23 @@
     return lines.join('\n');
   }
 
+  // Return true if sym is a user-assigned window property (not a browser built-in).
+  // Uses the same property-descriptor filter as buildWindowGlobalsShim: browser built-ins
+  // are either non-configurable or accessor properties (have a getter), so plain writable
+  // configurable data properties reliably identify user-assigned globals.
+  function isRuntimeWindowGlobal(sym) {
+    if (!sym || typeof window === 'undefined') return false;
+    try {
+      if (!Object.prototype.hasOwnProperty.call(window, sym)) return false;
+      var val;
+      try { val = window[sym]; } catch (e) { return false; }
+      if (val === null || val === undefined) return false;
+      var desc = Object.getOwnPropertyDescriptor(window, sym);
+      if (!desc) return false;
+      return desc.configurable === true && desc.writable === true && !desc.get;
+    } catch (e) { return false; }
+  }
+
   // Declare a discovered global in Monaco's extra libs so the TS2304 warning disappears.
   // Calling addExtraLib with the same URI replaces the previous content in-place.
   function addDiscoveredGlobal(name) {
@@ -104,7 +121,10 @@
     return FileService.getJsDefinition(word)
       .then(function(data) {
         var results = data && data.results;
-        if (!results || !results.length) return false;
+        if (!results || !results.length) {
+          if (isRuntimeWindowGlobal(word)) addDiscoveredGlobal(word);
+          return false;
+        }
         var r = results[0];
         // Only declare as a global when the definition lives in a different file.
         // Locally-defined functions/classes must not get a duplicate declare var.
@@ -658,6 +678,8 @@
                   var results = data && data.results;
                   if (results && results.length && results[0].file !== modelPath) {
                     addDiscoveredGlobal(sym);
+                  } else if (!results || !results.length) {
+                    if (isRuntimeWindowGlobal(sym)) addDiscoveredGlobal(sym);
                   }
                 })
                 .catch(function() {});
@@ -1187,15 +1209,14 @@
     });
 
     // JS/JSX hover provider: looks up workspace definitions for window globals.
-    // Only fires for mixed-case identifiers (skips lowercase-only names that are
-    // almost always browser builtins or local vars).
+    // Fires for mixed-case identifiers and for any symbol already in discoveredJsGlobals.
     var JS_HOVER_CACHE_TTL_MS = 60000;
     monaco.languages.registerHoverProvider('javascript', {
       provideHover: function(model, position, token) {
         var wordInfo = model.getWordAtPosition(position);
         if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return null;
         var word = wordInfo.word;
-        if (!/[A-Z]/.test(word)) return null;
+        if (!discoveredJsGlobals[word] && !/[A-Z]/.test(word)) return null;
         if (typeof FileService === 'undefined' || !FileService.getJsDefinition) return null;
 
         var cached = jsHoverCache[word];
@@ -1212,6 +1233,13 @@
             if (token && token.isCancellationRequested) return null;
             var results = data && data.results;
             if (!results || !results.length) {
+              if (isRuntimeWindowGlobal(word)) {
+                addDiscoveredGlobal(word);
+                var kind = typeof window[word];
+                var rtValue = { contents: [{ value: '**' + word + '** — runtime global (`' + kind + '`)' }] };
+                jsHoverCache[word] = { ts: Date.now(), value: rtValue };
+                return rtValue;
+              }
               jsHoverCache[word] = { ts: Date.now(), value: null };
               return null;
             }

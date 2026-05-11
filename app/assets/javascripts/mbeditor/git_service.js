@@ -7,7 +7,8 @@ var GitService = (function () {
       gitInfo: data,
       gitInfoError: null
     };
-    if (JSON.stringify(files) !== JSON.stringify(current)) {
+    var gitSig = function(arr) { return arr.map(function(f) { return f.path + '\x00' + f.status; }).join('\x01'); };
+    if (gitSig(files) !== gitSig(current)) {
       stateUpdate.gitFiles = files;
     }
     EditorStore.setState(stateUpdate);

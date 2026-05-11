@@ -1,5 +1,5 @@
 var TabManager = (function () {
-  var MAX_MODELS = 15;
+  var MAX_MODELS = 25;
 
   // Evict the least-recently-used Monaco model that is not currently open in
   // any pane. Call this before creating a new model entry.

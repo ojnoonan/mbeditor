@@ -66,6 +66,33 @@ var DEFAULT_EDITOR_PREFS = {
   showDotFiles: false
 };
 
+function spacesToTabs(code, indentSize) {
+  var unit = ' '.repeat(indentSize || 2);
+  return code.split('\n').map(function(line) {
+    var tabs = '';
+    while (line.startsWith(unit)) { tabs += '\t'; line = line.slice(unit.length); }
+    return tabs + line;
+  }).join('\n');
+}
+
+function diffLines(oldLines, newLines) {
+  var n = oldLines.length, m = newLines.length;
+  var dp = [];
+  for (var i = 0; i <= n; i++) { dp.push(new Array(m + 1).fill(0)); }
+  for (var i = 1; i <= n; i++) {
+    for (var j = 1; j <= m; j++) {
+      dp[i][j] = oldLines[i-1] === newLines[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1]);
+    }
+  }
+  var changed = [], i = n, j = m;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i-1] === newLines[j-1]) { i--; j--; }
+    else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) { changed.push(j); j--; }
+    else { i--; }
+  }
+  return changed;
+}
+
 var SidebarActionButton = function SidebarActionButton(_ref) {
   var title = _ref.title;
   var iconClass = _ref.iconClass;
@@ -284,15 +311,10 @@ var MbeditorApp = function MbeditorApp() {
   var sidebarCollapsed = _useStateSC2[0];
   var setSidebarCollapsed = _useStateSC2[1];
 
-  var _useStateRF = useState(null);
-  var _useStateRF2 = _slicedToArray(_useStateRF, 2);
-  var railsFiles = _useStateRF2[0];
-  var setRailsFiles = _useStateRF2[1];
-
-  var _useStateRFL = useState(false);
-  var _useStateRFL2 = _slicedToArray(_useStateRFL, 2);
-  var railsFilesLoading = _useStateRFL2[0];
-  var setRailsFilesLoading = _useStateRFL2[1];
+  var _useStateRFMap = useState({});
+  var _useStateRFMap2 = _slicedToArray(_useStateRFMap, 2);
+  var railsFilesMap = _useStateRFMap2[0];
+  var setRailsFilesMap = _useStateRFMap2[1];
 
   var _useStateRFC = useState({});
   var _useStateRFC2 = _slicedToArray(_useStateRFC, 2);
@@ -1499,27 +1521,107 @@ var MbeditorApp = function MbeditorApp() {
     return function() { window.removeEventListener('beforeinstallprompt', handler); };
   }, []);
 
-  var railsTargetPath = (function() {
-    var fp = state.panes.find(function(p) { return p.id === state.focusedPaneId; }) || state.panes[0];
-    var at = fp && fp.tabs.find(function(t) { return t.id === fp.activeTabId; });
-    return (at && at.path) || null;
+  var resourceLabelFromPath = function(p) {
+    if (!p) return null;
+    var parts = p.split('/');
+    var file = parts[parts.length - 1];
+    var name;
+    if (parts[0] === 'app') {
+      if (parts[1] === 'controllers') name = file.replace(/_controller\.rb$/, '');
+      else if (parts[1] === 'models') name = file.replace(/\.rb$/, '');
+      else if (parts[1] === 'views' && parts.length >= 4) name = parts[2];
+      else if (parts[1] === 'helpers') name = file.replace(/_helper\.rb$/, '');
+      else return null;
+    } else if (parts[0] === 'test' || parts[0] === 'spec') {
+      if (parts[1] === 'controllers') name = file.replace(/_controller_(test|spec)\.rb$/, '');
+      else if (parts[1] === 'models') name = file.replace(/_(test|spec)\.rb$/, '');
+      else return null;
+    } else { return null; }
+    var seg = (name || '').split('/').pop() || name || '';
+    // Normalize plural→singular so views/users and models/user share one group
+    seg = seg.replace(/ies$/, 'y')
+             .replace(/([^aeiou])es$/, '$1')
+             .replace(/([^s])s$/, '$1');
+    return seg.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+  };
+
+  var RAILS_MAX_RESOURCES = 10;
+
+  // Map resource label → representative path (capped at RAILS_MAX_RESOURCES, focused pane first)
+  var railsResourceDeps = (function() {
+    var deps = {};
+    var panesOrdered = state.panes.slice().sort(function(a, b) {
+      return a.id === state.focusedPaneId ? -1 : b.id === state.focusedPaneId ? 1 : 0;
+    });
+    panesOrdered.forEach(function(p) {
+      var tabs = p.tabs.slice().sort(function(a, b) {
+        return a.id === p.activeTabId ? -1 : b.id === p.activeTabId ? 1 : 0;
+      });
+      tabs.forEach(function(t) {
+        if (Object.keys(deps).length >= RAILS_MAX_RESOURCES) return;
+        if (!t.path || t.path === '__settings__' || t.path.startsWith('mbeditor://')) return;
+        var label = resourceLabelFromPath(t.path);
+        if (label && !deps[label]) deps[label] = t.path;
+      });
+    });
+    return deps;
+  })();
+  var railsResourceDepStr = Object.keys(railsResourceDeps).sort().join('|');
+
+  var railsOverflow = (function() {
+    var all = {};
+    state.panes.forEach(function(p) {
+      p.tabs.forEach(function(t) {
+        if (!t.path || t.path === '__settings__' || t.path.startsWith('mbeditor://')) return;
+        var label = resourceLabelFromPath(t.path);
+        if (label) all[label] = true;
+      });
+    });
+    return Math.max(0, Object.keys(all).length - Object.keys(railsResourceDeps).length);
+  })();
+
+  var dirtyPaths = (function() {
+    var set = {};
+    state.panes.forEach(function(p) {
+      p.tabs.forEach(function(t) {
+        if (t.dirty && t.path) set[t.path] = true;
+      });
+    });
+    return set;
   })();
 
   useEffect(function() {
     if (activeSidebarTab !== 'rails') return;
-    if (!railsTargetPath || railsTargetPath === '__settings__' || railsTargetPath.startsWith('mbeditor://')) {
-      setRailsFiles(null);
-      return;
-    }
-    setRailsFilesLoading(true);
-    FileService.getRelatedFiles(railsTargetPath).then(function(data) {
-      setRailsFiles(data);
-      setRailsFilesLoading(false);
-    })['catch'](function() {
-      setRailsFiles(null);
-      setRailsFilesLoading(false);
+    var labels = Object.keys(railsResourceDeps);
+    if (labels.length === 0) { setRailsFilesMap({}); return; }
+    setRailsFilesMap(function(prev) {
+      var next = {};
+      labels.forEach(function(label) {
+        next[label] = prev[label] ? { files: prev[label].files, loading: true } : { files: null, loading: true };
+      });
+      return next;
     });
-  }, [activeSidebarTab, railsTargetPath]);
+    labels.forEach(function(label) {
+      var path = railsResourceDeps[label];
+      FileService.getRelatedFiles(path).then(function(data) {
+        setRailsFilesMap(function(prev) {
+          if (!prev.hasOwnProperty(label)) return prev;
+          var next = Object.assign({}, prev);
+          var update = {};
+          update[label] = { files: data, loading: false };
+          return Object.assign(next, update);
+        });
+      })['catch'](function() {
+        setRailsFilesMap(function(prev) {
+          if (!prev.hasOwnProperty(label)) return prev;
+          var next = Object.assign({}, prev);
+          var update = {};
+          update[label] = { files: null, loading: false };
+          return Object.assign(next, update);
+        });
+      });
+    });
+  }, [activeSidebarTab, railsResourceDepStr]);
 
   var focusedPane = state.panes.find(function (p) {
     return p.id === state.focusedPaneId;
@@ -1864,7 +1966,10 @@ var MbeditorApp = function MbeditorApp() {
         return _extends({}, prev, { format: true });
       });
       EditorStore.setStatus("Formatting...", "info");
-      FileService.formatFile(activeTab.path, activeTab.content).then(function (res) {
+      var useTabs = editorPrefs.insertSpaces === false;
+      var originalContent = activeTab.content;
+      var codeToFormat = useTabs ? spacesToTabs(originalContent, 2) : originalContent;
+      FileService.formatFile(activeTab.path, codeToFormat).then(function (res) {
         if (res.content) {
           // Update content and mark dirty — user decides when to save.
           // The executeEdits path in EditorPanel preserves the undo stack.
@@ -1875,6 +1980,19 @@ var MbeditorApp = function MbeditorApp() {
             return p;
           });
           EditorStore.setState({ panes: newPanes });
+
+          // Highlight changed lines briefly
+          var monacoEditor = window.__mbeditorActiveEditor;
+          if (monacoEditor && res.content !== originalContent) {
+            var changedLineNums = diffLines(originalContent.split('\n'), res.content.split('\n'));
+            if (changedLineNums.length > 0) {
+              var decorations = changedLineNums.map(function(ln) {
+                return { range: new monaco.Range(ln, 1, ln, 1), options: { isWholeLine: true, className: 'mbeditor-format-changed' } };
+              });
+              var ids = monacoEditor.deltaDecorations([], decorations);
+              setTimeout(function() { monacoEditor.deltaDecorations(ids, []); }, 3000);
+            }
+          }
         }
         EditorStore.setStatus("Formatted (Unsaved)", "success");
         GitService.fetchStatus();
@@ -2919,7 +3037,7 @@ var MbeditorApp = function MbeditorApp() {
               title: "Rails",
               onClick: function() { handleActivityBarClick('rails'); }
             },
-            React.createElement("span", { className: "ide-activity-rails-icon" }, "R")
+            React.createElement("i", { className: "far fa-gem" })
           )
         ),
         React.createElement(
@@ -2941,6 +3059,11 @@ var MbeditorApp = function MbeditorApp() {
       !sidebarCollapsed && !zenMode && React.createElement(
         "div",
         { className: "ide-sidebar", style: { width: sidebarWidth + "px" } },
+        React.createElement("div", { className: "sidebar-panel-title" },
+          activeSidebarTab === 'explorer' ? 'Explorer' :
+          activeSidebarTab === 'search' ? 'Search' :
+          activeSidebarTab === 'rails' ? 'Rails' : ''
+        ),
         activeSidebarTab === 'explorer' && React.createElement(
           "div",
           { className: "ide-sidebar-content" },
@@ -3310,101 +3433,73 @@ var MbeditorApp = function MbeditorApp() {
         activeSidebarTab === 'rails' && React.createElement(
           "div",
           { className: "rails-panel" },
-          railsFilesLoading && React.createElement("div", { className: "rails-panel-loading" },
-            React.createElement("i", { className: "fas fa-spinner fa-spin" }),
-            " Loading…"
-          ),
-          !railsFilesLoading && railsFiles && Object.keys(railsFiles).length === 0 && React.createElement(
-            "div", { className: "rails-panel-empty" }, "No related files found."
-          ),
-          !railsFilesLoading && !railsFiles && React.createElement(
-            "div", { className: "rails-panel-empty" }, "Open a Rails file to see related files."
-          ),
-          !railsFilesLoading && railsFiles && (function() {
-            var GROUP_LABELS = {
-              controller: 'Controller',
-              model: 'Model',
-              views: 'Views',
-              helper: 'Helper',
-              tests: 'Tests'
-            };
-            var sections = [];
-            ['controller', 'model', 'views', 'helper', 'tests'].forEach(function(key) {
-              var files = railsFiles[key];
-              if (!files || files.length === 0) return;
-              sections.push(React.createElement(
+          (function() {
+            var labels = Object.keys(railsFilesMap).sort();
+            if (labels.length === 0) {
+              return React.createElement("div", { className: "rails-panel-empty" }, "Open a Rails file to see related files.");
+            }
+            var sections = labels.map(function(label) {
+              var entry = railsFilesMap[label];
+              var files = entry && entry.files;
+              var loading = entry && entry.loading;
+              if (loading && !files) {
+                return React.createElement("div", { key: label + '_loading', className: "rails-panel-loading" },
+                  React.createElement("i", { className: "fas fa-spinner fa-spin" }),
+                  " Loading…"
+                );
+              }
+              if (!files || Object.keys(files).length === 0) return null;
+              var allFiles = [];
+              ['model', 'controller', 'helper', 'tests', 'views'].forEach(function(key) {
+                var group = files[key];
+                if (group && group.length) allFiles = allFiles.concat(group);
+              });
+              var customGroups = files['custom'];
+              if (customGroups && typeof customGroups === 'object') {
+                Object.keys(customGroups).forEach(function(base) {
+                  var grpFiles = customGroups[base];
+                  if (grpFiles && grpFiles.length) allFiles = allFiles.concat(grpFiles);
+                });
+              }
+              if (allFiles.length === 0) return null;
+              return React.createElement(
                 CollapsibleSection,
                 {
-                  key: key,
-                  title: GROUP_LABELS[key].toUpperCase(),
-                  isCollapsed: !!railsGroupsCollapsed[key],
-                  onToggle: function(isCollapsed) {
-                    var capturedKey = key;
+                  key: label,
+                  title: label.toUpperCase(),
+                  isCollapsed: !!railsGroupsCollapsed[label],
+                  onToggle: (function(captured) { return function(isCollapsed) {
                     setRailsGroupsCollapsed(function(prev) {
                       var next = Object.assign({}, prev);
-                      next[capturedKey] = isCollapsed;
+                      next[captured] = isCollapsed;
                       return next;
                     });
-                  }
+                  }; })(label)
                 },
                 React.createElement(
                   "div",
                   null,
-                  files.map(function(f) {
+                  allFiles.map(function(f) {
                     return React.createElement(
                       "div", {
                         key: f.path,
                         className: "rails-group-item",
-                        onClick: function() { handleSoftOpenFile(f.path, f.name); },
+                        onClick: (function(file) { return function() { handleSelectFile(file.path, file.name); }; })(f),
                         title: f.path
                       },
                       React.createElement("i", { className: "tree-item-icon " + (window.getFileIcon ? window.getFileIcon(f.name) : 'far fa-file-code') + " tree-file-icon" }),
-                      React.createElement("span", { className: "rails-group-item-name" }, f.name)
+                      React.createElement("span", { className: "rails-group-item-name" }, f.name),
+                      dirtyPaths[f.path] && React.createElement("span", { className: "rails-group-item-dirty" }, "●")
                     );
                   })
                 )
-              ));
+              );
             });
-            var customGroups = railsFiles['custom'];
-            if (customGroups && typeof customGroups === 'object') {
-              Object.keys(customGroups).forEach(function(base) {
-                var files = customGroups[base];
-                if (!files || files.length === 0) return;
-                var label = base.split('/').pop() || base;
-                var customKey = 'custom_' + base;
-                sections.push(React.createElement(
-                  CollapsibleSection,
-                  {
-                    key: customKey,
-                    title: label.toUpperCase(),
-                    isCollapsed: !!railsGroupsCollapsed[customKey],
-                    onToggle: function(isCollapsed) {
-                      var capturedKey = customKey;
-                      setRailsGroupsCollapsed(function(prev) {
-                        var next = Object.assign({}, prev);
-                        next[capturedKey] = isCollapsed;
-                        return next;
-                      });
-                    }
-                  },
-                  React.createElement(
-                    "div",
-                    null,
-                    files.map(function(f) {
-                      return React.createElement(
-                        "div", {
-                          key: f.path,
-                          className: "rails-group-item",
-                          onClick: function() { handleSoftOpenFile(f.path, f.name); },
-                          title: f.path
-                        },
-                        React.createElement("i", { className: "tree-item-icon " + (window.getFileIcon ? window.getFileIcon(f.name) : 'far fa-file-code') + " tree-file-icon" }),
-                        React.createElement("span", { className: "rails-group-item-name" }, f.name)
-                      );
-                    })
-                  )
-                ));
-              });
+            if (railsOverflow > 0) {
+              sections = sections.concat([React.createElement(
+                "div", { key: '__overflow', className: "rails-panel-overflow" },
+                "+" + railsOverflow + " more — close tabs to show all"
+              )]);
             }
             return sections;
           })()

@@ -69,12 +69,40 @@ var FileTree = function FileTree(_ref) {
   // signal is where they last clicked.
   var sidebarActiveRef = useRef(false);
 
+  // Virtual scroll state
+  var ROW_HEIGHT = 22;
+  var BUFFER = 5;
+  var flatItemsRef = useRef([]);
+  var scrollParentRef = useRef(null);
+
+  var _scrollState = useState(0);
+  var scrollTop = _scrollState[0];
+  var setScrollTop = _scrollState[1];
+
+  var _heightState = useState(400);
+  var containerHeight = _heightState[0];
+  var setContainerHeight = _heightState[1];
+
+  // Scroll item at idx into view via the parent scroll container
+  var scrollToItem = function scrollToItem(idx) {
+    var parent = scrollParentRef.current;
+    if (!parent || !containerRef.current) return;
+    var parentTop = parent.getBoundingClientRect().top;
+    var treeTop = containerRef.current.getBoundingClientRect().top;
+    var treeOffset = parent.scrollTop + (treeTop - parentTop);
+    var itemAbsTop = treeOffset + idx * ROW_HEIGHT;
+    var itemAbsBottom = itemAbsTop + ROW_HEIGHT;
+    if (itemAbsTop < parent.scrollTop || itemAbsBottom > parent.scrollTop + parent.clientHeight) {
+      parent.scrollTop = Math.max(0, itemAbsTop - Math.floor((parent.clientHeight - ROW_HEIGHT) / 2));
+    }
+  };
+
   // Scroll the highlighted node into view when anchorPath changes (e.g. Find in Explorer)
   useEffect(function () {
-    if (!anchorPath || !containerRef.current) return;
+    if (!anchorPath) return;
     var timer = setTimeout(function () {
-      var el = containerRef.current && containerRef.current.querySelector('.tree-item.selected');
-      if (el) el.scrollIntoView({ block: 'center' });
+      var idx = flatItemsRef.current.findIndex(function(item) { return item.kind === 'node' && item.node.path === anchorPath; });
+      if (idx >= 0) scrollToItem(idx);
     }, 60);
     return function () { clearTimeout(timer); };
   }, [anchorPath]);
@@ -97,15 +125,8 @@ var FileTree = function FileTree(_ref) {
 
     // After the DOM updates, scroll the active item into view only if not already visible
     var timer = setTimeout(function () {
-      if (!containerRef.current) return;
-      var el = containerRef.current.querySelector('.tree-item.active');
-      if (el) {
-        var elRect = el.getBoundingClientRect();
-        var containerRect = containerRef.current.getBoundingClientRect();
-        if (elRect.top < containerRect.top || elRect.bottom > containerRect.bottom) {
-          el.scrollIntoView({ block: 'nearest' });
-        }
-      }
+      var idx = flatItemsRef.current.findIndex(function(item) { return item.kind === 'node' && item.node.path === activePath; });
+      if (idx >= 0) scrollToItem(idx);
     }, 80);
     return function () { clearTimeout(timer); };
   }, [activePath]);
@@ -134,6 +155,8 @@ var FileTree = function FileTree(_ref) {
     if (pendingCreate) {
       setInlineValue('');
       committedRef.current = false;
+      var createIdx = flatItemsRef.current.findIndex(function(item) { return item.kind === 'create'; });
+      if (createIdx >= 0) scrollToItem(createIdx);
       setTimeout(function () {
         if (inlineRef.current) inlineRef.current.focus();
       }, 0);
@@ -144,6 +167,35 @@ var FileTree = function FileTree(_ref) {
   // a prefetch from firing against an unmounted component.
   useEffect(function() {
     return function() { clearTimeout(hoverTimerRef.current); };
+  }, []);
+
+  // Track the parent scroll container (.ide-sidebar-scrollable) for virtual scroll.
+  // The file-tree-root itself does not scroll — the parent does.
+  useEffect(function() {
+    if (!containerRef.current) return;
+    var parent = containerRef.current.closest('.ide-sidebar-scrollable');
+    if (!parent) return;
+    scrollParentRef.current = parent;
+
+    var update = function() {
+      if (!containerRef.current || !parent) return;
+      var parentRect = parent.getBoundingClientRect();
+      var treeRect = containerRef.current.getBoundingClientRect();
+      var treeOffset = parent.scrollTop + (treeRect.top - parentRect.top);
+      setScrollTop(Math.max(0, parent.scrollTop - treeOffset));
+      setContainerHeight(parent.clientHeight);
+    };
+
+    parent.addEventListener('scroll', update, { passive: true });
+    var obs = new ResizeObserver(update);
+    obs.observe(parent);
+    obs.observe(containerRef.current);
+    update();
+
+    return function() {
+      parent.removeEventListener('scroll', update);
+      obs.disconnect();
+    };
   }, []);
 
   var toggleFolder = function toggleFolder(path, e) {
@@ -186,22 +238,10 @@ var FileTree = function FileTree(_ref) {
   };
 
   // Returns all visible paths in depth-first render order (for shift+click range select)
-  var computeVisiblePaths = function computeVisiblePaths(nodes) {
-    var paths = [];
-    var visit = function visit(list) {
-      var sorted = [].concat(_toConsumableArray(list)).sort(function (a, b) {
-        if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-      sorted.forEach(function (node) {
-        paths.push(node.path);
-        if (node.type === 'folder' && expandedDirs && expandedDirs[node.path] && node.children) {
-          visit(node.children);
-        }
-      });
-    };
-    visit(nodes);
-    return paths;
+  var computeVisiblePaths = function computeVisiblePaths(_nodes) {
+    return flatItemsRef.current
+      .filter(function(item) { return item.kind === 'node'; })
+      .map(function(item) { return item.node.path; });
   };
 
   // Global type-ahead: tracks the last mousedown to know if the user is "in the explorer",
@@ -232,17 +272,14 @@ var FileTree = function FileTree(_ref) {
       }, 600);
 
       var prefix = typeaheadBufferRef.current;
-      var allItems = containerRef.current.querySelectorAll('.tree-item');
-      for (var i = 0; i < allItems.length; i++) {
-        var nameEl = allItems[i].querySelector('.tree-item-name');
-        if (nameEl && nameEl.textContent.trim().toLowerCase().indexOf(prefix) === 0) {
-          allItems[i].scrollIntoView({ block: 'nearest' });
-          // Visually select the matched item so the user sees the highlight change.
-          var nodePath = allItems[i].getAttribute('data-path');
-          var nodeName = allItems[i].getAttribute('data-name');
-          var nodeType = allItems[i].getAttribute('data-type');
-          if (nodePath && onNodeSelectRef.current) {
-            onNodeSelectRef.current({ path: nodePath, name: nodeName || nodePath.split('/').pop(), type: nodeType || 'file' });
+      var flat = flatItemsRef.current;
+      for (var i = 0; i < flat.length; i++) {
+        var fItem = flat[i];
+        if (fItem.kind !== 'node') continue;
+        if (fItem.node.name.toLowerCase().indexOf(prefix) === 0) {
+          scrollToItem(i);
+          if (onNodeSelectRef.current) {
+            onNodeSelectRef.current({ path: fItem.node.path, name: fItem.node.name, type: fItem.node.type });
           }
           break;
         }
@@ -348,60 +385,93 @@ var FileTree = function FileTree(_ref) {
     );
   };
 
-  var renderTree = function renderTree(nodes, folderPath) {
-    var sortedNodes = [].concat(_toConsumableArray(nodes)).sort(function (a, b) {
-      if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+  // Flatten the visible tree into a linear array for virtual scrolling.
+  var flattenVisible = function flattenVisible(nodes, depth, parentPath) {
+    var result = [];
+    var sorted = [].concat(_toConsumableArray(nodes)).sort(function(a, b) {
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
+    sorted.forEach(function(node) {
+      result.push({ kind: 'node', node: node, depth: depth });
+      if (node.type === 'folder' && expandedDirs && expandedDirs[node.path] && node.children) {
+        var children = flattenVisible(node.children, depth + 1, node.path);
+        for (var ci = 0; ci < children.length; ci++) result.push(children[ci]);
+      }
+    });
+    if (pendingCreate && pendingCreate.parentPath === parentPath) {
+      result.push({ kind: 'create', depth: depth });
+    }
+    return result;
+  };
 
-    var rows = sortedNodes.map(function (node) {
-      var isFolder = node.type === "folder";
-      var isExpanded = !!(expandedDirs && expandedDirs[node.path]);
-      var isRenamingThisNode = !!(pendingRename && pendingRename.path === node.path);
-      var isOpenFile = activePath === node.path;
-      var isSelected = !!(selectedPaths && selectedPaths.has(node.path));
-      var isDragOver = isFolder && dragOverFolder === node.path;
-      var status = getGitStatus(node.path);
-      var statusMeta = getTreeStatusMeta(status);
-      var isModified = statusMeta && (statusMeta.cssKey === "M" || statusMeta.cssKey === "A");
+  var flatItems = flattenVisible(items || [], 0, '');
+  flatItemsRef.current = flatItems;
 
-      var classNames = 'tree-item' +
-        (isOpenFile ? ' active' : '') +
-        (isSelected ? ' selected' : '') +
-        (isModified ? ' modified' : '') +
-        (isDragOver ? ' drag-over' : '');
+  var totalHeight = flatItems.length * ROW_HEIGHT;
+  var startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER);
+  var endIdx = Math.min(flatItems.length - 1, Math.ceil((scrollTop + containerHeight) / ROW_HEIGHT) + BUFFER);
 
+  var renderRow = function renderRow(item, idx) {
+    var indentPx = 8 + item.depth * 12;
+
+    if (item.kind === 'create') {
       return React.createElement(
         'div',
-        { key: node.path, className: 'file-tree' },
-        isRenamingThisNode ? renderInlineRenameRow(node) : React.createElement(
+        { key: '__inline-create__', style: { position: 'absolute', top: idx * ROW_HEIGHT, left: 0, right: 0 } },
+        React.createElement('div', { style: { paddingLeft: indentPx } }, renderInlineRow())
+      );
+    }
+
+    var node = item.node;
+    var isFolder = node.type === 'folder';
+    var isExpanded = !!(expandedDirs && expandedDirs[node.path]);
+    var isRenamingThisNode = !!(pendingRename && pendingRename.path === node.path);
+    var isOpenFile = activePath === node.path;
+    var isSelected = !!(selectedPaths && selectedPaths.has(node.path));
+    var isDragOver = isFolder && dragOverFolder === node.path;
+    var status = getGitStatus(node.path);
+    var statusMeta = getTreeStatusMeta(status);
+    var isModified = statusMeta && (statusMeta.cssKey === 'M' || statusMeta.cssKey === 'A');
+
+    var classNames = 'tree-item' +
+      (isOpenFile ? ' active' : '') +
+      (isSelected ? ' selected' : '') +
+      (isModified ? ' modified' : '') +
+      (isDragOver ? ' drag-over' : '');
+
+    return React.createElement(
+      'div',
+      { key: node.path, style: { position: 'absolute', top: idx * ROW_HEIGHT, left: 0, right: 0 } },
+      isRenamingThisNode
+        ? React.createElement('div', { style: { paddingLeft: indentPx } }, renderInlineRenameRow(node))
+        : React.createElement(
           'div',
           {
             className: classNames,
+            style: { paddingLeft: indentPx },
             'data-path': node.path,
             'data-name': node.name,
             'data-type': node.type,
             draggable: true,
-            onDragStart: function (e) {
-              // If the dragged node is part of a multi-selection, drag all selected; otherwise just this node
+            onDragStart: function(e) {
               var srcPaths = (selectedPaths && selectedPaths.has(node.path) && selectedPaths.size > 1)
                 ? Array.from(selectedPaths)
                 : [node.path];
               e.dataTransfer.setData('text/plain', JSON.stringify(srcPaths));
               e.dataTransfer.effectAllowed = 'move';
             },
-            onDragOver: function (e) {
+            onDragOver: function(e) {
               if (!isFolder) return;
               e.preventDefault();
               e.stopPropagation();
               e.dataTransfer.dropEffect = 'move';
               if (dragOverFolder !== node.path) setDragOverFolder(node.path);
             },
-            onDragLeave: function (e) {
-              // Only clear if we're leaving the folder item itself, not entering a child
+            onDragLeave: function() {
               if (dragOverFolder === node.path) setDragOverFolder(null);
             },
-            onDrop: function (e) {
+            onDrop: function(e) {
               e.preventDefault();
               e.stopPropagation();
               setDragOverFolder(null);
@@ -411,66 +481,51 @@ var FileTree = function FileTree(_ref) {
                 if (onMove && srcPaths && srcPaths.length > 0) onMove(srcPaths, node.path);
               } catch (err) {}
             },
-            onDragEnd: function () { setDragOverFolder(null); },
-            onClick: function (e) {
+            onDragEnd: function() { setDragOverFolder(null); },
+            onClick: function(e) {
               if (e.ctrlKey || e.metaKey) {
-                // Ctrl/Cmd+click: toggle this node in/out of selection
                 if (onMultiSelect) {
                   var newPaths = new Set(selectedPaths || []);
-                  if (newPaths.has(node.path)) {
-                    newPaths.delete(node.path);
-                  } else {
-                    newPaths.add(node.path);
-                  }
+                  if (newPaths.has(node.path)) { newPaths.delete(node.path); } else { newPaths.add(node.path); }
                   onMultiSelect(newPaths);
                 }
-                // Don't open file on ctrl-click
               } else if (e.shiftKey && anchorPath) {
-                // Shift+click: range-select from anchor to this node
                 if (onMultiSelect) {
                   var visiblePaths = computeVisiblePaths(items);
-                  var anchorIdx = visiblePaths.indexOf(anchorPath);
-                  var currentIdx = visiblePaths.indexOf(node.path);
-                  if (anchorIdx >= 0 && currentIdx >= 0) {
-                    var start = Math.min(anchorIdx, currentIdx);
-                    var end = Math.max(anchorIdx, currentIdx);
+                  var anchorIdx2 = visiblePaths.indexOf(anchorPath);
+                  var currentIdx2 = visiblePaths.indexOf(node.path);
+                  if (anchorIdx2 >= 0 && currentIdx2 >= 0) {
+                    var start = Math.min(anchorIdx2, currentIdx2);
+                    var end = Math.max(anchorIdx2, currentIdx2);
                     onMultiSelect(new Set(visiblePaths.slice(start, end + 1)));
                   } else {
                     selectNode(node);
                   }
                 }
               } else {
-                // Normal single click
                 selectNode(node);
-                if (isFolder) {
-                  toggleFolder(node.path, e);
-                } else {
-                  onSelect(node.path, node.name);
-                }
+                if (isFolder) { toggleFolder(node.path, e); } else { onSelect(node.path, node.name); }
                 if (containerRef.current) containerRef.current.focus();
               }
             },
-            onDoubleClick: function (e) {
-              if (!isFolder && onFileDoubleClick) {
-                e.stopPropagation();
-                onFileDoubleClick(node.path, node.name);
-              }
+            onDoubleClick: function(e) {
+              if (!isFolder && onFileDoubleClick) { e.stopPropagation(); onFileDoubleClick(node.path, node.name); }
             },
-            onMouseEnter: function () {
+            onMouseEnter: function() {
               if (isFolder) return;
               clearTimeout(hoverTimerRef.current);
-              hoverTimerRef.current = setTimeout(function () {
+              hoverTimerRef.current = setTimeout(function() {
                 hoverPathRef.current = node.path;
                 FileService.prefetch(node.path);
               }, 200);
             },
-            onMouseLeave: function () {
+            onMouseLeave: function() {
               if (isFolder) return;
               clearTimeout(hoverTimerRef.current);
               FileService.cancelPrefetch(hoverPathRef.current);
               hoverPathRef.current = null;
             },
-            onContextMenu: function (e) {
+            onContextMenu: function(e) {
               e.preventDefault();
               e.stopPropagation();
               selectNode(node);
@@ -478,9 +533,10 @@ var FileTree = function FileTree(_ref) {
             }
           },
           React.createElement(
-            'div',
-            { className: 'tree-item-icon' },
-            isFolder ? React.createElement('i', { className: 'fas fa-folder' + (isExpanded ? "-open" : "") + ' tree-folder-icon' }) : React.createElement('i', { className: window.getFileIcon(node.name) + ' tree-file-icon' })
+            'div', { className: 'tree-item-icon' },
+            isFolder
+              ? React.createElement('i', { className: 'fas fa-folder' + (isExpanded ? '-open' : '') + ' tree-folder-icon' })
+              : React.createElement('i', { className: window.getFileIcon(node.name) + ' tree-file-icon' })
           ),
           React.createElement(
             'div',
@@ -492,27 +548,23 @@ var FileTree = function FileTree(_ref) {
             { className: 'git-status-badge git-' + statusMeta.cssKey, title: statusMeta.title },
             statusMeta.badge
           )
-        ),
-        isFolder && isExpanded && node.children && React.createElement(
-          'div',
-          { style: { paddingLeft: "12px" } },
-          renderTree(node.children, node.path)
         )
-      );
-    });
-
-    // Inject inline create row at the end of this directory's list
-    if (pendingCreate && pendingCreate.parentPath === folderPath) {
-      rows.push(renderInlineRow());
-    }
-
-    return rows;
+    );
   };
+
+  var visibleRows = [];
+  for (var vi = startIdx; vi <= endIdx; vi++) {
+    visibleRows.push(renderRow(flatItems[vi], vi));
+  }
 
   return React.createElement(
     'div',
-    { className: 'file-tree-root', ref: containerRef, tabIndex: 0, style: { outline: 'none' } },
-    renderTree(items, '')
+    { className: 'file-tree-root', ref: containerRef, tabIndex: 0, style: { outline: 'none', padding: 0 } },
+    React.createElement(
+      'div',
+      { style: { height: totalHeight, position: 'relative' } },
+      visibleRows
+    )
   );
 };
 
@@ -527,7 +579,7 @@ var FileTreeMemo = React.memo(FileTree, function(prev, next) {
     prev.activePath === next.activePath &&
     prev.selectedPaths === next.selectedPaths &&
     prev.anchorPath === next.anchorPath &&
-    JSON.stringify(prev.gitFiles) === JSON.stringify(next.gitFiles) &&
+    prev.gitFiles === next.gitFiles &&
     prev.expandedDirs === next.expandedDirs &&
     prev.pendingCreate === next.pendingCreate &&
     prev.pendingRename === next.pendingRename;

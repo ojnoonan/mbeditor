@@ -524,17 +524,7 @@ var EditorPanel = function EditorPanel(_ref) {
       // Evict the LRU model if the cache is at capacity before creating a new one.
       TabManager.evictLruModel();
 
-      // Pretty-print JSON content before initial load
-      var contentForModel = tab.content;
-      if (language === 'json' && contentForModel) {
-        try {
-          contentForModel = JSON.stringify(JSON.parse(contentForModel), null, 2);
-        } catch (_) {
-          // invalid JSON — use raw content; Monaco will show error markers
-        }
-      }
-
-      modelObj = window.monaco.editor.createModel(contentForModel, language);
+      modelObj = window.monaco.editor.createModel(tab.content, language);
       window.__mbeditorModels[tab.path] = { model: modelObj, aviBase: null, aviMax: null, lastAccessed: Date.now(), cleanVersionId: null };
       _modelEntry = window.__mbeditorModels[tab.path];
     }
@@ -571,9 +561,9 @@ var EditorPanel = function EditorPanel(_ref) {
       formatOnPaste: editorPrefs.formatOnPaste !== false,
       formatOnType: editorPrefs.formatOnType !== false,
       quickSuggestions: editorPrefs.quickSuggestions !== false,
-      wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'matchingDocuments',
+      wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',
       acceptSuggestionOnEnter: editorPrefs.acceptSuggestionOnEnter || 'on',
-      linkedEditing: true,
+      linkedEditing: !!(editorPrefs.linkedEditing),
       fixedOverflowWidgets: true,
       hover: { above: false }
     });
@@ -713,7 +703,12 @@ var EditorPanel = function EditorPanel(_ref) {
       } else if (currentAvi > aviMaxRef.current) {
         aviMaxRef.current = currentAvi;
       }
-      EditorStore.setState({ canUndo: currentAvi > aviBaseRef.current, canRedo: currentAvi < aviMaxRef.current });
+      var newCanUndo = currentAvi > aviBaseRef.current;
+      var newCanRedo = currentAvi < aviMaxRef.current;
+      var _st = EditorStore.getState();
+      if (_st.canUndo !== newCanUndo || _st.canRedo !== newCanRedo) {
+        EditorStore.setState({ canUndo: newCanUndo, canRedo: newCanRedo });
+      }
 
       var val = editor.getValue();
 
@@ -819,18 +814,7 @@ var EditorPanel = function EditorPanel(_ref) {
       var _initEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
       if (_initEntry) _initEntry.cleanVersionId = null;
 
-      // Pretty-print JSON content before initial load
-      var contentToSet = tab.content;
-      var modelLang = model.getLanguageId();
-      if (modelLang === 'json' && contentToSet) {
-        try {
-          contentToSet = JSON.stringify(JSON.parse(contentToSet), null, 2);
-        } catch (_) {
-          // invalid JSON — use raw content; Monaco will show error markers
-        }
-      }
-
-      editor.setValue(contentToSet);
+      editor.setValue(tab.content);
       // Reset the AVI baseline: setValue clears the undo stack so anything before
       // this point is no longer reachable. Also clear the canUndo/canRedo display.
       var newBase = model.getAlternativeVersionId();
@@ -935,7 +919,8 @@ var EditorPanel = function EditorPanel(_ref) {
         formatOnPaste: editorPrefs.formatOnPaste !== false,
         formatOnType: editorPrefs.formatOnType !== false,
         quickSuggestions: editorPrefs.quickSuggestions !== false,
-        wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'matchingDocuments',
+        wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',
+        linkedEditing: !!(editorPrefs.linkedEditing),
         acceptSuggestionOnEnter: editorPrefs.acceptSuggestionOnEnter || 'on'
       });
     }
@@ -970,6 +955,20 @@ var EditorPanel = function EditorPanel(_ref) {
         });
         MonacoVim.VimMode.Vim.map('<C-p>', ':mbeditorquickopen<CR>', 'normal');
         MonacoVim.VimMode.Vim.map('<C-p>', ':mbeditorquickopen<CR>', 'visual');
+        // :split / :vsplit — open the current file in the other pane and focus it.
+        // Both map to the same behaviour since the editor always has exactly two panes.
+        var openInOtherPane = function() {
+          var model = monacoRef.current && monacoRef.current.getModel();
+          var filePath = model && model._mbeditorPath;
+          if (!filePath || typeof TabManager === 'undefined') return;
+          var otherPaneId = paneId === 1 ? 2 : 1;
+          // forcePaneId (4th arg) bypasses the "redirect empty pane 2 → pane 1" guard.
+          TabManager.openTab(filePath, filePath.split('/').pop(), null, otherPaneId);
+          TabManager.focusPane(otherPaneId);
+          window.dispatchEvent(new CustomEvent('mbeditor:focusPane', { detail: { paneId: otherPaneId } }));
+        };
+        MonacoVim.VimMode.Vim.defineEx('split', 'sp', openInOtherPane);
+        MonacoVim.VimMode.Vim.defineEx('vsplit', 'vs', openInOtherPane);
         vimModeObjRef.current = vimInstance;
       });
     } else {
@@ -986,6 +985,18 @@ var EditorPanel = function EditorPanel(_ref) {
       }
     };
   }, [editorPrefs.vimMode]);
+
+  // Focus this pane's Monaco editor when MbeditorApp dispatches mbeditor:focusPane
+  // (used by the vim Ctrl+W panel-switching handler to move keyboard focus).
+  useEffect(function() {
+    function onFocusPane(e) {
+      if (e.detail && e.detail.paneId === paneId && monacoRef.current) {
+        monacoRef.current.focus();
+      }
+    }
+    window.addEventListener('mbeditor:focusPane', onFocusPane);
+    return function() { window.removeEventListener('mbeditor:focusPane', onFocusPane); };
+  }, [paneId]);
 
   // Jump to line if specified
   useEffect(function () {
@@ -1831,4 +1842,18 @@ var EditorPanel = function EditorPanel(_ref) {
   );
 };
 
-window.EditorPanel = EditorPanel;
+// treeData and all function props (onSave, onFormat, etc.) are intentionally
+// excluded — their references change every parent render but don't affect editor output.
+window.EditorPanel = React.memo(EditorPanel, function(prev, next) {
+  return prev.tab === next.tab &&
+    prev.paneId === next.paneId &&
+    (prev.markers === next.markers || (prev.markers.length === 0 && next.markers.length === 0)) &&
+    prev.gitAvailable === next.gitAvailable &&
+    prev.testAvailable === next.testAvailable &&
+    prev.testResult === next.testResult &&
+    prev.testPanelFile === next.testPanelFile &&
+    prev.testLoading === next.testLoading &&
+    prev.testInlineVisible === next.testInlineVisible &&
+    prev.editorPrefs === next.editorPrefs &&
+    prev.monacoReady === next.monacoReady;
+});

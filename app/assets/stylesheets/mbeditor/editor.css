@@ -122,10 +122,15 @@ html, body, #mbeditor-root {
   border-left: 2px solid var(--ide-accent-fg);
 }
 
-.ide-activity-rails-icon {
-  font-size: 13px;
+.sidebar-panel-title {
+  font-size: 11px;
   font-weight: 700;
-  font-family: monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ide-fg-muted, var(--ide-text-muted, #888));
+  padding: 10px 12px 6px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--ide-border);
 }
 
 
@@ -1081,6 +1086,23 @@ html, body, #mbeditor-root {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.rails-group-item-dirty {
+  flex-shrink: 0;
+  font-size: 8px;
+  color: var(--ide-accent-fg);
+  opacity: 0.85;
+  line-height: 1;
+}
+
+.rails-panel-overflow {
+  padding: 4px 12px 8px;
+  font-size: 11px;
+  color: var(--ide-text-muted, #888);
+  font-style: italic;
 }
 
 /* ── Git Status Panel ─────────────────────────────────────── */
@@ -2277,4 +2299,8 @@ button:not(.pico-btn) { margin-bottom: 0; }
 .ide-file-history-header [role="group"] button,
 .project-actions[role="group"] button {
   --pico-form-element-spacing-horizontal: 0;
+}
+
+.mbeditor-format-changed {
+  background-color: rgba(80, 200, 100, 0.15);
 }
