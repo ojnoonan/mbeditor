@@ -177,7 +177,6 @@ var FileService = (function () {
       prefetchCache.delete(path);
       return null;
     }
-    prefetchCache.delete(path);
     return entry.promise;
   }
 
@@ -214,6 +213,11 @@ var FileService = (function () {
     return axios.get(window.mbeditorBasePath() + '/unused_methods', config).then(function(res) { return res.data; });
   }
 
+  function getRelatedFiles(path) {
+    return axios.get(window.mbeditorBasePath() + '/related_files', { params: { path: path } })
+      .then(function(res) { return res.data; });
+  }
+
   return {
     getWorkspace: getWorkspace,
     getTree: getTree,
@@ -242,6 +246,7 @@ var FileService = (function () {
     cancelPrefetch: cancelPrefetch,
     getModuleMembers: getModuleMembers,
     getFileIncludes: getFileIncludes,
-    getUnusedMethods: getUnusedMethods
+    getUnusedMethods: getUnusedMethods,
+    getRelatedFiles: getRelatedFiles
   };
 })();
