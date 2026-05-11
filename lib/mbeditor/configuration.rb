@@ -7,7 +7,7 @@ module Mbeditor
                   :test_framework, :test_command, :test_timeout,
                   :authenticate_with,
                   :lint_timeout, :base_branch_candidates, :git_timeout,
-                  :ruby_def_include_dirs
+                  :ruby_def_include_dirs, :related_files_custom_paths
 
     def initialize
       @allowed_environments = [:development]
@@ -25,6 +25,7 @@ module Mbeditor
       @base_branch_candidates = %w[origin/develop origin/main origin/master develop main master]
       @git_timeout            = nil # seconds; nil disables (no timeout on git subprocesses)
       @ruby_def_include_dirs  = %w[app/models app/controllers app/helpers app/concerns]
+      @related_files_custom_paths = []
     end
   end
 end

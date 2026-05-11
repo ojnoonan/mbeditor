@@ -896,6 +896,16 @@ module Mbeditor
       render json: { error: e.message, ok: false }, status: :unprocessable_content
     end
 
+    # GET /mbeditor/related_files?path=...
+    def related_files
+      path = resolve_path(params[:path])
+      return render json: {}, status: :bad_request unless path
+      rel = relative_path(path)
+      custom = Array(Mbeditor.configuration.related_files_custom_paths)
+      result = RailsRelatedFilesService.find(workspace_root.to_s, rel, custom_paths: custom)
+      render json: result
+    end
+
     # POST /mbeditor/format — rubocop -A on buffer content; returns corrected content WITHOUT saving to disk
     #
     # Accepts the current buffer content as `code` and formats it using a
@@ -1090,22 +1100,25 @@ module Mbeditor
       0
     end
 
-    def build_tree(dir, max_depth: 10, depth: 0)
+    def build_tree(dir, max_depth: 10, depth: 0, _excl: excluded_paths)
       return [] if depth >= max_depth
 
       entries = Dir.entries(dir).sort.reject { |entry| entry == "." || entry == ".." }
       entries.filter_map do |name|
         full = File.join(dir, name)
         rel = relative_path(full)
+        is_excl = excluded_path?(rel, name, _excl)
 
         if File.directory?(full)
-          node = { name: name, type: "folder", path: rel, children: build_tree(full, depth: depth + 1) }
-          node[:excluded] = true if excluded_path?(rel, name)
+          # Skip recursing into excluded directories — avoids traversing node_modules etc.
+          children = is_excl ? [] : build_tree(full, max_depth: max_depth, depth: depth + 1, _excl: _excl)
+          node = { name: name, type: "folder", path: rel, children: children }
+          node[:excluded] = true if is_excl
           node
         else
-          size = File.size(full) rescue nil
-          node = { name: name, type: "file", path: rel, size: size }
-          node[:excluded] = true if excluded_path?(rel, name)
+          node = { name: name, type: "file", path: rel }
+          node[:size] = (File.size(full) rescue nil) unless is_excl
+          node[:excluded] = true if is_excl
           node
         end
       end
@@ -1125,8 +1138,8 @@ module Mbeditor
       Array(Mbeditor.configuration.ruby_def_include_dirs).map(&:to_s).reject(&:blank?)
     end
 
-    def excluded_path?(relative_path, name)
-      excluded_paths.any? do |pattern|
+    def excluded_path?(relative_path, name, excl = excluded_paths)
+      excl.any? do |pattern|
         if pattern.include?("/")
           relative_path == pattern || relative_path.start_with?("#{pattern}/")
         else

@@ -1332,6 +1332,62 @@ module Mbeditor
       assert_equal 2, json["replaced_count"]
     end
 
+    # ---------------------------------------------------------------------------
+    # related_files
+    # ---------------------------------------------------------------------------
+
+    test "related_files returns 400 for missing path param" do
+      get "/mbeditor/related_files"
+      assert_response :bad_request
+    end
+
+    test "related_files returns empty hash for non-Rails path" do
+      get "/mbeditor/related_files", params: { path: "README.md" }
+      assert_response :ok
+      assert_equal({}, json)
+    end
+
+    test "related_files returns model group when model file exists" do
+      FileUtils.mkdir_p(File.join(@workspace, "app", "controllers"))
+      File.write(File.join(@workspace, "app", "models", "user.rb"), "class User; end\n")
+      get "/mbeditor/related_files", params: { path: "app/controllers/users_controller.rb" }
+      assert_response :ok
+      assert json.key?("model"), "expected model group"
+      assert_equal "app/models/user.rb", json["model"].first["path"]
+    end
+
+    test "related_files returns views group with sorted children" do
+      FileUtils.mkdir_p(File.join(@workspace, "app", "views", "users"))
+      File.write(File.join(@workspace, "app", "views", "users", "index.html.erb"), "")
+      File.write(File.join(@workspace, "app", "views", "users", "show.html.erb"), "")
+      get "/mbeditor/related_files", params: { path: "app/controllers/users_controller.rb" }
+      assert_response :ok
+      assert json.key?("views")
+      names = json["views"].map { |e| e["name"] }
+      assert_equal %w[index.html.erb show.html.erb], names
+    end
+
+    test "related_files omits groups with no existing files" do
+      # No related files exist for this controller path
+      get "/mbeditor/related_files", params: { path: "app/controllers/things_controller.rb" }
+      assert_response :ok
+      assert_equal({}, json)
+    end
+
+    test "related_files uses configured related_files_custom_paths" do
+      base = "app/assets/javascripts/ux"
+      FileUtils.mkdir_p(File.join(@workspace, base, "users"))
+      File.write(File.join(@workspace, base, "users", "index.js"), "")
+      Mbeditor.configure { |c| c.related_files_custom_paths = [base] }
+      get "/mbeditor/related_files", params: { path: "app/controllers/users_controller.rb" }
+      assert_response :ok
+      assert json.key?("custom")
+      assert json["custom"].key?(base)
+      assert_equal "index.js", json["custom"][base].first["name"]
+    ensure
+      Mbeditor.configure { |c| c.related_files_custom_paths = [] }
+    end
+
     private
 
     def json
