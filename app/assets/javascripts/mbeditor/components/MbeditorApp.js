@@ -294,6 +294,11 @@ var MbeditorApp = function MbeditorApp() {
   var railsFilesLoading = _useStateRFL2[0];
   var setRailsFilesLoading = _useStateRFL2[1];
 
+  var _useStateRFC = useState({});
+  var _useStateRFC2 = _slicedToArray(_useStateRFC, 2);
+  var railsGroupsCollapsed = _useStateRFC2[0];
+  var setRailsGroupsCollapsed = _useStateRFC2[1];
+
   var _useState9 = useState({});
 
   var _useState92 = _slicedToArray(_useState9, 2);
@@ -1494,24 +1499,27 @@ var MbeditorApp = function MbeditorApp() {
     return function() { window.removeEventListener('beforeinstallprompt', handler); };
   }, []);
 
-  useEffect(function() {
-    if (activeSidebarTab !== 'rails') return;
+  var railsTargetPath = (function() {
     var fp = state.panes.find(function(p) { return p.id === state.focusedPaneId; }) || state.panes[0];
     var at = fp && fp.tabs.find(function(t) { return t.id === fp.activeTabId; });
-    var path = at && at.path;
-    if (!path || path === '__settings__' || path.startsWith('mbeditor://')) {
+    return (at && at.path) || null;
+  })();
+
+  useEffect(function() {
+    if (activeSidebarTab !== 'rails') return;
+    if (!railsTargetPath || railsTargetPath === '__settings__' || railsTargetPath.startsWith('mbeditor://')) {
       setRailsFiles(null);
       return;
     }
     setRailsFilesLoading(true);
-    FileService.getRelatedFiles(path).then(function(data) {
+    FileService.getRelatedFiles(railsTargetPath).then(function(data) {
       setRailsFiles(data);
       setRailsFilesLoading(false);
     })['catch'](function() {
       setRailsFiles(null);
       setRailsFilesLoading(false);
     });
-  }, [activeSidebarTab, state.focusedPaneId, state.panes]);
+  }, [activeSidebarTab, railsTargetPath]);
 
   var focusedPane = state.panes.find(function (p) {
     return p.id === state.focusedPaneId;
@@ -3334,31 +3342,23 @@ var MbeditorApp = function MbeditorApp() {
               var files = railsFiles[key];
               if (!files || files.length === 0) return;
               sections.push(React.createElement(
-                "div", { key: key, className: "rails-group" },
-                React.createElement("div", { className: "rails-group-title" }, GROUP_LABELS[key]),
-                files.map(function(f) {
-                  return React.createElement(
-                    "div", {
-                      key: f.path,
-                      className: "rails-group-item",
-                      onClick: function() { handleSoftOpenFile(f.path, f.name); },
-                      title: f.path
-                    },
-                    React.createElement("i", { className: "tree-item-icon " + (window.getFileIcon ? window.getFileIcon(f.name) : 'far fa-file-code') + " tree-file-icon" }),
-                    React.createElement("span", { className: "rails-group-item-name" }, f.name)
-                  );
-                })
-              ));
-            });
-            var customGroups = railsFiles['custom'];
-            if (customGroups && typeof customGroups === 'object') {
-              Object.keys(customGroups).forEach(function(base) {
-                var files = customGroups[base];
-                if (!files || files.length === 0) return;
-                var label = base.split('/').pop() || base;
-                sections.push(React.createElement(
-                  "div", { key: 'custom_' + base, className: "rails-group" },
-                  React.createElement("div", { className: "rails-group-title", title: base }, label),
+                CollapsibleSection,
+                {
+                  key: key,
+                  title: GROUP_LABELS[key].toUpperCase(),
+                  isCollapsed: !!railsGroupsCollapsed[key],
+                  onToggle: function(isCollapsed) {
+                    var capturedKey = key;
+                    setRailsGroupsCollapsed(function(prev) {
+                      var next = Object.assign({}, prev);
+                      next[capturedKey] = isCollapsed;
+                      return next;
+                    });
+                  }
+                },
+                React.createElement(
+                  "div",
+                  null,
                   files.map(function(f) {
                     return React.createElement(
                       "div", {
@@ -3371,6 +3371,47 @@ var MbeditorApp = function MbeditorApp() {
                       React.createElement("span", { className: "rails-group-item-name" }, f.name)
                     );
                   })
+                )
+              ));
+            });
+            var customGroups = railsFiles['custom'];
+            if (customGroups && typeof customGroups === 'object') {
+              Object.keys(customGroups).forEach(function(base) {
+                var files = customGroups[base];
+                if (!files || files.length === 0) return;
+                var label = base.split('/').pop() || base;
+                var customKey = 'custom_' + base;
+                sections.push(React.createElement(
+                  CollapsibleSection,
+                  {
+                    key: customKey,
+                    title: label.toUpperCase(),
+                    isCollapsed: !!railsGroupsCollapsed[customKey],
+                    onToggle: function(isCollapsed) {
+                      var capturedKey = customKey;
+                      setRailsGroupsCollapsed(function(prev) {
+                        var next = Object.assign({}, prev);
+                        next[capturedKey] = isCollapsed;
+                        return next;
+                      });
+                    }
+                  },
+                  React.createElement(
+                    "div",
+                    null,
+                    files.map(function(f) {
+                      return React.createElement(
+                        "div", {
+                          key: f.path,
+                          className: "rails-group-item",
+                          onClick: function() { handleSoftOpenFile(f.path, f.name); },
+                          title: f.path
+                        },
+                        React.createElement("i", { className: "tree-item-icon " + (window.getFileIcon ? window.getFileIcon(f.name) : 'far fa-file-code') + " tree-file-icon" }),
+                        React.createElement("span", { className: "rails-group-item-name" }, f.name)
+                      );
+                    })
+                  )
                 ));
               });
             }
