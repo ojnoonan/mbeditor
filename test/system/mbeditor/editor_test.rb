@@ -77,7 +77,7 @@ module Mbeditor
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
 
-      find(".ide-sidebar-tab", text: "SEARCH").click
+      find(".ide-activity-btn[title='Search']").click
 
       page.execute_script(<<~'JS')
         window.SearchService.projectSearch = function () {
@@ -245,12 +245,12 @@ module Mbeditor
       find("body").send_keys([:control, :shift, "z"])
 
       assert_selector ".statusbar-zen-btn", wait: 5
-      sidebar_hidden = page.evaluate_script("document.querySelector('.ide-sidebar').style.display === 'none'")
+      sidebar_hidden = page.evaluate_script("document.querySelector('.ide-sidebar') === null")
       assert sidebar_hidden, "Sidebar should be hidden in zen mode"
 
       find(".statusbar-zen-btn").click
       assert_no_selector ".statusbar-zen-btn", wait: 5
-      sidebar_restored = page.evaluate_script("document.querySelector('.ide-sidebar').style.display !== 'none'")
+      sidebar_restored = page.evaluate_script("document.querySelector('.ide-sidebar') !== null")
       assert sidebar_restored, "Sidebar should be visible after exiting zen mode"
     end
 
@@ -258,7 +258,7 @@ module Mbeditor
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
 
-      find(".ide-sidebar-tab", text: "SEARCH").click
+      find(".ide-activity-btn[title='Search']").click
 
       assert_no_selector ".search-replace-row"
 
@@ -350,7 +350,7 @@ module Mbeditor
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
 
-      find(".ide-sidebar-tab", text: "SEARCH").click
+      find(".ide-activity-btn[title='Search']").click
 
       page.execute_script(<<~'JS')
         window.__searchNetworkCount = 0;
