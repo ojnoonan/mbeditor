@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-11
+
+### Added
+- **Virtual scrolling in FileTree** — only visible rows are rendered, dramatically improving performance with large file trees.
+- **Multi-resource Rails panel** — the sidebar Rails panel now shows related files for up to 10 open Rails resources simultaneously, grouped by resource name with a dirty-file dot indicator.
+- **Vim `:split` / `:vsplit` commands** — split the current file into the other pane using standard Vim command-line syntax.
+- **Format changed-line highlighting** — after running Format Document, changed lines are highlighted with a green background for 3 seconds.
+- **Sidebar panel titles** — "Explorer", "Search", and "Rails" labels now appear at the top of each sidebar panel.
+- **Dirty-file indicators in Rails panel** — a small dot appears next to related files with unsaved changes.
+
+### Changed
+- Rails activity bar icon updated from text "R" to a Font Awesome gem icon.
+- Monaco model cache size raised from 15 to 25 (`MAX_MODELS`).
+- `wordBasedSuggestions` default changed to `'currentDocument'`; `linkedEditing` now respects user preferences.
+- Git file comparison uses a lightweight signature function instead of `JSON.stringify`.
+- Window-globals detection improved: symbols found on `window` at runtime are declared as globals to suppress TS2304 errors.
+
+### Removed
+- JSON auto-pretty-print on file open (files now display raw content).
+
 ## [0.5.1] - 2026-04-30
 
 ### Added
