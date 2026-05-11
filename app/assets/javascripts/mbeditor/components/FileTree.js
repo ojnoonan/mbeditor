@@ -559,7 +559,7 @@ var FileTree = function FileTree(_ref) {
 
   return React.createElement(
     'div',
-    { className: 'file-tree-root', ref: containerRef, tabIndex: 0, style: { outline: 'none', padding: 0 } },
+    { className: 'file-tree file-tree-root', ref: containerRef, tabIndex: 0, style: { outline: 'none', padding: 0 } },
     React.createElement(
       'div',
       { style: { height: totalHeight, position: 'relative' } },
