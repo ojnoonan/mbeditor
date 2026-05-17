@@ -312,7 +312,7 @@ module Mbeditor
 
     test 'raw returns 413 for file exceeding size limit' do
       big = File.join(@workspace, 'big.bin')
-      File.binwrite(big, 'x' * (Mbeditor::EditorsController::MAX_OPEN_FILE_SIZE_BYTES + 1))
+      File.binwrite(big, 'x' * (Mbeditor::FileOperationService::MAX_FILE_SIZE_BYTES + 1))
       get '/mbeditor/raw', params: { path: 'big.bin' }
       assert_response 413
     end
@@ -350,8 +350,8 @@ module Mbeditor
       assert_response :forbidden
     end
 
-    test "save rejects content exceeding MAX_OPEN_FILE_SIZE_BYTES" do
-      oversized = "x" * (Mbeditor::EditorsController::MAX_OPEN_FILE_SIZE_BYTES + 1)
+    test "save rejects content exceeding MAX_FILE_SIZE_BYTES" do
+      oversized = "x" * (Mbeditor::FileOperationService::MAX_FILE_SIZE_BYTES + 1)
       post "/mbeditor/file", params: { path: "README.md", code: oversized }, as: :json
       assert_response 413
       assert json.key?("error")
@@ -390,8 +390,8 @@ module Mbeditor
       assert_response :forbidden
     end
 
-    test "create_file rejects content exceeding MAX_OPEN_FILE_SIZE_BYTES" do
-      oversized = "x" * (Mbeditor::EditorsController::MAX_OPEN_FILE_SIZE_BYTES + 1)
+    test "create_file rejects content exceeding MAX_FILE_SIZE_BYTES" do
+      oversized = "x" * (Mbeditor::FileOperationService::MAX_FILE_SIZE_BYTES + 1)
       post "/mbeditor/create_file", params: { path: "big_new.txt", code: oversized }, as: :json
       assert_response 413
       assert json.key?("error")
@@ -526,7 +526,7 @@ module Mbeditor
     test "show returns 413 for file over size limit" do
       big_file = File.join(@workspace, "big.txt")
       File.open(big_file, "wb") do |f|
-        f.write("x" * (Mbeditor::EditorsController::MAX_OPEN_FILE_SIZE_BYTES + 1))
+        f.write("x" * (Mbeditor::FileOperationService::MAX_FILE_SIZE_BYTES + 1))
       end
 
       get "/mbeditor/file", params: { path: "big.txt" }
@@ -576,7 +576,7 @@ module Mbeditor
       # Write just enough lines to test; the file doesn't need to actually exceed 5 MB
       # — we verify that start_line mode returns 200 even for a file over the limit
       File.open(big_file, "wb") do |f|
-        f.write("x" * (Mbeditor::EditorsController::MAX_OPEN_FILE_SIZE_BYTES + 1))
+        f.write("x" * (Mbeditor::FileOperationService::MAX_FILE_SIZE_BYTES + 1))
       end
 
       get "/mbeditor/file", params: { path: "bigpaged.txt", start_line: 0, line_count: 5 }

@@ -14,7 +14,6 @@ module Mbeditor
     before_action :verify_mbeditor_client, unless: -> { request.get? || request.head? }
 
     IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
-    MAX_OPEN_FILE_SIZE_BYTES = 5 * 1024 * 1024
     RG_AVAILABLE = system("which rg > /dev/null 2>&1")
 
     # GET /mbeditor — renders the IDE shell
@@ -194,7 +193,7 @@ module Mbeditor
       end
 
       size = File.size(path)
-      return render_file_too_large(size) if size > MAX_OPEN_FILE_SIZE_BYTES
+      return render_file_too_large(size) if size > FileOperationService::MAX_FILE_SIZE_BYTES
 
       if image_path?(path)
         return render json: {
@@ -223,7 +222,7 @@ module Mbeditor
       return render json: { error: "Not found" }, status: :not_found unless File.file?(path)
 
       size = File.size(path)
-      return render_file_too_large(size) if size > MAX_OPEN_FILE_SIZE_BYTES
+      return render_file_too_large(size) if size > FileOperationService::MAX_FILE_SIZE_BYTES
 
       send_file path, disposition: "inline"
     end
@@ -234,12 +233,11 @@ module Mbeditor
       return render json: { error: "Forbidden" }, status: :forbidden unless path
       return render json: { error: "Cannot write to this path" }, status: :forbidden if path_blocked_for_operations?(path)
 
-      content = params[:code].to_s
-      return render_file_too_large(content.bytesize) if content.bytesize > MAX_OPEN_FILE_SIZE_BYTES
-
-      File.write(path, content)
+      result = FileOperationService.new(workspace_root).save(path, params[:code].to_s)
       broadcast_files_changed
-      render json: { ok: true, path: relative_path(path) }
+      render json: result
+    rescue FileOperationService::FileTooLargeError
+      render_file_too_large(params[:code].to_s.bytesize)
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -249,16 +247,14 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
       return render json: { error: "Cannot create file in this path" }, status: :forbidden if path_blocked_for_operations?(path)
-      return render json: { error: "File already exists" }, status: :unprocessable_content if File.exist?(path)
 
-      content = params[:code].to_s
-      return render_file_too_large(content.bytesize) if content.bytesize > MAX_OPEN_FILE_SIZE_BYTES
-
-      FileUtils.mkdir_p(File.dirname(path))
-      File.write(path, content)
+      result = FileOperationService.new(workspace_root).create_file(path, params[:code].to_s)
       broadcast_files_changed
-
-      render json: { ok: true, type: "file", path: relative_path(path), name: File.basename(path) }
+      render json: result
+    rescue FileOperationService::FileExistsError
+      render json: { error: "File already exists" }, status: :unprocessable_content
+    rescue FileOperationService::FileTooLargeError
+      render_file_too_large(params[:code].to_s.bytesize)
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -268,11 +264,12 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
       return render json: { error: "Cannot create directory in this path" }, status: :forbidden if path_blocked_for_operations?(path)
-      return render json: { error: "Path already exists" }, status: :unprocessable_content if File.exist?(path)
 
-      FileUtils.mkdir_p(path)
+      result = FileOperationService.new(workspace_root).create_dir(path)
       broadcast_files_changed
-      render json: { ok: true, type: "folder", path: relative_path(path), name: File.basename(path) }
+      render json: result
+    rescue FileOperationService::FileExistsError
+      render json: { error: "Path already exists" }, status: :unprocessable_content
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -282,20 +279,15 @@ module Mbeditor
       old_path = resolve_path(params[:path])
       new_path = resolve_path(params[:new_path])
       return render json: { error: "Forbidden" }, status: :forbidden unless old_path && new_path
-      return render json: { error: "Path not found" }, status: :not_found unless File.exist?(old_path)
-      return render json: { error: "Target path already exists" }, status: :unprocessable_content if File.exist?(new_path)
       return render json: { error: "Cannot rename this path" }, status: :forbidden if path_blocked_for_operations?(old_path) || path_blocked_for_operations?(new_path)
 
-      FileUtils.mkdir_p(File.dirname(new_path))
-      FileUtils.mv(old_path, new_path)
+      result = FileOperationService.new(workspace_root).rename(old_path, new_path)
       broadcast_files_changed
-
-      render json: {
-        ok: true,
-        oldPath: relative_path(old_path),
-        path: relative_path(new_path),
-        name: File.basename(new_path)
-      }
+      render json: result
+    rescue FileOperationService::PathNotFoundError
+      render json: { error: "Path not found" }, status: :not_found
+    rescue FileOperationService::TargetExistsError
+      render json: { error: "Target path already exists" }, status: :unprocessable_content
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -304,19 +296,11 @@ module Mbeditor
     def destroy_path
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
-      # Idempotent: if already gone the desired state is already achieved.
-      return render json: { ok: true } unless File.exist?(path)
-      return render json: { error: "Cannot delete this path" }, status: :forbidden if path_blocked_for_operations?(path)
+      return render json: { error: "Cannot delete this path" }, status: :forbidden if File.exist?(path) && path_blocked_for_operations?(path)
 
-      if File.directory?(path)
-        FileUtils.rm_rf(path)
-        broadcast_files_changed
-        render json: { ok: true, type: "folder", path: relative_path(path) }
-      else
-        File.delete(path)
-        broadcast_files_changed
-        render json: { ok: true, type: "file", path: relative_path(path) }
-      end
+      result = FileOperationService.new(workspace_root).destroy_path(path)
+      broadcast_files_changed if result.key?(:type)
+      render json: result
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -542,7 +526,7 @@ module Mbeditor
           errors << { file: rel_path, error: "File not found" }
           next
         end
-        if File.size(full_path) > MAX_OPEN_FILE_SIZE_BYTES
+        if File.size(full_path) > FileOperationService::MAX_FILE_SIZE_BYTES
           errors << { file: rel_path, error: "File too large" }
           next
         end
@@ -1264,7 +1248,7 @@ module Mbeditor
 
     def render_file_too_large(size)
       render json: {
-        error: "File is too large to open (#{human_size(size)}). Limit is #{human_size(MAX_OPEN_FILE_SIZE_BYTES)}."
+        error: "File is too large to open (#{human_size(size)}). Limit is #{human_size(FileOperationService::MAX_FILE_SIZE_BYTES)}."
       }, status: :content_too_large
     end
 
