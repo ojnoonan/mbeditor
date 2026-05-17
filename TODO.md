@@ -83,7 +83,7 @@
 
 ### Quality / robustness
 
-- [ ] `TestRunnerService#execute_with_timeout` reads stdout then stderr sequentially (`test_runner_service.rb` lines 144-145) — `out = stdout.read` followed by `err = stderr.read`; if the subprocess fills the stderr OS pipe buffer before stdout EOF, both reads deadlock each other (classic popen deadlock); use `Open3.capture3` or read both streams in parallel threads
+- [x] `TestRunnerService#execute_with_timeout` reads stdout then stderr sequentially (`test_runner_service.rb` lines 144-145) — `out = stdout.read` followed by `err = stderr.read`; if the subprocess fills the stderr OS pipe buffer before stdout EOF, both reads deadlock each other (classic popen deadlock); use `Open3.capture3` or read both streams in parallel threads — fixed by migrating to `ProcessRunner` which uses `Open3.capture3` (#20)
 - [ ] `EditorChannel#workspace_root` runs `git rev-parse` on every WebSocket action (`editor_channel.rb` lines 69-78) — unlike `ApplicationController#workspace_root` which caches per class via a mutex + class ivar, the channel recomputes on every `save_state`/`save_branch_state` message; heavy WebSocket auto-save usage spawns many unnecessary subprocesses; apply the same class-level caching
 - [ ] `prune_branch_states` swallows corrupt JSON silently with inline rescue (`editors_controller.rb` line 140) — `JSON.parse(f.read) rescue {}` on a corrupted file irreversibly discards all saved branch state with no log entry; add a `Rails.logger.warn` before falling back to `{}`
 

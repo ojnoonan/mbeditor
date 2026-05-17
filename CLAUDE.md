@@ -6,13 +6,20 @@ Mbeditor (Mini Browser Editor) is a **mountable Rails engine** gem providing a b
 
 ```bash
 bundle install
-bundle exec rake test          # 132 tests, 580 assertions
+bundle exec rake test          # 403 tests, 1425 assertions
 cd test/dummy && rails server  # http://localhost:3000/mbeditor
 ```
 
 ## Architecture
 
-**Backend:** Rails engine. Core controller is `app/controllers/mbeditor/editors_controller.rb` (file I/O, git status, search, RuboCop). Git features in `git_controller.rb`. Service objects in `app/services/mbeditor/`.
+**Backend:** Rails engine. Controllers are thin renderers; business logic lives in `app/services/mbeditor/`. Key services:
+- `GitInfoService` — concurrent git metadata fetch (wave orchestration, 5 s TTL cache)
+- `CodeSearchService` — rg/grep subprocess execution with fallback
+- `ExclusionMatcher` — unified path exclusion predicate
+- `FileOperationService` — all file mutations (save, create, rename, delete) with path-safety invariants
+- `ProcessRunner` — subprocess-with-timeout (used by `GitService`, `TestRunnerService`, lint path)
+
+Git features in `git_controller.rb`. Git primitive wrappers in `GitService`.
 
 **Frontend:** Plain JS + React + Monaco in `app/assets/javascripts/mbeditor/`. **No build step** — edit files directly. Vendored libs in `vendor/assets/`, Monaco in `public/monaco-editor/`.
 
