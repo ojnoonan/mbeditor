@@ -186,12 +186,14 @@ module Mbeditor
         end
       end
 
+      GitInfoService.invalidate(@workspace)
       get "/mbeditor/git_info"
       assert_response :ok
       assert_equal "feature/history-scope", json["branch"]
       assert_equal 1, json["branchCommits"].length
       assert_equal "aaa1111", json["branchCommits"].first["hash"]
     ensure
+      GitInfoService.invalidate(@workspace)
       git_service_singleton.remove_method :current_branch
       git_service_singleton.alias_method :current_branch, :__original_current_branch_for_test
       git_service_singleton.remove_method :__original_current_branch_for_test
