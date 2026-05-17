@@ -82,5 +82,26 @@ module Mbeditor
 
       assert results[0][:comments].is_a?(String)
     end
+
+    # -------------------------------------------------------------------------
+    # Absent ri binary
+    # -------------------------------------------------------------------------
+
+    test "returns empty array when ri binary is not installed" do
+      open3_singleton = class << Open3; self; end
+      open3_singleton.alias_method :__original_popen3_for_ri_enoent, :popen3
+      open3_singleton.remove_method :popen3
+      Open3.define_singleton_method(:popen3) do |*_args, &_block|
+        raise Errno::ENOENT, "No such file or directory - ri"
+      end
+
+      result = RiDefinitionService.call("some_method")
+      assert_equal [], result
+    ensure
+      open3_singleton.remove_method :popen3
+      open3_singleton.alias_method :popen3, :__original_popen3_for_ri_enoent
+      open3_singleton.remove_method :__original_popen3_for_ri_enoent
+      RiDefinitionService.clear_cache!
+    end
   end
 end

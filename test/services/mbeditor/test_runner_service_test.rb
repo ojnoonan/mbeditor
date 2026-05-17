@@ -305,6 +305,30 @@ module Mbeditor
       assert_kind_of Hash, summary
     end
 
+    test 'parse_rspec_output with rspec plain-text format returns empty counts without raising' do
+      # RSpec --format progress (no --format json) emits text that the minitest
+      # fallback parser cannot understand — documents the known limitation.
+      raw = <<~OUTPUT
+        ..F
+
+        Failures:
+
+          1) User is valid
+             Failure/Error: expect(user).to be_valid
+               expected #<User> to be valid, but got errors: name can't be blank
+             # ./spec/models/user_spec.rb:5:in `block (2 levels) in <top (required)>'
+
+        Finished in 0.05432 seconds (files took 1.23 seconds to load)
+        3 examples, 1 failure
+
+      OUTPUT
+
+      tests, summary = TestRunnerService.parse_rspec_output(raw)
+      assert_kind_of Array, tests
+      assert_kind_of Hash, summary
+      assert_equal 0, summary[:total]
+    end
+
     # -------------------------------------------------------------------------
     # error_result
     # -------------------------------------------------------------------------

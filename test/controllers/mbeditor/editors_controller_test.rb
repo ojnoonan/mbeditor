@@ -581,7 +581,6 @@ module Mbeditor
 
       get "/mbeditor/file", params: { path: "bigpaged.txt", start_line: 0, line_count: 5 }
       assert_response :ok
-      body = json
       assert_equal 200, response.status
     ensure
       File.delete(big_file) if File.exist?(big_file)
@@ -827,6 +826,7 @@ module Mbeditor
       RUBY
 
       original = RiDefinitionService.method(:call)
+      RiDefinitionService.singleton_class.remove_method(:call)
       RiDefinitionService.define_singleton_method(:call) { |_sym| ri_result }
       begin
         get "/mbeditor/definition", params: { symbol: "my_ws_symbol", language: "ruby" }
@@ -839,6 +839,7 @@ module Mbeditor
         last_ws_index  = results.rindex { |r| r["line"] > 0 }
         assert last_ws_index < first_ri_index, "Workspace results must come before ri results"
       ensure
+        RiDefinitionService.singleton_class.remove_method(:call)
         RiDefinitionService.define_singleton_method(:call, &original)
       end
     end

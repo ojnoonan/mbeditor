@@ -33,3 +33,17 @@ cd test/dummy && rails server  # http://localhost:3000/mbeditor
 
 ## Dependencies
 Ruby >= 3.0, Rails 7.1–8.x, `sprockets-rails >= 3.4`. Dev: `minitest-reporters`, `webmock`. Host optional: `rubocop`, `rubocop-rails`, `haml_lint`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on ojnoonan/mbeditor. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

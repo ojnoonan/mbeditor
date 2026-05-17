@@ -168,5 +168,29 @@ module Mbeditor
         assert_equal [0, 0], [ahead, behind]
       end
     end
+
+    # -------------------------------------------------------------------------
+    # resolve_path
+    # -------------------------------------------------------------------------
+
+    def test_resolve_path_returns_full_path_for_valid_relative
+      result = GitService.resolve_path('/some/root', 'lib/foo.rb')
+      assert_equal '/some/root/lib/foo.rb', result
+    end
+
+    def test_resolve_path_returns_nil_for_traversal
+      result = GitService.resolve_path('/some/root', '../../etc/passwd')
+      assert_nil result
+    end
+
+    def test_resolve_path_returns_nil_for_blank_input
+      assert_nil GitService.resolve_path('/some/root', '')
+      assert_nil GitService.resolve_path('/some/root', nil)
+    end
+
+    def test_resolve_path_returns_repo_path_for_exact_root_dot
+      result = GitService.resolve_path('/some/root', '.')
+      assert_equal '/some/root', result
+    end
   end
 end

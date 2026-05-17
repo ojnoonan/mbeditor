@@ -150,6 +150,9 @@ module Mbeditor
       git_service_singleton.alias_method :__original_current_branch_for_test, :current_branch
       git_service_singleton.alias_method :__original_find_branch_base_for_test, :find_branch_base
       open3_singleton.alias_method :__original_capture3_for_test, :capture3
+      git_service_singleton.remove_method :current_branch
+      git_service_singleton.remove_method :find_branch_base
+      open3_singleton.remove_method :capture3
 
       git_status_ok = Object.new
       def git_status_ok.success?
@@ -189,10 +192,13 @@ module Mbeditor
       assert_equal 1, json["branchCommits"].length
       assert_equal "aaa1111", json["branchCommits"].first["hash"]
     ensure
+      git_service_singleton.remove_method :current_branch
       git_service_singleton.alias_method :current_branch, :__original_current_branch_for_test
       git_service_singleton.remove_method :__original_current_branch_for_test
+      git_service_singleton.remove_method :find_branch_base
       git_service_singleton.alias_method :find_branch_base, :__original_find_branch_base_for_test
       git_service_singleton.remove_method :__original_find_branch_base_for_test
+      open3_singleton.remove_method :capture3
       open3_singleton.alias_method :capture3, :__original_capture3_for_test
       open3_singleton.remove_method :__original_capture3_for_test
     end
@@ -263,6 +269,9 @@ module Mbeditor
       git_service_singleton.alias_method :__original_current_branch_for_test, :current_branch
       git_service_singleton.alias_method :__original_find_branch_base_for_test, :find_branch_base
       open3_singleton.alias_method :__original_capture3_for_test, :capture3
+      git_service_singleton.remove_method :current_branch
+      git_service_singleton.remove_method :find_branch_base
+      open3_singleton.remove_method :capture3
 
       base_sha = 'b' * 40
 
@@ -295,12 +304,56 @@ module Mbeditor
       assert_response :ok
       assert_includes response.body, 'diff --git a/foo b/foo'
     ensure
+      git_service_singleton.remove_method :current_branch
       git_service_singleton.alias_method :current_branch, :__original_current_branch_for_test
       git_service_singleton.remove_method :__original_current_branch_for_test
+      git_service_singleton.remove_method :find_branch_base
       git_service_singleton.alias_method :find_branch_base, :__original_find_branch_base_for_test
       git_service_singleton.remove_method :__original_find_branch_base_for_test
+      open3_singleton.remove_method :capture3
       open3_singleton.alias_method :capture3, :__original_capture3_for_test
       open3_singleton.remove_method :__original_capture3_for_test
+    end
+
+    test 'combined_diff scope=branch returns empty body when no base sha and no upstream' do
+      git_service_singleton = class << GitService; self; end
+      open3_singleton       = class << Open3; self; end
+
+      git_service_singleton.alias_method :__original_current_branch_for_nobase, :current_branch
+      git_service_singleton.alias_method :__original_find_branch_base_for_nobase, :find_branch_base
+      open3_singleton.alias_method :__original_capture3_for_nobase, :capture3
+      git_service_singleton.remove_method :current_branch
+      git_service_singleton.remove_method :find_branch_base
+      open3_singleton.remove_method :capture3
+
+      git_status_fail = Object.new
+      def git_status_fail.success?; false; end
+
+      GitService.define_singleton_method(:current_branch) { |_| 'feature/orphan' }
+      GitService.define_singleton_method(:find_branch_base) { |*| [nil, nil] }
+
+      Open3.define_singleton_method(:capture3) do |*args|
+        command = args.map(&:to_s)
+        if command.include?('rev-parse') && command.include?('@{u}')
+          ['', 'error: no upstream configured', git_status_fail]
+        else
+          ['', '', git_status_fail]
+        end
+      end
+
+      get '/mbeditor/git/combined_diff', params: { scope: 'branch' }
+      assert_response :ok
+      assert_equal '', response.body
+    ensure
+      git_service_singleton.remove_method :current_branch
+      git_service_singleton.alias_method :current_branch, :__original_current_branch_for_nobase
+      git_service_singleton.remove_method :__original_current_branch_for_nobase
+      git_service_singleton.remove_method :find_branch_base
+      git_service_singleton.alias_method :find_branch_base, :__original_find_branch_base_for_nobase
+      git_service_singleton.remove_method :__original_find_branch_base_for_nobase
+      open3_singleton.remove_method :capture3
+      open3_singleton.alias_method :capture3, :__original_capture3_for_nobase
+      open3_singleton.remove_method :__original_capture3_for_nobase
     end
 
     test 'combined_diff unknown scope falls back to local behaviour' do
