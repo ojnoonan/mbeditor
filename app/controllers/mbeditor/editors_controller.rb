@@ -333,12 +333,12 @@ module Mbeditor
 
       results = case language
                 when "ruby"
+                  excl_patterns = Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?)
                   workspace = RubyDefinitionService.call(
                     workspace_root,
                     symbol,
-                    excluded_dirnames: excluded_dirnames,
-                    excluded_paths:    excluded_paths,
-                    included_dirs:     ruby_def_include_dirs
+                    excluded_paths: excl_patterns,
+                    included_dirs:  ruby_def_include_dirs
                   )
                   ri = RiDefinitionService.call(symbol)
                   workspace + ri
@@ -386,11 +386,11 @@ module Mbeditor
       return render json: { error: "Invalid name" }, status: :bad_request \
         unless name.match?(/\A[A-Z][a-zA-Z0-9_]*\z/)
 
+      excl_patterns = Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?)
       file = RubyDefinitionService.module_defined_in(
         workspace_root, name,
-        excluded_dirnames: excluded_dirnames,
-        excluded_paths:    excluded_paths,
-        included_dirs:     ruby_def_include_dirs
+        excluded_paths: excl_patterns,
+        included_dirs:  ruby_def_include_dirs
       )
       return render json: { name: name, methods: [] } unless file
 
@@ -411,18 +411,17 @@ module Mbeditor
 
       # Ensure workspace is scanned so include_calls are populated in the cache.
       # Fast no-op on subsequent calls (mtime checks only).
+      excl_patterns = Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?)
       RubyDefinitionService.scan(workspace_root,
-                                 excluded_dirnames: excluded_dirnames,
-                                 excluded_paths:    excluded_paths,
-                                 included_dirs:     ruby_def_include_dirs)
+                                 excluded_paths: excl_patterns,
+                                 included_dirs:  ruby_def_include_dirs)
 
       module_names = RubyDefinitionService.includes_in_file(path)
       includes = module_names.filter_map do |mod_name|
         mod_file = RubyDefinitionService.module_defined_in(
           workspace_root, mod_name,
-          excluded_dirnames: excluded_dirnames,
-          excluded_paths:    excluded_paths,
-          included_dirs:     ruby_def_include_dirs
+          excluded_paths: excl_patterns,
+          included_dirs:  ruby_def_include_dirs
         )
         next unless mod_file
 
@@ -443,10 +442,10 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
 
+      excl_patterns = Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?)
       unused = UnusedMethodsService.call(
         workspace_root, path,
-        excluded_dirnames: excluded_dirnames,
-        excluded_paths:    excluded_paths
+        excluded_paths: excl_patterns
       )
       render json: { unused: unused }
     rescue StandardError => e
@@ -887,7 +886,7 @@ module Mbeditor
       rel = relative_path(full_path)
       return true if rel.blank?
 
-      excluded_path?(rel, File.basename(full_path))
+      ExclusionMatcher.new(Mbeditor.configuration.excluded_paths).excluded?(rel)
     end
 
     # Stream search results using popen so we can stop reading early once we
@@ -901,7 +900,7 @@ module Mbeditor
         args << "-F" unless use_regex
         args << "--ignore-case" unless match_case
         args << "--word-regexp" if whole_word
-        excluded_paths.each { |p| args << "--glob=!#{p}" }
+        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).each { |p| args << "--glob=!#{p}" }
         args += ["--", query, workspace_root.to_s]
 
         IO.popen(args, err: File::NULL) do |io|
@@ -929,7 +928,7 @@ module Mbeditor
         args = ["grep", "-rn", base_flags]
         args << "-i" unless match_case
         args << "-w" if whole_word
-        excluded_dirnames.select { |d| d.match?(/\A[\w.\/-]+\z/) }.each { |d| args << "--exclude-dir=#{d}" }
+        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).reject { |p| p.include?("/") }.select { |d| d.match?(/\A[\w.\/-]+\z/) }.each { |d| args << "--exclude-dir=#{d}" }
         args += [query, workspace_root.to_s]
 
         IO.popen(args, err: File::NULL) do |io|
@@ -943,7 +942,7 @@ module Mbeditor
             next unless file_path.start_with?(workspace_root.to_s)
 
             rel = relative_path(file_path)
-            next if excluded_path?(rel, File.basename(file_path))
+            next if ExclusionMatcher.new(Mbeditor.configuration.excluded_paths).excluded?(rel)
 
             results << {
               file: rel,
@@ -966,7 +965,7 @@ module Mbeditor
         args << "-F" unless use_regex
         args << "--ignore-case" unless match_case
         args << "--word-regexp" if whole_word
-        excluded_paths.each { |p| args << "--glob=!#{p}" }
+        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).each { |p| args << "--glob=!#{p}" }
         args += ["--", query, workspace_root.to_s]
         IO.popen(args, err: File::NULL) do |io|
           io.each_line { |line| total += line.strip.split(":").last.to_i rescue 0 }
@@ -976,7 +975,7 @@ module Mbeditor
         args = ["grep", "-rc", base_flags]
         args << "-i" unless match_case
         args << "-w" if whole_word
-        excluded_dirnames.each { |d| args << "--exclude-dir=#{d}" }
+        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).reject { |p| p.include?("/") }.each { |d| args << "--exclude-dir=#{d}" }
         args += [query, workspace_root.to_s]
         IO.popen(args, err: File::NULL) do |io|
           io.each_line { |line| total += line.strip.split(":").last.to_i rescue 0 }
@@ -987,18 +986,19 @@ module Mbeditor
       0
     end
 
-    def build_tree(dir, max_depth: 10, depth: 0, _excl: excluded_paths)
+    def build_tree(dir, max_depth: 10, depth: 0)
       return [] if depth >= max_depth
 
+      matcher = ExclusionMatcher.new(Mbeditor.configuration.excluded_paths)
       entries = Dir.entries(dir).sort.reject { |entry| entry == "." || entry == ".." }
       entries.filter_map do |name|
         full = File.join(dir, name)
         rel = relative_path(full)
-        is_excl = excluded_path?(rel, name, _excl)
+        is_excl = matcher.excluded?(rel)
 
         if File.directory?(full)
           # Skip recursing into excluded directories — avoids traversing node_modules etc.
-          children = is_excl ? [] : build_tree(full, max_depth: max_depth, depth: depth + 1, _excl: _excl)
+          children = is_excl ? [] : build_tree(full, max_depth: max_depth, depth: depth + 1)
           node = { name: name, type: "folder", path: rel, children: children }
           node[:excluded] = true if is_excl
           node
@@ -1013,26 +1013,8 @@ module Mbeditor
       []
     end
 
-    def excluded_paths
-      Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?)
-    end
-
-    def excluded_dirnames
-      excluded_paths.filter { |path| !path.include?("/") }
-    end
-
     def ruby_def_include_dirs
       Array(Mbeditor.configuration.ruby_def_include_dirs).map(&:to_s).reject(&:blank?)
-    end
-
-    def excluded_path?(relative_path, name, excl = excluded_paths)
-      excl.any? do |pattern|
-        if pattern.include?("/")
-          relative_path == pattern || relative_path.start_with?("#{pattern}/")
-        else
-          name == pattern || relative_path.split("/").include?(pattern)
-        end
-      end
     end
 
     def run_with_timeout(env, cmd, stdin_data:)
