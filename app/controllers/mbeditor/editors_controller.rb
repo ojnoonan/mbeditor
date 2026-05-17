@@ -1003,30 +1003,9 @@ module Mbeditor
 
     def run_with_timeout(env, cmd, stdin_data:)
       timeout_seconds = Mbeditor.configuration.lint_timeout&.to_i
-      output = +""; timed_out = false
-
-      Open3.popen3(env, *cmd, pgroup: true) do |stdin, stdout, _stderr, wait_thr|
-        stdin.write(stdin_data)
-        stdin.close
-
-        timer = if timeout_seconds && timeout_seconds > 0
-          Thread.new do
-            sleep timeout_seconds
-            timed_out = true
-            Process.kill('-KILL', wait_thr.pid)
-          rescue Errno::ESRCH
-            nil
-          end
-        end
-
-        output = stdout.read
-        wait_thr.value
-        timer&.kill
-      end
-
-      raise "RuboCop timed out after #{timeout_seconds} seconds" if timed_out
-
-      output
+      timeout = timeout_seconds && timeout_seconds > 0 ? timeout_seconds : nil
+      result = ProcessRunner.call(cmd, timeout: timeout, env: env, stdin_data: stdin_data)
+      result[:stdout]
     end
 
     def cop_severity(severity)

@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
-require "open3"
-require "timeout"
+require_relative "process_runner"
 
 module Mbeditor
   # Shared helpers for running git CLI commands read-only inside a repo.
@@ -15,33 +14,16 @@ module Mbeditor
     SAFE_GIT_REF = %r{\A[\w./-]+\z}
 
     # Run an arbitrary git command inside +repo_path+.
-    # Returns [stdout, Process::Status]. stderr is captured and discarded to
-    # prevent git diagnostic messages from leaking into the Rails server log.
+    # Returns [stdout, Process::Status]. stderr is discarded to prevent git
+    # diagnostic messages from leaking into the Rails server log.
     # Honors config.git_timeout (seconds) when set.
     def run_git(repo_path, *args)
       timeout_secs = Mbeditor.configuration.git_timeout&.to_i
-      out = +""; timed_out = false; exit_status = nil
-
-      Open3.popen3("git", "-C", repo_path, *args, pgroup: true) do |stdin, stdout, _stderr, wait_thr|
-        stdin.close
-
-        timer = if timeout_secs && timeout_secs > 0
-          Thread.new do
-            sleep timeout_secs
-            timed_out = true
-            Process.kill("-KILL", wait_thr.pid)
-          rescue Errno::ESRCH
-            nil
-          end
-        end
-
-        out = stdout.read
-        exit_status = wait_thr.value
-        timer&.kill
-      end
-
-      raise Timeout::Error, "git timed out after #{timeout_secs}s" if timed_out
-      [out, exit_status]
+      timeout = timeout_secs && timeout_secs > 0 ? timeout_secs : nil
+      result = ProcessRunner.call(["git", "-C", repo_path, *args], timeout: timeout)
+      [result[:stdout], result[:exit_status]]
+    rescue ProcessRunner::TimeoutError
+      raise Timeout::Error, "git timed out after #{timeout_secs}s"
     end
 
     # Current branch name, or nil if not in a git repo.

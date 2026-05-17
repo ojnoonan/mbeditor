@@ -340,5 +340,47 @@ module Mbeditor
       assert_kind_of Array, result[:tests]
       assert_kind_of Hash, result[:summary]
     end
+
+    # -------------------------------------------------------------------------
+    # execute_with_timeout
+    # -------------------------------------------------------------------------
+
+    test "execute_with_timeout returns combined stdout and stderr as a single string" do
+      Dir.mktmpdir do |dir|
+        cmd = ["bash", "-c", "echo out; echo err >&2"]
+        raw = TestRunnerService.execute_with_timeout(dir, cmd, 5)
+
+        assert_includes raw, "out\n"
+        assert_includes raw, "err\n"
+      end
+    end
+
+    test "execute_with_timeout raises ProcessRunner::TimeoutError when subprocess exceeds timeout" do
+      Dir.mktmpdir do |dir|
+        assert_raises(ProcessRunner::TimeoutError) do
+          TestRunnerService.execute_with_timeout(dir, ["sleep", "10"], 0.01)
+        end
+      end
+    end
+
+    # -------------------------------------------------------------------------
+    # run (timeout handling)
+    # -------------------------------------------------------------------------
+
+    test "run returns timeout error result when subprocess times out" do
+      Dir.mktmpdir do |dir|
+        FileUtils.mkdir_p(File.join(dir, "test"))
+        test_file = File.join(dir, "test", "slow_test.rb")
+        File.write(test_file, "")
+
+        # bash -c 'sleep 10' treats the trailing file arg as $0, so sleep runs
+        result = TestRunnerService.run(dir, "test/slow_test.rb",
+                                       command: "bash -c 'sleep 10'",
+                                       timeout: 0.01)
+
+        assert_equal false, result[:ok]
+        assert_match(/timed out/i, result[:error])
+      end
+    end
   end
 end

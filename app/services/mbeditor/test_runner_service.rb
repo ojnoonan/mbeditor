@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "open3"
 require "json"
 require "shellwords"
 
@@ -26,10 +25,7 @@ module Mbeditor
       return error_result("Could not detect test framework") unless framework
 
       cmd = build_command(repo_path, test_path, framework, command)
-      raw, timed_out = execute_with_timeout(repo_path, cmd, timeout)
-
-      return error_result("Test run timed out after #{timeout} seconds") if timed_out
-
+      raw = execute_with_timeout(repo_path, cmd, timeout)
       tests, summary = parse_output(raw, framework)
       {
         ok: true,
@@ -38,6 +34,8 @@ module Mbeditor
         tests: tests,
         raw: raw
       }
+    rescue ProcessRunner::TimeoutError
+      error_result("Test run timed out after #{timeout} seconds")
     rescue StandardError => e
       error_result(e.message)
     end
@@ -127,28 +125,8 @@ module Mbeditor
     end
 
     def execute_with_timeout(repo_path, cmd, timeout)
-      raw = +""
-      timed_out = false
-
-      Open3.popen3(*cmd, chdir: repo_path, pgroup: true) do |stdin, stdout, stderr, wait_thr|
-        stdin.close
-
-        timer = Thread.new do
-          sleep timeout
-          timed_out = true
-          Process.kill("-KILL", wait_thr.pid)
-        rescue Errno::ESRCH
-          nil
-        end
-
-        out = stdout.read
-        err = stderr.read
-        raw = out.to_s + err.to_s
-        wait_thr.value
-        timer.kill
-      end
-
-      [raw, timed_out]
+      result = ProcessRunner.call(cmd, timeout: timeout, chdir: repo_path)
+      result[:stdout] + result[:stderr]
     end
 
     def parse_output(raw, framework)
