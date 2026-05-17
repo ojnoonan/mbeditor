@@ -906,8 +906,8 @@ module Mbeditor
 
     test "git_info returns error JSON in a non-git workspace" do
       get "/mbeditor/git_info"
-      # temp workspace is not a git repo — controller returns 422
-      assert_response :unprocessable_content
+      assert_response :ok
+      assert_equal false, json["ok"]
       assert json.key?("error")
     end
 

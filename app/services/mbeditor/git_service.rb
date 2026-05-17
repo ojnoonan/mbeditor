@@ -103,6 +103,34 @@ module Mbeditor
       [nil, nil]
     end
 
+    # Parse `git status --porcelain` output.
+    # Returns Array of { status: String, path: String }.
+    def parse_porcelain_status(output)
+      output.lines.filter_map do |line|
+        next if line.length < 4
+
+        path = line[3..].to_s.strip
+        next if path.blank?
+
+        { status: line[0..1].strip, path: path }
+      end
+    end
+
+    # Parse `git diff --name-status` output.
+    # Returns Array of { status: String, path: String }.
+    def parse_name_status(output)
+      output.lines.filter_map do |line|
+        parts = line.strip.split("\t")
+        next if parts.empty?
+
+        status = parts[0].to_s.strip
+        path = parts.last.to_s.strip
+        next if path.blank?
+
+        { status: status, path: path }
+      end
+    end
+
     # Parse `git diff --numstat` output.
     # Returns Hash of path => { added: Integer, removed: Integer }.
     def parse_numstat(output)

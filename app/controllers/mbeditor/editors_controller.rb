@@ -586,7 +586,7 @@ module Mbeditor
     def git_status
       output, _err, status = Open3.capture3("git", "-C", workspace_root.to_s, "status", "--porcelain")
       branch = GitService.current_branch(workspace_root.to_s) || ""
-      files = parse_porcelain_status(output)
+      files = GitService.parse_porcelain_status(output)
       render json: { ok: status.success?, files: files, branch: branch }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -594,120 +594,7 @@ module Mbeditor
 
     # GET /mbeditor/git_info
     def git_info
-      repo = workspace_root.to_s
-      cached = cached_git_info(repo)
-      return render json: cached if cached
-
-      branch = GitService.current_branch(repo)
-      unless branch
-        return render json: { ok: false, error: "Unable to determine current branch" }, status: :unprocessable_content
-      end
-
-      # Wave 1: all independent git reads run in parallel
-      status_t   = Thread.new { Open3.capture3("git", "-C", repo, "status", "--porcelain") }
-      numstat_t  = Thread.new { Open3.capture3("git", "-C", repo, "diff", "--numstat", "HEAD") }
-      upstream_t = Thread.new { Open3.capture3("git", "-C", repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}") }
-      base_t     = Thread.new { GitService.find_branch_base(repo, branch) }
-
-      working_output, _err, working_status = status_t.value
-      working_tree = working_status.success? ? parse_porcelain_status(working_output) : []
-
-      numstat_out = numstat_t.value.first
-      numstat_map = GitService.parse_numstat(numstat_out)
-      working_tree = working_tree.map { |f| f.merge(numstat_map.fetch(f[:path], {})) }
-
-      upstream_output, _err, upstream_status = upstream_t.value
-      upstream_branch = upstream_status.success? ? upstream_output.strip : nil
-      upstream_branch = nil unless upstream_branch&.match?(%r{\A[\w./-]+\z})
-
-      # Determine the branch's fork point relative to a base branch (develop/main/master).
-      # This ensures History and Changes only show work unique to this branch.
-      base_sha, base_ref = base_t.value
-
-      ahead_count    = 0
-      behind_count   = 0
-      unpushed_files = []
-      unpushed_commits = []
-      diff_base = base_sha || upstream_branch
-
-      # Wave 2: conditional parallel reads that depend on Wave 1 results
-      wave2 = {}
-      wave2[:counts]    = Thread.new { Open3.capture3("git", "-C", repo, "rev-list", "--left-right", "--count", "HEAD...#{upstream_branch}") } if upstream_branch.present?
-      wave2[:unp_log]   = Thread.new { Open3.capture3("git", "-C", repo, "log", "#{upstream_branch}..HEAD", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e") } if upstream_branch.present?
-      wave2[:diff_name] = Thread.new { Open3.capture3("git", "-C", repo, "diff", "--name-status", "#{diff_base}..HEAD") } if diff_base.present?
-      wave2[:diff_num]  = Thread.new { Open3.capture3("git", "-C", repo, "diff", "--numstat", "#{diff_base}..HEAD") } if diff_base.present?
-      wave2[:branch_log] = Thread.new do
-        if base_sha
-          Open3.capture3("git", "-C", repo, "log", "--first-parent", "#{base_sha}..HEAD",
-                         "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
-        else
-          Open3.capture3("git", "-C", repo, "log", "--first-parent", branch, "-n", "100",
-                         "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
-        end
-      end
-
-      wave2.each_value(&:join)
-
-      if (ct = wave2[:counts])
-        counts_output, _err, counts_status = ct.value
-        if counts_status.success?
-          ahead_str, behind_str = counts_output.strip.split("\t", 2)
-          ahead_count  = ahead_str.to_i
-          behind_count = behind_str.to_i
-        end
-      end
-
-      if (ul = wave2[:unp_log])
-        unpushed_log_output, _err, unpushed_log_status = ul.value
-        unpushed_commits = GitService.parse_git_log(unpushed_log_output) if unpushed_log_status.success?
-      end
-
-      if (dn = wave2[:diff_name]) && (dnum = wave2[:diff_num])
-        diff_name_out, _err, diff_name_status = dn.value
-        if diff_name_status.success?
-          unpushed_files  = parse_name_status(diff_name_out)
-          unp_numstat_out = dnum.value.first
-          unp_numstat_map = GitService.parse_numstat(unp_numstat_out)
-          unpushed_files  = unpushed_files.map { |f| f.merge(unp_numstat_map.fetch(f[:path], {})) }
-        end
-      end
-
-      branch_log_output, _err, branch_log_status = wave2[:branch_log].value
-      branch_commits = branch_log_status.success? ? GitService.parse_git_log(branch_log_output) : []
-
-      redmine_ticket_id = nil
-      if Mbeditor.configuration.redmine_enabled
-        if Mbeditor.configuration.redmine_ticket_source == :branch
-          m = branch.match(/\A(\d+)/)
-          redmine_ticket_id = m[1] if m
-        else
-          branch_commits.each do |commit|
-            m = commit["title"]&.match(/#(\d+)/)
-            if m
-              redmine_ticket_id = m[1]
-              break
-            end
-          end
-        end
-      end
-
-      payload = {
-        ok: true,
-        branch: branch,
-        upstreamBranch: upstream_branch,
-        ahead: ahead_count,
-        behind: behind_count,
-        workingTree: working_tree,
-        unpushedFiles: unpushed_files,
-        unpushedCommits: unpushed_commits,
-        branchCommits: branch_commits,
-        branchBaseRef: base_ref,
-        redmineTicketId: redmine_ticket_id
-      }
-      store_git_info(repo, payload)
-      render json: payload
-    rescue StandardError => e
-      render json: { ok: false, error: e.message }, status: :unprocessable_content
+      render json: GitInfoService.call(workspace_root.to_s)
     end
 
     # GET /mbeditor/monaco-editor/*asset_path — serve packaged Monaco files
@@ -945,7 +832,7 @@ module Mbeditor
     def broadcast_files_changed
       root = workspace_root.to_s
       invalidate_file_tree_cache(root)
-      invalidate_git_info_cache(root)
+      GitInfoService.invalidate(root)
 
       return unless defined?(ActionCable.server)
 
@@ -1247,9 +1134,8 @@ module Mbeditor
     end
 
     PROBE_MUTEX     = Mutex.new
-    GIT_INFO_MUTEX  = Mutex.new
     FILE_TREE_MUTEX = Mutex.new
-    private_constant :PROBE_MUTEX, :GIT_INFO_MUTEX, :FILE_TREE_MUTEX
+    private_constant :PROBE_MUTEX, :FILE_TREE_MUTEX
 
     def rubocop_available?
       key = Mbeditor.configuration.rubocop_command.to_s
@@ -1273,31 +1159,6 @@ module Mbeditor
       probe_cached(:@git_available_cache, key) do
         _out, _err, status = Open3.capture3("git", "-C", key, "rev-parse", "--is-inside-work-tree")
         status.success?
-      end
-    end
-
-    def cached_git_info(repo, ttl: 5)
-      GIT_INFO_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(:@git_info_cache) || {}
-        entry = cache[repo]
-        return entry[:data] if entry && (Process.clock_gettime(Process::CLOCK_MONOTONIC) - entry[:ts]) < ttl
-      end
-      nil
-    end
-
-    def store_git_info(repo, data)
-      GIT_INFO_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(:@git_info_cache) || {}
-        cache[repo] = { ts: Process.clock_gettime(Process::CLOCK_MONOTONIC), data: data }
-        self.class.instance_variable_set(:@git_info_cache, cache)
-      end
-    end
-
-    def invalidate_git_info_cache(repo)
-      GIT_INFO_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(:@git_info_cache) || {}
-        cache.delete(repo)
-        self.class.instance_variable_set(:@git_info_cache, cache)
       end
     end
 
@@ -1388,30 +1249,6 @@ module Mbeditor
       when "error" then "error"
       when "warning" then "warning"
       else "info"
-      end
-    end
-
-    def parse_porcelain_status(output)
-      output.lines.filter_map do |line|
-        next if line.length < 4
-
-        path = line[3..].to_s.strip
-        next if path.blank?
-
-        { status: line[0..1].strip, path: path }
-      end
-    end
-
-    def parse_name_status(output)
-      output.lines.filter_map do |line|
-        parts = line.strip.split("\t")
-        next if parts.empty?
-
-        status = parts[0].to_s.strip
-        path = parts.last.to_s.strip
-        next if path.blank?
-
-        { status: status, path: path }
       end
     end
 
