@@ -63,6 +63,13 @@ var FileTree = function FileTree(_ref) {
   // Ref that always points to the latest onNodeSelect prop, avoiding stale closures in the effect.
   var onNodeSelectRef = useRef(onNodeSelect);
   onNodeSelectRef.current = onNodeSelect;
+  // Refs that track pending create/rename state for the typeahead guard.
+  // Since these props are not in the effect's dependency array, we use refs to
+  // always read the current values without stale closures.
+  var pendingCreateRef = useRef(pendingCreate);
+  var pendingRenameRef = useRef(pendingRename);
+  pendingCreateRef.current = pendingCreate;
+  pendingRenameRef.current = pendingRename;
   // Tracks whether the user's most recent mousedown was inside the sidebar.
   // Monaco re-steals keyboard focus after any click so e.target on keydown is
   // always Monaco's textarea — the only reliable "is the user in the explorer?"
@@ -259,6 +266,8 @@ var FileTree = function FileTree(_ref) {
       if (!typeaheadEnabled) return;
       if (!sidebarActiveRef.current) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // Prevent typeahead from jumping files while typing a new name in inline create/rename.
+      if (pendingCreateRef.current || pendingRenameRef.current) return;
       if (e.key.length !== 1) return;
       // Still skip when an inline rename/create input is the actual focused element.
       if (e.target && e.target.tagName === 'INPUT') return;
