@@ -1402,7 +1402,7 @@ var EditorPanel = function EditorPanel(_ref) {
   var isImage = tab.isImage || IMAGE_EXTENSIONS.includes(ext);
   var isMarkdown = ['md', 'markdown'].includes(ext);
   var fileBaseName = (tab.path || '').split('/').pop().toLowerCase();
-  var isRubyFile = ext === 'rb' || ext === 'ruby' || ext === 'gemspec' ||
+  var isRubyFile = ext === 'rb' || ext === 'ruby' || ext === 'gemspec' || ext === 'rake' ||
     fileBaseName === 'gemfile' || fileBaseName === 'gemfile.lock' || fileBaseName === 'rakefile';
 
   useEffect(function () {
