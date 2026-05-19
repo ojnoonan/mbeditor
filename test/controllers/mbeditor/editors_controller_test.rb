@@ -1389,6 +1389,16 @@ module Mbeditor
       Mbeditor.configure { |c| c.related_files_custom_paths = [] }
     end
 
+    test "client_config returns 200 with related_files_custom_paths" do
+      Mbeditor.configure { |c| c.related_files_custom_paths = ["app/javascript/components"] }
+      get "/mbeditor/client_config"
+      assert_response :ok
+      assert json.key?("related_files_custom_paths")
+      assert_includes json["related_files_custom_paths"], "app/javascript/components"
+    ensure
+      Mbeditor.configure { |c| c.related_files_custom_paths = [] }
+    end
+
     private
 
     def json

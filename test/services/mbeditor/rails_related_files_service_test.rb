@@ -282,6 +282,25 @@ module Mbeditor
     end
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Concerns
+    # ─────────────────────────────────────────────────────────────────────────
+
+    test "concern in app/models/concerns appears in concerns group" do
+      touch "app/models/concerns/user_concern.rb"
+      result = find("app/controllers/users_controller.rb")
+      assert result.key?(:concerns), "expected :concerns group"
+      paths = result[:concerns].map { |e| e[:path] }
+      assert_includes paths, "app/models/concerns/user_concern.rb"
+    end
+
+    test "controller entry has kind Controller" do
+      touch "app/controllers/users_controller.rb"
+      result = find("app/models/user.rb")
+      assert result.key?(:controller)
+      assert_equal 'Controller', result[:controller].first[:kind]
+    end
+
+    # ─────────────────────────────────────────────────────────────────────────
     # extract_resource_names unit tests
     # ─────────────────────────────────────────────────────────────────────────
 

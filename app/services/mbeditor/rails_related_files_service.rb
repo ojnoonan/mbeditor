@@ -63,19 +63,21 @@ module Mbeditor
       result[:tests] = tests unless tests.empty?
 
       # ── concerns ──────────────────────────────────────────────────────────────
+      plain_plural   = plural.split('/').last
+      plain_singular = singular.split('/').last
       concern_dirs = ['app/models/concerns', 'app/controllers/concerns']
       concern_files = []
       concern_dirs.each do |dir|
         children = dir_children(workspace_root, dir, kind: 'Concern')
         matching = children.select { |c|
           base = File.basename(c[:path], '.*')
-          base == plural || base == singular ||
-            base.start_with?("#{plural}_") || base.start_with?("#{singular}_") ||
-            base.end_with?("_#{plural}") || base.end_with?("_#{singular}")
+          base == plain_plural || base == plain_singular ||
+            base.start_with?("#{plain_plural}_") || base.start_with?("#{plain_singular}_") ||
+            base.end_with?("_#{plain_plural}") || base.end_with?("_#{plain_singular}")
         }
         concern_files.concat(matching)
       end
-      result[:concerns] = concern_files unless concern_files.empty?
+      result[:concerns] = concern_files.uniq { |c| c[:path] } unless concern_files.empty?
 
       # ── custom paths ──────────────────────────────────────────────────────────
       custom_result = {}
@@ -84,7 +86,7 @@ module Mbeditor
         next if base.empty?
 
         # Derive a human-readable kind from the last segment of the base path
-        custom_kind = base.split('/').last.to_s
+        custom_kind = base.split('/').last.to_s.tr('_', ' ').split.map(&:capitalize).join(' ')
 
         [plural, singular].uniq.each do |name|
           rel_dir = "#{base}/#{name}"
