@@ -815,7 +815,7 @@ module Mbeditor
     def broadcast_files_changed
       root = workspace_root.to_s
       invalidate_file_tree_cache(root)
-      GitInfoService.invalidate(root)
+      Thread.new { GitInfoService.invalidate(root) rescue nil }
 
       return unless defined?(ActionCable.server)
 
