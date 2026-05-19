@@ -650,10 +650,10 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
 
-      filename = File.basename(path)
+      filename = path.to_s
       code = params[:code] || File.read(path)
 
-      if filename.end_with?('.haml')
+      if File.basename(filename).end_with?('.haml')
         unless haml_lint_available?
           return render json: { error: "haml-lint not available", markers: [] }, status: :unprocessable_content
         end
