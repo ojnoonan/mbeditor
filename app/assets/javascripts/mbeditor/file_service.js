@@ -213,6 +213,10 @@ var FileService = (function () {
     return axios.get(window.mbeditorBasePath() + '/unused_methods', config).then(function(res) { return res.data; });
   }
 
+  function getClientConfig() {
+    return axios.get(window.mbeditorBasePath() + '/client_config').then(function(res) { return res.data; });
+  }
+
   function getRelatedFiles(path) {
     return axios.get(window.mbeditorBasePath() + '/related_files', { params: { path: path } })
       .then(function(res) { return res.data; });
@@ -247,6 +251,7 @@ var FileService = (function () {
     getModuleMembers: getModuleMembers,
     getFileIncludes: getFileIncludes,
     getUnusedMethods: getUnusedMethods,
+    getClientConfig: getClientConfig,
     getRelatedFiles: getRelatedFiles
   };
 })();

@@ -1098,6 +1098,15 @@ html, body, #mbeditor-root {
   line-height: 1;
 }
 
+.rails-group-item-kind {
+  font-size: 10px;
+  color: #888;
+  margin-left: auto;
+  padding-right: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .rails-panel-overflow {
   padding: 4px 12px 8px;
   font-size: 11px;

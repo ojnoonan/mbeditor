@@ -766,6 +766,13 @@ module Mbeditor
       render json: { error: e.message, ok: false }, status: :unprocessable_content
     end
 
+    # GET /mbeditor/client_config — returns client-side configuration values
+    def client_config
+      render json: {
+        related_files_custom_paths: Array(Mbeditor.configuration.related_files_custom_paths)
+      }
+    end
+
     # GET /mbeditor/related_files?path=...
     def related_files
       path = resolve_path(params[:path])

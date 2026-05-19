@@ -535,6 +535,7 @@ var MbeditorApp = function MbeditorApp() {
   var stateRestoredRef = useRef(false);
   var ctrlWPendingRef = useRef(false);
   var ctrlWTimeoutRef = useRef(null);
+  var customPathsRef = useRef([]);
 
   // ── Draft backup helpers ─────────────────────────────────────────────────
   var draftWriteTimerRef = useRef({});
@@ -1521,6 +1522,12 @@ var MbeditorApp = function MbeditorApp() {
     return function() { window.removeEventListener('beforeinstallprompt', handler); };
   }, []);
 
+  useEffect(function() {
+    FileService.getClientConfig().then(function(cfg) {
+      customPathsRef.current = Array.isArray(cfg.related_files_custom_paths) ? cfg.related_files_custom_paths : [];
+    })['catch'](function() {});
+  }, []);
+
   var resourceLabelFromPath = function(p) {
     if (!p) return null;
     var parts = p.split('/');
@@ -1536,7 +1543,22 @@ var MbeditorApp = function MbeditorApp() {
       if (parts[1] === 'controllers') name = file.replace(/_controller_(test|spec)\.rb$/, '');
       else if (parts[1] === 'models') name = file.replace(/_(test|spec)\.rb$/, '');
       else return null;
-    } else { return null; }
+    } else {
+      // Check custom paths
+      var customPaths = customPathsRef.current;
+      for (var ci = 0; ci < customPaths.length; ci++) {
+        var base = customPaths[ci];
+        if (p.startsWith(base + '/')) {
+          var rest = p.slice(base.length + 1);
+          var resource = rest.split('/')[0].replace(/\.[^.]+$/, '');
+          if (resource) {
+            var seg = resource.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+            return seg;
+          }
+        }
+      }
+      return null;
+    }
     var seg = (name || '').split('/').pop() || name || '';
     // Normalize plural→singular so views/users and models/user share one group
     seg = seg.replace(/ies$/, 'y')
@@ -3450,7 +3472,7 @@ var MbeditorApp = function MbeditorApp() {
               }
               if (!files || Object.keys(files).length === 0) return null;
               var allFiles = [];
-              ['model', 'controller', 'helper', 'tests', 'views'].forEach(function(key) {
+              ['model', 'controller', 'helper', 'concerns', 'tests', 'views'].forEach(function(key) {
                 var group = files[key];
                 if (group && group.length) allFiles = allFiles.concat(group);
               });
@@ -3489,6 +3511,7 @@ var MbeditorApp = function MbeditorApp() {
                       },
                       React.createElement("i", { className: "tree-item-icon " + (window.getFileIcon ? window.getFileIcon(f.name) : 'far fa-file-code') + " tree-file-icon" }),
                       React.createElement("span", { className: "rails-group-item-name" }, f.name),
+                      f.kind && React.createElement("span", { className: "rails-group-item-kind" }, f.kind),
                       dirtyPaths[f.path] && React.createElement("span", { className: "rails-group-item-dirty" }, "●")
                     );
                   })

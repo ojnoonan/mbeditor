@@ -22,7 +22,7 @@ module Mbeditor
     #
     # Returns {} when the path does not match any known Rails convention.
     def find(workspace_root, relative_path, custom_paths: [])
-      plural, singular = extract_resource_names(relative_path)
+      plural, singular = extract_resource_names(relative_path, custom_paths: custom_paths)
       return {} unless plural && singular
 
       result = {}
@@ -30,26 +30,26 @@ module Mbeditor
       # ── controller ────────────────────────────────────────────────────────────
       controller_path = "app/controllers/#{plural}_controller.rb"
       if file_exists?(workspace_root, controller_path)
-        result[:controller] = [entry(controller_path)]
+        result[:controller] = [entry(controller_path, kind: 'Controller')]
       end
 
       # ── model ─────────────────────────────────────────────────────────────────
       model_path = "app/models/#{singular}.rb"
       if file_exists?(workspace_root, model_path)
-        result[:model] = [entry(model_path)]
+        result[:model] = [entry(model_path, kind: 'Model')]
       end
 
       # ── views ─────────────────────────────────────────────────────────────────
       views_dir = File.join(workspace_root, "app", "views", plural)
       if File.directory?(views_dir)
-        children = dir_children(workspace_root, "app/views/#{plural}")
+        children = dir_children(workspace_root, "app/views/#{plural}", kind: 'View')
         result[:views] = children unless children.empty?
       end
 
       # ── helper ────────────────────────────────────────────────────────────────
       helper_path = "app/helpers/#{plural}_helper.rb"
       if file_exists?(workspace_root, helper_path)
-        result[:helper] = [entry(helper_path)]
+        result[:helper] = [entry(helper_path, kind: 'Helper')]
       end
 
       # ── tests ─────────────────────────────────────────────────────────────────
@@ -59,14 +59,32 @@ module Mbeditor
         "spec/controllers/#{plural}_controller_spec.rb",
         "spec/models/#{singular}_spec.rb"
       ]
-      tests = test_candidates.select { |p| file_exists?(workspace_root, p) }.map { |p| entry(p) }
+      tests = test_candidates.select { |p| file_exists?(workspace_root, p) }.map { |p| entry(p, kind: 'Test') }
       result[:tests] = tests unless tests.empty?
+
+      # ── concerns ──────────────────────────────────────────────────────────────
+      concern_dirs = ['app/models/concerns', 'app/controllers/concerns']
+      concern_files = []
+      concern_dirs.each do |dir|
+        children = dir_children(workspace_root, dir, kind: 'Concern')
+        matching = children.select { |c|
+          base = File.basename(c[:path], '.*')
+          base == plural || base == singular ||
+            base.start_with?("#{plural}_") || base.start_with?("#{singular}_") ||
+            base.end_with?("_#{plural}") || base.end_with?("_#{singular}")
+        }
+        concern_files.concat(matching)
+      end
+      result[:concerns] = concern_files unless concern_files.empty?
 
       # ── custom paths ──────────────────────────────────────────────────────────
       custom_result = {}
       Array(custom_paths).each do |base|
         base = base.to_s.strip
         next if base.empty?
+
+        # Derive a human-readable kind from the last segment of the base path
+        custom_kind = base.split('/').last.to_s
 
         [plural, singular].uniq.each do |name|
           rel_dir = "#{base}/#{name}"
@@ -81,7 +99,7 @@ module Mbeditor
             next
           end
 
-          children = dir_children(workspace_root, rel_dir)
+          children = dir_children(workspace_root, rel_dir, kind: custom_kind)
           next if children.empty?
 
           custom_result[base] ||= []
@@ -100,7 +118,7 @@ module Mbeditor
     # Returns [plural, singular] workspace-relative resource name strings
     # (may include namespace prefix, e.g. "admin/users", "admin/user"),
     # or nil when the path does not match a known Rails convention.
-    def extract_resource_names(relative_path)
+    def extract_resource_names(relative_path, custom_paths: [])
       parts = relative_path.to_s.split("/")
       return nil unless parts.length >= 2
 
@@ -109,6 +127,15 @@ module Mbeditor
         case parts[1]
         when "controllers"
           # app/controllers/[namespace/]name_controller.rb
+          # also handles app/controllers/concerns/name_concern.rb
+          if parts[2] == "concerns"
+            return nil unless parts.length >= 4 && parts.last.end_with?(".rb")
+            file_base = parts.last.delete_suffix(".rb")
+            singular = file_base.sub(/_concern$/, '').sub(/^concern_/, '')
+            plural = pluralize(singular)
+            return [plural, singular]
+          end
+
           return nil unless parts.last.end_with?("_controller.rb")
 
           ns_and_file = parts[2..]
@@ -121,6 +148,15 @@ module Mbeditor
 
         when "models"
           # app/models/[namespace/]name.rb
+          # also handles app/models/concerns/name_concern.rb
+          if parts[2] == "concerns"
+            return nil unless parts.length >= 4 && parts.last.end_with?(".rb")
+            file_base = parts.last.delete_suffix(".rb")
+            singular = file_base.sub(/_concern$/, '').sub(/^concern_/, '')
+            plural = pluralize(singular)
+            return [plural, singular]
+          end
+
           return nil unless parts.last.end_with?(".rb")
 
           ns_and_file = parts[2..]
@@ -192,12 +228,22 @@ module Mbeditor
         end
 
       else
+        # Custom path fallback — must be last
+        Array(custom_paths).each do |base|
+          base = base.to_s.strip
+          next if base.empty?
+          next unless relative_path.start_with?("#{base}/")
+          rest = relative_path.delete_prefix("#{base}/")
+          resource = rest.split('/').first.to_s.sub(/\.[^.]+$/, '')  # first path segment, no extension
+          next if resource.empty?
+          return [pluralize(resource), singularize(resource)]
+        end
         nil
       end
     end
 
-    def entry(rel_path)
-      { path: rel_path, name: File.basename(rel_path), type: :file }
+    def entry(rel_path, kind: nil)
+      { path: rel_path, name: File.basename(rel_path), type: :file, kind: kind }
     end
 
     def file_exists?(workspace_root, rel_path)
@@ -205,8 +251,8 @@ module Mbeditor
     end
 
     # Returns direct file children (not subdirectories) of a workspace-relative
-    # directory, sorted by name, as {path:, name:, type: :file} hashes.
-    def dir_children(workspace_root, rel_dir)
+    # directory, sorted by name, as {path:, name:, type: :file, kind:} hashes.
+    def dir_children(workspace_root, rel_dir, kind: nil)
       abs_dir = File.join(workspace_root, rel_dir)
       return [] unless File.directory?(abs_dir)
 
@@ -217,7 +263,7 @@ module Mbeditor
            full = File.join(abs_dir, name)
            next unless File.file?(full)
 
-           { path: "#{rel_dir}/#{name}", name: name, type: :file }
+           { path: "#{rel_dir}/#{name}", name: name, type: :file, kind: kind }
          end
     end
 

@@ -26,6 +26,7 @@ Mbeditor::Engine.routes.draw do
   get    'module_members',  to: 'editors#module_members'
   get    'file_includes',   to: 'editors#file_includes'
   get    'unused_methods',  to: 'editors#unused_methods'
+  get    'client_config',   to: 'editors#client_config'
   get    'related_files',   to: 'editors#related_files'
   get    'git_info',        to: 'editors#git_info'
   get    'git_status',      to: 'editors#git_status'
