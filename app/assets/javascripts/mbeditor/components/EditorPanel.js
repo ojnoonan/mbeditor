@@ -472,7 +472,7 @@ var EditorPanel = function EditorPanel(_ref) {
         language = 'ruby';break;
       default:
         switch (extension) {
-      case 'rb':case 'ruby':case 'gemspec':
+      case 'rb':case 'ruby':case 'gemspec':case 'rake':
           language = 'ruby';break;
       case 'js':case 'jsx':
         language = 'javascript';break;

@@ -106,7 +106,7 @@ var DiffViewer = function DiffViewer(_ref) {
     if (/\.css\.erb$/.test(fileName)) return 'css';
     var ext = fileName.split('.').pop();
     var map = {
-      'rb': 'ruby', 'gemspec': 'ruby',
+      'rb': 'ruby', 'gemspec': 'ruby', 'rake': 'ruby',
       'js': 'javascript', 'jsx': 'javascript',
       'ts': 'typescript', 'tsx': 'typescript',
       'json': 'json', 'yml': 'yaml', 'yaml': 'yaml',

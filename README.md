@@ -67,6 +67,10 @@ Mbeditor.configure do |config|
   # config.redmine_url = "https://redmine.example.com/"
   # config.redmine_api_key = "optional_api_key_override"
   # config.redmine_ticket_source = :commit  # :commit (scan recent commit messages for #123) or :branch (leading digits of branch name)
+
+  # Optional Ruby/Rails side panel tuning
+  # config.ruby_def_include_dirs = %w[app/models app/controllers app/helpers app/concerns]
+  # config.related_files_custom_paths = %w[app/assets/javascripts/app app/policies]
 end
 ```
 
@@ -84,6 +88,8 @@ Available options:
 - `redmine_url` sets the Redmine base URL. Required when `redmine_enabled` is `true`.
 - `redmine_api_key` sets the Redmine API key. Required when `redmine_enabled` is `true`.
 - `redmine_ticket_source` controls how the current Redmine ticket is identified. `:commit` scans the 100 most recent branch commits for a `#123` reference in the commit message. `:branch` reads the leading digits from the branch name (e.g. `123-my-feature` → ticket 123). Default: `:commit`.
+- `ruby_def_include_dirs` sets which workspace-relative directories are searched when resolving Ruby go-to-definition jumps (e.g. clicking a class name). Add any extra directories that hold Ruby source files you want the engine to index. Default: `%w[app/models app/controllers app/helpers app/concerns]`.
+- `related_files_custom_paths` adds extra base directories to the Rails related-files side panel. For each entry the panel looks for a subdirectory named after the current resource (plural or singular) and lists its files. For example, `"app/assets/javascripts/app"` will surface `app/assets/javascripts/app/users/` when you are editing a `users` resource. Default: `[]`.
 
 ## Test Runner
 
