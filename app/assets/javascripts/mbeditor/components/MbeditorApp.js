@@ -67,8 +67,22 @@ var DEFAULT_EDITOR_PREFS = {
   branchStateRestore: true
 };
 
+// Detect the minimum number of leading spaces used for indentation across all
+// indented lines in the code. Returns 0 if no space-indented lines are found
+// (e.g. file already uses tabs or has no indented lines).
+function detectIndentWidth(code) {
+  var min = Infinity;
+  code.split('\n').forEach(function(line) {
+    if (!line.trim()) return;
+    var m = line.match(/^( +)/);
+    if (m) min = Math.min(min, m[1].length);
+  });
+  return min === Infinity ? 0 : min;
+}
+
+// Convert leading space-based indentation to tabs using the detected unit size.
 function spacesToTabs(code, indentSize) {
-  var unit = ' '.repeat(indentSize || 2);
+  var unit = ' '.repeat(indentSize);
   return code.split('\n').map(function(line) {
     var tabs = '';
     while (line.startsWith(unit)) { tabs += '\t'; line = line.slice(unit.length); }
@@ -2022,7 +2036,7 @@ var MbeditorApp = function MbeditorApp() {
   var handleFormat = function handleFormat() {
     if (!activeTab) return;
 
-    var isRubyLang = activeTab.path.endsWith('.rb') || activeTab.path.endsWith('.gemspec') || activeTab.path.endsWith("Rakefile") || activeTab.path.endsWith("Gemfile");
+    var isRubyLang = activeTab.path.endsWith('.rb') || activeTab.path.endsWith('.rake') || activeTab.path.endsWith('.gemspec') || activeTab.path.endsWith("Rakefile") || activeTab.path.endsWith("Gemfile");
 
     if (isRubyLang && !rubocopAvailable) {
       EditorStore.setStatus("RuboCop is not available for this workspace.", "warning");
@@ -2034,9 +2048,12 @@ var MbeditorApp = function MbeditorApp() {
         return _extends({}, prev, { format: true });
       });
       EditorStore.setStatus("Formatting...", "info");
-      var useTabs = editorPrefs.insertSpaces === false;
       var originalContent = activeTab.content;
-      var codeToFormat = useTabs ? spacesToTabs(originalContent, 2) : originalContent;
+      var codeToFormat = originalContent;
+      if (editorPrefs.insertSpaces === false) {
+        var detectedWidth = detectIndentWidth(originalContent);
+        if (detectedWidth > 0) codeToFormat = spacesToTabs(originalContent, detectedWidth);
+      }
       FileService.formatFile(activeTab.path, codeToFormat).then(function (res) {
         if (res.content) {
           // Update content and mark dirty — user decides when to save.

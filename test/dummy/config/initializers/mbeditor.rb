@@ -132,17 +132,27 @@ Rails.application.config.after_initialize do
   end
 
   # ── Ensure .rubocop.yml exists ──────────────────────────────────────────────
-  # Written on every boot so the Settings panel can show the config link.
-  File.write(sample_workspace.join(".rubocop.yml"), <<~YAML) unless sample_workspace.join(".rubocop.yml").exist?
+  # Always written on boot so changes here take effect without clearing tmp/.
+  File.write(sample_workspace.join(".rubocop.yml"), <<~YAML)
     AllCops:
       NewCops: enable
       TargetRubyVersion: 3.2
+      SuggestExtensions: false
+
+    Layout/IndentationStyle:
+      EnforcedStyle: tabs
+
+    Layout/IndentationWidth:
+      Width: 1
 
     Style/StringLiterals:
       Enabled: true
       EnforcedStyle: double_quotes
 
     Style/FrozenStringLiteralComment:
+      Enabled: false
+
+    Style/Documentation:
       Enabled: false
 
     Metrics/MethodLength:
