@@ -739,8 +739,15 @@
           // Single-line comments
           [/#.*$/, 'comment'],
 
-          // Heredoc start — capture the terminator word into state arg
-          [/<<[-~]?(['"]?)(\w+)\1/, { token: 'string.heredoc.delimiter', next: '@heredoc.$2' }],
+          // Heredoc start — capture the terminator word; route to specialized state by delimiter name
+          [/<<[-~]?(['"]?)(\w+)\1/, {
+            cases: {
+              '$2~(?i:SQL)':        { token: 'string.heredoc.delimiter', next: '@heredocSQL.$2' },
+              '$2~(?i:HTML?)':      { token: 'string.heredoc.delimiter', next: '@heredocHTML.$2' },
+              '$2~(?i:JS|JAVASCRIPT)': { token: 'string.heredoc.delimiter', next: '@heredocJS.$2' },
+              '@default':           { token: 'string.heredoc.delimiter', next: '@heredoc.$2' }
+            }
+          }],
 
           // def + method name (handles self. prefix and operator method names)
           [/(\bdef\b)(\s+)(self)(\.)([\w]+[!?=]?|[+\-*\/%<>=!\[\]&|^~]+)/,
@@ -865,6 +872,7 @@
           [/\s+/, '']
         ],
 
+        // Generic heredoc — all content is string.heredoc
         heredoc: [
           [/^(\w+)\s*$/, {
             cases: {
@@ -873,6 +881,69 @@
             }
           }],
           [/.+/, 'string.heredoc']
+        ],
+
+        // SQL heredoc — keyword/string/number/comment tokenization
+        heredocSQL: [
+          [/^(\w+)\s*$/, {
+            cases: {
+              '$1==$S2': { token: 'string.heredoc.delimiter', next: '@pop' },
+              '@default': { token: '@rematch', next: '@heredocSQLLine' }
+            }
+          }],
+          [/.+/, { token: '@rematch', next: '@heredocSQLLine' }]
+        ],
+
+        heredocSQLLine: [
+          [/--.*$/, { token: 'comment.sql', next: '@pop' }],
+          [/'[^']*'/, 'string.sql'],
+          [/\b\d+(?:\.\d+)?\b/, 'number.sql'],
+          [/\b(?:SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|JOIN|LEFT|RIGHT|INNER|OUTER|ON|GROUP|ORDER|BY|HAVING|LIMIT|OFFSET|CREATE|DROP|ALTER|TABLE|INDEX|INTO|VALUES|SET|AS|AND|OR|NOT|NULL|IS|IN|LIKE|BETWEEN|DISTINCT|COUNT|SUM|AVG|MIN|MAX)\b/i, 'keyword.sql'],
+          [/[^\s\w'"-]+/, 'string.heredoc'],
+          [/\w+/, 'string.heredoc'],
+          [/$/, { token: '', next: '@pop' }]
+        ],
+
+        // HTML heredoc — tag/attribute tokenization
+        heredocHTML: [
+          [/^(\w+)\s*$/, {
+            cases: {
+              '$1==$S2': { token: 'string.heredoc.delimiter', next: '@pop' },
+              '@default': { token: '@rematch', next: '@heredocHTMLLine' }
+            }
+          }],
+          [/.+/, { token: '@rematch', next: '@heredocHTMLLine' }]
+        ],
+
+        heredocHTMLLine: [
+          [/<\/?[a-zA-Z][a-zA-Z0-9]*/, 'tag.html'],
+          [/[a-zA-Z_:][a-zA-Z0-9_:\-\.]*(?=\s*=)/, 'attribute.name.html'],
+          [/\/?>/, 'tag.html'],
+          [/[^<>]+/, 'string.heredoc'],
+          [/$/, { token: '', next: '@pop' }]
+        ],
+
+        // JS heredoc — keyword/string/number/comment tokenization
+        heredocJS: [
+          [/^(\w+)\s*$/, {
+            cases: {
+              '$1==$S2': { token: 'string.heredoc.delimiter', next: '@pop' },
+              '@default': { token: '@rematch', next: '@heredocJSLine' }
+            }
+          }],
+          [/.+/, { token: '@rematch', next: '@heredocJSLine' }]
+        ],
+
+        heredocJSLine: [
+          [/\/\/.*$/, { token: 'comment', next: '@pop' }],
+          [/"(?:[^"\\]|\\.)*"/, 'string'],
+          [/'(?:[^'\\]|\\.)*'/, 'string'],
+          [/`(?:[^`\\]|\\.)*`/, 'string'],
+          [/\b\d+(?:\.\d+)?\b/, 'number'],
+          [/\b(?:var|let|const|function|return|if|else|for|while|do|switch|case|break|continue|new|delete|typeof|instanceof|in|of|class|extends|import|export|default|null|undefined|true|false|this|super|async|await|try|catch|finally|throw|void|yield)\b/, 'keyword'],
+          [/[^\s\w'"`;\/]+/, 'string.heredoc'],
+          [/\w+/, 'string.heredoc'],
+          [/$/, { token: '', next: '@pop' }]
         ],
 
         // %w[] %W[] word arrays
