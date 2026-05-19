@@ -3688,7 +3688,7 @@ var MbeditorApp = function MbeditorApp() {
                     /* ── Appearance ──────────────────────────────── */
                     React.createElement('div', { className: 'ide-settings-section-header' }, 'Appearance'),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Color theme for the editor' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Theme'),
                       React.createElement(
                         'select', {
@@ -3709,7 +3709,7 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Editor font size in pixels (8–32)' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Font size'),
                       React.createElement('input', {
                         key: String(editorPrefs.fontSize || 13),
@@ -3727,7 +3727,7 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row-full' },
+                      'label', { className: 'ide-settings-row-full', title: 'Font stack used in the editor — the first font available on your system is used' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Font family'),
                       React.createElement('input', {
                         type: 'text',
@@ -3776,7 +3776,7 @@ var MbeditorApp = function MbeditorApp() {
                     /* ── Indentation (unified editor + Prettier) ── */
                     React.createElement('div', { className: 'ide-settings-section-header' }, 'Indentation'),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Number of spaces per indentation level (also sets Prettier tab width)' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Tab size'),
                       React.createElement('input', {
                         key: String(editorPrefs.tabSize || 4),
@@ -3794,7 +3794,7 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Insert spaces instead of tab characters when pressing Tab' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Use spaces'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -3807,7 +3807,7 @@ var MbeditorApp = function MbeditorApp() {
                     /* ── Editor ──────────────────────────────────── */
                     React.createElement('div', { className: 'ide-settings-section-header' }, 'Editor'),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'How long lines are handled — Off: scroll horizontally, On: wrap at viewport width, Column: wrap at a fixed column' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Word wrap'),
                       React.createElement(
                         'select', {
@@ -3820,7 +3820,7 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Show line numbers in the gutter — On, Off, or Relative (useful with Vim mode)' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Line numbers'),
                       React.createElement(
                         'select', {
@@ -3833,7 +3833,7 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Render whitespace characters visually — None, Selection only, Boundary (leading/trailing), or All' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Whitespace'),
                       React.createElement(
                         'select', {
@@ -3847,7 +3847,7 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Show a scaled-down overview of the file on the right edge of the editor' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Minimap'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -3857,7 +3857,7 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Allow scrolling past the last line so it can be positioned at the top of the viewport' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Scroll past end'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -3867,7 +3867,7 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Colorize matching bracket pairs with distinct colors to make nesting easier to read' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Bracket colors'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -3877,7 +3877,7 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Enable Vim keybindings (Normal/Insert/Visual modes). Press Escape to return to Normal mode.' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Vim mode'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -3929,7 +3929,7 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Shape of the text cursor in the editor' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Cursor style'),
                       React.createElement(
                         'select', {
@@ -3945,7 +3945,7 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Cursor animation style — Blink (on/off), Smooth (fade), Phase (offset fade), Expand (grow), or Solid (no animation)' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Cursor blinking'),
                       React.createElement(
                         'select', {
@@ -4068,7 +4068,7 @@ var MbeditorApp = function MbeditorApp() {
                     /* ── Formatting (Prettier) ───────────────────── */
                     React.createElement('div', { className: 'ide-settings-section-header' }, 'Formatting'),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Prettier: maximum line length before wrapping (40–200)' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Print width'),
                       React.createElement('input', {
                         key: String(editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80),
@@ -4086,7 +4086,7 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Prettier: add trailing commas in multi-line expressions — All (ES2017+), ES5 (objects/arrays only), or None' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Trailing commas'),
                       React.createElement(
                         'select', {
@@ -4099,7 +4099,7 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Prettier: add semicolons at the end of statements' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Semicolons'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -4109,7 +4109,7 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: "Prettier: use single quotes instead of double quotes for strings" },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Single quotes'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -4119,7 +4119,7 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Prettier: add spaces inside object literal braces, e.g. { a: 1 } vs {a: 1}' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Bracket spacing'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -4132,7 +4132,7 @@ var MbeditorApp = function MbeditorApp() {
                     /* ── Interface ───────────────────────────────── */
                     React.createElement('div', { className: 'ide-settings-section-header' }, 'Interface'),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Automatically scroll the file explorer to reveal and highlight the file you are editing' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Explorer follows active file'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -4142,7 +4142,7 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Jump to a file in the explorer by typing its name when the sidebar is focused' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Explorer type-ahead'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -4152,7 +4152,7 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Show hidden files and directories (those starting with a dot, e.g. .env, .gitignore) in the file explorer' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Show dotfiles'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -4162,7 +4162,7 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half' },
+                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Scroll: tabs overflow horizontally with a scrollbar; Wrap: tabs flow onto multiple rows' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Tab bar layout'),
                       React.createElement(
                         'select', {
@@ -4174,7 +4174,7 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Include folder names in the Quick Open picker (Ctrl+P / Cmd+P) results, not just files' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Quick Open: show folders'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -4184,7 +4184,7 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Hide toolbar button labels and show only icons, giving more horizontal space' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Toolbar: icons only'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -4195,7 +4195,7 @@ var MbeditorApp = function MbeditorApp() {
                     ),
 
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Keep the search/replace text when switching between files in the editor' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Persist find state across files'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -4205,7 +4205,7 @@ var MbeditorApp = function MbeditorApp() {
                       })
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Save which files are open per branch and restore them when switching branches. Disable to always start with a clean slate when switching.' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Restore tabs on branch switch'),
                       React.createElement('input', {
                         type: 'checkbox',
@@ -4218,7 +4218,7 @@ var MbeditorApp = function MbeditorApp() {
                     /* ── RuboCop ─────────────────────────────────── */
                     React.createElement('div', { className: 'ide-settings-section-header' }, 'RuboCop'),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Run RuboCop in the background and show lint warnings/errors as markers in the editor gutter' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Enable RuboCop linting'),
                       React.createElement('input', {
                         type: 'checkbox',
