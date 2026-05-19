@@ -63,7 +63,8 @@ var DEFAULT_EDITOR_PREFS = {
   quickOpenShowFolders: false,
   tabDisplayMode: 'scroll',
   persistFindState: true,
-  showDotFiles: false
+  showDotFiles: false,
+  branchStateRestore: true
 };
 
 function spacesToTabs(code, indentSize) {
@@ -536,6 +537,8 @@ var MbeditorApp = function MbeditorApp() {
   var ctrlWPendingRef = useRef(false);
   var ctrlWTimeoutRef = useRef(null);
   var customPathsRef = useRef([]);
+  var recentSavesRef = useRef({});
+  var isSavingRef = useRef(false);
 
   // ── Draft backup helpers ─────────────────────────────────────────────────
   var draftWriteTimerRef = useRef({});
@@ -583,6 +586,11 @@ var MbeditorApp = function MbeditorApp() {
   var _useStateZen2 = _slicedToArray(_useStateZen, 2);
   var zenMode = _useStateZen2[0];
   var setZenMode = _useStateZen2[1];
+
+  var _useStateSB = useState(false);
+  var _useStateSB2 = _slicedToArray(_useStateSB, 2);
+  var isSwitchingBranch = _useStateSB2[0];
+  var setIsSwitchingBranch = _useStateSB2[1];
 
   var clamp = function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
@@ -934,26 +942,33 @@ var MbeditorApp = function MbeditorApp() {
       if (!newBranch || newBranch === oldBranch) return;
       prevGitBranchRef.current = newBranch;
       if (!oldBranch || isSwitchingBranchRef.current) return;
+      // Ignore spurious branch changes triggered by saves (race condition)
+      if (isSavingRef.current) return;
 
       isSwitchingBranchRef.current = true;
+      setIsSwitchingBranch(true);
 
-      // Save pane state for old branch before switching
-      var cur = EditorStore.getState();
-      var lightweightPanes = cur.panes.map(function (p) {
-        return {
-          id: p.id,
-          activeTabId: p.activeTabId,
-          tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff; }).map(function (t) {
-            return {
-              id: t.id, path: t.path, name: t.name, dirty: t.dirty, viewState: t.viewState,
-              isSettings: !!t.isSettings, isPreview: !!t.isPreview, previewFor: t.previewFor || null,
-              isDiff: !!t.isDiff, diffBaseSha: t.diffBaseSha || null, diffHeadSha: t.diffHeadSha || null,
-              repoPath: t.repoPath || null
-            };
-          })
-        };
-      });
-      FileService.saveBranchState(oldBranch, { panes: lightweightPanes, focusedPaneId: cur.focusedPaneId })["catch"](function () {});
+      var shouldRestore = (EditorStore.getState().editorPrefs || {}).branchStateRestore !== false;
+
+      if (shouldRestore) {
+        // Save pane state for old branch before switching
+        var cur = EditorStore.getState();
+        var lightweightPanes = cur.panes.map(function (p) {
+          return {
+            id: p.id,
+            activeTabId: p.activeTabId,
+            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff; }).map(function (t) {
+              return {
+                id: t.id, path: t.path, name: t.name, dirty: t.dirty, viewState: t.viewState,
+                isSettings: !!t.isSettings, isPreview: !!t.isPreview, previewFor: t.previewFor || null,
+                isDiff: !!t.isDiff, diffBaseSha: t.diffBaseSha || null, diffHeadSha: t.diffHeadSha || null,
+                repoPath: t.repoPath || null
+              };
+            })
+          };
+        });
+        FileService.saveBranchState(oldBranch, { panes: lightweightPanes, focusedPaneId: cur.focusedPaneId })["catch"](function () {});
+      }
 
       // Clear all open tabs for the new branch
       EditorStore.setState({
@@ -963,18 +978,27 @@ var MbeditorApp = function MbeditorApp() {
       });
 
       // Load pane state for new branch (or start empty)
-      FileService.getBranchState(newBranch)["catch"](function () { return null; }).then(function (branchState) {
-        var hasBranchPanes = branchState && branchState.panes && branchState.panes.some(function (p) { return p.tabs && p.tabs.length > 0; });
-        if (hasBranchPanes) {
-          return loadPaneState(branchState.panes, branchState.focusedPaneId || 1);
-        }
-        return null;
-      }).then(function () {
+      var restorePromise;
+      if (shouldRestore) {
+        restorePromise = FileService.getBranchState(newBranch)["catch"](function () { return null; }).then(function (branchState) {
+          var hasBranchPanes = branchState && branchState.panes && branchState.panes.some(function (p) { return p.tabs && p.tabs.length > 0; });
+          if (hasBranchPanes) {
+            return loadPaneState(branchState.panes, branchState.focusedPaneId || 1);
+          }
+          return null;
+        });
+      } else {
+        restorePromise = Promise.resolve(null);
+      }
+
+      restorePromise.then(function () {
         // Prune states for deleted branches
         FileService.pruneBranchStates()["catch"](function () {});
         isSwitchingBranchRef.current = false;
+        setIsSwitchingBranch(false);
       })["catch"](function () {
         isSwitchingBranchRef.current = false;
+        setIsSwitchingBranch(false);
       });
     });
 
@@ -1249,6 +1273,8 @@ var MbeditorApp = function MbeditorApp() {
         typeof pt.tab.content === 'string';
     });
     fileTabs.forEach(function (pt) {
+      var savedAt = recentSavesRef.current[pt.tab.path];
+      if (savedAt && Date.now() - savedAt < 3000) return;
       FileService.getFile(pt.tab.path, { allowMissing: true }).then(function (data) {
         if (!data || typeof data.content !== 'string') return;
         var serverNorm = data.content.replace(/\r\n/g, '\n');
@@ -1772,7 +1798,9 @@ var MbeditorApp = function MbeditorApp() {
       return _extends({}, prev, { save: true });
     });
     EditorStore.setStatus("Saving " + tab.name + "...", "info");
+    isSavingRef.current = true;
     FileService.saveFile(tab.path, tab.content).then(function () {
+      recentSavesRef.current[tab.path] = Date.now();
       var newPanes = EditorStore.getState().panes.map(function (p) {
         if (p.id === paneId) {
           return _extends({}, p, { tabs: p.tabs.map(function (t) {
@@ -1800,6 +1828,7 @@ var MbeditorApp = function MbeditorApp() {
     })["catch"](function (err) {
       EditorStore.setStatus("Save failed: " + err.message, "error");
     })["finally"](function () {
+      isSavingRef.current = false;
       return setLoading(function (prev) {
         return _extends({}, prev, { save: false });
       });
@@ -1876,10 +1905,13 @@ var MbeditorApp = function MbeditorApp() {
       return _extends({}, prev, { saveAll: true });
     });
     EditorStore.setStatus("Saving " + dirtyTabs.length + " files...", "info");
+    isSavingRef.current = true;
     var promises = dirtyTabs.map(function (tab) {
       return FileService.saveFile(tab.path, tab.content);
     });
     Promise.all(promises).then(function () {
+      var now = Date.now();
+      dirtyTabs.forEach(function(tab) { recentSavesRef.current[tab.path] = now; });
       var newPanes = EditorStore.getState().panes.map(function (p) {
         return _extends({}, p, { tabs: p.tabs.map(function (t) {
             return _extends({}, t, { dirty: false, cleanContent: t.content });
@@ -1900,6 +1932,7 @@ var MbeditorApp = function MbeditorApp() {
     })["catch"](function (err) {
       EditorStore.setStatus("Failed to save some files", "error");
     })["finally"](function () {
+      isSavingRef.current = false;
       return setLoading(function (prev) {
         return _extends({}, prev, { saveAll: false });
       });
@@ -3541,7 +3574,7 @@ var MbeditorApp = function MbeditorApp() {
         {
           id: "ide-main-split-container",
           className: "ide-main",
-          style: { display: 'flex', flexDirection: 'row', width: '100%', height: '100%', cursor: activeResizeMode === 'pane' ? 'col-resize' : 'default', userSelect: activeResizeMode ? 'none' : 'auto' },
+          style: { position: 'relative', display: 'flex', flexDirection: 'row', width: '100%', height: '100%', cursor: activeResizeMode === 'pane' ? 'col-resize' : 'default', userSelect: activeResizeMode ? 'none' : 'auto' },
           onDragOverCapture: function (e) {
             if (!draggedTab) return;
             e.preventDefault();
@@ -3593,6 +3626,9 @@ var MbeditorApp = function MbeditorApp() {
             }
           }
         },
+        isSwitchingBranch && React.createElement('div', { className: 'branch-switch-overlay' },
+          React.createElement('span', null, 'Switching branch…')
+        ),
         state.panes.map(function (pane, idx) {
           // Show empty pane 2 as a drop zone only when the cursor is actively hovering
           // over its half of the editor content (dragOverPaneId === 2).
@@ -4153,6 +4189,16 @@ var MbeditorApp = function MbeditorApp() {
                         className: 'ide-settings-checkbox',
                         checked: editorPrefs.persistFindState !== false,
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { persistFindState: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Restore tabs on branch switch'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: editorPrefs.branchStateRestore !== false,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { branchStateRestore: v }); }); }
                       })
                     ),
 

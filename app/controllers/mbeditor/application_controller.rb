@@ -15,7 +15,14 @@ module Mbeditor
 
     def run_authentication
       auth = Mbeditor.configuration.authenticate_with
-      instance_exec(&auth) if auth
+      return unless auth
+      ttl = Mbeditor.configuration.authentication_cache_ttl.to_i
+      if ttl > 0
+        last = session[:mbeditor_authed_at].to_i
+        return if last > 0 && (Time.now.to_i - last) < ttl
+      end
+      instance_exec(&auth)
+      session[:mbeditor_authed_at] = Time.now.to_i if ttl > 0
     end
 
     def ensure_allowed_environment!

@@ -5,7 +5,7 @@ module Mbeditor
     attr_accessor :allowed_environments, :workspace_root, :excluded_paths, :rubocop_command,
                   :redmine_enabled, :redmine_url, :redmine_api_key, :redmine_ticket_source,
                   :test_framework, :test_command, :test_timeout,
-                  :authenticate_with,
+                  :authenticate_with, :authentication_cache_ttl,
                   :lint_timeout, :base_branch_candidates, :git_timeout,
                   :ruby_def_include_dirs, :related_files_custom_paths
 
@@ -26,6 +26,7 @@ module Mbeditor
       @git_timeout            = nil # seconds; nil disables (no timeout on git subprocesses)
       @ruby_def_include_dirs  = %w[app/models app/controllers app/helpers app/concerns]
       @related_files_custom_paths = []
+      @authentication_cache_ttl = 0
     end
   end
 end

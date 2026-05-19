@@ -78,6 +78,7 @@ Available options:
 
 - `allowed_environments` controls which Rails environments can access the engine. Default: `[:development]`.
 - `authenticate_with` accepts a proc that runs as a `before_action` in all engine controllers. Use it to plug in the host app's authentication. The proc executes via `instance_exec` inside the engine controller, so it has access to `session`, `cookies`, `redirect_to`, and auth library class methods (e.g. Authlogic's `UserSession.find`), but not helper methods defined in the host app's `ApplicationController`. Default: `nil` (no authentication).
+- `authentication_cache_ttl` caches the authentication result in the session for the given number of seconds (default: `0`, no caching). Set to e.g. `300` to avoid calling `authenticate_with` on every request — useful when the lambda is expensive (e.g. calls Authlogic's `current_user`). Trade-off: if the user logs out of the host app, mbeditor remains accessible for up to TTL seconds.
 - `workspace_root` sets the root directory exposed by Mbeditor. Default: `Rails.root` from the host app.
 - `excluded_paths` hides files and directories from the tree and path-based operations. Entries without `/` match names anywhere in the workspace path; entries with `/` match relative paths and their descendants. Default: `%w[.git tmp log node_modules .bundle coverage vendor/bundle]`.
 - `rubocop_command` sets the command used for inline Ruby linting and formatting. Default: `"rubocop"`.
