@@ -1412,7 +1412,10 @@ var MbeditorApp = function MbeditorApp() {
         return _extends({}, prev, { save: true });
       });
       EditorStore.setStatus("Saving " + tab.name + "...", "info");
+      isSavingRef.current = true;
       FileService.saveFile(tab.path, tab.content).then(function () {
+        recentSavesRef.current[tab.path] = Date.now();
+        setTimeout(function() { delete recentSavesRef.current[tab.path]; }, 3500);
         EditorStore.setStatus("Saved", "success");
         SearchService.invalidate();
         GitService.fetchStatus();
@@ -1432,6 +1435,7 @@ var MbeditorApp = function MbeditorApp() {
       })["catch"](function (err) {
         EditorStore.setStatus("Save failed: " + err.message, "error");
       })["finally"](function () {
+        isSavingRef.current = false;
         setLoading(function (prev) {
           return _extends({}, prev, { save: false });
         });
@@ -1801,6 +1805,7 @@ var MbeditorApp = function MbeditorApp() {
     isSavingRef.current = true;
     FileService.saveFile(tab.path, tab.content).then(function () {
       recentSavesRef.current[tab.path] = Date.now();
+      setTimeout(function() { delete recentSavesRef.current[tab.path]; }, 3500);
       var newPanes = EditorStore.getState().panes.map(function (p) {
         if (p.id === paneId) {
           return _extends({}, p, { tabs: p.tabs.map(function (t) {
@@ -1848,7 +1853,10 @@ var MbeditorApp = function MbeditorApp() {
     var pane = st.panes.find(function (p) { return p.id === reload.paneId; });
     var tab = pane && pane.tabs.find(function (t) { return t.id === reload.tabId; });
     if (!tab) { dismissPendingReload(reload); return; }
+    isSavingRef.current = true;
     FileService.saveFile(tab.path, tab.content).then(function () {
+      recentSavesRef.current[tab.path] = Date.now();
+      setTimeout(function() { delete recentSavesRef.current[tab.path]; }, 3500);
       EditorStore.setState({
         panes: EditorStore.getState().panes.map(function (p) {
           if (p.id !== reload.paneId) return p;
@@ -1867,6 +1875,8 @@ var MbeditorApp = function MbeditorApp() {
       dismissPendingReload(reload);
     })["catch"](function () {
       EditorStore.setStatus('Save failed — cannot reload', 'error');
+    })["finally"](function () {
+      isSavingRef.current = false;
     });
   }
 
@@ -1911,7 +1921,10 @@ var MbeditorApp = function MbeditorApp() {
     });
     Promise.all(promises).then(function () {
       var now = Date.now();
-      dirtyTabs.forEach(function(tab) { recentSavesRef.current[tab.path] = now; });
+      dirtyTabs.forEach(function(tab) {
+        recentSavesRef.current[tab.path] = now;
+        setTimeout(function() { delete recentSavesRef.current[tab.path]; }, 3500);
+      });
       var newPanes = EditorStore.getState().panes.map(function (p) {
         return _extends({}, p, { tabs: p.tabs.map(function (t) {
             return _extends({}, t, { dirty: false, cleanContent: t.content });

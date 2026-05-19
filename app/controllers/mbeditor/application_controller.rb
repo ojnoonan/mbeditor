@@ -22,7 +22,7 @@ module Mbeditor
         return if last > 0 && (Time.now.to_i - last) < ttl
       end
       instance_exec(&auth)
-      session[:mbeditor_authed_at] = Time.now.to_i if ttl > 0
+      session[:mbeditor_authed_at] = Time.now.to_i if ttl > 0 && !performed?
     end
 
     def ensure_allowed_environment!

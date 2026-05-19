@@ -56,6 +56,58 @@ module Mbeditor
       assert_response :ok
     end
 
+    test "authentication_cache_ttl skips proc when session timestamp is within ttl" do
+      call_count = 0
+      Mbeditor.configure do |c|
+        c.authenticate_with     = proc { call_count += 1 }
+        c.authentication_cache_ttl = 60
+      end
+
+      # First request — proc runs and stamps the session
+      get "/mbeditor/ping"
+      assert_response :ok
+      assert_equal 1, call_count
+
+      # Second request within ttl — proc must NOT run again
+      get "/mbeditor/ping"
+      assert_response :ok
+      assert_equal 1, call_count, "auth proc should not be called again within ttl"
+    ensure
+      Mbeditor.configure { |c| c.authentication_cache_ttl = 0 }
+    end
+
+    test "authentication_cache_ttl calls proc again when ttl has expired" do
+      call_count = 0
+      Mbeditor.configure do |c|
+        c.authenticate_with     = proc { call_count += 1 }
+        c.authentication_cache_ttl = 60
+      end
+
+      # Seed the session with a timestamp that is already 120 s old (past the 60 s ttl)
+      get "/mbeditor/ping"
+      assert_equal 1, call_count
+
+      # Manually expire the cached timestamp via a direct session write
+      post "/mbeditor/ping", params: {}  # just to open the session
+      # Simulate expired timestamp by making a new request after overriding the session
+      # We test this by setting the ttl to 1 second and waiting for it to pass isn't
+      # practical, so instead reconfigure ttl=1 with an already-stale timestamp written
+      # via a helper request that sets mbeditor_authed_at to a value in the past.
+      Mbeditor.configure { |c| c.authentication_cache_ttl = 1 }
+      # Stamp a fresh session timestamp
+      get "/mbeditor/ping"
+      stale_call_count = call_count
+
+      # Sleep past the 1-second ttl
+      sleep 1.1
+
+      get "/mbeditor/ping"
+      assert_response :ok
+      assert_operator call_count, :>, stale_call_count, "auth proc should be called again after ttl expires"
+    ensure
+      Mbeditor.configure { |c| c.authentication_cache_ttl = 0 }
+    end
+
     # ---------------------------------------------------------------------------
     # ping
     # ---------------------------------------------------------------------------
