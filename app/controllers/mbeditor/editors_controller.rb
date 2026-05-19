@@ -822,7 +822,11 @@ module Mbeditor
     def broadcast_files_changed
       root = workspace_root.to_s
       invalidate_file_tree_cache(root)
-      Thread.new { GitInfoService.invalidate(root) rescue nil }
+      Thread.new do
+        GitInfoService.invalidate(root)
+      rescue => e
+        Rails.logger.warn("[mbeditor] GitInfoService.invalidate failed: #{e}")
+      end
 
       return unless defined?(ActionCable.server)
 
