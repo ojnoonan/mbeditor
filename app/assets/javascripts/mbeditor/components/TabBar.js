@@ -157,6 +157,15 @@ var TabBar = function TabBar(_ref) {
             if (isSpecial) return;
             e.preventDefault();
             setTabContextMenu({ x: e.clientX, y: e.clientY, tab: tab });
+          },
+          onMouseDown: function (e) {
+            if (e.button === 1) e.preventDefault();
+          },
+          onAuxClick: function (e) {
+            if (e.button === 1) {
+              e.preventDefault();
+              onClose(tab.id);
+            }
           }
         },
         React.createElement('i', { className: 'tab-item-icon ' + (tab.isSettings ? 'fas fa-cog' : (window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code')) }),
