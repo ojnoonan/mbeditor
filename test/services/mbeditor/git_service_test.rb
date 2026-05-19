@@ -168,5 +168,77 @@ module Mbeditor
         assert_equal [0, 0], [ahead, behind]
       end
     end
+
+    # -------------------------------------------------------------------------
+    # resolve_path
+    # -------------------------------------------------------------------------
+
+    def test_resolve_path_returns_full_path_for_valid_relative
+      result = GitService.resolve_path('/some/root', 'lib/foo.rb')
+      assert_equal '/some/root/lib/foo.rb', result
+    end
+
+    def test_resolve_path_returns_nil_for_traversal
+      result = GitService.resolve_path('/some/root', '../../etc/passwd')
+      assert_nil result
+    end
+
+    def test_resolve_path_returns_nil_for_blank_input
+      assert_nil GitService.resolve_path('/some/root', '')
+      assert_nil GitService.resolve_path('/some/root', nil)
+    end
+
+    def test_resolve_path_returns_repo_path_for_exact_root_dot
+      result = GitService.resolve_path('/some/root', '.')
+      assert_equal '/some/root', result
+    end
+
+    # -------------------------------------------------------------------------
+    # parse_porcelain_status
+    # -------------------------------------------------------------------------
+
+    def test_parse_porcelain_status_returns_status_and_path_hashes
+      output = " M app/foo.rb\n?? app/bar.rb\nA  app/baz.rb\n"
+      result = GitService.parse_porcelain_status(output)
+      assert_equal 3, result.length
+      assert_equal({ status: "M", path: "app/foo.rb" }, result[0])
+      assert_equal({ status: "??", path: "app/bar.rb" }, result[1])
+      assert_equal({ status: "A", path: "app/baz.rb" }, result[2])
+    end
+
+    def test_parse_porcelain_status_with_empty_input_returns_empty_array
+      assert_equal [], GitService.parse_porcelain_status("")
+    end
+
+    def test_parse_porcelain_status_skips_short_lines
+      output = "AB\n M app/foo.rb\n"
+      result = GitService.parse_porcelain_status(output)
+      assert_equal 1, result.length
+      assert_equal "app/foo.rb", result[0][:path]
+    end
+
+    # -------------------------------------------------------------------------
+    # parse_name_status
+    # -------------------------------------------------------------------------
+
+    def test_parse_name_status_returns_status_and_path_hashes
+      output = "M\tapp/foo.rb\nA\tapp/bar.rb\nD\tapp/old.rb\n"
+      result = GitService.parse_name_status(output)
+      assert_equal 3, result.length
+      assert_equal({ status: "M", path: "app/foo.rb" }, result[0])
+      assert_equal({ status: "A", path: "app/bar.rb" }, result[1])
+      assert_equal({ status: "D", path: "app/old.rb" }, result[2])
+    end
+
+    def test_parse_name_status_with_empty_input_returns_empty_array
+      assert_equal [], GitService.parse_name_status("")
+    end
+
+    def test_parse_name_status_skips_lines_with_blank_path
+      output = "\t\nM\tapp/foo.rb\n"
+      result = GitService.parse_name_status(output)
+      assert_equal 1, result.length
+      assert_equal "app/foo.rb", result[0][:path]
+    end
   end
 end

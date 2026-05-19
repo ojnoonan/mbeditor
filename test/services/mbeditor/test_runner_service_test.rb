@@ -305,6 +305,30 @@ module Mbeditor
       assert_kind_of Hash, summary
     end
 
+    test 'parse_rspec_output with rspec plain-text format returns empty counts without raising' do
+      # RSpec --format progress (no --format json) emits text that the minitest
+      # fallback parser cannot understand — documents the known limitation.
+      raw = <<~OUTPUT
+        ..F
+
+        Failures:
+
+          1) User is valid
+             Failure/Error: expect(user).to be_valid
+               expected #<User> to be valid, but got errors: name can't be blank
+             # ./spec/models/user_spec.rb:5:in `block (2 levels) in <top (required)>'
+
+        Finished in 0.05432 seconds (files took 1.23 seconds to load)
+        3 examples, 1 failure
+
+      OUTPUT
+
+      tests, summary = TestRunnerService.parse_rspec_output(raw)
+      assert_kind_of Array, tests
+      assert_kind_of Hash, summary
+      assert_equal 0, summary[:total]
+    end
+
     # -------------------------------------------------------------------------
     # error_result
     # -------------------------------------------------------------------------
@@ -315,6 +339,48 @@ module Mbeditor
       assert_equal "something broke", result[:error]
       assert_kind_of Array, result[:tests]
       assert_kind_of Hash, result[:summary]
+    end
+
+    # -------------------------------------------------------------------------
+    # execute_with_timeout
+    # -------------------------------------------------------------------------
+
+    test "execute_with_timeout returns combined stdout and stderr as a single string" do
+      Dir.mktmpdir do |dir|
+        cmd = ["bash", "-c", "echo out; echo err >&2"]
+        raw = TestRunnerService.execute_with_timeout(dir, cmd, 5)
+
+        assert_includes raw, "out\n"
+        assert_includes raw, "err\n"
+      end
+    end
+
+    test "execute_with_timeout raises ProcessRunner::TimeoutError when subprocess exceeds timeout" do
+      Dir.mktmpdir do |dir|
+        assert_raises(ProcessRunner::TimeoutError) do
+          TestRunnerService.execute_with_timeout(dir, ["sleep", "10"], 0.01)
+        end
+      end
+    end
+
+    # -------------------------------------------------------------------------
+    # run (timeout handling)
+    # -------------------------------------------------------------------------
+
+    test "run returns timeout error result when subprocess times out" do
+      Dir.mktmpdir do |dir|
+        FileUtils.mkdir_p(File.join(dir, "test"))
+        test_file = File.join(dir, "test", "slow_test.rb")
+        File.write(test_file, "")
+
+        # bash -c 'sleep 10' treats the trailing file arg as $0, so sleep runs
+        result = TestRunnerService.run(dir, "test/slow_test.rb",
+                                       command: "bash -c 'sleep 10'",
+                                       timeout: 0.01)
+
+        assert_equal false, result[:ok]
+        assert_match(/timed out/i, result[:error])
+      end
     end
   end
 end

@@ -18,7 +18,7 @@ module Mbeditor
   #
   # Usage:
   #   results = RubyDefinitionService.call(workspace_root, "my_method",
-  #                                        excluded_dirnames: %w[tmp .git])
+  #                                        excluded_paths: %w[tmp .git])
   #
   # Additional class methods for IntelliSense features:
   #   RubyDefinitionService.defs_in_file(abs_path)
@@ -51,11 +51,10 @@ module Mbeditor
       attr_reader :file_cache, :mutex
       attr_accessor :cache_path
 
-      def call(workspace_root, symbol, excluded_dirnames: [], excluded_paths: [], included_dirs: [])
+      def call(workspace_root, symbol, excluded_paths: [], included_dirs: [])
         new(workspace_root, symbol,
-            excluded_dirnames: excluded_dirnames,
-            excluded_paths:    excluded_paths,
-            included_dirs:     included_dirs).call
+            excluded_paths: excluded_paths,
+            included_dirs:  included_dirs).call
       end
 
       # Load the JSON cache from disk exactly once per process (double-checked
@@ -123,7 +122,7 @@ module Mbeditor
       # Searches the cache (and triggers a workspace scan if needed) to find
       # which file in +workspace_root+ defines the given module or class name.
       # Returns the absolute file path string or nil.
-      def module_defined_in(workspace_root, module_name, excluded_dirnames: [], excluded_paths: [], included_dirs: [])
+      def module_defined_in(workspace_root, module_name, excluded_paths: [], included_dirs: [])
         load_disk_cache_once
         root_prefix = workspace_root.to_s.chomp("/")
         within_dirs = ->(path) {
@@ -137,9 +136,8 @@ module Mbeditor
 
         # Cache miss: scan workspace to populate cache entries with module_names.
         new(workspace_root, nil,
-            excluded_dirnames: excluded_dirnames,
-            excluded_paths:    excluded_paths,
-            included_dirs:     included_dirs).scan_workspace
+            excluded_paths: excluded_paths,
+            included_dirs:  included_dirs).scan_workspace
 
         result = @mutex.synchronize do
           @file_cache.find { |path, entry| within_dirs.call(path) && entry[:module_names]&.include?(module_name) }
@@ -160,20 +158,19 @@ module Mbeditor
 
       # Convenience wrapper: scan the whole workspace to warm the cache.
       # Fast on subsequent calls (only re-parses files whose mtime changed).
-      def scan(workspace_root, excluded_dirnames: [], excluded_paths: [], included_dirs: [])
+      def scan(workspace_root, excluded_paths: [], included_dirs: [])
         new(workspace_root, nil,
-            excluded_dirnames: excluded_dirnames,
-            excluded_paths:    excluded_paths,
-            included_dirs:     included_dirs).scan_workspace
+            excluded_paths: excluded_paths,
+            included_dirs:  included_dirs).scan_workspace
       end
     end
 
-    def initialize(workspace_root, symbol, excluded_dirnames: [], excluded_paths: [], included_dirs: [])
+    def initialize(workspace_root, symbol, excluded_paths: [], included_dirs: [])
       @workspace_root    = workspace_root.to_s.chomp("/")
       @symbol            = symbol
-      @excluded_dirnames = Array(excluded_dirnames)
       @excluded_paths    = Array(excluded_paths)
       @included_dirs     = Array(included_dirs)
+      @exclusion_matcher = ExclusionMatcher.new(@excluded_paths)
     end
 
     # Walks the entire workspace and populates the per-file cache (including the
@@ -188,15 +185,13 @@ module Mbeditor
       search_roots.each do |root|
         Find.find(root) do |path|
           if File.directory?(path)
-            dirname = File.basename(path)
-            rel_dir = relative_path(path)
-            Find.prune if path != root && excluded_dir?(dirname, rel_dir)
+            Find.prune if path != root && @exclusion_matcher.excluded?(relative_path(path))
             next
           end
           next unless path.end_with?(".rb")
 
           rel = relative_path(path)
-          next if excluded_rel_path?(rel, File.basename(path))
+          next if @exclusion_matcher.excluded?(rel)
 
           files_scanned += 1
           if files_scanned > MAX_FILES_SCANNED
@@ -225,18 +220,15 @@ module Mbeditor
 
       search_roots.each do |root|
         Find.find(root) do |path|
-          # Prune excluded directories
           if File.directory?(path)
-            dirname = File.basename(path)
-            rel_dir = relative_path(path)
-            Find.prune if path != root && excluded_dir?(dirname, rel_dir)
+            Find.prune if path != root && @exclusion_matcher.excluded?(relative_path(path))
             next
           end
 
           next unless path.end_with?(".rb")
 
           rel = relative_path(path)
-          next if excluded_rel_path?(rel, File.basename(path))
+          next if @exclusion_matcher.excluded?(rel)
 
           files_scanned += 1
           if files_scanned > MAX_FILES_SCANNED
@@ -406,25 +398,5 @@ module Mbeditor
       dirs.empty? ? [@workspace_root] : dirs
     end
 
-    def excluded_dir?(dirname, rel_dir)
-      @excluded_dirnames.include?(dirname) ||
-        @excluded_paths.any? do |pattern|
-          if pattern.include?("/")
-            rel_dir == pattern || rel_dir.start_with?("#{pattern}/")
-          else
-            dirname == pattern
-          end
-        end
-    end
-
-    def excluded_rel_path?(rel, name)
-      @excluded_paths.any? do |pattern|
-        if pattern.include?("/")
-          rel == pattern || rel.start_with?("#{pattern}/")
-        else
-          name == pattern || rel.split("/").include?(pattern)
-        end
-      end
-    end
   end
 end

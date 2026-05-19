@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — internal refactor (2026-05-17)
+
+### Changed (no user-visible behavior change)
+- **`GitInfoService` extracted** — the 139-line concurrent wave-orchestration block in `EditorsController#git_info` is now `GitInfoService.call(repo_path)` with a 5 s TTL cache and `invalidate` hook. Controller action is a single `render json:` call. `parse_porcelain_status` and `parse_name_status` promoted to `GitService` module functions. Closes #4, #5, #6.
+- **`CodeSearchService` extracted** — `rg`/`grep` subprocess execution, fallback, ReDoS guards, and result parsing unified in one place. `JsDefinitionService` and `JsMembersService` are now thin wrappers. Closes #7, #8, #9, #10.
+- **`ExclusionMatcher` extracted** — four diverged implementations of "should this path be excluded?" replaced by `ExclusionMatcher.new(config.excluded_paths).excluded?(path)`. `EditorsController`, `RubyDefinitionService`, and `UnusedMethodsService` all delegate to it. Closes #11, #12, #13, #14.
+- **`FileOperationService` extracted** — ~200 LOC of inline file-CRUD logic in `EditorsController` moved to `FileOperationService` (save, create_file, create_dir, rename, destroy_path). Each controller action is now: resolve path → block-check → call service → broadcast → render. Closes #15, #16, #17.
+- **`ProcessRunner` extracted** — three copies of "Open3 + timeout thread + SIGKILL" unified in `ProcessRunner.call(cmd, timeout:, env: {}, stdin_data: nil, chdir: nil)`. `GitService`, `TestRunnerService`, and the `EditorsController` lint path all delegate to it. Fixes the latent popen deadlock in `TestRunnerService`. Closes #18, #19, #20, #21.
+
+### Tests
+- 271 new tests and 845 new assertions across 10 new service test files; suite now at 403 tests / 1425 assertions (up from 132 / 580).
+
+---
+
 ## [0.6.0] - 2026-05-11
 
 ### Added

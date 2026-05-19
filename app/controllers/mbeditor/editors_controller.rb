@@ -14,7 +14,6 @@ module Mbeditor
     before_action :verify_mbeditor_client, unless: -> { request.get? || request.head? }
 
     IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
-    MAX_OPEN_FILE_SIZE_BYTES = 5 * 1024 * 1024
     RG_AVAILABLE = system("which rg > /dev/null 2>&1")
 
     # GET /mbeditor — renders the IDE shell
@@ -194,7 +193,7 @@ module Mbeditor
       end
 
       size = File.size(path)
-      return render_file_too_large(size) if size > MAX_OPEN_FILE_SIZE_BYTES
+      return render_file_too_large(size) if size > FileOperationService::MAX_FILE_SIZE_BYTES
 
       if image_path?(path)
         return render json: {
@@ -223,7 +222,7 @@ module Mbeditor
       return render json: { error: "Not found" }, status: :not_found unless File.file?(path)
 
       size = File.size(path)
-      return render_file_too_large(size) if size > MAX_OPEN_FILE_SIZE_BYTES
+      return render_file_too_large(size) if size > FileOperationService::MAX_FILE_SIZE_BYTES
 
       send_file path, disposition: "inline"
     end
@@ -234,12 +233,11 @@ module Mbeditor
       return render json: { error: "Forbidden" }, status: :forbidden unless path
       return render json: { error: "Cannot write to this path" }, status: :forbidden if path_blocked_for_operations?(path)
 
-      content = params[:code].to_s
-      return render_file_too_large(content.bytesize) if content.bytesize > MAX_OPEN_FILE_SIZE_BYTES
-
-      File.write(path, content)
+      result = FileOperationService.new(workspace_root).save(path, params[:code].to_s)
       broadcast_files_changed
-      render json: { ok: true, path: relative_path(path) }
+      render json: result
+    rescue FileOperationService::FileTooLargeError
+      render_file_too_large(params[:code].to_s.bytesize)
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -249,16 +247,14 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
       return render json: { error: "Cannot create file in this path" }, status: :forbidden if path_blocked_for_operations?(path)
-      return render json: { error: "File already exists" }, status: :unprocessable_content if File.exist?(path)
 
-      content = params[:code].to_s
-      return render_file_too_large(content.bytesize) if content.bytesize > MAX_OPEN_FILE_SIZE_BYTES
-
-      FileUtils.mkdir_p(File.dirname(path))
-      File.write(path, content)
+      result = FileOperationService.new(workspace_root).create_file(path, params[:code].to_s)
       broadcast_files_changed
-
-      render json: { ok: true, type: "file", path: relative_path(path), name: File.basename(path) }
+      render json: result
+    rescue FileOperationService::FileExistsError
+      render json: { error: "File already exists" }, status: :unprocessable_content
+    rescue FileOperationService::FileTooLargeError
+      render_file_too_large(params[:code].to_s.bytesize)
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -268,11 +264,12 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
       return render json: { error: "Cannot create directory in this path" }, status: :forbidden if path_blocked_for_operations?(path)
-      return render json: { error: "Path already exists" }, status: :unprocessable_content if File.exist?(path)
 
-      FileUtils.mkdir_p(path)
+      result = FileOperationService.new(workspace_root).create_dir(path)
       broadcast_files_changed
-      render json: { ok: true, type: "folder", path: relative_path(path), name: File.basename(path) }
+      render json: result
+    rescue FileOperationService::FileExistsError
+      render json: { error: "Path already exists" }, status: :unprocessable_content
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -282,20 +279,15 @@ module Mbeditor
       old_path = resolve_path(params[:path])
       new_path = resolve_path(params[:new_path])
       return render json: { error: "Forbidden" }, status: :forbidden unless old_path && new_path
-      return render json: { error: "Path not found" }, status: :not_found unless File.exist?(old_path)
-      return render json: { error: "Target path already exists" }, status: :unprocessable_content if File.exist?(new_path)
       return render json: { error: "Cannot rename this path" }, status: :forbidden if path_blocked_for_operations?(old_path) || path_blocked_for_operations?(new_path)
 
-      FileUtils.mkdir_p(File.dirname(new_path))
-      FileUtils.mv(old_path, new_path)
+      result = FileOperationService.new(workspace_root).rename(old_path, new_path)
       broadcast_files_changed
-
-      render json: {
-        ok: true,
-        oldPath: relative_path(old_path),
-        path: relative_path(new_path),
-        name: File.basename(new_path)
-      }
+      render json: result
+    rescue FileOperationService::PathNotFoundError
+      render json: { error: "Path not found" }, status: :not_found
+    rescue FileOperationService::TargetExistsError
+      render json: { error: "Target path already exists" }, status: :unprocessable_content
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -304,19 +296,11 @@ module Mbeditor
     def destroy_path
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
-      # Idempotent: if already gone the desired state is already achieved.
-      return render json: { ok: true } unless File.exist?(path)
-      return render json: { error: "Cannot delete this path" }, status: :forbidden if path_blocked_for_operations?(path)
+      return render json: { error: "Cannot delete this path" }, status: :forbidden if File.exist?(path) && path_blocked_for_operations?(path)
 
-      if File.directory?(path)
-        FileUtils.rm_rf(path)
-        broadcast_files_changed
-        render json: { ok: true, type: "folder", path: relative_path(path) }
-      else
-        File.delete(path)
-        broadcast_files_changed
-        render json: { ok: true, type: "file", path: relative_path(path) }
-      end
+      result = FileOperationService.new(workspace_root).destroy_path(path)
+      broadcast_files_changed if result.key?(:type)
+      render json: result
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -333,12 +317,12 @@ module Mbeditor
 
       results = case language
                 when "ruby"
+                  excl_patterns = Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?)
                   workspace = RubyDefinitionService.call(
                     workspace_root,
                     symbol,
-                    excluded_dirnames: excluded_dirnames,
-                    excluded_paths:    excluded_paths,
-                    included_dirs:     ruby_def_include_dirs
+                    excluded_paths: excl_patterns,
+                    included_dirs:  ruby_def_include_dirs
                   )
                   ri = RiDefinitionService.call(symbol)
                   workspace + ri
@@ -386,11 +370,11 @@ module Mbeditor
       return render json: { error: "Invalid name" }, status: :bad_request \
         unless name.match?(/\A[A-Z][a-zA-Z0-9_]*\z/)
 
+      excl_patterns = Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?)
       file = RubyDefinitionService.module_defined_in(
         workspace_root, name,
-        excluded_dirnames: excluded_dirnames,
-        excluded_paths:    excluded_paths,
-        included_dirs:     ruby_def_include_dirs
+        excluded_paths: excl_patterns,
+        included_dirs:  ruby_def_include_dirs
       )
       return render json: { name: name, methods: [] } unless file
 
@@ -411,18 +395,17 @@ module Mbeditor
 
       # Ensure workspace is scanned so include_calls are populated in the cache.
       # Fast no-op on subsequent calls (mtime checks only).
+      excl_patterns = Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?)
       RubyDefinitionService.scan(workspace_root,
-                                 excluded_dirnames: excluded_dirnames,
-                                 excluded_paths:    excluded_paths,
-                                 included_dirs:     ruby_def_include_dirs)
+                                 excluded_paths: excl_patterns,
+                                 included_dirs:  ruby_def_include_dirs)
 
       module_names = RubyDefinitionService.includes_in_file(path)
       includes = module_names.filter_map do |mod_name|
         mod_file = RubyDefinitionService.module_defined_in(
           workspace_root, mod_name,
-          excluded_dirnames: excluded_dirnames,
-          excluded_paths:    excluded_paths,
-          included_dirs:     ruby_def_include_dirs
+          excluded_paths: excl_patterns,
+          included_dirs:  ruby_def_include_dirs
         )
         next unless mod_file
 
@@ -443,10 +426,10 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
 
+      excl_patterns = Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?)
       unused = UnusedMethodsService.call(
         workspace_root, path,
-        excluded_dirnames: excluded_dirnames,
-        excluded_paths:    excluded_paths
+        excluded_paths: excl_patterns
       )
       render json: { unused: unused }
     rescue StandardError => e
@@ -543,7 +526,7 @@ module Mbeditor
           errors << { file: rel_path, error: "File not found" }
           next
         end
-        if File.size(full_path) > MAX_OPEN_FILE_SIZE_BYTES
+        if File.size(full_path) > FileOperationService::MAX_FILE_SIZE_BYTES
           errors << { file: rel_path, error: "File too large" }
           next
         end
@@ -586,7 +569,7 @@ module Mbeditor
     def git_status
       output, _err, status = Open3.capture3("git", "-C", workspace_root.to_s, "status", "--porcelain")
       branch = GitService.current_branch(workspace_root.to_s) || ""
-      files = parse_porcelain_status(output)
+      files = GitService.parse_porcelain_status(output)
       render json: { ok: status.success?, files: files, branch: branch }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -594,120 +577,7 @@ module Mbeditor
 
     # GET /mbeditor/git_info
     def git_info
-      repo = workspace_root.to_s
-      cached = cached_git_info(repo)
-      return render json: cached if cached
-
-      branch = GitService.current_branch(repo)
-      unless branch
-        return render json: { ok: false, error: "Unable to determine current branch" }, status: :unprocessable_content
-      end
-
-      # Wave 1: all independent git reads run in parallel
-      status_t   = Thread.new { Open3.capture3("git", "-C", repo, "status", "--porcelain") }
-      numstat_t  = Thread.new { Open3.capture3("git", "-C", repo, "diff", "--numstat", "HEAD") }
-      upstream_t = Thread.new { Open3.capture3("git", "-C", repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}") }
-      base_t     = Thread.new { GitService.find_branch_base(repo, branch) }
-
-      working_output, _err, working_status = status_t.value
-      working_tree = working_status.success? ? parse_porcelain_status(working_output) : []
-
-      numstat_out = numstat_t.value.first
-      numstat_map = GitService.parse_numstat(numstat_out)
-      working_tree = working_tree.map { |f| f.merge(numstat_map.fetch(f[:path], {})) }
-
-      upstream_output, _err, upstream_status = upstream_t.value
-      upstream_branch = upstream_status.success? ? upstream_output.strip : nil
-      upstream_branch = nil unless upstream_branch&.match?(%r{\A[\w./-]+\z})
-
-      # Determine the branch's fork point relative to a base branch (develop/main/master).
-      # This ensures History and Changes only show work unique to this branch.
-      base_sha, base_ref = base_t.value
-
-      ahead_count    = 0
-      behind_count   = 0
-      unpushed_files = []
-      unpushed_commits = []
-      diff_base = base_sha || upstream_branch
-
-      # Wave 2: conditional parallel reads that depend on Wave 1 results
-      wave2 = {}
-      wave2[:counts]    = Thread.new { Open3.capture3("git", "-C", repo, "rev-list", "--left-right", "--count", "HEAD...#{upstream_branch}") } if upstream_branch.present?
-      wave2[:unp_log]   = Thread.new { Open3.capture3("git", "-C", repo, "log", "#{upstream_branch}..HEAD", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e") } if upstream_branch.present?
-      wave2[:diff_name] = Thread.new { Open3.capture3("git", "-C", repo, "diff", "--name-status", "#{diff_base}..HEAD") } if diff_base.present?
-      wave2[:diff_num]  = Thread.new { Open3.capture3("git", "-C", repo, "diff", "--numstat", "#{diff_base}..HEAD") } if diff_base.present?
-      wave2[:branch_log] = Thread.new do
-        if base_sha
-          Open3.capture3("git", "-C", repo, "log", "--first-parent", "#{base_sha}..HEAD",
-                         "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
-        else
-          Open3.capture3("git", "-C", repo, "log", "--first-parent", branch, "-n", "100",
-                         "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
-        end
-      end
-
-      wave2.each_value(&:join)
-
-      if (ct = wave2[:counts])
-        counts_output, _err, counts_status = ct.value
-        if counts_status.success?
-          ahead_str, behind_str = counts_output.strip.split("\t", 2)
-          ahead_count  = ahead_str.to_i
-          behind_count = behind_str.to_i
-        end
-      end
-
-      if (ul = wave2[:unp_log])
-        unpushed_log_output, _err, unpushed_log_status = ul.value
-        unpushed_commits = GitService.parse_git_log(unpushed_log_output) if unpushed_log_status.success?
-      end
-
-      if (dn = wave2[:diff_name]) && (dnum = wave2[:diff_num])
-        diff_name_out, _err, diff_name_status = dn.value
-        if diff_name_status.success?
-          unpushed_files  = parse_name_status(diff_name_out)
-          unp_numstat_out = dnum.value.first
-          unp_numstat_map = GitService.parse_numstat(unp_numstat_out)
-          unpushed_files  = unpushed_files.map { |f| f.merge(unp_numstat_map.fetch(f[:path], {})) }
-        end
-      end
-
-      branch_log_output, _err, branch_log_status = wave2[:branch_log].value
-      branch_commits = branch_log_status.success? ? GitService.parse_git_log(branch_log_output) : []
-
-      redmine_ticket_id = nil
-      if Mbeditor.configuration.redmine_enabled
-        if Mbeditor.configuration.redmine_ticket_source == :branch
-          m = branch.match(/\A(\d+)/)
-          redmine_ticket_id = m[1] if m
-        else
-          branch_commits.each do |commit|
-            m = commit["title"]&.match(/#(\d+)/)
-            if m
-              redmine_ticket_id = m[1]
-              break
-            end
-          end
-        end
-      end
-
-      payload = {
-        ok: true,
-        branch: branch,
-        upstreamBranch: upstream_branch,
-        ahead: ahead_count,
-        behind: behind_count,
-        workingTree: working_tree,
-        unpushedFiles: unpushed_files,
-        unpushedCommits: unpushed_commits,
-        branchCommits: branch_commits,
-        branchBaseRef: base_ref,
-        redmineTicketId: redmine_ticket_id
-      }
-      store_git_info(repo, payload)
-      render json: payload
-    rescue StandardError => e
-      render json: { ok: false, error: e.message }, status: :unprocessable_content
+      render json: GitInfoService.call(workspace_root.to_s)
     end
 
     # GET /mbeditor/monaco-editor/*asset_path — serve packaged Monaco files
@@ -945,7 +815,7 @@ module Mbeditor
     def broadcast_files_changed
       root = workspace_root.to_s
       invalidate_file_tree_cache(root)
-      invalidate_git_info_cache(root)
+      GitInfoService.invalidate(root)
 
       return unless defined?(ActionCable.server)
 
@@ -1000,7 +870,7 @@ module Mbeditor
       rel = relative_path(full_path)
       return true if rel.blank?
 
-      excluded_path?(rel, File.basename(full_path))
+      ExclusionMatcher.new(Mbeditor.configuration.excluded_paths).excluded?(rel)
     end
 
     # Stream search results using popen so we can stop reading early once we
@@ -1014,7 +884,7 @@ module Mbeditor
         args << "-F" unless use_regex
         args << "--ignore-case" unless match_case
         args << "--word-regexp" if whole_word
-        excluded_paths.each { |p| args << "--glob=!#{p}" }
+        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).each { |p| args << "--glob=!#{p}" }
         args += ["--", query, workspace_root.to_s]
 
         IO.popen(args, err: File::NULL) do |io|
@@ -1042,7 +912,7 @@ module Mbeditor
         args = ["grep", "-rn", base_flags]
         args << "-i" unless match_case
         args << "-w" if whole_word
-        excluded_dirnames.select { |d| d.match?(/\A[\w.\/-]+\z/) }.each { |d| args << "--exclude-dir=#{d}" }
+        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).reject { |p| p.include?("/") }.select { |d| d.match?(/\A[\w.\/-]+\z/) }.each { |d| args << "--exclude-dir=#{d}" }
         args += [query, workspace_root.to_s]
 
         IO.popen(args, err: File::NULL) do |io|
@@ -1056,7 +926,7 @@ module Mbeditor
             next unless file_path.start_with?(workspace_root.to_s)
 
             rel = relative_path(file_path)
-            next if excluded_path?(rel, File.basename(file_path))
+            next if ExclusionMatcher.new(Mbeditor.configuration.excluded_paths).excluded?(rel)
 
             results << {
               file: rel,
@@ -1079,7 +949,7 @@ module Mbeditor
         args << "-F" unless use_regex
         args << "--ignore-case" unless match_case
         args << "--word-regexp" if whole_word
-        excluded_paths.each { |p| args << "--glob=!#{p}" }
+        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).each { |p| args << "--glob=!#{p}" }
         args += ["--", query, workspace_root.to_s]
         IO.popen(args, err: File::NULL) do |io|
           io.each_line { |line| total += line.strip.split(":").last.to_i rescue 0 }
@@ -1089,7 +959,7 @@ module Mbeditor
         args = ["grep", "-rc", base_flags]
         args << "-i" unless match_case
         args << "-w" if whole_word
-        excluded_dirnames.each { |d| args << "--exclude-dir=#{d}" }
+        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).reject { |p| p.include?("/") }.each { |d| args << "--exclude-dir=#{d}" }
         args += [query, workspace_root.to_s]
         IO.popen(args, err: File::NULL) do |io|
           io.each_line { |line| total += line.strip.split(":").last.to_i rescue 0 }
@@ -1100,18 +970,19 @@ module Mbeditor
       0
     end
 
-    def build_tree(dir, max_depth: 10, depth: 0, _excl: excluded_paths)
+    def build_tree(dir, max_depth: 10, depth: 0)
       return [] if depth >= max_depth
 
+      matcher = ExclusionMatcher.new(Mbeditor.configuration.excluded_paths)
       entries = Dir.entries(dir).sort.reject { |entry| entry == "." || entry == ".." }
       entries.filter_map do |name|
         full = File.join(dir, name)
         rel = relative_path(full)
-        is_excl = excluded_path?(rel, name, _excl)
+        is_excl = matcher.excluded?(rel)
 
         if File.directory?(full)
           # Skip recursing into excluded directories — avoids traversing node_modules etc.
-          children = is_excl ? [] : build_tree(full, max_depth: max_depth, depth: depth + 1, _excl: _excl)
+          children = is_excl ? [] : build_tree(full, max_depth: max_depth, depth: depth + 1)
           node = { name: name, type: "folder", path: rel, children: children }
           node[:excluded] = true if is_excl
           node
@@ -1126,54 +997,15 @@ module Mbeditor
       []
     end
 
-    def excluded_paths
-      Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?)
-    end
-
-    def excluded_dirnames
-      excluded_paths.filter { |path| !path.include?("/") }
-    end
-
     def ruby_def_include_dirs
       Array(Mbeditor.configuration.ruby_def_include_dirs).map(&:to_s).reject(&:blank?)
     end
 
-    def excluded_path?(relative_path, name, excl = excluded_paths)
-      excl.any? do |pattern|
-        if pattern.include?("/")
-          relative_path == pattern || relative_path.start_with?("#{pattern}/")
-        else
-          name == pattern || relative_path.split("/").include?(pattern)
-        end
-      end
-    end
-
     def run_with_timeout(env, cmd, stdin_data:)
       timeout_seconds = Mbeditor.configuration.lint_timeout&.to_i
-      output = +""; timed_out = false
-
-      Open3.popen3(env, *cmd, pgroup: true) do |stdin, stdout, _stderr, wait_thr|
-        stdin.write(stdin_data)
-        stdin.close
-
-        timer = if timeout_seconds && timeout_seconds > 0
-          Thread.new do
-            sleep timeout_seconds
-            timed_out = true
-            Process.kill('-KILL', wait_thr.pid)
-          rescue Errno::ESRCH
-            nil
-          end
-        end
-
-        output = stdout.read
-        wait_thr.value
-        timer&.kill
-      end
-
-      raise "RuboCop timed out after #{timeout_seconds} seconds" if timed_out
-
-      output
+      timeout = timeout_seconds && timeout_seconds > 0 ? timeout_seconds : nil
+      result = ProcessRunner.call(cmd, timeout: timeout, env: env, stdin_data: stdin_data)
+      result[:stdout]
     end
 
     def cop_severity(severity)
@@ -1247,9 +1079,8 @@ module Mbeditor
     end
 
     PROBE_MUTEX     = Mutex.new
-    GIT_INFO_MUTEX  = Mutex.new
     FILE_TREE_MUTEX = Mutex.new
-    private_constant :PROBE_MUTEX, :GIT_INFO_MUTEX, :FILE_TREE_MUTEX
+    private_constant :PROBE_MUTEX, :FILE_TREE_MUTEX
 
     def rubocop_available?
       key = Mbeditor.configuration.rubocop_command.to_s
@@ -1273,31 +1104,6 @@ module Mbeditor
       probe_cached(:@git_available_cache, key) do
         _out, _err, status = Open3.capture3("git", "-C", key, "rev-parse", "--is-inside-work-tree")
         status.success?
-      end
-    end
-
-    def cached_git_info(repo, ttl: 5)
-      GIT_INFO_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(:@git_info_cache) || {}
-        entry = cache[repo]
-        return entry[:data] if entry && (Process.clock_gettime(Process::CLOCK_MONOTONIC) - entry[:ts]) < ttl
-      end
-      nil
-    end
-
-    def store_git_info(repo, data)
-      GIT_INFO_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(:@git_info_cache) || {}
-        cache[repo] = { ts: Process.clock_gettime(Process::CLOCK_MONOTONIC), data: data }
-        self.class.instance_variable_set(:@git_info_cache, cache)
-      end
-    end
-
-    def invalidate_git_info_cache(repo)
-      GIT_INFO_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(:@git_info_cache) || {}
-        cache.delete(repo)
-        self.class.instance_variable_set(:@git_info_cache, cache)
       end
     end
 
@@ -1391,30 +1197,6 @@ module Mbeditor
       end
     end
 
-    def parse_porcelain_status(output)
-      output.lines.filter_map do |line|
-        next if line.length < 4
-
-        path = line[3..].to_s.strip
-        next if path.blank?
-
-        { status: line[0..1].strip, path: path }
-      end
-    end
-
-    def parse_name_status(output)
-      output.lines.filter_map do |line|
-        parts = line.strip.split("\t")
-        next if parts.empty?
-
-        status = parts[0].to_s.strip
-        path = parts.last.to_s.strip
-        next if path.blank?
-
-        { status: status, path: path }
-      end
-    end
-
     def monaco_worker_file
       engine_path = Mbeditor::Engine.root.join("public", "monaco_worker.js")
       return engine_path if engine_path.file?
@@ -1445,7 +1227,7 @@ module Mbeditor
 
     def render_file_too_large(size)
       render json: {
-        error: "File is too large to open (#{human_size(size)}). Limit is #{human_size(MAX_OPEN_FILE_SIZE_BYTES)}."
+        error: "File is too large to open (#{human_size(size)}). Limit is #{human_size(FileOperationService::MAX_FILE_SIZE_BYTES)}."
       }, status: :content_too_large
     end
 

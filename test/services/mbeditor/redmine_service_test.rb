@@ -70,12 +70,13 @@ module Mbeditor
 
     def with_http_new_stub(stub_proc)
       net_http_singleton = class << Net::HTTP; self; end
-      net_http_singleton.alias_method :__original_new_for_redmine_test, :new
+      original = Net::HTTP.method(:new)
+      net_http_singleton.remove_method(:new) if net_http_singleton.instance_methods(false).include?(:new)
       Net::HTTP.define_singleton_method(:new, &stub_proc)
       yield
     ensure
-      net_http_singleton.alias_method :new, :__original_new_for_redmine_test
-      net_http_singleton.remove_method :__original_new_for_redmine_test
+      net_http_singleton.remove_method(:new) if net_http_singleton.instance_methods(false).include?(:new)
+      Net::HTTP.define_singleton_method(:new, &original)
     end
 
     def test_returns_issue_hash_with_correct_keys_for_valid_response

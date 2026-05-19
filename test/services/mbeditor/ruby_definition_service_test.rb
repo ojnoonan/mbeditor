@@ -156,11 +156,11 @@ module Mbeditor
     # Excluded directories
     # -------------------------------------------------------------------------
 
-    test "skips files inside excluded dirnames" do
+    test "skips files inside excluded dirname when passed as excluded_paths" do
       write_rb("app/models/user.rb", "class User\n  def the_method\n  end\nend\n")
       write_rb("tmp/cache/generated.rb", "class Cache\n  def the_method\n  end\nend\n")
 
-      results = call("the_method", excluded_dirnames: %w[tmp])
+      results = call("the_method", excluded_paths: %w[tmp])
       assert results.all? { |r| !r[:file].start_with?("tmp/") }
     end
 

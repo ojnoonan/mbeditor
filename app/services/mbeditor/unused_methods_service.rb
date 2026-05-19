@@ -15,7 +15,7 @@ module Mbeditor
   #
   # Usage:
   #   UnusedMethodsService.call(workspace_root, abs_path,
-  #                             excluded_dirnames: [], excluded_paths: [])
+  #                             excluded_paths: [])
   #   → [{ name: "my_method", line: 42 }, ...]
   class UnusedMethodsService
     CACHE_TTL_SECONDS = 30
@@ -26,7 +26,7 @@ module Mbeditor
     @cache_mutex = Mutex.new
 
     class << self
-      def call(workspace_root, file_path, excluded_dirnames: [], excluded_paths: [])
+      def call(workspace_root, file_path, excluded_paths: [])
         file_path = file_path.to_s
 
         begin
@@ -48,16 +48,14 @@ module Mbeditor
           # File not yet in cache; trigger a parse of just this one file by
           # calling the definition service with a dummy symbol.
           RubyDefinitionService.call(workspace_root, "__mbeditor_warmup__",
-                                     excluded_dirnames: excluded_dirnames,
-                                     excluded_paths:    excluded_paths)
+                                     excluded_paths: excluded_paths)
           defs = RubyDefinitionService.defs_in_file(file_path)
         end
         return [] if defs.empty?
 
         method_names = defs.keys
         counts       = count_occurrences(method_names, workspace_root.to_s,
-                                         excluded_dirnames: excluded_dirnames,
-                                         excluded_paths:    excluded_paths)
+                                         excluded_paths: excluded_paths)
 
         # A method with ≤1 total occurrence has only its own `def` line; no call-sites.
         unused = method_names.select { |n| counts.fetch(n, 0) <= 1 }
@@ -86,7 +84,7 @@ module Mbeditor
 
       RG_AVAILABLE = system("which rg > /dev/null 2>&1")
 
-      def count_occurrences(method_names, workspace_root, excluded_dirnames:, excluded_paths:)
+      def count_occurrences(method_names, workspace_root, excluded_paths:)
         # Build one alternation pattern matching any of the method names as
         # whole identifiers.  We escape each name and join with |.
         escaped  = method_names.map { |n| Regexp.escape(n) }
@@ -95,7 +93,7 @@ module Mbeditor
         if RG_AVAILABLE
           run_ripgrep(pattern, method_names, workspace_root, excluded_paths)
         else
-          run_grep(pattern, method_names, workspace_root, excluded_dirnames)
+          run_grep(pattern, method_names, workspace_root, excluded_paths)
         end
       end
 
@@ -118,9 +116,9 @@ module Mbeditor
       end
 
       # grep -oh: -o outputs only the matching part, -h suppresses filenames.
-      def run_grep(pattern, method_names, workspace_root, excluded_dirnames)
+      def run_grep(pattern, method_names, workspace_root, excluded_paths)
         args = ["grep", "-roh", "-E", pattern, "--include=*.rb"]
-        excluded_dirnames.each { |d| args += ["--exclude-dir=#{d}"] }
+        excluded_paths.reject { |p| p.include?("/") }.each { |d| args += ["--exclude-dir=#{d}"] }
         args << workspace_root
 
         counts = Hash.new(0)

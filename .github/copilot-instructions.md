@@ -4,7 +4,8 @@ Mbeditor is a mountable Rails engine gem that provides a browser-based editor UI
 
 ## Architecture
 
-- Backend is a Rails engine under `app/controllers/mbeditor/` and `app/services/mbeditor/`.
+- Backend is a Rails engine under `app/controllers/mbeditor/` and `app/services/mbeditor/`. Controllers are thin renderers; all business logic lives in services.
+- Core services: `GitInfoService` (concurrent git metadata), `CodeSearchService` (rg/grep), `ExclusionMatcher` (path exclusion), `FileOperationService` (file mutations), `ProcessRunner` (subprocess timeout).
 - Frontend is plain JavaScript + React + Monaco under `app/assets/javascripts/mbeditor/`.
 - There is no frontend build pipeline in normal development; edit committed JS assets directly.
 

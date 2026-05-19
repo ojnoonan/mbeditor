@@ -1,18 +1,6 @@
 {
   "ignored_warnings": [
     {
-      "fingerprint": "2aaa806f0a3717ea1a35fb4a49b230346ec9ccd0a60528f50db4bbd357ddc626",
-      "note": "False positive: Open3.capture3 called with array form (no shell). Search query is passed as a plain argument to rg/grep, not shell-interpolated. Query is already capped at 500 chars upstream."
-    },
-    {
-      "fingerprint": "37b9d9b749c9ed508b44930fa4ea2ca9fe4e92c03984365b00eb2d3c4b972eed",
-      "note": "False positive: Open3.capture3 called with array form (no shell). tmpfile path derived from resolve_path() which sandbox-validates the path stays within workspace_root."
-    },
-    {
-      "fingerprint": "7659fd54ef8a71569b3ef99d3e0a87db3469ad692c243a91f9e9fe4f6830578a",
-      "note": "False positive: Open3.capture3 called with array form (no shell). tmpfile path derived from resolve_path() which sandbox-validates the path stays within workspace_root."
-    },
-    {
       "fingerprint": "3a52da4d6ee93b8e71f696fc7a16d8d59c7a1101a4e986b633fa8235901134d7",
       "note": "False positive: sha is validated against /\\A[0-9a-fA-F]{1,40}\\z/ before use. Open3.capture3 called with array form (no shell)."
     },
@@ -25,18 +13,6 @@
       "note": "False positive: sha is validated against /\\A[0-9a-fA-F]{1,40}\\z/ before use. Open3.capture3 called with array form (no shell)."
     },
     {
-      "fingerprint": "5026f7d64debdef90d7fd1ce0bbabf1bbfe01f83fff96850a99c51f7912d4cf6",
-      "note": "False positive: upstream_branch is validated against %r{\\A[\\w./-]+\\z} before use (editors_controller.rb line 293). Open3.capture3 array form; rev-range is a single argument, no shell involved."
-    },
-    {
-      "fingerprint": "6ea79c946d3459adfbf44ce03fb0e7b78425a23361fd7384d21a2a757295a8cd",
-      "note": "False positive: upstream_branch is validated against %r{\\A[\\w./-]+\\z} before use (editors_controller.rb line 293). Open3.capture3 array form; rev-range is a single argument, no shell involved."
-    },
-    {
-      "fingerprint": "a13d858897653706914401428f0352188b5be7e28fe606d459891aeb27092948",
-      "note": "False positive: diff_base is either base_sha (validated /\\A[0-9a-f]{40}\\z/ in find_branch_base) or upstream_branch (validated against %r{\\A[\\w./-]+\\z}). Open3.capture3 array form."
-    },
-    {
       "fingerprint": "a6f8310f269771565c00ce398d44fb7da71124d880c8ce9ac4ca3ecf37432471",
       "note": "False positive: upstream is validated against %r{\\A[\\w./-]+\\z} before use (git_controller.rb line 150). Open3.capture3 array form; rev-range is a single argument, no shell involved."
     },
@@ -45,11 +21,27 @@
       "note": "False positive: base_sha is validated against /\\A[0-9a-f]{40}\\z/ inside find_branch_base before being returned. Open3.capture3 array form."
     },
     {
-      "fingerprint": "c65dd70ab6e8d35d8dcd9619fb500359a6255c1256eb87e7d1bb38e2db120e90",
-      "note": "False positive: diff_base is either base_sha (validated /\\A[0-9a-f]{40}\\z/ in find_branch_base) or upstream_branch (validated against %r{\\A[\\w./-]+\\z}). Open3.capture3 array form."
+      "fingerprint": "5abaaacf89cfd612e696279609c92cfd6433306117c85ba0fa50e68021581293",
+      "note": "False positive: Open3.capture2 called with array form (no shell). globs defaults to JS_GLOBS (hardcoded constant); --include=#{g} is a separate argv element, not shell-interpolated."
     },
     {
-      "fingerprint": "c6ce08dcb054a0231634493b70815644759cce078896dcd63a394e97dd309159",
+      "fingerprint": "eb66bd7fd18af690125623a57a79c9f98c6b29dff97b3b61b7efc53eb696b94a",
+      "note": "False positive: upstream_branch is validated against %r{\\A[\\w./-]+\\z} at git_info_service.rb line 36 before use. Open3.capture3 array form; rev-range is a single argument, no shell involved."
+    },
+    {
+      "fingerprint": "aa6d3ca0bc3f5d379fd6dd86a0a080ef02d778baa81a59a6281423549e3283c9",
+      "note": "False positive: upstream_branch is validated against %r{\\A[\\w./-]+\\z} at git_info_service.rb line 36 before use. Open3.capture3 array form; rev-range is a single argument, no shell involved."
+    },
+    {
+      "fingerprint": "271cf0ac51cad549f3d06efc163b53ef52d1ad4d0b97d8015c3b0adbb4199fa7",
+      "note": "False positive: diff_base is either base_sha (validated /\\A[0-9a-f]{40}\\z/ in find_branch_base) or upstream_branch (validated %r{\\A[\\w./-]+\\z}). Open3.capture3 array form."
+    },
+    {
+      "fingerprint": "2a0a71e561cf5b17bfb2e3201707c156998bab7a5fbd62a341a1bef2a463cf9a",
+      "note": "False positive: diff_base is either base_sha (validated /\\A[0-9a-f]{40}\\z/ in find_branch_base) or upstream_branch (validated %r{\\A[\\w./-]+\\z}). Open3.capture3 array form."
+    },
+    {
+      "fingerprint": "c72a8cc8d82af40cd040f79ad4e3808b7090d109c44aa17aeb13889792749a1b",
       "note": "False positive: base_sha is validated against /\\A[0-9a-f]{40}\\z/ inside find_branch_base before being returned. Open3.capture3 array form."
     }
   ]
