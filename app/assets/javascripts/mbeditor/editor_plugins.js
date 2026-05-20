@@ -67,7 +67,7 @@
   // this reliably separates them from user-assigned globals without a native-code test
   // (which only works for functions, not objects like `document` or `location`).
   function buildWindowGlobalsShim() {
-    var alreadyDeclared = { React: 1, ReactDOM: 1, PropTypes: 1, MaterialUI: 1, $: 1, jQuery: 1 };
+    var alreadyDeclared = { React: 1, ReactDOM: 1, PropTypes: 1, MaterialUI: 1, $: 1, jQuery: 1, JSX: 1 };
     var lines = [];
     try {
       var keys = Object.keys(window);
@@ -101,10 +101,15 @@
     } catch (e) { return false; }
   }
 
+  // Globals already declared in the React mini-UMD — never add these to
+  // discovered-globals.d.ts or TypeScript will see a duplicate identifier.
+  var REACT_MINI_UMD_GLOBALS = { React: 1, ReactDOM: 1, PropTypes: 1, MaterialUI: 1, $: 1, jQuery: 1, JSX: 1 };
+
   // Declare a discovered global in Monaco's extra libs so the TS2304 warning disappears.
   // Calling addExtraLib with the same URI replaces the previous content in-place.
   function addDiscoveredGlobal(name) {
     if (discoveredJsGlobals[name]) return;
+    if (REACT_MINI_UMD_GLOBALS[name]) return; // already in the mini-UMD
     discoveredJsGlobals[name] = true;
     var mts = window.monaco && window.monaco.languages && window.monaco.languages.typescript;
     if (!mts) return;
@@ -490,7 +495,9 @@
     if (language === 'ruby' && typeof FileService !== 'undefined' && FileService.getUnusedMethods) {
       function refreshUnused() {
         var path = model._mbeditorPath;
-        if (!path) return;
+        // Skip test/spec files — test methods are invoked dynamically by the
+        // framework (e.g. Minitest) and never appear as explicit call-sites.
+        if (!path || /(?:^|\/)(?:test|spec)\//.test(path)) return;
         FileService.getUnusedMethods(path).then(function(data) {
           var unused = data && Array.isArray(data.unused) ? data.unused : [];
           var newDecs = unused.map(function(m) {
@@ -585,6 +592,105 @@
       });
     }
 
+    // ── React mini-UMD type declarations ────────────────────────────────────
+    // A self-contained React + JSX type stub vendored locally so Monaco's
+    // TypeScript language service has enough information to:
+    //   • complete React hooks and lifecycle methods
+    //   • resolve JSX element types (no "Cannot find name" for <div /> etc.)
+    //   • navigate to component definitions on hover / Ctrl+Click
+    // This replaces the bare `declare var React: any` that previously gave
+    // Monaco no useful type information.
+    var REACT_MINI_UMD_DTS = [
+      '// React mini-UMD — mbeditor local type stub',
+      'declare namespace React {',
+      '  type Key = string | number;',
+      '  type ReactText = string | number;',
+      '  type ReactNode = ReactElement | ReactText | boolean | null | undefined | ReactNodeArray;',
+      '  interface ReactNodeArray extends Array<ReactNode> {}',
+      '  interface ReactElement<P = any> { type: any; props: P; key: Key | null; }',
+      '  interface RefObject<T> { readonly current: T | null; }',
+      '  type Ref<T> = RefObject<T> | ((instance: T | null) => void) | null;',
+      '  interface MutableRefObject<T> { current: T; }',
+      '  type FC<P = {}> = (props: P & { children?: ReactNode; key?: Key }) => ReactElement | null;',
+      '  type FunctionComponent<P = {}> = FC<P>;',
+      '  type ComponentType<P = {}> = FC<P>;',
+      '  type DependencyList = ReadonlyArray<any>;',
+      '  type EffectCallback = () => (void | (() => void | undefined));',
+      '  type SetStateAction<S> = S | ((prevState: S) => S);',
+      '  type Dispatch<A> = (value: A) => void;',
+      '  type Reducer<S, A> = (prevState: S, action: A) => S;',
+      '  interface Context<T> { Provider: FC<{ value: T; children?: ReactNode }>; Consumer: any; displayName?: string; }',
+      '  class Component<P = {}, S = {}> {',
+      '    constructor(props: Readonly<P>);',
+      '    props: Readonly<P>;',
+      '    state: Readonly<S>;',
+      '    setState(state: SetStateAction<S>, cb?: () => void): void;',
+      '    forceUpdate(cb?: () => void): void;',
+      '    render(): ReactNode;',
+      '    componentDidMount?(): void;',
+      '    componentDidUpdate?(prevProps: Readonly<P>, prevState: Readonly<S>): void;',
+      '    componentWillUnmount?(): void;',
+      '  }',
+      '  class PureComponent<P = {}, S = {}> extends Component<P, S> {}',
+      '  function createElement(type: any, props?: any, ...children: any[]): ReactElement;',
+      '  function cloneElement(element: ReactElement, props?: any, ...children: any[]): ReactElement;',
+      '  function isValidElement(object: any): object is ReactElement;',
+      '  function createContext<T>(defaultValue: T): Context<T>;',
+      '  function forwardRef<T, P = {}>(render: (props: P, ref: Ref<T>) => ReactElement | null): FC<P & { ref?: Ref<T> }>;',
+      '  function memo<P>(comp: FC<P>, compare?: (a: P, b: P) => boolean): FC<P>;',
+      '  function lazy<T extends ComponentType<any>>(factory: () => Promise<{ default: T }>): T;',
+      '  function useState<S>(initialState: S | (() => S)): [S, Dispatch<SetStateAction<S>>];',
+      '  function useEffect(effect: EffectCallback, deps?: DependencyList): void;',
+      '  function useLayoutEffect(effect: EffectCallback, deps?: DependencyList): void;',
+      '  function useRef<T>(initialValue: T): MutableRefObject<T>;',
+      '  function useRef<T>(initialValue: T | null): RefObject<T>;',
+      '  function useRef<T = undefined>(): MutableRefObject<T | undefined>;',
+      '  function useMemo<T>(factory: () => T, deps: DependencyList | undefined): T;',
+      '  function useCallback<T extends (...args: any[]) => any>(callback: T, deps: DependencyList): T;',
+      '  function useContext<T>(context: Context<T>): T;',
+      '  function useReducer<S, A>(reducer: Reducer<S, A>, initialState: S): [S, Dispatch<A>];',
+      '  function useImperativeHandle<T>(ref: Ref<T>, init: () => T, deps?: DependencyList): void;',
+      '  function useDebugValue<T>(value: T, format?: (value: T) => any): void;',
+      '  function useId(): string;',
+      '  const Fragment: any;',
+      '  const StrictMode: any;',
+      '  const Suspense: FC<{ fallback?: ReactNode; children?: ReactNode }>;',
+      '  const Children: { map<T,C>(children: any, fn: (child: C, index: number) => T): T[]; forEach(children: any, fn: (child: any, index: number) => void): void; count(children: any): number; toArray(children: any): any[]; only(children: any): ReactElement; };',
+      '  const version: string;',
+      '}',
+      '',
+      '// Allow `var React = window.React;` in host-app files without TS2300.',
+      '// Using a namespace+var combo lets Monaco see the namespace members while',
+      '// still accepting the runtime assignment pattern common in Sprockets apps.',
+      'declare var React: typeof React;',
+      '',
+      '// ReactDOM global',
+      'declare var ReactDOM: {',
+      '  render(element: React.ReactElement, container: Element | null, cb?: () => void): any;',
+      '  unmountComponentAtNode(container: Element): boolean;',
+      '  createPortal(children: React.ReactNode, container: Element): React.ReactElement;',
+      '  findDOMNode(instance: any): Element | null;',
+      '};',
+      '',
+      '// JSX intrinsic elements — wildcard so any HTML tag is accepted.',
+      '// Without this, TypeScript reports TS2339 / TS7026 for every <div> etc.',
+      'declare namespace JSX {',
+      '  interface Element extends React.ReactElement<any> {}',
+      '  interface ElementClass { render(): React.ReactNode; }',
+      '  interface ElementAttributesProperty { props: {}; }',
+      '  interface ElementChildrenAttribute { children: {}; }',
+      '  type LibraryManagedAttributes<C, P> = P;',
+      '  interface IntrinsicElements { [elem: string]: any; }',
+      '}',
+      '',
+      '// Other common Sprockets globals',
+      'declare var PropTypes: any;',
+      'declare var MaterialUI: any;',
+      'declare var $: any;',
+      'declare var jQuery: any;',
+      'interface Window { [key: string]: any; }'
+    ].join('\n');
+
     // Declare globals that are injected at runtime so checkJs doesn't flag them
     // as undefined. The buildWindowGlobalsShim() function automatically detects
     // window globals from the host application. Common Sprockets globals
@@ -592,16 +698,8 @@
     // not auto-detected, add `/* global MyComponent */` at the top of the file.
     if (monaco.languages.typescript && monaco.languages.typescript.javascriptDefaults) {
       monaco.languages.typescript.javascriptDefaults.addExtraLib(
-        [
-          'declare var React: any;',
-          'declare var ReactDOM: any;',
-          'declare var PropTypes: any;',
-          'declare var MaterialUI: any;',
-          'declare var $: any;',
-          'declare var jQuery: any;',
-          'interface Window { [key: string]: any; }'
-        ].join('\n'),
-        'inmemory://mbeditor/sprockets-globals.d.ts'
+        REACT_MINI_UMD_DTS,
+        'inmemory://mbeditor/react-mini-umd.d.ts'
       );
 
       var dynamicShim = buildWindowGlobalsShim();
@@ -622,7 +720,11 @@
       //   hard errors are almost always false positives. Downgrading keeps the
       //   signal without blocking genuine undefined-variable detection.
       // - Both: downgrade TS6133 ("declared but never read") from Error to Warning.
-      var JS_SUPPRESS_CODES = {};
+      // - JS/JSX: suppress TS2300 ("Duplicate identifier") — in Sprockets apps all
+      //   open files share a global script context in Monaco's TS worker, so a
+      //   component defined in file_a.jsx looks like a redeclaration when file_b.jsx
+      //   is also open. This is a structural false positive, not a real error.
+      var JS_SUPPRESS_CODES = { '2300': true, '2451': true };
       var JS_WARN_CODES    = { '2304': true, '6133': true };
       var TS_WARN_CODES    = { '6133': true };
       var _severityPatchActive = false;
