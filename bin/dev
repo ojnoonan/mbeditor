@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -e
 cd "$(dirname "$0")/../test/dummy"
-exec rails server -p 3001 "$@"
+exec rails server -p 3123 "$@"

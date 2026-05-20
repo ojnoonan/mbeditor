@@ -30,7 +30,9 @@ module Mbeditor
       s = Regexp.escape(@symbol)
       # Matches the most common JS global-definition forms, anchored so we
       # don't pick up every usage — only assignment / declaration lines.
-      "(?:window\\.#{s}\\s*=|\\b(?:var|let|const)\\s+#{s}[\\s=;,]|\\bfunction\\s+#{s}[\\s({]|\\bclass\\s+#{s}\\b|\\bexport\\s+(?:default\\s+)?(?:var|let|const|function|class)\\s+#{s}\\b)"
+      # Note: [\s=;,] is avoided inside character classes because BSD grep
+      # (macOS) does not support \s inside [...]. Use explicit [ \t=;,] instead.
+      "(?:window\\.#{s}\\s*=|\\b(?:var|let|const)\\s+#{s}[ \\t=;,]|\\bfunction\\s+#{s}[ \\t({]|\\bclass\\s+#{s}\\b|\\bexport\\s+(?:default\\s+)?(?:var|let|const|function|class)\\s+#{s}\\b)"
     end
 
     def parse_results(lines)

@@ -1392,9 +1392,17 @@
         if (!discoveredJsGlobals[word] && !/[A-Z]/.test(word)) return null;
         if (typeof FileService === 'undefined' || !FileService.getJsDefinition) return null;
 
+        // Build a position-specific range for this hover instance.
+        // The range must NOT be cached because the same symbol can appear on
+        // different lines; a stale cached lineNumber would highlight the wrong place.
+        function makeHoverRange() {
+          return new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn);
+        }
+
         var cached = jsHoverCache[word];
         if (cached && (Date.now() - cached.ts) < JS_HOVER_CACHE_TTL_MS) {
-          return cached.value || null;
+          if (!cached.contents) return null;
+          return { range: makeHoverRange(), contents: cached.contents };
         }
 
         var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -1409,11 +1417,11 @@
               if (isRuntimeWindowGlobal(word)) {
                 addDiscoveredGlobal(word);
                 var kind = typeof window[word];
-                var rtValue = { contents: [{ value: '**' + word + '** — runtime global (`' + kind + '`)' }] };
-                jsHoverCache[word] = { ts: Date.now(), value: rtValue };
-                return rtValue;
+                var rtContents = [{ value: '**' + word + '** — runtime global (`' + kind + '`)' }];
+                jsHoverCache[word] = { ts: Date.now(), contents: rtContents };
+                return { range: makeHoverRange(), contents: rtContents };
               }
-              jsHoverCache[word] = { ts: Date.now(), value: null };
+              jsHoverCache[word] = { ts: Date.now(), contents: null };
               return null;
             }
             var r = results[0];
@@ -1421,14 +1429,12 @@
             // locally-defined functions must not get a duplicate declare var.
             if (r.file !== model._mbeditorPath) addDiscoveredGlobal(word);
             var fileRef = r.file + ':' + r.line;
-            var value = {
-              contents: [
-                { value: '```javascript\n' + r.snippet + '\n```', isTrusted: true },
-                { value: '<span style="opacity:0.55;font-size:0.9em;">' + fileRef + '</span>', isTrusted: true, supportHtml: true }
-              ]
-            };
-            jsHoverCache[word] = { ts: Date.now(), value: value };
-            return value;
+            var contents = [
+              { value: '```javascript\n' + r.snippet + '\n```', isTrusted: true },
+              { value: '<span style="opacity:0.55;font-size:0.9em;">' + fileRef + '</span>', isTrusted: true, supportHtml: true }
+            ];
+            jsHoverCache[word] = { ts: Date.now(), contents: contents };
+            return { range: makeHoverRange(), contents: contents };
           }).catch(function() { return null; });
       }
     });
