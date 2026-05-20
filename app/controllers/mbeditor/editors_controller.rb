@@ -662,7 +662,7 @@ module Mbeditor
         return render json: { markers: markers }
       end
 
-      cmd = rubocop_command + ["--no-server", "--stdin", filename, "--format", "json", "--no-color", "--force-exclusion"]
+      cmd = rubocop_command + ["--no-server", "--stdin", filename, "--format", "json", "--no-color"]
       env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
       output = run_with_timeout(env, cmd, stdin_data: code)
 
