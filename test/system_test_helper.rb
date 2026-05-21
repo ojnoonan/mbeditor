@@ -10,11 +10,12 @@ Minitest::Reporters.use! Minitest::Reporters::ProgressReporter.new
 
 MBEDITOR_CUPRITE_OPTIONS = {
   headless: true,
-  timeout: 30,
+  # Page-load timeout: CI precompiles assets before system tests, so 60 s is
+  # generous, but slow Ruby 3.0 runners still need headroom.  Override via env.
+  timeout: ENV.fetch("MBEDITOR_CUPRITE_TIMEOUT", "60").to_i,
   process_timeout: ENV.fetch("MBEDITOR_CUPRITE_PROCESS_TIMEOUT", "120").to_i,
-  # Asset files (react-dom, monaco) can still be in-flight when Chrome fires
-  # the page-load event on slow CI runners. Suppress the error so tests are
-  # not flaky due to asset delivery timing.
+  # Suppress PendingConnectionsError in case any background resource is still
+  # in-flight when Chrome fires the page-load event.
   pending_connection_errors: false,
   browser_options: {
     "no-sandbox": nil,
