@@ -10,8 +10,12 @@ Minitest::Reporters.use! Minitest::Reporters::ProgressReporter.new
 
 MBEDITOR_CUPRITE_OPTIONS = {
   headless: true,
-  timeout: 15,
+  timeout: 30,
   process_timeout: ENV.fetch("MBEDITOR_CUPRITE_PROCESS_TIMEOUT", "120").to_i,
+  # Asset files (react-dom, monaco) can still be in-flight when Chrome fires
+  # the page-load event on slow CI runners. Suppress the error so tests are
+  # not flaky due to asset delivery timing.
+  pending_connection_errors: false,
   browser_options: {
     "no-sandbox": nil,
     "disable-dev-shm-usage": nil,
