@@ -351,6 +351,68 @@ Rails.application.config.after_initialize do
     document.addEventListener("DOMContentLoaded", ThemeSwitcher.init);
   JS
 
+  # ── Schema file (for schema-modal feature demo) ─────────────────────────────
+  FileUtils.mkdir_p(sample_workspace.join("db"))
+  File.write(sample_workspace.join("db", "schema.rb"), <<~RUBY)
+    # This file is auto-generated from the current state of the database. Instead
+    # of editing this file, please use the migrations feature of Active Record.
+
+    ActiveRecord::Schema[7.1].define(version: 2024_06_01_000000) do
+      create_table "users", force: :cascade do |t|
+        t.string "name", null: false
+        t.string "email", null: false
+        t.boolean "admin", default: false, null: false
+        t.string "password_digest"
+        t.datetime "last_sign_in_at"
+        t.datetime "created_at", null: false
+        t.datetime "updated_at", null: false
+        t.index ["email"], name: "index_users_on_email", unique: true
+        t.index ["name"], name: "index_users_on_name"
+      end
+
+      create_table "orders", force: :cascade do |t|
+        t.string "status", default: "pending", null: false
+        t.bigint "user_id", null: false
+        t.decimal "total", precision: 10, scale: 2
+        t.text "notes"
+        t.datetime "shipped_at"
+        t.datetime "created_at", null: false
+        t.datetime "updated_at", null: false
+        t.index ["status"], name: "index_orders_on_status"
+        t.index ["user_id"], name: "index_orders_on_user_id"
+      end
+
+      create_table "products", force: :cascade do |t|
+        t.string "name", null: false
+        t.decimal "price", precision: 10, scale: 2, null: false
+        t.integer "stock", default: 0, null: false
+        t.text "description"
+        t.boolean "active", default: true, null: false
+        t.datetime "created_at", null: false
+        t.datetime "updated_at", null: false
+        t.index ["active", "name"], name: "index_products_on_active_and_name"
+        t.index ["name"], name: "index_products_on_name", unique: true
+      end
+
+      create_table "themes", force: :cascade do |t|
+        t.string "name", null: false
+        t.string "key", null: false
+        t.boolean "is_dark", default: false
+        t.datetime "created_at", null: false
+        t.datetime "updated_at", null: false
+        t.index ["key"], name: "index_themes_on_key", unique: true
+      end
+
+      create_table "paginations", force: :cascade do |t|
+        t.integer "page", default: 1, null: false
+        t.integer "per_page", default: 25, null: false
+        t.string "scope"
+        t.datetime "created_at", null: false
+        t.datetime "updated_at", null: false
+      end
+    end
+  RUBY
+
   # ── Feature demo files ──────────────────────────────────────────────────────
   # Written on every boot.  Each file demonstrates one of the new editor
   # features so developers can test them immediately after starting the server.

@@ -28,6 +28,8 @@ Mbeditor::Engine.routes.draw do
   get    'unused_methods',  to: 'editors#unused_methods'
   get    'client_config',   to: 'editors#client_config'
   get    'related_files',   to: 'editors#related_files'
+  get    'model_schema',    to: 'editors#model_schema'
+  get    'changelog',       to: 'editors#changelog'
   get    'git_info',        to: 'editors#git_info'
   get    'git_status',      to: 'editors#git_status'
   get    'manifest.webmanifest',            to: 'editors#pwa_manifest',   format: false

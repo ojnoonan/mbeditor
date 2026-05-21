@@ -336,6 +336,21 @@ var MbeditorApp = function MbeditorApp() {
   var railsGroupsCollapsed = _useStateRFC2[0];
   var setRailsGroupsCollapsed = _useStateRFC2[1];
 
+  var _useStateChangelog = useState(null); // null | { content, loading, error }
+  var _useStateChangelog2 = _slicedToArray(_useStateChangelog, 2);
+  var changelogState = _useStateChangelog2[0];
+  var setChangelogState = _useStateChangelog2[1];
+
+  var _useStateSchemaModal = useState(null);
+  var _useStateSchemaModal2 = _slicedToArray(_useStateSchemaModal, 2);
+  var schemaModal = _useStateSchemaModal2[0];
+  var setSchemaModal = _useStateSchemaModal2[1];
+
+  var _useStateSchemaLoading = useState(null);
+  var _useStateSchemaLoading2 = _slicedToArray(_useStateSchemaLoading, 2);
+  var schemaLoadingLabel = _useStateSchemaLoading2[0];
+  var setSchemaLoadingLabel = _useStateSchemaLoading2[1];
+
   var _useState9 = useState({});
 
   var _useState92 = _slicedToArray(_useState9, 2);
@@ -853,6 +868,9 @@ var MbeditorApp = function MbeditorApp() {
         if (t.isSettings || t.path === '__settings__') {
           return Promise.resolve({ content: '' });
         }
+        if (t.isChangelog || t.path === 'mbeditor://changelog') {
+          return Promise.resolve({ content: '' });
+        }
         if (t.isDiff && t.repoPath) {
           return GitService.fetchDiff(t.repoPath, t.diffBaseSha, t.diffHeadSha)
             .then(function (d) { return { content: 'Diff loaded', diffOriginal: d.original || '', diffModified: d.modified || '', _isDiffResult: true }; })
@@ -976,7 +994,7 @@ var MbeditorApp = function MbeditorApp() {
                 id: t.id, path: t.path, name: t.name, dirty: t.dirty, viewState: t.viewState,
                 isSettings: !!t.isSettings, isPreview: !!t.isPreview, previewFor: t.previewFor || null,
                 isDiff: !!t.isDiff, diffBaseSha: t.diffBaseSha || null, diffHeadSha: t.diffHeadSha || null,
-                repoPath: t.repoPath || null
+                repoPath: t.repoPath || null, isChangelog: !!t.isChangelog
               };
             })
           };
@@ -1570,6 +1588,19 @@ var MbeditorApp = function MbeditorApp() {
     FileService.getClientConfig().then(function(cfg) {
       customPathsRef.current = Array.isArray(cfg.related_files_custom_paths) ? cfg.related_files_custom_paths : [];
     })['catch'](function() {});
+  }, []);
+
+  // Version-update detection: open the changelog tab automatically when the
+  // gem version has changed since last time the editor was opened.
+  useEffect(function() {
+    var SEEN_KEY = 'mbeditor_seen_version';
+    var current = document.body.dataset.mbeditorVersion || '';
+    var seen = localStorage.getItem(SEEN_KEY) || '';
+    if (current && seen && seen !== current) {
+      // Delay slightly so the editor finishes restoring saved tabs first
+      setTimeout(function() { openChangelogTab(); }, 800);
+    }
+    if (current) localStorage.setItem(SEEN_KEY, current);
   }, []);
 
   var resourceLabelFromPath = function(p) {
@@ -2981,6 +3012,45 @@ var MbeditorApp = function MbeditorApp() {
     EditorStore.setState({ panes: newPanes2, focusedPaneId: paneId, activeTabId: '__settings__' });
   }
 
+  var CHANGELOG_TAB_ID = 'mbeditor://changelog';
+  function openChangelogTab() {
+    var st = EditorStore.getState();
+    // Focus existing tab if already open
+    var foundPaneId = null, foundTab = null;
+    st.panes.forEach(function(p) {
+      if (!foundTab) {
+        var t = p.tabs.find(function(tab) { return tab.id === CHANGELOG_TAB_ID; });
+        if (t) { foundTab = t; foundPaneId = p.id; }
+      }
+    });
+    if (foundTab) {
+      var switchPanes = st.panes.map(function(p) {
+        if (p.id === foundPaneId) return Object.assign({}, p, { activeTabId: CHANGELOG_TAB_ID });
+        return p;
+      });
+      EditorStore.setState({ panes: switchPanes, focusedPaneId: foundPaneId });
+      return;
+    }
+    // Open in focused pane
+    var paneId = st.focusedPaneId;
+    var pane = st.panes.find(function(p) { return p.id === paneId; }) || st.panes[0];
+    if (!pane) return;
+    paneId = pane.id;
+    var newTab = { id: CHANGELOG_TAB_ID, path: CHANGELOG_TAB_ID, name: "What's New", dirty: false, content: '', isChangelog: true };
+    var newPanes = st.panes.map(function(p) {
+      if (p.id === paneId) return Object.assign({}, p, { tabs: p.tabs.concat(newTab), activeTabId: CHANGELOG_TAB_ID });
+      return p;
+    });
+    EditorStore.setState({ panes: newPanes, focusedPaneId: paneId });
+    // Fetch content if not already loaded
+    if (!changelogState || changelogState.error) {
+      setChangelogState({ loading: true, content: null, error: null });
+      FileService.getChangelog()
+        .then(function(data) { setChangelogState({ loading: false, content: data.content || '', error: null }); })
+        ['catch'](function() { setChangelogState({ loading: false, content: null, error: 'Could not load changelog.' }); });
+    }
+  }
+
   return React.createElement(
     "div",
     { className: "ide-shell" },
@@ -3547,12 +3617,47 @@ var MbeditorApp = function MbeditorApp() {
                 });
               }
               if (allFiles.length === 0) return null;
+              var schemaBtn = React.createElement(
+                'button',
+                {
+                  className: 'rails-schema-btn' + (schemaLoadingLabel === label ? ' rails-schema-btn-loading' : ''),
+                  title: 'View database schema for ' + label,
+                  onClick: (function(lbl) { return function(e) {
+                    e.stopPropagation();
+                    if (schemaLoadingLabel === lbl) return;
+                    setSchemaLoadingLabel(lbl);
+                    var modelName = lbl.replace(/\s+/g, '');
+                    FileService.getModelSchema(modelName)
+                      .then(function(data) {
+                        setSchemaLoadingLabel(null);
+                        if (data && data.columns) {
+                          setSchemaModal({ label: lbl, data: data });
+                        } else {
+                          setSchemaModal({ label: lbl, error: 'No schema found for ' + lbl });
+                        }
+                      })
+                      ['catch'](function(err) {
+                        setSchemaLoadingLabel(null);
+                        var msg = (err && err.response && err.response.data && err.response.data.error)
+                          ? err.response.data.error
+                          : 'No db/schema.rb found or table not defined';
+                        setSchemaModal({ label: lbl, error: msg });
+                      });
+                  }; })(label)
+                },
+                React.createElement('i', {
+                  className: schemaLoadingLabel === label
+                    ? 'fas fa-spinner fa-spin'
+                    : 'fas fa-table'
+                })
+              );
               return React.createElement(
                 CollapsibleSection,
                 {
                   key: label,
                   title: label.toUpperCase(),
                   isCollapsed: !!railsGroupsCollapsed[label],
+                  actions: schemaBtn,
                   onToggle: (function(captured) { return function(isCollapsed) {
                     setRailsGroupsCollapsed(function(prev) {
                       var next = Object.assign({}, prev);
@@ -3693,6 +3798,18 @@ var MbeditorApp = function MbeditorApp() {
                 content = React.createElement(window.CommitGraph || CommitGraph, {
                   commits: pActiveTab.commits || [],
                   onSelectCommit: handleSelectCommit
+                });
+              } else if (pActiveTab.isChangelog) {
+                content = React.createElement(ChangelogView, {
+                  changelogState: changelogState,
+                  onLoad: function() {
+                    if (!changelogState || (!changelogState.content && !changelogState.loading && !changelogState.error)) {
+                      setChangelogState({ loading: true, content: null, error: null });
+                      FileService.getChangelog()
+                        .then(function(data) { setChangelogState({ loading: false, content: data.content || '', error: null }); })
+                        ['catch'](function() { setChangelogState({ loading: false, content: null, error: 'Could not load changelog.' }); });
+                    }
+                  }
                 });
               } else if (pActiveTab.isSettings) {
                 content = React.createElement(
@@ -4572,8 +4689,8 @@ var MbeditorApp = function MbeditorApp() {
         "ZEN"
       ),
       React.createElement(
-        "div",
-        { className: "statusbar-version" },
+        "button",
+        { type: "button", className: "statusbar-version statusbar-btn", onClick: openChangelogTab, title: "What's New — click to open changelog" },
         "v" + (document.body.dataset.mbeditorVersion || "")
       )
     ),
@@ -4881,6 +4998,96 @@ var MbeditorApp = function MbeditorApp() {
               style: { padding: '6px 16px', background: 'transparent', color: '#888', border: 'none', cursor: 'pointer' } },
             "Cancel"
           )
+        )
+      )
+    ),
+
+    /* ── Schema modal ──────────────────────────────────────────────────── */
+    schemaModal && React.createElement(
+      'div',
+      {
+        className: 'schema-modal-overlay',
+        onClick: function() { setSchemaModal(null); }
+      },
+      React.createElement(
+        'div',
+        {
+          className: 'schema-modal',
+          onClick: function(e) { e.stopPropagation(); }
+        },
+        /* Header */
+        React.createElement(
+          'div', { className: 'schema-modal-header' },
+          React.createElement(
+            'div', { className: 'schema-modal-title' },
+            React.createElement('i', { className: 'fas fa-table', style: { marginRight: '8px', opacity: 0.7 } }),
+            schemaModal.label,
+            !schemaModal.error && schemaModal.data && React.createElement(
+              'span', { className: 'schema-modal-table-name' }, schemaModal.data.table
+            )
+          ),
+          React.createElement(
+            'button',
+            { className: 'schema-modal-close', onClick: function() { setSchemaModal(null); }, title: 'Close' },
+            React.createElement('i', { className: 'fas fa-times' })
+          )
+        ),
+        /* Body */
+        React.createElement(
+          'div', { className: 'schema-modal-body' },
+          schemaModal.error
+            ? React.createElement('div', { className: 'schema-modal-error' },
+                React.createElement('i', { className: 'fas fa-exclamation-circle', style: { marginRight: '8px' } }),
+                schemaModal.error
+              )
+            : [
+              /* Columns table */
+              React.createElement(
+                'table', { key: 'cols', className: 'schema-table' },
+                React.createElement(
+                  'thead', null,
+                  React.createElement(
+                    'tr', null,
+                    React.createElement('th', null, 'Column'),
+                    React.createElement('th', null, 'Type'),
+                    React.createElement('th', null, 'Options')
+                  )
+                ),
+                React.createElement(
+                  'tbody', null,
+                  schemaModal.data.columns.map(function(col) {
+                    var opts = [];
+                    if (col.null === false) opts.push('NOT NULL');
+                    if (col.default !== undefined && col.default !== null) opts.push('default: ' + col.default);
+                    if (col.limit) opts.push('limit: ' + col.limit);
+                    if (col.precision) opts.push('precision: ' + col.precision + (col.scale ? ', scale: ' + col.scale : ''));
+                    if (col.primary_key) opts.push('PK');
+                    return React.createElement(
+                      'tr', { key: col.name },
+                      React.createElement('td', { className: 'schema-col-name' }, col.name),
+                      React.createElement('td', { className: 'schema-col-type schema-type-' + col.type }, col.type),
+                      React.createElement('td', { className: 'schema-col-opts' }, opts.join(' · ') || '—')
+                    );
+                  })
+                )
+              ),
+              /* Indexes */
+              schemaModal.data.indexes && schemaModal.data.indexes.length > 0 && React.createElement(
+                'div', { key: 'idxs', className: 'schema-indexes' },
+                React.createElement('div', { className: 'schema-indexes-header' }, 'Indexes'),
+                schemaModal.data.indexes.map(function(idx, i) {
+                  return React.createElement(
+                    'div', { key: idx.name || i, className: 'schema-index-row' },
+                    React.createElement('span', { className: 'schema-index-cols' },
+                      React.createElement('i', { className: 'fas fa-key', style: { fontSize: '9px', marginRight: '5px', opacity: 0.5 } }),
+                      idx.columns.join(', ')
+                    ),
+                    idx.unique && React.createElement('span', { className: 'schema-index-unique' }, 'UNIQUE'),
+                    idx.name && React.createElement('span', { className: 'schema-index-name' }, idx.name)
+                  );
+                })
+              )
+            ]
         )
       )
     )

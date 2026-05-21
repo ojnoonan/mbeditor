@@ -783,6 +783,28 @@ module Mbeditor
       render json: result
     end
 
+    # GET /mbeditor/changelog — serves the gem's CHANGELOG.md for the in-editor changelog tab.
+    def changelog
+      path = Mbeditor::Engine.root.join("CHANGELOG.md")
+      content = path.exist? ? path.read(encoding: "utf-8") : ""
+      render json: { content: content, version: Mbeditor::VERSION }
+    end
+
+    # GET /mbeditor/model_schema?model=User
+    # Returns the db/schema.rb table definition for the named model as JSON.
+    # 404 when the schema file is missing or the table is not found.
+    def model_schema
+      model_name = params[:model].to_s.strip
+      return render json: { error: "model required" }, status: :bad_request if model_name.blank?
+
+      schema = SchemaService.new(model_name, workspace_root.to_s).call
+      if schema
+        render json: schema
+      else
+        render json: { error: "No schema found for '#{model_name}'" }, status: :not_found
+      end
+    end
+
     # POST /mbeditor/format — rubocop -A on buffer content; returns corrected content WITHOUT saving to disk
     #
     # Accepts the current buffer content as `code` and formats it using a

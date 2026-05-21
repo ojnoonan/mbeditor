@@ -222,6 +222,16 @@ var FileService = (function () {
       .then(function(res) { return res.data; });
   }
 
+  function getChangelog() {
+    return axios.get(window.mbeditorBasePath() + '/changelog')
+      .then(function(res) { return res.data; });
+  }
+
+  function getModelSchema(model) {
+    return axios.get(window.mbeditorBasePath() + '/model_schema', { params: { model: model } })
+      .then(function(res) { return res.data; });
+  }
+
   return {
     getWorkspace: getWorkspace,
     getTree: getTree,
@@ -252,6 +262,8 @@ var FileService = (function () {
     getFileIncludes: getFileIncludes,
     getUnusedMethods: getUnusedMethods,
     getClientConfig: getClientConfig,
-    getRelatedFiles: getRelatedFiles
+    getRelatedFiles: getRelatedFiles,
+    getModelSchema: getModelSchema,
+    getChangelog: getChangelog
   };
 })();

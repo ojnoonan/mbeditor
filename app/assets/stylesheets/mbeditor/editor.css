@@ -806,6 +806,11 @@ html, body, #mbeditor-root {
   font-size: 10px;
   white-space: nowrap;
   padding-left: 8px;
+  cursor: pointer;
+}
+.statusbar-version:hover {
+  color: var(--ide-accent-text);
+  background: color-mix(in srgb, var(--ide-accent-text) 15%, transparent);
 }
 
 .statusbar-eol-btn {
@@ -1106,8 +1111,7 @@ html, body, #mbeditor-root {
 .rails-group-item-dirty {
   flex-shrink: 0;
   font-size: 8px;
-  color: var(--ide-accent-fg);
-  opacity: 0.85;
+  color: #e5c07b;
   line-height: 1;
 }
 
@@ -1125,6 +1129,290 @@ html, body, #mbeditor-root {
   font-size: 11px;
   color: var(--ide-text-muted, #888);
   font-style: italic;
+}
+
+/* ── Rails schema button (in CollapsibleSection actions) ──── */
+.rails-schema-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--ide-text-muted, #888);
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0;
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 0.1s, color 0.1s;
+}
+.collapsible-header:hover .rails-schema-btn,
+.rails-schema-btn-loading {
+  opacity: 1;
+}
+.rails-schema-btn:hover {
+  color: var(--ide-text, #ccc);
+  background: var(--ide-hover, rgba(255,255,255,0.08));
+}
+
+/* ── Schema modal ─────────────────────────────────────────── */
+.schema-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.schema-modal {
+  background: var(--ide-bg, #1e1e1e);
+  border: 1px solid var(--ide-border, #3c3c3c);
+  border-radius: 6px;
+  min-width: 420px;
+  max-width: 680px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+.schema-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--ide-border, #3c3c3c);
+  flex-shrink: 0;
+}
+.schema-modal-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ide-text, #ccc);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.schema-modal-table-name {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ide-text-muted, #888);
+  margin-left: 8px;
+  font-family: monospace;
+  background: var(--ide-hover, rgba(255,255,255,0.06));
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.schema-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--ide-text-muted, #888);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 13px;
+}
+.schema-modal-close:hover { color: var(--ide-text, #ccc); background: var(--ide-hover, rgba(255,255,255,0.08)); }
+.schema-modal-body {
+  overflow-y: auto;
+  padding: 0 0 12px;
+  flex: 1;
+}
+.schema-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.schema-table th {
+  text-align: left;
+  padding: 6px 16px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ide-text-muted, #888);
+  border-bottom: 1px solid var(--ide-border, #3c3c3c);
+  background: var(--ide-sidebar-bg, #252526);
+}
+.schema-table td {
+  padding: 5px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  vertical-align: middle;
+}
+.schema-table tr:last-child td { border-bottom: none; }
+.schema-table tr:hover td { background: var(--ide-hover, rgba(255,255,255,0.04)); }
+.schema-col-name {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--ide-text, #d4d4d4);
+  white-space: nowrap;
+}
+.schema-col-type {
+  font-family: monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+/* type colouring */
+.schema-type-string, .schema-type-text, .schema-type-citext { color: #ce9178; }
+.schema-type-integer, .schema-type-bigint, .schema-type-decimal, .schema-type-float, .schema-type-numeric { color: #b5cea8; }
+.schema-type-boolean { color: #569cd6; }
+.schema-type-datetime, .schema-type-date, .schema-type-time, .schema-type-timestamp { color: #9cdcfe; }
+.schema-type-json, .schema-type-jsonb { color: #dcdcaa; }
+.schema-col-opts {
+  font-size: 11px;
+  color: var(--ide-text-muted, #888);
+  white-space: nowrap;
+}
+.schema-indexes {
+  padding: 0 16px;
+  margin-top: 4px;
+}
+.schema-indexes-header {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ide-text-muted, #888);
+  padding: 8px 0 4px;
+  border-top: 1px solid var(--ide-border, #3c3c3c);
+}
+.schema-index-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--ide-text-muted, #999);
+}
+.schema-index-cols { flex: 1; }
+.schema-index-unique {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #569cd6;
+  background: rgba(86,156,214,0.12);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: sans-serif;
+}
+.schema-index-name {
+  font-size: 10px;
+  color: var(--ide-text-muted, #666);
+  opacity: 0.7;
+}
+.schema-modal-error {
+  padding: 24px 20px;
+  color: var(--ide-text-muted, #888);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+}
+
+/* ── Changelog tab ────────────────────────────────────────── */
+.changelog-view {
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--ide-bg, #1e1e1e);
+}
+.changelog-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px 40px 48px;
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+.changelog-loading,
+.changelog-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--ide-text-muted, #888);
+  font-size: 13px;
+}
+.changelog-h1 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ide-text, #d4d4d4);
+  margin: 0 0 28px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--ide-border, #3c3c3c);
+}
+.changelog-version-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 32px 0 10px;
+}
+.changelog-version-badge {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ide-accent-text, #4fc1ff);
+  letter-spacing: -0.01em;
+}
+.changelog-version-date {
+  font-size: 11px;
+  color: var(--ide-text-muted, #888);
+}
+.changelog-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin: 18px 0 6px;
+  padding: 3px 0;
+}
+.changelog-section i { font-size: 10px; }
+.changelog-section-added    { color: #4ec9b0; }
+.changelog-section-fixed    { color: #569cd6; }
+.changelog-section-changed  { color: #dcdcaa; }
+.changelog-section-removed  { color: #f44747; }
+.changelog-section-performance { color: #ce9178; }
+.changelog-section-tests    { color: #b5cea8; }
+.changelog-section-security { color: #d7ba7d; }
+.changelog-list {
+  margin: 0 0 4px 0;
+  padding-left: 20px;
+  list-style: none;
+}
+.changelog-list li {
+  position: relative;
+  padding: 2px 0 2px 4px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ide-text, #ccc);
+}
+.changelog-list li::before {
+  content: '–';
+  position: absolute;
+  left: -12px;
+  color: var(--ide-text-muted, #666);
+}
+.changelog-list li strong {
+  color: var(--ide-text, #d4d4d4);
+  font-weight: 600;
+}
+.changelog-p {
+  font-size: 12px;
+  color: var(--ide-text-muted, #999);
+  margin: 4px 0;
+  line-height: 1.5;
+}
+.changelog-rule {
+  border: none;
+  border-top: 1px solid var(--ide-border, #3c3c3c);
+  margin: 24px 0;
 }
 
 /* ── Git Status Panel ─────────────────────────────────────── */

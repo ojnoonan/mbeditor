@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-21
+
+### Added
+- **Model schema modal** — click the table icon next to any resource in the Rails panel to view its database columns, types, constraints, and indexes parsed from `db/schema.rb`.
+- **Changelog tab** — click the version number in the status bar to open a formatted changelog tab. Upgrades automatically open "What's New" on first boot after a version bump.
+- **Rails panel: concerns** — model and controller concerns appear as a dedicated group in the Rails panel.
+- **Rails panel: file kind labels** — each entry shows a dim label (Controller, Model, View, Test, Concern, Helper) on the right so you can distinguish files with similar names at a glance.
+- **Rails panel: custom-path awareness** — files living outside the standard `app/` tree (configured via `related_files_custom_paths`) now show related files in the panel.
+- **SQL/HTML heredoc highlighting** — Ruby heredocs with `<<~SQL`, `<<~HTML`, etc. tokenize their body with SQL/HTML keyword colours in the Monaco Monarch tokenizer.
+- **Rake file syntax** — `.rake` files now use Ruby syntax highlighting.
+- **Middle-click to close tab** — scroll-wheel click on any tab closes it (matching browser and VS Code behaviour).
+
+### Fixed
+- **Format button on Ruby files** — the Format button now correctly converts space-indented buffers to tabs before sending to RuboCop, so `Layout/IndentationStyle` offenses are fixed rather than silently ignored.
+- **Hover highlight position** — hovering a JS/JSX global or component name now highlights the exact word under the cursor instead of text on a different line. The hover cache now stores only the popup contents and rebuilds the Monaco `Range` fresh per hover call so the same symbol on different lines highlights correctly.
+- **`<MyComponent/>` hover** — components defined as `const MyComponent = () => {}` resolve correctly on hover; the JsDefinitionService grep pattern no longer uses `\s` inside character classes, which was silently failing under macOS BSD grep.
+- **"Edited externally" false positives** — a `recentSavesRef` map suppresses external-edit warnings for 3 s after a successful save, preventing the warning triggered by the WebSocket `files_changed` broadcast that follows every save.
+- **Branch detection race during save** — saving a file no longer triggers a false branch-switch (which was closing all tabs) by guarding the branch-change subscriber with `isSavingRef`.
+- **File creation performance** — `GitInfoService.invalidate` is now called in a background thread so create-file and create-directory requests respond immediately.
+- **Explorer type-ahead jump during rename/create** — global key-down handler returns early while a rename or create input is active.
+- **Authlogic SHA512 console spam** — optional `authentication_cache_ttl` config (default 0 = disabled) caches successful authentication results in the session, reducing per-request auth lambda calls to at most once per TTL window.
+- **Unused-method false positives in test files** — the unused-methods overlay is suppressed when the active file lives under `test/` or `spec/`.
+- **JSX "defined twice" errors** — TS2300/TS2451 diagnostics are filtered out; they are structural false positives caused by Monaco treating all open JS files as a shared global script context.
+
+### Changed
+- **Dirty marker in Rails panel** now uses the same orange (`#e5c07b`) as the tab bar dirty dot.
+- **Rails panel branch-switch UX** — tabs stay visible (read-only) during a branch switch instead of disappearing immediately; a `branch_state_restore` setting (default `true`) controls whether tab state is saved/restored across branch switches.
+
 ## [Unreleased] — internal refactor (2026-05-17)
 
 ### Changed (no user-visible behavior change)
