@@ -32,11 +32,11 @@ module Mbeditor
       render json: {
         rootName: workspace_root.basename.to_s,
         rootPath: workspace_root.to_s,
-        rubocopAvailable: rubocop_available?,
+        rubocopAvailable: AvailabilityProbe.rubocop(workspace_root),
         rubocopConfigPath: rubocop_config_path,
-        hamlLintAvailable: haml_lint_available?,
-        gitAvailable: git_available?,
-        blameAvailable: git_blame_available?,
+        hamlLintAvailable: AvailabilityProbe.haml_lint(workspace_root),
+        gitAvailable: AvailabilityProbe.git(workspace_root),
+        blameAvailable: AvailabilityProbe.git(workspace_root),
         redmineEnabled: Mbeditor.configuration.redmine_enabled == true,
         testAvailable: test_available?,
         actionCableEnabled: action_cable_enabled?
@@ -45,13 +45,7 @@ module Mbeditor
 
     # GET /mbeditor/files — recursive file tree
     def files
-      root = workspace_root.to_s
-      cached = cached_file_tree(root)
-      return render json: cached if cached
-
-      tree = build_tree(root)
-      store_file_tree(root, tree)
-      render json: tree
+      render json: FileTreeService.build(workspace_root)
     end
 
     # GET /mbeditor/state — load workspace state
@@ -654,7 +648,7 @@ module Mbeditor
       code = params[:code] || File.read(path)
 
       if File.basename(filename).end_with?('.haml')
-        unless haml_lint_available?
+        unless AvailabilityProbe.haml_lint(workspace_root)
           return render json: { error: "haml-lint not available", markers: [] }, status: :unprocessable_content
         end
 
@@ -662,7 +656,7 @@ module Mbeditor
         return render json: { markers: markers }
       end
 
-      cmd = rubocop_command + ["--no-server", "--stdin", filename, "--format", "json", "--no-color"]
+      cmd = AvailabilityProbe.rubocop_command(workspace_root) + ["--no-server", "--stdin", filename, "--format", "json", "--no-color"]
       env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
       output = run_with_timeout(env, cmd, stdin_data: code)
 
@@ -723,7 +717,7 @@ module Mbeditor
         f.flush
         tmpfile = f.path
 
-        cmd = rubocop_command + ["--no-server", "-A", "--no-color", tmpfile]
+        cmd = AvailabilityProbe.rubocop_command(workspace_root) + ["--no-server", "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
         _out, _err, status = Open3.capture3(env, *cmd)
 
@@ -825,7 +819,7 @@ module Mbeditor
         f.flush
         tmpfile = f.path
 
-        cmd = rubocop_command + ["--no-server", "-A", "--no-color", tmpfile]
+        cmd = AvailabilityProbe.rubocop_command(workspace_root) + ["--no-server", "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
         _out, _err, status = Open3.capture3(env, *cmd)
         unless status.success? || status.exitstatus == 1
@@ -843,7 +837,7 @@ module Mbeditor
 
     def broadcast_files_changed
       root = workspace_root.to_s
-      invalidate_file_tree_cache(root)
+      FileTreeService.invalidate(root)
       Thread.new do
         GitInfoService.invalidate(root)
       rescue => e
@@ -1003,33 +997,6 @@ module Mbeditor
       0
     end
 
-    def build_tree(dir, max_depth: 10, depth: 0)
-      return [] if depth >= max_depth
-
-      matcher = ExclusionMatcher.new(Mbeditor.configuration.excluded_paths)
-      entries = Dir.entries(dir).sort.reject { |entry| entry == "." || entry == ".." }
-      entries.filter_map do |name|
-        full = File.join(dir, name)
-        rel = relative_path(full)
-        is_excl = matcher.excluded?(rel)
-
-        if File.directory?(full)
-          # Skip recursing into excluded directories — avoids traversing node_modules etc.
-          children = is_excl ? [] : build_tree(full, max_depth: max_depth, depth: depth + 1)
-          node = { name: name, type: "folder", path: rel, children: children }
-          node[:excluded] = true if is_excl
-          node
-        else
-          node = { name: name, type: "file", path: rel }
-          node[:size] = (File.size(full) rescue nil) unless is_excl
-          node[:excluded] = true if is_excl
-          node
-        end
-      end
-    rescue Errno::EACCES
-      []
-    end
-
     def ruby_def_include_dirs
       Array(Mbeditor.configuration.ruby_def_include_dirs).map(&:to_s).reject(&:blank?)
     end
@@ -1093,109 +1060,14 @@ module Mbeditor
       }
     end
 
-    def rubocop_command
-      command = Mbeditor.configuration.rubocop_command.to_s.strip
-      command = "rubocop" if command.empty?
-      tokens = Shellwords.split(command)
-
-      local_bin = workspace_root.join("bin", "rubocop")
-      return [local_bin.to_s] if tokens == ["rubocop"] && local_bin.exist?
-
-      tokens
-    rescue ArgumentError
-      ["rubocop"]
-    end
-
     def rubocop_config_path
       candidate = workspace_root.join(".rubocop.yml")
       candidate.exist? ? ".rubocop.yml" : nil
     end
 
-    PROBE_MUTEX     = Mutex.new
-    FILE_TREE_MUTEX = Mutex.new
-    private_constant :PROBE_MUTEX, :FILE_TREE_MUTEX
-
-    def rubocop_available?
-      key = Mbeditor.configuration.rubocop_command.to_s
-      probe_cached(:@rubocop_available_cache, key) do
-        _out, _err, status = Open3.capture3(*rubocop_command, "--version")
-        status.success?
-      end
-    end
-
-    def haml_lint_available?
-      cmd = haml_lint_command
-      key = cmd.join(" ")
-      probe_cached(:@haml_lint_available_cache, key) do
-        _out, _err, status = Open3.capture3(*cmd, "--version")
-        status.success?
-      end
-    end
-
-    def git_available?
-      key = workspace_root.to_s
-      probe_cached(:@git_available_cache, key) do
-        _out, _err, status = Open3.capture3("git", "-C", key, "rev-parse", "--is-inside-work-tree")
-        status.success?
-      end
-    end
-
-    def cached_file_tree(root, ttl: 15)
-      FILE_TREE_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(:@file_tree_cache) || {}
-        entry = cache[root]
-        return entry[:data] if entry && (Process.clock_gettime(Process::CLOCK_MONOTONIC) - entry[:ts]) < ttl
-      end
-      nil
-    end
-
-    def store_file_tree(root, data)
-      FILE_TREE_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(:@file_tree_cache) || {}
-        cache[root] = { ts: Process.clock_gettime(Process::CLOCK_MONOTONIC), data: data }
-        self.class.instance_variable_set(:@file_tree_cache, cache)
-      end
-    end
-
-    def invalidate_file_tree_cache(root)
-      FILE_TREE_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(:@file_tree_cache) || {}
-        cache.delete(root)
-        self.class.instance_variable_set(:@file_tree_cache, cache)
-      end
-    end
-
-    def probe_cached(ivar, key, &block)
-      PROBE_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(ivar) ||
-                self.class.instance_variable_set(ivar, {})
-        unless cache.key?(key)
-          cache[key] = begin
-            block.call
-          rescue StandardError
-            false
-          end
-        end
-        cache[key]
-      end
-    end
-
-    alias git_blame_available? git_available?
-
     def test_available?
       root = workspace_root.to_s
       File.directory?(File.join(root, "test")) || File.directory?(File.join(root, "spec"))
-    end
-
-    def haml_lint_command
-      workspace_bin = workspace_root.join("bin", "haml-lint")
-      return [workspace_bin.to_s] if workspace_bin.exist?
-
-      begin
-        [Gem.bin_path("haml_lint", "haml-lint")]
-      rescue Gem::Exception, Gem::GemNotFoundException
-        ["haml-lint"]
-      end
     end
 
     def run_haml_lint(code)
@@ -1203,7 +1075,7 @@ module Mbeditor
       Tempfile.create(["mbeditor_haml", ".haml"]) do |f|
         f.write(code)
         f.flush
-        output, _err, _status = Open3.capture3(*haml_lint_command, "--reporter", "json", "--no-color", f.path)
+        output, _err, _status = Open3.capture3(*AvailabilityProbe.haml_lint_command(workspace_root), "--reporter", "json", "--no-color", f.path)
         idx = output.index("{")
         result = idx ? JSON.parse(output[idx..]) : {}
         result = {} unless result.is_a?(Hash)
