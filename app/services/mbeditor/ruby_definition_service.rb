@@ -48,7 +48,6 @@ module Mbeditor
     @cache_loaded = false
 
     class << self
-      attr_reader :file_cache, :mutex
       attr_accessor :cache_path
 
       def call(workspace_root, symbol, excluded_paths: [], included_dirs: [])
@@ -56,6 +55,72 @@ module Mbeditor
             excluded_paths: excluded_paths,
             included_dirs:  included_dirs).call
       end
+
+      # Exposed for tests.
+      def clear_cache!
+        @mutex.synchronize { @file_cache.clear; @cache_loaded = false }
+        path = @cache_path.to_s
+        File.delete(path) if !path.empty? && File.exist?(path)
+      rescue StandardError
+        nil
+      end
+
+      # Returns all method defs in a single file from the cache (no workspace walk).
+      # Self-warms the cache for the file if not already present.
+      # Result: { "method_name" => [{ line: Integer, signature: String }, ...] }
+      def defs_in_file(file_path)
+        load_disk_cache_once
+        file_path = file_path.to_s
+        entry = @mutex.synchronize { @file_cache[file_path] }
+        entry ||= new(File.dirname(file_path), nil).send(:cache_entry_for, file_path)
+        return {} unless entry
+
+        entry[:all_defs].transform_values do |lines_arr|
+          lines_arr.map { |line| { line: line, signature: (entry[:lines][line - 1] || "").strip } }
+        end
+      end
+
+      # Searches the cache (and triggers a workspace scan if needed) to find
+      # which file in +workspace_root+ defines the given module or class name.
+      # Returns the absolute file path string or nil.
+      def module_defined_in(workspace_root, module_name, excluded_paths: [], included_dirs: [])
+        load_disk_cache_once
+        root_prefix = workspace_root.to_s.chomp("/")
+        within_dirs = ->(path) {
+          return true if included_dirs.empty?
+          included_dirs.any? { |d| path.start_with?(File.join(root_prefix, d) + "/") }
+        }
+        result = @mutex.synchronize do
+          @file_cache.find { |path, entry| within_dirs.call(path) && entry[:module_names]&.include?(module_name) }
+        end
+        return result[0] if result
+
+        # Cache miss: scan workspace to populate cache entries with module_names.
+        new(workspace_root, nil,
+            excluded_paths: excluded_paths,
+            included_dirs:  included_dirs).scan_workspace
+
+        result = @mutex.synchronize do
+          @file_cache.find { |path, entry| within_dirs.call(path) && entry[:module_names]&.include?(module_name) }
+        end
+        result ? result[0] : nil
+      end
+
+      # Returns the list of module/class names passed to include/extend/prepend
+      # in the given file. Self-warms the cache for the file if not already present.
+      def includes_in_file(file_path)
+        load_disk_cache_once
+        file_path = file_path.to_s
+        entry = @mutex.synchronize { @file_cache[file_path] }
+        entry ||= new(File.dirname(file_path), nil).send(:cache_entry_for, file_path)
+        return [] unless entry
+
+        entry[:include_calls] || []
+      end
+
+      private
+
+      attr_reader :file_cache, :mutex
 
       # Load the JSON cache from disk exactly once per process (double-checked
       # under the mutex so concurrent first-calls don't double-load).
@@ -97,72 +162,6 @@ module Mbeditor
         nil
       end
 
-      # Exposed for tests.
-      def clear_cache!
-        @mutex.synchronize { @file_cache.clear; @cache_loaded = false }
-        path = @cache_path.to_s
-        File.delete(path) if !path.empty? && File.exist?(path)
-      rescue StandardError
-        nil
-      end
-
-      # Returns all method defs in a single file from the cache (no workspace walk).
-      # The file must already be cached; returns {} if not found.
-      # Result: { "method_name" => [{ line: Integer, signature: String }, ...] }
-      def defs_in_file(file_path)
-        load_disk_cache_once
-        entry = @mutex.synchronize { @file_cache[file_path.to_s] }
-        return {} unless entry
-
-        entry[:all_defs].transform_values do |lines_arr|
-          lines_arr.map { |line| { line: line, signature: (entry[:lines][line - 1] || "").strip } }
-        end
-      end
-
-      # Searches the cache (and triggers a workspace scan if needed) to find
-      # which file in +workspace_root+ defines the given module or class name.
-      # Returns the absolute file path string or nil.
-      def module_defined_in(workspace_root, module_name, excluded_paths: [], included_dirs: [])
-        load_disk_cache_once
-        root_prefix = workspace_root.to_s.chomp("/")
-        within_dirs = ->(path) {
-          return true if included_dirs.empty?
-          included_dirs.any? { |d| path.start_with?(File.join(root_prefix, d) + "/") }
-        }
-        result = @mutex.synchronize do
-          @file_cache.find { |path, entry| within_dirs.call(path) && entry[:module_names]&.include?(module_name) }
-        end
-        return result[0] if result
-
-        # Cache miss: scan workspace to populate cache entries with module_names.
-        new(workspace_root, nil,
-            excluded_paths: excluded_paths,
-            included_dirs:  included_dirs).scan_workspace
-
-        result = @mutex.synchronize do
-          @file_cache.find { |path, entry| within_dirs.call(path) && entry[:module_names]&.include?(module_name) }
-        end
-        result ? result[0] : nil
-      end
-
-      # Returns the list of module/class names passed to include/extend/prepend
-      # in the given file, from the cache.  The file must already be cached;
-      # returns [] if not found.
-      def includes_in_file(file_path)
-        load_disk_cache_once
-        entry = @mutex.synchronize { @file_cache[file_path.to_s] }
-        return [] unless entry
-
-        entry[:include_calls] || []
-      end
-
-      # Convenience wrapper: scan the whole workspace to warm the cache.
-      # Fast on subsequent calls (only re-parses files whose mtime changed).
-      def scan(workspace_root, excluded_paths: [], included_dirs: [])
-        new(workspace_root, nil,
-            excluded_paths: excluded_paths,
-            included_dirs:  included_dirs).scan_workspace
-      end
     end
 
     def initialize(workspace_root, symbol, excluded_paths: [], included_dirs: [])
@@ -171,13 +170,15 @@ module Mbeditor
       @excluded_paths    = Array(excluded_paths)
       @included_dirs     = Array(included_dirs)
       @exclusion_matcher = ExclusionMatcher.new(@excluded_paths)
+      @shared_cache      = self.class.send(:file_cache)
+      @shared_mutex      = self.class.send(:mutex)
     end
 
     # Walks the entire workspace and populates the per-file cache (including the
     # new module_names and include_calls fields) without filtering by symbol.
     # Used by +module_defined_in+ to ensure the cache is warm.
     def scan_workspace
-      self.class.load_disk_cache_once
+      load_disk_cache_once
       @new_entries  = false
       files_scanned = 0
       evict_deleted_cache_entries
@@ -206,11 +207,11 @@ module Mbeditor
         end
       end
 
-      self.class.persist_cache if @new_entries
+      persist_cache if @new_entries
     end
 
     def call
-      self.class.load_disk_cache_once
+      load_disk_cache_once
 
       results       = []
       @new_entries  = false
@@ -258,7 +259,7 @@ module Mbeditor
         end
       end
 
-      self.class.persist_cache if @new_entries
+      persist_cache if @new_entries
       results
     end
 
@@ -266,12 +267,12 @@ module Mbeditor
 
     # Remove cache entries for files that no longer exist on disk.
     def evict_deleted_cache_entries
-      stale_keys = self.class.mutex.synchronize do
-        self.class.file_cache.keys.select { |p| !File.exist?(p) }
+      stale_keys = @shared_mutex.synchronize do
+        @shared_cache.keys.select { |p| !File.exist?(p) }
       end
       return if stale_keys.empty?
 
-      self.class.mutex.synchronize { stale_keys.each { |k| self.class.file_cache.delete(k) } }
+      @shared_mutex.synchronize { stale_keys.each { |k| @shared_cache.delete(k) } }
       @new_entries = true
     end
 
@@ -279,7 +280,7 @@ module Mbeditor
     # been modified since the last parse.  Returns nil on any read/parse error.
     def cache_entry_for(path)
       mtime = File.mtime(path).to_f
-      cached = self.class.mutex.synchronize { self.class.file_cache[path] }
+      cached = @shared_mutex.synchronize { @shared_cache[path] }
       return cached if cached && cached[:mtime] == mtime && !cached[:module_names].nil?
 
       source                              = File.read(path, encoding: "UTF-8", invalid: :replace, undef: :replace)
@@ -288,7 +289,7 @@ module Mbeditor
       all_defs, module_names, include_calls = sexp ? collect_all_defs(sexp) : [{}, [], []]
       entry = { mtime: mtime, lines: lines, all_defs: all_defs,
                 module_names: module_names, include_calls: include_calls }
-      self.class.mutex.synchronize { self.class.file_cache[path] = entry }
+      @shared_mutex.synchronize { @shared_cache[path] = entry }
       @new_entries = true
       entry
     rescue StandardError
@@ -397,6 +398,9 @@ module Mbeditor
                .select { |d| File.directory?(d) }
       dirs.empty? ? [@workspace_root] : dirs
     end
+
+    def load_disk_cache_once = self.class.send(:load_disk_cache_once)
+    def persist_cache        = self.class.send(:persist_cache)
 
   end
 end

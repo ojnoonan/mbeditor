@@ -259,5 +259,86 @@ module Mbeditor
       assert_equal 1, results.length
       assert_equal "app/good.rb", results[0][:file]
     end
+
+    # -------------------------------------------------------------------------
+    # defs_in_file self-warms on cache miss
+    # -------------------------------------------------------------------------
+
+    test "defs_in_file returns correct results for a file never scanned" do
+      write_rb("app/models/user.rb", <<~RUBY)
+        class User
+          def find_by_email(email)
+          end
+
+          def save!
+          end
+        end
+      RUBY
+      abs_path = File.join(@workspace, "app/models/user.rb")
+
+      result = RubyDefinitionService.defs_in_file(abs_path)
+
+      assert_includes result.keys, "find_by_email"
+      assert_includes result.keys, "save!"
+      assert_equal 2, result["find_by_email"].first[:line]
+      assert_includes result["find_by_email"].first[:signature], "def find_by_email"
+    end
+
+    # -------------------------------------------------------------------------
+    # includes_in_file self-warms on cache miss
+    # -------------------------------------------------------------------------
+
+    test "includes_in_file returns correct modules for a file never scanned" do
+      write_rb("app/models/article.rb", <<~RUBY)
+        class Article
+          include Searchable
+          extend ClassMethods
+          prepend Validatable
+        end
+      RUBY
+      abs_path = File.join(@workspace, "app/models/article.rb")
+
+      result = RubyDefinitionService.includes_in_file(abs_path)
+
+      assert_includes result, "Searchable"
+      assert_includes result, "ClassMethods"
+      assert_includes result, "Validatable"
+    end
+
+    test "includes_in_file returns empty array for a file with no include calls" do
+      write_rb("app/models/plain.rb", <<~RUBY)
+        class Plain
+          def hello; end
+        end
+      RUBY
+      abs_path = File.join(@workspace, "app/models/plain.rb")
+
+      result = RubyDefinitionService.includes_in_file(abs_path)
+
+      assert_equal [], result
+    end
+
+    # -------------------------------------------------------------------------
+    # Public interface contract
+    # -------------------------------------------------------------------------
+
+    test "scan is not part of the public interface" do
+      assert_not RubyDefinitionService.respond_to?(:scan),
+                 "scan should not be publicly callable"
+    end
+
+    test "cache lifecycle methods are not part of the public interface" do
+      %i[file_cache mutex load_disk_cache_once persist_cache].each do |m|
+        assert_not RubyDefinitionService.respond_to?(m),
+                   "#{m} should not be publicly callable"
+      end
+    end
+
+    test "six specified public methods are all accessible" do
+      %i[call defs_in_file module_defined_in includes_in_file cache_path= clear_cache!].each do |m|
+        assert RubyDefinitionService.respond_to?(m),
+               "#{m} should be publicly callable"
+      end
+    end
   end
 end

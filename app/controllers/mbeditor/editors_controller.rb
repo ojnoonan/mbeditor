@@ -338,13 +338,7 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
 
-      # Ensure workspace is scanned so include_calls are populated in the cache.
-      # Fast no-op on subsequent calls (mtime checks only).
       excl_patterns = Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?)
-      RubyDefinitionService.scan(workspace_root,
-                                 excluded_paths: excl_patterns,
-                                 included_dirs:  ruby_def_include_dirs)
-
       module_names = RubyDefinitionService.includes_in_file(path)
       includes = module_names.filter_map do |mod_name|
         mod_file = RubyDefinitionService.module_defined_in(

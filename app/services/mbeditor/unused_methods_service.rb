@@ -42,15 +42,7 @@ module Mbeditor
           return cached[:result]
         end
 
-        # Ensure the file is indexed (populates module_names / include_calls too).
         defs = RubyDefinitionService.defs_in_file(file_path)
-        if defs.empty?
-          # File not yet in cache; trigger a parse of just this one file by
-          # calling the definition service with a dummy symbol.
-          RubyDefinitionService.call(workspace_root, "__mbeditor_warmup__",
-                                     excluded_paths: excluded_paths)
-          defs = RubyDefinitionService.defs_in_file(file_path)
-        end
         return [] if defs.empty?
 
         method_names = defs.keys
