@@ -14,7 +14,6 @@ module Mbeditor
     before_action :verify_mbeditor_client, unless: -> { request.get? || request.head? }
 
     IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
-    RG_AVAILABLE = system("which rg > /dev/null 2>&1")
 
     # GET /mbeditor — renders the IDE shell
     def index
@@ -444,9 +443,9 @@ module Mbeditor
       return render json: { error: "Query too long" }, status: :bad_request if query.length > 500
 
       # On first page, count total matches in parallel with fetching results.
-      count_thread = offset == 0 ? Thread.new { count_search_results(query, use_regex: use_regex, match_case: match_case, whole_word: whole_word) } : nil
+      count_thread = offset == 0 ? Thread.new { SearchReplaceService.count(workspace_root, query, use_regex: use_regex, match_case: match_case, whole_word: whole_word, excluded_paths: Mbeditor.configuration.excluded_paths) } : nil
 
-      results   = stream_search_results(query, needed, use_regex: use_regex, match_case: match_case, whole_word: whole_word)
+      results   = SearchReplaceService.search(workspace_root, query, limit: needed, use_regex: use_regex, match_case: match_case, whole_word: whole_word, excluded_paths: Mbeditor.configuration.excluded_paths)
       has_more  = results.length > offset + limit
       response  = { results: results[offset, limit] || [], has_more: has_more }
       if count_thread
@@ -461,8 +460,6 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
-    MAX_REPLACE_FILES = 500
-
     # POST /mbeditor/replace_in_files
     # Replaces a string/pattern across all matching files in the workspace.
     # Returns { replaced_count:, files_affected:[], errors:[], partial: }
@@ -476,85 +473,17 @@ module Mbeditor
       return render json: { error: "Query is required" }, status: :bad_request if query.blank?
       return render json: { error: "Query too long" }, status: :bad_request if query.length > 500
 
-      # Collect all unique file paths that have at least one match.
-      # Use a large limit to get all matching files; stream_search_results handles deduplication by file internally.
-      raw_results = stream_search_results(query, 10_000, use_regex: use_regex, match_case: match_case, whole_word: whole_word)
-      file_paths = raw_results.map { |r| r[:file] }.uniq
+      result = SearchReplaceService.replace(
+        workspace_root, query, replacement,
+        use_regex: use_regex, match_case: match_case, whole_word: whole_word,
+        excluded_paths: Mbeditor.configuration.excluded_paths
+      )
 
-      # Fix 3: Cap the number of files to process
-      if file_paths.length > MAX_REPLACE_FILES
-        return render json: { error: "Too many files matched (#{file_paths.length}). Narrow your search." }, status: :unprocessable_entity
+      if result.key?(:error)
+        render json: { error: result[:error] }, status: :unprocessable_entity
+      else
+        render json: result
       end
-
-      replaced_count = 0
-      files_affected = []
-      errors = []
-
-      # Build the Ruby Regexp to use for gsub
-      begin
-        pattern = if use_regex
-          flags = match_case ? 0 : Regexp::IGNORECASE
-          Regexp.new(whole_word ? "\\b(?:#{query})\\b" : query, flags)
-        else
-          flags = match_case ? 0 : Regexp::IGNORECASE
-          Regexp.new(whole_word ? "\\b#{Regexp.escape(query)}\\b" : Regexp.escape(query), flags)
-        end
-      rescue RegexpError => e
-        return render json: { error: "Invalid regex: #{e.message}" }, status: :bad_request
-      end
-
-      file_paths.each do |rel_path|
-        full_path = resolve_path(rel_path)
-        unless full_path
-          errors << { file: rel_path, error: "Forbidden" }
-          next
-        end
-
-        # Fix 2: Check path_blocked_for_operations?
-        if path_blocked_for_operations?(full_path)
-          errors << { file: rel_path, error: "Forbidden" }
-          next
-        end
-
-        unless File.file?(full_path)
-          errors << { file: rel_path, error: "File not found" }
-          next
-        end
-        if File.size(full_path) > FileOperationService::MAX_FILE_SIZE_BYTES
-          errors << { file: rel_path, error: "File too large" }
-          next
-        end
-
-        # Fix 1: Wrap per-file gsub/scan in a timeout to prevent ReDoS
-        begin
-          Timeout::timeout(5) do
-            content = File.binread(full_path).force_encoding("UTF-8")
-            replacements_in_file = content.scan(pattern).length
-            new_content = content.gsub(pattern, replacement)
-
-            # Fix 4: Use new_content != content instead of delta logic
-            if new_content != content
-              File.binwrite(full_path, new_content.encode("UTF-8", invalid: :replace, undef: :replace))
-              files_affected << rel_path
-              replaced_count += replacements_in_file
-            end
-          end
-        rescue Timeout::Error
-          errors << { file: rel_path, error: "Timed out processing file" }
-          next
-        rescue StandardError => e
-          errors << { file: rel_path, error: e.message }
-          next
-        end
-      end
-
-      # Fix 5: Surface partial failure
-      render json: {
-        replaced_count: replaced_count,
-        files_affected: files_affected,
-        errors: errors,
-        partial: errors.any? && files_affected.any?
-      }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -898,103 +827,6 @@ module Mbeditor
       return true if rel.blank?
 
       ExclusionMatcher.new(Mbeditor.configuration.excluded_paths).excluded?(rel)
-    end
-
-    # Stream search results using popen so we can stop reading early once we
-    # have collected `limit` matches (avoids buffering the entire rg/grep output
-    # in memory when searching large codebases for common tokens).
-    def stream_search_results(query, limit, use_regex: false, match_case: false, whole_word: false)
-      results = []
-
-      if RG_AVAILABLE
-        args = ["rg", "--json", "--no-ignore"]
-        args << "-F" unless use_regex
-        args << "--ignore-case" unless match_case
-        args << "--word-regexp" if whole_word
-        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).each { |p| args << "--glob=!#{p}" }
-        args += ["--", query, workspace_root.to_s]
-
-        IO.popen(args, err: File::NULL) do |io|
-          io.each_line do |raw|
-            break if results.length >= limit
-
-            begin
-              data = JSON.parse(raw)
-            rescue JSON::ParserError => e
-              Rails.logger.warn("[mbeditor] search: malformed rg JSON line: #{e.message}")
-              next
-            end
-            next unless data["type"] == "match"
-
-            md = data["data"]
-            results << {
-              file: relative_path(md.dig("path", "text").to_s),
-              line: md.dig("line_number"),
-              text: md.dig("lines", "text").to_s.strip
-            }
-          end
-        end
-      else
-        base_flags = use_regex ? "-E" : "-F"
-        args = ["grep", "-rn", base_flags]
-        args << "-i" unless match_case
-        args << "-w" if whole_word
-        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).reject { |p| p.include?("/") }.select { |d| d.match?(/\A[\w.\/-]+\z/) }.each { |d| args << "--exclude-dir=#{d}" }
-        args += [query, workspace_root.to_s]
-
-        IO.popen(args, err: File::NULL) do |io|
-          io.each_line do |raw|
-            break if results.length >= limit
-
-            raw.chomp!
-            next unless raw =~ /\A(.+?):(\d+):(.*)\z/
-
-            file_path = Regexp.last_match(1)
-            next unless file_path.start_with?(workspace_root.to_s)
-
-            rel = relative_path(file_path)
-            next if ExclusionMatcher.new(Mbeditor.configuration.excluded_paths).excluded?(rel)
-
-            results << {
-              file: rel,
-              line: Regexp.last_match(2).to_i,
-              text: Regexp.last_match(3).strip
-            }
-          end
-        end
-      end
-
-      results
-    end
-
-    # Count total matching lines across the workspace using rg --count (or grep -c).
-    # Fast: rg just counts without extracting context. Runs in a background thread.
-    def count_search_results(query, use_regex: false, match_case: false, whole_word: false)
-      total = 0
-      if RG_AVAILABLE
-        args = ["rg", "--count", "--no-ignore"]
-        args << "-F" unless use_regex
-        args << "--ignore-case" unless match_case
-        args << "--word-regexp" if whole_word
-        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).each { |p| args << "--glob=!#{p}" }
-        args += ["--", query, workspace_root.to_s]
-        IO.popen(args, err: File::NULL) do |io|
-          io.each_line { |line| total += line.strip.split(":").last.to_i rescue 0 }
-        end
-      else
-        base_flags = use_regex ? "-E" : "-F"
-        args = ["grep", "-rc", base_flags]
-        args << "-i" unless match_case
-        args << "-w" if whole_word
-        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).reject { |p| p.include?("/") }.each { |d| args << "--exclude-dir=#{d}" }
-        args += [query, workspace_root.to_s]
-        IO.popen(args, err: File::NULL) do |io|
-          io.each_line { |line| total += line.strip.split(":").last.to_i rescue 0 }
-        end
-      end
-      total
-    rescue StandardError
-      0
     end
 
     def ruby_def_include_dirs
