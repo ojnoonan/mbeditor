@@ -49,56 +49,31 @@ module Mbeditor
 
     # GET /mbeditor/state — load workspace state
     def state
-      path = workspace_root.join("tmp", "mbeditor_workspace.json")
-      if File.exist?(path)
-        render json: JSON.parse(File.read(path))
-      else
-        render json: {}
-      end
-    rescue Errno::ENOENT
-      render json: {}
-    rescue JSON::ParserError
-      render json: {}
+      render json: editor_state_service.read_state
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
 
-    STATE_MAX_BYTES = 1 * 1024 * 1024
+    STATE_MAX_BYTES = EditorStateService::STATE_MAX_BYTES
 
     # POST /mbeditor/state — save workspace state
     def save_state
       raw = params[:state]
       raw = raw.to_unsafe_h if raw.respond_to?(:to_unsafe_h)
-      payload = raw.to_json
-      return render json: { error: "State payload too large" }, status: :content_too_large if payload.bytesize > STATE_MAX_BYTES
-
-      path = workspace_root.join("tmp", "mbeditor_workspace.json")
-      FileUtils.mkdir_p(workspace_root.join("tmp"))
-      File.open(path, File::RDWR | File::CREAT) do |f|
-        f.flock(File::LOCK_EX)
-        f.truncate(0)
-        f.rewind
-        f.write(payload)
-      end
+      editor_state_service.write_state(raw)
       render json: { ok: true }
+    rescue EditorStateService::PayloadTooLargeError
+      render json: { error: "State payload too large" }, status: :content_too_large
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
-
-    SAFE_BRANCH_NAME = /\A[a-zA-Z0-9._\-\/]+\z/
 
     # GET /mbeditor/branch_state?branch=... — load per-branch pane state
     def branch_state
       branch = sanitize_branch_name(params[:branch])
       return render json: {}, status: :bad_request unless branch
 
-      path = workspace_root.join("tmp", "mbeditor_branch_states.json")
-      if File.exist?(path)
-        all = JSON.parse(File.read(path))
-        render json: (all[branch] || {})
-      else
-        render json: {}
-      end
+      render json: editor_state_service.read_branch_state(branch)
     rescue StandardError
       render json: {}
     end
@@ -107,45 +82,22 @@ module Mbeditor
       return render json: { error: "Invalid branch name" }, status: :bad_request unless branch
 
       payload = params[:state].to_unsafe_h
-      return render json: { error: "State payload too large" }, status: :content_too_large if payload.to_json.bytesize > STATE_MAX_BYTES
-
-      path = workspace_root.join("tmp", "mbeditor_branch_states.json")
-      FileUtils.mkdir_p(workspace_root.join("tmp"))
-      File.open(path, File::RDWR | File::CREAT) do |f|
-        f.flock(File::LOCK_EX)
-        existing = f.size > 0 ? JSON.parse(f.read) : {}
-        existing[branch] = payload
-        f.truncate(0)
-        f.rewind
-        f.write(existing.to_json)
-      end
+      editor_state_service.write_branch_state(branch, payload)
       render json: { ok: true }
+    rescue EditorStateService::PayloadTooLargeError
+      render json: { error: "State payload too large" }, status: :content_too_large
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
 
     # POST /mbeditor/prune_branch_states — remove states for deleted branches
     def prune_branch_states
-      state_path = workspace_root.join("tmp", "mbeditor_branch_states.json")
-      return render json: { pruned: [] } unless File.exist?(state_path)
-
       root = workspace_root.to_s
       out, _err, status = Open3.capture3("git", "-C", root, "branch", "--format=%(refname:short)")
       return render json: { pruned: [] } unless status.success?
 
       local_branches = out.split("\n").map(&:strip).reject(&:empty?)
-      pruned = []
-      File.open(state_path, File::RDWR) do |f|
-        f.flock(File::LOCK_EX)
-        all = JSON.parse(f.read) rescue {}
-        pruned = all.keys - local_branches
-        if pruned.any?
-          pruned.each { |b| all.delete(b) }
-          f.truncate(0)
-          f.rewind
-          f.write(all.to_json)
-        end
-      end
+      pruned = editor_state_service.prune_branch_states(active_branches: local_branches)
       render json: { pruned: pruned }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -780,11 +732,15 @@ module Mbeditor
       # Never let a broadcast failure affect the HTTP response
     end
 
+    def editor_state_service
+      @editor_state_service ||= EditorStateService.new(workspace_root)
+    end
+
     def sanitize_branch_name(branch)
       return nil if branch.blank?
       str = branch.to_s.strip
       return nil if str.include?('..')
-      str.match?(SAFE_BRANCH_NAME) ? str : nil
+      str.match?(EditorStateService::SAFE_BRANCH_NAME) ? str : nil
     end
 
     def action_cable_enabled?
