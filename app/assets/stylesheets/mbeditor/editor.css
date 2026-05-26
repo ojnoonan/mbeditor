@@ -1765,9 +1765,9 @@ html, body, #mbeditor-root {
 .collapsible-title {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .collapsible-actions {

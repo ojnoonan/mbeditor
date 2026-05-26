@@ -565,7 +565,12 @@ var MbeditorApp = function MbeditorApp() {
   var stateRestoredRef = useRef(false);
   var ctrlWPendingRef = useRef(false);
   var ctrlWTimeoutRef = useRef(null);
+  var _useStateCP = useState([]);
+  var _useStateCP2 = _slicedToArray(_useStateCP, 2);
+  var customPaths = _useStateCP2[0];
+  var setCustomPaths = _useStateCP2[1];
   var customPathsRef = useRef([]);
+  customPathsRef.current = customPaths;
   var recentSavesRef = useRef({});
   var isSavingRef = useRef(false);
 
@@ -1586,7 +1591,7 @@ var MbeditorApp = function MbeditorApp() {
 
   useEffect(function() {
     FileService.getClientConfig().then(function(cfg) {
-      customPathsRef.current = Array.isArray(cfg.related_files_custom_paths) ? cfg.related_files_custom_paths : [];
+      setCustomPaths(Array.isArray(cfg.related_files_custom_paths) ? cfg.related_files_custom_paths : []);
     })['catch'](function() {});
   }, []);
 
