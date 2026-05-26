@@ -752,6 +752,121 @@ var EditorPanel = function EditorPanel(_ref) {
       }
     });
 
+    // Phase 2: background undo-history replay.
+    // Only run for newly-created models (reused models already have their undo stack).
+    var _phase2CleanupFn = null;
+    if (!_reusingModel && typeof HistoryService !== 'undefined') {
+      var _phase2Branch  = EditorStore.getState().gitBranch || '';
+      var _phase2Path    = tab.path;
+      var _phase2Content = tab.content || '';
+      var _phase2Buf     = [];
+      var _phase2Active  = true;
+
+      var _phase2ModelA    = modelObj;
+      var _phase2Listener  = _phase2ModelA.onDidChangeContent(function (ev) {
+        if (!_phase2Active) return;
+        for (var _ci = 0; _ci < ev.changes.length; _ci++) {
+          var _c = ev.changes[_ci];
+          _phase2Buf.push([
+            _c.range.startLineNumber, _c.range.startColumn,
+            _c.range.endLineNumber,   _c.range.endColumn,
+            _c.text
+          ]);
+        }
+      });
+
+      var _runPhase2 = function () {
+        if (!_phase2Active || !_phase2Branch) return;
+        HistoryService.fetchHistory(_phase2Branch, _phase2Path).then(function (hist) {
+          if (!_phase2Active) return;
+          if (!hist || !hist.ops || hist.ops.length === 0) {
+            _phase2Listener.dispose();
+            return;
+          }
+
+          var _lang = modelObj.getLanguageId();
+          var modelB = window.monaco.editor.createModel(hist.base, _lang);
+
+          HistoryService.setReplayInProgress(_phase2Path, true);
+          try {
+            for (var _oi = 0; _oi < hist.ops.length; _oi++) {
+              var _op = hist.ops[_oi];
+              modelB.pushEditOperations([], [{
+                range: new window.monaco.Range(_op[0], _op[1], _op[2], _op[3]),
+                text:  _op[4] || ''
+              }], function () { return null; });
+            }
+          } catch (e) {
+            HistoryService.setReplayInProgress(_phase2Path, false);
+            _phase2Listener.dispose();
+            modelB.dispose();
+            return;
+          }
+          HistoryService.setReplayInProgress(_phase2Path, false);
+
+          var _expectedContent = _phase2ModelA.getValue();
+          if (modelB.getValue() !== _expectedContent) {
+            _phase2Listener.dispose();
+            modelB.dispose();
+            return;
+          }
+
+          if (_phase2Buf.length > 0) {
+            try {
+              for (var _bi = 0; _bi < _phase2Buf.length; _bi++) {
+                var _bop = _phase2Buf[_bi];
+                modelB.pushEditOperations([], [{
+                  range: new window.monaco.Range(_bop[0], _bop[1], _bop[2], _bop[3]),
+                  text:  _bop[4] || ''
+                }], function () { return null; });
+              }
+            } catch (e) {
+              _phase2Listener.dispose();
+              modelB.dispose();
+              return;
+            }
+          }
+
+          _phase2Listener.dispose();
+          if (!_phase2Active) { modelB.dispose(); return; }
+
+          if (modelB.getLanguageId() !== _lang) {
+            window.monaco.editor.setModelLanguage(modelB, _lang);
+          }
+          modelB._mbeditorPath = _phase2Path;
+
+          var _vs = editor.saveViewState();
+          editor.setModel(modelB);
+          if (_vs) editor.restoreViewState(_vs);
+
+          var _oldEntry = window.__mbeditorModels[_phase2Path];
+          if (_oldEntry && _oldEntry.model !== modelB) {
+            var _oldModel = _oldEntry.model;
+            window.__mbeditorModels[_phase2Path] = {
+              model:          modelB,
+              aviBase:        aviBaseRef.current,
+              aviMax:         modelB.getAlternativeVersionId(),
+              lastAccessed:   Date.now(),
+              cleanVersionId: _oldEntry.cleanVersionId
+            };
+            setTimeout(function () {
+              if (_oldModel && !_oldModel.isDisposed()) _oldModel.dispose();
+            }, 0);
+          }
+        }).catch(function () {
+          _phase2Listener.dispose();
+        });
+      };
+
+      if (typeof requestIdleCallback !== 'undefined') {
+        requestIdleCallback(_runPhase2, { timeout: 2000 });
+      } else {
+        setTimeout(_runPhase2, 200);
+      }
+
+      _phase2CleanupFn = function () { _phase2Active = false; _phase2Listener.dispose(); };
+    }
+
     return function () {
       blameDecorationsRef.current = editor.deltaDecorations(blameDecorationsRef.current, []);
       testDecorationIdsRef.current = editor.deltaDecorations(testDecorationIdsRef.current, []);
@@ -792,6 +907,7 @@ var EditorPanel = function EditorPanel(_ref) {
       columnSelectDisposable.dispose();
       contentDisposable.dispose();
       EditorStore.setState({ canUndo: false, canRedo: false });
+      if (_phase2CleanupFn) _phase2CleanupFn();
       // Detach the model before disposing the editor so the model (and its undo
       // history) survives for when the user returns to this tab.
       editor.setModel(null);
