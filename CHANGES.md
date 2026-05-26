@@ -1,13 +1,10 @@
-- rake files should be formatted as ruby
-- SQL heredoc statements break syntax highlight
-- Allow scroll clicking open editor tabs to close
-- Files/Dir creation is very slow
-- When creating a file sometimes the explorer jumps to the line based on what you type instead of naming the new file
-- Using the Rails panel I should see all related files show up when something in the custom path is open even if a controller is not open
-- In the rails panel we should also see concerns
-- In the rails panel show decorator text showing view/controller/helper etc. For custom file just show the dir it's under for example ux when it's under app/assets/javascripts/ux/users.
-- Keep getting file has been edited externally messages when it hasn't been
-- The the  showing open editors when swapping branches is quite slow so so sometimes you can open a file, start editing it and then it vanishes or get's swapped with other open files
-    - This need to be made more clear what's happening and perhaps allow toggling this in settings
-    - I've also noticed a possible related bug when I'm editing a file after save sometimes all open editor just suddenly close but my save persisted when reopened
-- My host app uses Sha512 from aithlogic and the mbeditor seems to spam the console whenever a file is saved with the "Authlogic has no plans yet to depricate this crypto provider..."
+## Persistent undo history per branch
+
+Undo history is now persisted on the server per file per branch. Reloading the editor or switching VMs restores full Ctrl+Z history back to the first edit on that branch.
+
+- Edit operations are captured client-side (`HistoryService`) and flushed on save, tab close, page hide, and unload
+- History files stored in `tmp/mbeditor_history/` as compact JSON op logs
+- History replayed in the background after file open (two-phase load) — file is immediately usable while history restores
+- Saves to disk do not clear history; undo past a save works correctly
+- History pruned automatically on branch deletion and after 7 days of inactivity
+- Large op logs compacted automatically (oldest ops folded into base content)
