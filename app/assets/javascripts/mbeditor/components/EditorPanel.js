@@ -853,6 +853,13 @@ var EditorPanel = function EditorPanel(_ref) {
               if (_oldModel && !_oldModel.isDisposed()) _oldModel.dispose();
             }, 0);
           }
+
+          // Re-attach the HistoryService content listener to modelB so ops recorded
+          // after the swap are captured without waiting for the next tab switch.
+          var _modelBListener = modelB.onDidChangeContent(function (ev) {
+            HistoryService.recordOps(_phase2Path, ev.changes);
+          });
+          _phase2CleanupFn = function () { _modelBListener.dispose(); };
         }).catch(function () {
           _phase2Listener.dispose();
         });
