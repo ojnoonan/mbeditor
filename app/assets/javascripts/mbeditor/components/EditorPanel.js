@@ -529,6 +529,17 @@ var EditorPanel = function EditorPanel(_ref) {
       _modelEntry = window.__mbeditorModels[tab.path];
     }
 
+    if (typeof HistoryService !== 'undefined') {
+      var _histBranch = EditorStore.getState().gitBranch || '';
+      if (_histBranch) {
+        if (_reusingModel) {
+          HistoryService.resumeTracking(_histBranch, tab.path);
+        } else {
+          HistoryService.beginTracking(_histBranch, tab.path, tab.content || '');
+        }
+      }
+    }
+
     // Sync latestContentRef from the actual model content so the onDidChangeContent
     // handler doesn't fire a spurious onContentChange call on the first keystroke.
     latestContentRef.current = _reusingModel ? modelObj.getValue() : (tab.content || '');
@@ -696,6 +707,9 @@ var EditorPanel = function EditorPanel(_ref) {
     EditorStore.setState({ canUndo: avi > aviBaseRef.current, canRedo: avi < aviMaxRef.current });
 
     var contentDisposable = modelObj.onDidChangeContent(function (e) {
+      if (typeof HistoryService !== 'undefined') {
+        HistoryService.recordOps(tab.path, e.changes);
+      }
       var currentAvi = modelObj.getAlternativeVersionId();
       if (!e.isUndoing && !e.isRedoing) {
         // New edit: redo stack discarded at this point, so max resets here
@@ -1005,7 +1019,7 @@ var EditorPanel = function EditorPanel(_ref) {
         var editor = monacoRef.current;
         setTimeout(function () {
           editor.revealLineInCenter(tab.gotoLine);
-          editor.setPosition({ lineNumber: tab.gotoLine, column: 1 });
+          editor.setPosition({ lineNumber: tab.gotoLine, column: tab.gotoCol || 1 });
           editor.focus();
 
           TabManager.saveTabViewState(tab.id, editor.saveViewState());
