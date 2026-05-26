@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "digest"
 require "fileutils"
 require "open3"
 require "shellwords"
@@ -93,6 +94,8 @@ module Mbeditor
     end
 
     SAFE_BRANCH_NAME = /\A[a-zA-Z0-9._\-\/]+\z/
+    HISTORY_MAX_OPS      = 10_000
+    HISTORY_COMPACT_TARGET = 5_000
 
     # GET /mbeditor/branch_state?branch=... — load per-branch pane state
     def branch_state
@@ -156,6 +159,36 @@ module Mbeditor
       render json: { pruned: pruned }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
+    end
+
+    # GET /mbeditor/file_history?branch=X&path=Y
+    def file_history
+      branch = sanitize_branch_name(params[:branch])
+      return render json: {}, status: :bad_request unless branch
+
+      path = resolve_path(params[:path])
+      return render json: {}, status: :forbidden unless path
+
+      rel  = relative_path(path)
+      hist = history_file_path(branch, rel)
+      return render json: {} unless File.exist?(hist)
+
+      data = JSON.parse(File.read(hist))
+
+      if data['t']
+        age = Time.now.utc - Time.parse(data['t'])
+        if age > 7 * 24 * 3600
+          FileUtils.rm_f(hist)
+          return render json: {}
+        end
+      end
+
+      render json: { base: data['base'], ops: data['ops'] || [] }
+    rescue JSON::ParserError
+      FileUtils.rm_f(hist) rescue nil
+      render json: {}
+    rescue StandardError
+      render json: {}
     end
 
     # GET /mbeditor/file?path=...
@@ -416,22 +449,6 @@ module Mbeditor
         { name: mod_name, file: relative_path(mod_file), methods: methods }
       end
       render json: { includes: includes }
-    rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_content
-    end
-
-    # GET /mbeditor/unused_methods?path=app/models/article.rb
-    # Returns method names defined in the file that have no call-sites in the workspace.
-    def unused_methods
-      path = resolve_path(params[:path])
-      return render json: { error: "Forbidden" }, status: :forbidden unless path
-
-      excl_patterns = Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?)
-      unused = UnusedMethodsService.call(
-        workspace_root, path,
-        excluded_paths: excl_patterns
-      )
-      render json: { unused: unused }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -842,6 +859,36 @@ module Mbeditor
 
     private
 
+    def history_file_path(branch, rel_path)
+      branch_hash = Digest::SHA256.hexdigest(branch.to_s)[0, 16]
+      file_hash   = Digest::SHA256.hexdigest(rel_path.to_s)[0, 16]
+      workspace_root.join('tmp', 'mbeditor_history', "#{branch_hash}_#{file_hash}.json")
+    end
+
+    def compact_history_ops(base, ops)
+      text = base.to_s
+      ops.each do |op|
+        sl, sc, el, ec, ins = op[0].to_i, op[1].to_i, op[2].to_i, op[3].to_i, op[4].to_s
+        lines = text.split("\n", -1)
+        sl0  = [[sl - 1, 0].max, [lines.length - 1, 0].max].min
+        el0  = [[el - 1, 0].max, [lines.length - 1, 0].max].min
+        sc0  = sc - 1
+        ec0  = ec - 1
+        prefix    = (lines[sl0] || '')[0, sc0] || ''
+        suffix    = (lines[el0] || '')[ec0..] || ''
+        ins_lines = ins.split("\n", -1)
+        new_seg   = if ins_lines.length <= 1
+          [prefix + (ins_lines[0] || '') + suffix]
+        else
+          [prefix + ins_lines[0]] + ins_lines[1..-2] + [ins_lines[-1] + suffix]
+        end
+        text = (lines[0...sl0] + new_seg + lines[(el0 + 1)..]).join("\n")
+      end
+      text
+    rescue StandardError
+      base.to_s
+    end
+
     def broadcast_files_changed
       root = workspace_root.to_s
       invalidate_file_tree_cache(root)
@@ -934,9 +981,12 @@ module Mbeditor
             next unless data["type"] == "match"
 
             md = data["data"]
+            # submatches[0].start is the 0-based byte offset within the line → 1-based column
+            col = md.dig("submatches", 0, "start").to_i + 1
             results << {
               file: relative_path(md.dig("path", "text").to_s),
               line: md.dig("line_number"),
+              col:  col,
               text: md.dig("lines", "text").to_s.strip
             }
           end
@@ -962,10 +1012,14 @@ module Mbeditor
             rel = relative_path(file_path)
             next if ExclusionMatcher.new(Mbeditor.configuration.excluded_paths).excluded?(rel)
 
+            line_text = Regexp.last_match(3)
+            # Find column for grep fallback: case-insensitive unless match_case requested
+            col_idx = match_case ? line_text.index(query) : line_text.downcase.index(query.downcase)
             results << {
               file: rel,
               line: Regexp.last_match(2).to_i,
-              text: Regexp.last_match(3).strip
+              col:  col_idx ? col_idx + 1 : 1,
+              text: line_text.strip
             }
           end
         end
@@ -1015,8 +1069,9 @@ module Mbeditor
         is_excl = matcher.excluded?(rel)
 
         if File.directory?(full)
-          # Skip recursing into excluded directories — avoids traversing node_modules etc.
-          children = is_excl ? [] : build_tree(full, max_depth: max_depth, depth: depth + 1)
+          # Always traverse directories so they're visible and browsable in the tree.
+          # The excluded flag is respected by search and file operations, not tree rendering.
+          children = build_tree(full, max_depth: max_depth, depth: depth + 1)
           node = { name: name, type: "folder", path: rel, children: children }
           node[:excluded] = true if is_excl
           node

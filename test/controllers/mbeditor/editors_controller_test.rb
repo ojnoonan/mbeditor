@@ -280,6 +280,72 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # file_history
+    # ---------------------------------------------------------------------------
+
+    test "file_history returns empty hash when no history exists" do
+      get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }
+      assert_response :ok
+      assert_equal({}, json)
+    end
+
+    test "file_history returns 400 for invalid branch name" do
+      get "/mbeditor/file_history", params: { branch: "../../etc", path: "app/models/user.rb" }
+      assert_response :bad_request
+    end
+
+    test "file_history returns 403 for path outside workspace" do
+      get "/mbeditor/file_history", params: { branch: "main", path: "/etc/passwd" }
+      assert_response :forbidden
+    end
+
+    test "file_history returns base and ops after save" do
+      post "/mbeditor/file_history", params: {
+        branch: "main",
+        path: "app/models/user.rb",
+        ops: [[1,1,1,1,"hello"]],
+        base: "class User; end\n"
+      }, as: :json
+      assert_response :no_content
+
+      get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }
+      assert_response :ok
+      assert_equal "class User; end\n", json["base"]
+      assert_equal [[1,1,1,1,"hello"]], json["ops"]
+    end
+
+    test "file_history prunes and returns empty when history is older than 7 days" do
+      hist_dir = File.join(@workspace, "tmp", "mbeditor_history")
+      FileUtils.mkdir_p(hist_dir)
+      branch_hash = Digest::SHA256.hexdigest("main")[0,16]
+      file_hash   = Digest::SHA256.hexdigest("app/models/user.rb")[0,16]
+      hist_file   = File.join(hist_dir, "#{branch_hash}_#{file_hash}.json")
+      File.write(hist_file, {
+        branch: "main", path: "app/models/user.rb",
+        base: "x", ops: [], t: (Time.now.utc - 8 * 24 * 3600).iso8601
+      }.to_json)
+
+      get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }
+      assert_response :ok
+      assert_equal({}, json)
+      assert_not File.exist?(hist_file), "history file should be pruned"
+    end
+
+    test "file_history returns empty and deletes corrupted history file" do
+      hist_dir = File.join(@workspace, "tmp", "mbeditor_history")
+      FileUtils.mkdir_p(hist_dir)
+      branch_hash = Digest::SHA256.hexdigest("main")[0,16]
+      file_hash   = Digest::SHA256.hexdigest("app/models/user.rb")[0,16]
+      hist_file   = File.join(hist_dir, "#{branch_hash}_#{file_hash}.json")
+      File.write(hist_file, "not json {{{{")
+
+      get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }
+      assert_response :ok
+      assert_equal({}, json)
+      assert_not File.exist?(hist_file), "corrupt file should be deleted"
+    end
+
+    # ---------------------------------------------------------------------------
     # show (GET /file)
     # ---------------------------------------------------------------------------
 
