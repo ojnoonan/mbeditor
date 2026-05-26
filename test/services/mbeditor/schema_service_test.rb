@@ -149,5 +149,96 @@ module Mbeditor
     test "returns nil for blank workspace" do
       assert_nil SchemaService.new("User", "").call
     end
+
+    # ── structure.sql support ────────────────────────────────────────────
+
+    test "parses structure.sql (PostgreSQL format)" do
+      # Remove schema.rb so it tries structure.sql
+      FileUtils.rm(File.join(@workspace, "db", "schema.rb"))
+
+      # Create a PostgreSQL-style structure.sql
+      structure_sql = <<~SQL
+        CREATE TABLE public.users (
+            id bigint NOT NULL,
+            name character varying NOT NULL,
+            email character varying NOT NULL,
+            admin boolean DEFAULT false NOT NULL,
+            created_at timestamp(6) without time zone NOT NULL,
+            updated_at timestamp(6) without time zone NOT NULL
+        );
+
+        CREATE INDEX index_users_on_email ON public.users USING btree (email);
+      SQL
+
+      File.write(File.join(@workspace, "db", "structure.sql"), structure_sql)
+
+      result = call("User")
+      assert result, "should find schema in structure.sql"
+      assert_equal "users", result[:table]
+      assert_equal "User", result[:model]
+
+      cols = result[:columns]
+      name_col = cols.find { |c| c[:name] == "name" }
+      assert name_col
+      assert_equal "string", name_col[:type]
+      assert_equal false, name_col[:null]
+    end
+
+    test "parses structure.sql (MySQL format)" do
+      FileUtils.rm(File.join(@workspace, "db", "schema.rb"))
+
+      structure_sql = <<~SQL
+        CREATE TABLE `orders` (
+          `id` bigint NOT NULL AUTO_INCREMENT,
+          `status` varchar(255) NOT NULL DEFAULT 'pending',
+          `total` decimal(10,2),
+          `created_at` datetime(6) NOT NULL,
+          `updated_at` datetime(6) NOT NULL,
+          PRIMARY KEY (`id`),
+          KEY `index_orders_on_status` (`status`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      SQL
+
+      File.write(File.join(@workspace, "db", "structure.sql"), structure_sql)
+
+      result = call("Order")
+      assert result, "should find schema in structure.sql"
+      assert_equal "orders", result[:table]
+
+      cols = result[:columns]
+      status_col = cols.find { |c| c[:name] == "status" }
+      assert status_col
+      assert_equal "string", status_col[:type]
+
+      total_col = cols.find { |c| c[:name] == "total" }
+      assert total_col
+      assert_equal "decimal", total_col[:type]
+      assert_equal 10, total_col[:precision]
+      assert_equal 2, total_col[:scale]
+    end
+
+    test "prefers schema.rb over structure.sql when both exist" do
+      structure_sql = <<~SQL
+        CREATE TABLE users (
+            id integer NOT NULL
+        );
+      SQL
+
+      File.write(File.join(@workspace, "db", "structure.sql"), structure_sql)
+
+      result = call("User")
+      assert result
+
+      # Should have come from schema.rb (has name and email), not structure.sql (only has id)
+      cols = result[:columns]
+      assert cols.any? { |c| c[:name] == "name" }, "should parse from schema.rb, not structure.sql"
+    end
+
+    test "returns nil for unknown table in structure.sql" do
+      FileUtils.rm(File.join(@workspace, "db", "schema.rb"))
+      File.write(File.join(@workspace, "db", "structure.sql"), "CREATE TABLE users (id integer);")
+
+      assert_nil call("Widget")
+    end
   end
 end

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Mbeditor
-  # Parses db/schema.rb to extract the table definition for a given model name.
+  # Parses db/schema.rb or db/structure.sql to extract table definitions.
   # Returns nil when the schema file is missing or the table is not found.
   #
   # Return format:
@@ -12,7 +12,8 @@ module Mbeditor
   #     indexes: [{ name: "idx_users_on_email", columns: ["email"], unique: true }]
   #   }
   class SchemaService
-    SCHEMA_PATH = "db/schema.rb"
+    SCHEMA_RB_PATH = "db/schema.rb"
+    STRUCTURE_SQL_PATH = "db/structure.sql"
 
     def initialize(model_name, workspace_root)
       @model_name     = model_name.to_s.strip
@@ -22,26 +23,18 @@ module Mbeditor
     def call
       return nil if @model_name.empty? || @workspace_root.empty?
 
-      table_name  = derive_table_name(@model_name)
-      schema_path = File.join(@workspace_root, SCHEMA_PATH)
+      table_name = derive_table_name(@model_name)
 
-      unless File.exist?(schema_path)
-        Rails.logger.debug("SchemaService: schema.rb not found at #{schema_path} for model #{@model_name}")
-        return nil
-      end
+      # Try schema.rb first (Ruby format)
+      result = try_schema_rb(table_name)
+      return result if result
 
-      begin
-        content = File.read(schema_path, encoding: "utf-8")
-      rescue Errno::ENOENT, Errno::EACCES => e
-        Rails.logger.debug("SchemaService: failed to read #{schema_path}: #{e.message}")
-        return nil
-      end
+      # Try structure.sql (SQL format)
+      result = try_structure_sql(table_name)
+      return result if result
 
-      result = parse_table(content, table_name)
-      if result.nil?
-        Rails.logger.debug("SchemaService: table '#{table_name}' (from model '#{@model_name}') not found in schema.rb. Check if model has custom table_name.")
-      end
-      result
+      Rails.logger.debug("SchemaService: table '#{table_name}' (from model '#{@model_name}') not found in db/schema.rb or db/structure.sql. Check if model has custom table_name.")
+      nil
     end
 
     private
@@ -52,9 +45,39 @@ module Mbeditor
       ActiveSupport::Inflector.tableize(normalized)
     end
 
+    # Try to read and parse db/schema.rb
+    def try_schema_rb(table_name)
+      schema_path = File.join(@workspace_root, SCHEMA_RB_PATH)
+      return nil unless File.exist?(schema_path)
+
+      begin
+        content = File.read(schema_path, encoding: "utf-8")
+        parse_schema_rb(content, table_name)
+      rescue Errno::ENOENT, Errno::EACCES => e
+        Rails.logger.debug("SchemaService: failed to read #{schema_path}: #{e.message}")
+        nil
+      end
+    end
+
+    # Try to read and parse db/structure.sql
+    def try_structure_sql(table_name)
+      schema_path = File.join(@workspace_root, STRUCTURE_SQL_PATH)
+      return nil unless File.exist?(schema_path)
+
+      begin
+        content = File.read(schema_path, encoding: "utf-8")
+        parse_structure_sql(content, table_name)
+      rescue Errno::ENOENT, Errno::EACCES => e
+        Rails.logger.debug("SchemaService: failed to read #{schema_path}: #{e.message}")
+        nil
+      end
+    end
+
+    # ── Schema.rb parsing (Ruby DSL) ──────────────────────────────────────
+
     # Finds the create_table block and parses it.
     # Uses the leading-whitespace backreference to match the correct closing `end`.
-    def parse_table(content, table_name)
+    def parse_schema_rb(content, table_name)
       re = /^( *)create_table\s+"#{Regexp.escape(table_name)}"([^\n]*)\n(.*?)^\1end\b/m
       m  = content.match(re)
       return nil unless m
@@ -64,13 +87,13 @@ module Mbeditor
       {
         table:   table_name,
         model:   @model_name,
-        columns: parse_columns(body),
-        indexes: parse_indexes(body)
+        columns: parse_schema_rb_columns(body),
+        indexes: parse_schema_rb_indexes(body)
       }
     end
 
-    # Parses `t.type "name", options...` column lines.
-    def parse_columns(body)
+    # Parses `t.type "name", options...` column lines from schema.rb
+    def parse_schema_rb_columns(body)
       columns = []
       body.scan(/^\s+t\.(\w+)\s+"([^"]+)"(.*)$/) do |type, name, rest|
         next if type == "index"
@@ -97,8 +120,8 @@ module Mbeditor
       columns
     end
 
-    # Parses `t.index ["col"], name: "idx", unique: true` index lines.
-    def parse_indexes(body)
+    # Parses `t.index ["col"], name: "idx", unique: true` index lines from schema.rb
+    def parse_schema_rb_indexes(body)
       indexes = []
       body.scan(/^\s+t\.index\s+\[([^\]]*)\](.*)$/) do |cols_str, rest|
         cols = cols_str.scan(/"([^"]+)"/).flatten
@@ -112,6 +135,136 @@ module Mbeditor
         indexes << idx
       end
       indexes
+    end
+
+    # ── Structure.sql parsing (SQL DDL) ──────────────────────────────────
+
+    # Parses structure.sql (SQL format) to extract table definition
+    def parse_structure_sql(content, table_name)
+      # Match CREATE TABLE ... ( ... ) with support for various SQL dialects
+      # Handles: PostgreSQL, MySQL, SQLite with quoted/unquoted names
+      # Ends with different delimiters: ); ENGINE...; or just );
+      quoted_name = Regexp.escape(table_name)
+      patterns = [
+        # PostgreSQL with public schema: CREATE TABLE public."users" ( ... );
+        /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?["`]?#{quoted_name}["`]?\s*\(([\s\S]*?)\)\s*;/mi,
+        # MySQL with ENGINE: CREATE TABLE `users` ( ... ) ENGINE=...;
+        /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?#{quoted_name}["`]?\s*\(([\s\S]*?)\)\s*(?:ENGINE|DEFAULT)/mi
+      ]
+
+      table_def = nil
+      patterns.each do |pattern|
+        if (m = content.match(pattern))
+          table_def = m[1]
+          break
+        end
+      end
+
+      return nil unless table_def
+
+      {
+        table:   table_name,
+        model:   @model_name,
+        columns: parse_sql_columns(table_def),
+        indexes: parse_sql_indexes(content, table_name)
+      }
+    end
+
+    # Parses column definitions from SQL CREATE TABLE body
+    def parse_sql_columns(table_def)
+      columns = []
+
+      # Process line by line to handle complex type declarations like decimal(10,2)
+      table_def.each_line do |line|
+        line = line.strip
+        next if line.empty?
+        next if line.match?(/^(PRIMARY|UNIQUE|FOREIGN|KEY|INDEX|CONSTRAINT)/i)
+
+        # Extract column name and full definition
+        # Matches: `name` type(...) constraints, name type NOT NULL, etc.
+        if (m = line.match(/^["`]?(\w+)["`]?\s+(.+?)\s*,?\s*$/i))
+          col_name = m[1]
+          definition = m[2]
+
+          # Split at constraint keywords to isolate the type
+          # Extract everything before NOT NULL, NULL, AUTO_INCREMENT, DEFAULT, PRIMARY, etc.
+          col_type_and_params = definition.split(/\s+(?:NOT\s+NULL|NULL|AUTO_INCREMENT|DEFAULT|PRIMARY|UNIQUE|CHECK|COLLATE|COMMENT|ON|USING)/i).first.strip.downcase
+
+          # Extract base type (before parentheses)
+          col_type = col_type_and_params.split('(').first.strip
+          col = { name: col_name, type: sql_type_to_rails(col_type) }
+
+          col[:null] = false if definition.match?(/\bNOT\s+NULL\b/i)
+          col[:primary_key] = true if definition.match?(/\bPRIMARY\s+KEY\b/i)
+
+          # Extract precision and scale for decimals/numeric types
+          if (pm = col_type_and_params.match(/\((\d+),\s*(\d+)\)/))
+            col[:precision] = pm[1].to_i
+            col[:scale] = pm[2].to_i
+          elsif (pm = col_type_and_params.match(/\((\d+)\)/))
+            col[:limit] = pm[1].to_i
+          end
+
+          columns << col
+        end
+      end
+
+      columns
+    end
+
+    # Parses index definitions from structure.sql
+    def parse_sql_indexes(content, table_name)
+      indexes = []
+
+      # Match CREATE INDEX ... ON table_name (columns)
+      pattern = /CREATE\s+(?:UNIQUE\s+)?INDEX\s+["`]?(\w+)["`]?\s+ON\s+(?:public\.)?["`]?#{Regexp.escape(table_name)}["`]?\s*\((.*?)\)/mi
+
+      content.scan(pattern) do |index_name, columns_str|
+        cols = columns_str.split(',').map { |c| c.strip.gsub(/["`]/, '').split(/\s+/).first }.compact
+        next if cols.empty?
+
+        idx = {
+          name: index_name,
+          columns: cols
+        }
+        idx[:unique] = true if content.match?(/CREATE\s+UNIQUE\s+INDEX\s+["`]?#{Regexp.escape(index_name)}/mi)
+
+        indexes << idx
+      end
+
+      indexes
+    end
+
+    # Map SQL types to Rails column types
+    def sql_type_to_rails(sql_type)
+      type_map = {
+        'integer' => 'integer',
+        'int' => 'integer',
+        'bigint' => 'bigint',
+        'smallint' => 'integer',
+        'bigserial' => 'bigint',
+        'serial' => 'integer',
+        'varchar' => 'string',
+        'character varying' => 'string',
+        'character' => 'string',
+        'text' => 'text',
+        'boolean' => 'boolean',
+        'bool' => 'boolean',
+        'decimal' => 'decimal',
+        'numeric' => 'decimal',
+        'float' => 'float',
+        'double' => 'float',
+        'timestamp' => 'datetime',
+        'datetime' => 'datetime',
+        'date' => 'date',
+        'time' => 'time',
+        'json' => 'json',
+        'jsonb' => 'jsonb',
+        'uuid' => 'uuid',
+        'bytea' => 'binary'
+      }
+
+      type_map[sql_type.downcase] || sql_type
     end
   end
 end
