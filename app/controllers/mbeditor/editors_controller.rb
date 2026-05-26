@@ -801,7 +801,8 @@ module Mbeditor
       if schema
         render json: schema
       else
-        render json: { error: "No schema found for '#{model_name}'" }, status: :not_found
+        hint = " (Check if the model has a custom table_name or if db/schema.rb exists)"
+        render json: { error: "No schema found for '#{model_name}'#{hint}" }, status: :not_found
       end
     end
 

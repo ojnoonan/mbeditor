@@ -24,15 +24,24 @@ module Mbeditor
 
       table_name  = derive_table_name(@model_name)
       schema_path = File.join(@workspace_root, SCHEMA_PATH)
-      return nil unless File.exist?(schema_path)
 
-      begin
-        content = File.read(schema_path, encoding: "utf-8")
-      rescue Errno::ENOENT, Errno::EACCES
+      unless File.exist?(schema_path)
+        Rails.logger.debug("SchemaService: schema.rb not found at #{schema_path} for model #{@model_name}")
         return nil
       end
 
-      parse_table(content, table_name)
+      begin
+        content = File.read(schema_path, encoding: "utf-8")
+      rescue Errno::ENOENT, Errno::EACCES => e
+        Rails.logger.debug("SchemaService: failed to read #{schema_path}: #{e.message}")
+        return nil
+      end
+
+      result = parse_table(content, table_name)
+      if result.nil?
+        Rails.logger.debug("SchemaService: table '#{table_name}' (from model '#{@model_name}') not found in schema.rb. Check if model has custom table_name.")
+      end
+      result
     end
 
     private
