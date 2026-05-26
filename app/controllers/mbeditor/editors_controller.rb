@@ -191,6 +191,52 @@ module Mbeditor
       render json: {}
     end
 
+    # POST /mbeditor/file_history
+    def save_file_history
+      branch = sanitize_branch_name(params[:branch])
+      return render json: { error: 'Invalid branch name' }, status: :bad_request unless branch
+
+      path = resolve_path(params[:path])
+      return render json: { error: 'Forbidden' }, status: :forbidden unless path
+
+      rel      = relative_path(path)
+      new_ops  = params[:ops]
+      return render json: { error: 'ops must be an array' }, status: :bad_request unless new_ops.is_a?(Array)
+      return head :no_content if new_ops.empty?
+
+      new_ops_clean = new_ops.map { |op| Array(op).first(5) }
+
+      hist = history_file_path(branch, rel)
+      FileUtils.mkdir_p(File.dirname(hist))
+
+      File.open(hist, File::RDWR | File::CREAT) do |f|
+        f.flock(File::LOCK_EX)
+        existing = f.size > 0 ? (JSON.parse(f.read) rescue {}) : {}
+
+        if existing.empty?
+          base = params[:base].to_s
+          return render json: { error: 'base required for initial history' }, status: :bad_request if base.empty?
+          existing = { 'branch' => branch, 'path' => rel, 'base' => base, 'ops' => [], 't' => Time.now.utc.iso8601 }
+        end
+
+        existing['ops'] = (existing['ops'] || []) + new_ops_clean
+        existing['t']   = Time.now.utc.iso8601
+
+        if existing['ops'].length > HISTORY_MAX_OPS
+          to_compact       = existing['ops'].shift(HISTORY_COMPACT_TARGET)
+          existing['base'] = compact_history_ops(existing['base'], to_compact)
+        end
+
+        f.truncate(0)
+        f.rewind
+        f.write(existing.to_json)
+      end
+
+      head :no_content
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
     # GET /mbeditor/file?path=...
     def show
       path = resolve_path(params[:path])

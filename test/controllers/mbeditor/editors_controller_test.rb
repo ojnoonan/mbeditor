@@ -346,6 +346,80 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # save_file_history (POST /file_history)
+    # ---------------------------------------------------------------------------
+
+    test "save_file_history returns 400 for invalid branch name" do
+      post "/mbeditor/file_history", params: {
+        branch: "bad name!", path: "app/models/user.rb",
+        ops: [], base: "x"
+      }, as: :json
+      assert_response :bad_request
+    end
+
+    test "save_file_history returns 403 for path outside workspace" do
+      post "/mbeditor/file_history", params: {
+        branch: "main", path: "/etc/passwd",
+        ops: [[1,1,1,1,"x"]], base: "x"
+      }, as: :json
+      assert_response :forbidden
+    end
+
+    test "save_file_history returns 400 when base is missing on first write" do
+      post "/mbeditor/file_history", params: {
+        branch: "main", path: "app/models/user.rb",
+        ops: [[1,1,1,1,"hello"]]
+      }, as: :json
+      assert_response :bad_request
+    end
+
+    test "save_file_history appends ops on subsequent writes" do
+      post "/mbeditor/file_history", params: {
+        branch: "main", path: "app/models/user.rb",
+        ops: [[1,1,1,1,"hello"]], base: "class User; end\n"
+      }, as: :json
+      assert_response :no_content
+
+      post "/mbeditor/file_history", params: {
+        branch: "main", path: "app/models/user.rb",
+        ops: [[1,6,1,6," world"]]
+      }, as: :json
+      assert_response :no_content
+
+      get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }
+      assert_equal 2, json["ops"].length
+      assert_equal [1,6,1,6," world"], json["ops"].last
+    end
+
+    test "save_file_history compacts when ops exceed HISTORY_MAX_OPS" do
+      base = "line\n"
+      first_ops = Array.new(Mbeditor::EditorsController::HISTORY_MAX_OPS) { [1,1,1,1,"x"] }
+
+      post "/mbeditor/file_history", params: {
+        branch: "main", path: "app/models/user.rb",
+        ops: first_ops, base: base
+      }, as: :json
+      assert_response :no_content
+
+      post "/mbeditor/file_history", params: {
+        branch: "main", path: "app/models/user.rb",
+        ops: [[1,1,1,1,"y"]]
+      }, as: :json
+      assert_response :no_content
+
+      get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }
+      assert json["ops"].length < Mbeditor::EditorsController::HISTORY_MAX_OPS + 2
+    end
+
+    test "save_file_history returns 204 with empty ops array" do
+      post "/mbeditor/file_history", params: {
+        branch: "main", path: "app/models/user.rb",
+        ops: [], base: "x"
+      }, as: :json
+      assert_response :no_content
+    end
+
+    # ---------------------------------------------------------------------------
     # show (GET /file)
     # ---------------------------------------------------------------------------
 
