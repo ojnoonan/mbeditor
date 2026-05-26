@@ -216,6 +216,7 @@ module Mbeditor
         if existing.empty?
           base = params[:base].to_s
           return render json: { error: 'base required for initial history' }, status: :bad_request if base.empty?
+          return render json: { error: 'base too large' }, status: :content_too_large if base.bytesize > STATE_MAX_BYTES
           existing = { 'branch' => branch, 'path' => rel, 'base' => base, 'ops' => [], 't' => Time.now.utc.iso8601 }
         end
 

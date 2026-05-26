@@ -408,7 +408,7 @@ module Mbeditor
       assert_response :no_content
 
       get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }
-      assert json["ops"].length < Mbeditor::EditorsController::HISTORY_MAX_OPS + 2
+      assert_equal Mbeditor::EditorsController::HISTORY_MAX_OPS - Mbeditor::EditorsController::HISTORY_COMPACT_TARGET + 1, json["ops"].length
     end
 
     test "save_file_history returns 204 with empty ops array" do
