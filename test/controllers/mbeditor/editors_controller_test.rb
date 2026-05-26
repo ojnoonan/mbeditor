@@ -419,6 +419,29 @@ module Mbeditor
       assert_response :no_content
     end
 
+    test "prune_branch_states also deletes history files for deleted branches" do
+      system("git", "-C", @workspace, "init", "-q")
+      system("git", "-C", @workspace, "-c", "user.email=t@t.com", "-c", "user.name=T", "commit", "--allow-empty", "-m", "init", "-q")
+
+      # Save history for a branch that won't exist in the repo
+      post "/mbeditor/file_history", params: {
+        branch: "ghost-branch-xyz",
+        path: "app/models/user.rb",
+        ops: [[1,1,1,1,"x"]],
+        base: "x"
+      }, as: :json
+      assert_response :no_content
+
+      branch_hash = Digest::SHA256.hexdigest("ghost-branch-xyz")[0,16]
+      file_hash   = Digest::SHA256.hexdigest("app/models/user.rb")[0,16]
+      hist_file   = File.join(@workspace, "tmp", "mbeditor_history", "#{branch_hash}_#{file_hash}.json")
+      assert File.exist?(hist_file), "history file should exist before prune"
+
+      post "/mbeditor/prune_branch_states", as: :json
+      assert_response :ok
+      assert_not File.exist?(hist_file), "history file should be deleted after prune"
+    end
+
     # ---------------------------------------------------------------------------
     # show (GET /file)
     # ---------------------------------------------------------------------------

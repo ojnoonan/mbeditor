@@ -137,7 +137,6 @@ module Mbeditor
     # POST /mbeditor/prune_branch_states — remove states for deleted branches
     def prune_branch_states
       state_path = workspace_root.join("tmp", "mbeditor_branch_states.json")
-      return render json: { pruned: [] } unless File.exist?(state_path)
 
       root = workspace_root.to_s
       out, _err, status = Open3.capture3("git", "-C", root, "branch", "--format=%(refname:short)")
@@ -145,17 +144,30 @@ module Mbeditor
 
       local_branches = out.split("\n").map(&:strip).reject(&:empty?)
       pruned = []
-      File.open(state_path, File::RDWR) do |f|
-        f.flock(File::LOCK_EX)
-        all = JSON.parse(f.read) rescue {}
-        pruned = all.keys - local_branches
-        if pruned.any?
-          pruned.each { |b| all.delete(b) }
-          f.truncate(0)
-          f.rewind
-          f.write(all.to_json)
+
+      if File.exist?(state_path)
+        File.open(state_path, File::RDWR) do |f|
+          f.flock(File::LOCK_EX)
+          all    = JSON.parse(f.read) rescue {}
+          pruned = all.keys - local_branches
+          if pruned.any?
+            pruned.each { |b| all.delete(b) }
+            f.truncate(0)
+            f.rewind
+            f.write(all.to_json)
+          end
         end
       end
+
+      hist_dir = workspace_root.join('tmp', 'mbeditor_history')
+      if File.directory?(hist_dir)
+        Dir.glob(File.join(hist_dir, '*.json')) do |hist_file|
+          data = JSON.parse(File.read(hist_file)) rescue nil
+          next unless data.is_a?(Hash) && data['branch']
+          FileUtils.rm_f(hist_file) unless local_branches.include?(data['branch'])
+        end
+      end
+
       render json: { pruned: pruned }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
