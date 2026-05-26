@@ -1380,8 +1380,8 @@ var MbeditorApp = function MbeditorApp() {
     return function () { clearInterval(intervalId); };
   }, []);
 
-  var handleSelectFile = function handleSelectFile(path, name, line) {
-    TabManager.openTab(path, name, line);
+  var handleSelectFile = function handleSelectFile(path, name, line, col) {
+    TabManager.openTab(path, name, line, null, false, col);
     handleNodeSelect({ path: path, name: name || path.split('/').pop(), type: 'file' });
     setQuickOpen(false);
   };
@@ -1872,6 +1872,9 @@ var MbeditorApp = function MbeditorApp() {
       }
       EditorStore.setStatus("Saved", "success");
       _clearDraft(tab.path);
+      if (typeof HistoryService !== 'undefined') {
+        HistoryService.flushForPath(tab.path);
+      }
       SearchService.invalidate();
 
       // Hot reload for Markdown: sync preview tab after save
@@ -3561,7 +3564,7 @@ var MbeditorApp = function MbeditorApp() {
                       {
                         key: i,
                         className: "search-result-item",
-                        onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line); }; })(res)
+                        onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line, r.col); }; })(res)
                       },
                       React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
                       React.createElement(

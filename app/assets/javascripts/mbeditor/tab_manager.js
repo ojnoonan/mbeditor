@@ -118,7 +118,7 @@ var TabManager = (function () {
     });
   }
 
-  function openTab(path, name, line, forcePaneId, isSoftOpen) {
+  function openTab(path, name, line, forcePaneId, isSoftOpen, col) {
     var state = EditorStore.getState();
     var paneId = forcePaneId || state.focusedPaneId;
     var pane = state.panes.find(function(p) { return p.id === paneId; });
@@ -137,7 +137,7 @@ var TabManager = (function () {
     var existing = pane.tabs.find(function(t) { return t.path === path; });
 
     if (existing) {
-      if (line) _updateTab(paneId, path, { gotoLine: line });
+      if (line) _updateTab(paneId, path, { gotoLine: line, gotoCol: col || null });
       switchTab(paneId, path);
       if (_isMarkdownPath(path)) {
         _ensureMarkdownPreview(paneId, path, existing.name || name, existing.content || "");
@@ -163,7 +163,7 @@ var TabManager = (function () {
       isSoftOpen: isSoftOpen ? true : false,
       loading: true
     };
-    if (line) newTab.gotoLine = line;
+    if (line) { newTab.gotoLine = line; newTab.gotoCol = col || null; }
 
     var newPanes = state.panes.map(function(p) {
       if (p.id === paneId) {
@@ -349,6 +349,9 @@ var TabManager = (function () {
   }
 
   function closeTab(paneId, path) {
+    if (typeof HistoryService !== 'undefined') {
+      HistoryService.flushForPath(path);
+    }
     var state = EditorStore.getState();
     var newPanes = state.panes.map(function(pane) {
       if (pane.id === paneId) {
@@ -553,7 +556,7 @@ var TabManager = (function () {
   }
 
   function clearGotoLine(paneId, path) {
-    _updateTab(paneId, path, { gotoLine: null });
+    _updateTab(paneId, path, { gotoLine: null, gotoCol: null });
   }
 
   return {
