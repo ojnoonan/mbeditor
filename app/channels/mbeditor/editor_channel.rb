@@ -4,9 +4,7 @@ require "fileutils"
 require "pathname"
 
 module Mbeditor
-  CableBaseClass = defined?(ActionCable::Channel::Base) ? ActionCable::Channel::Base : Object
-
-  class EditorChannel < CableBaseClass
+  class EditorChannel < (defined?(ActionCable::Channel::Base) ? ActionCable::Channel::Base : Object)
     STATE_MAX_BYTES    = 1 * 1024 * 1024
     SAFE_BRANCH_NAME   = /\A[a-zA-Z0-9._\-\/]+\z/
 

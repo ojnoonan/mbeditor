@@ -486,48 +486,6 @@
       });
     }
 
-    // Unused method dimming — grey out `def method_name` for methods with no
-    // call-sites anywhere in the workspace.
-    var unusedDecIds = [];
-    var unusedTimer = null;
-    var unusedSaveDisposable = null;
-
-    if (language === 'ruby' && typeof FileService !== 'undefined' && FileService.getUnusedMethods) {
-      function refreshUnused() {
-        var path = model._mbeditorPath;
-        // Skip test/spec files — test methods are invoked dynamically by the
-        // framework (e.g. Minitest) and never appear as explicit call-sites.
-        if (!path || /(?:^|\/)(?:test|spec)\//.test(path)) return;
-        FileService.getUnusedMethods(path).then(function(data) {
-          var unused = data && Array.isArray(data.unused) ? data.unused : [];
-          var newDecs = unused.map(function(m) {
-            var lineContent = model.getLineContent(m.line);
-            var defIdx = lineContent.indexOf('def ');
-            if (defIdx < 0) return null;
-            var nameCol = defIdx + 5; // 1-based column of method name
-            return {
-              range: new monaco.Range(m.line, nameCol, m.line, nameCol + m.name.length),
-              options: {
-                inlineClassName: 'mbeditor-unused-def',
-                stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-                hoverMessage: { value: '**Unused method** — `' + m.name + '` is never called in this application.' }
-              }
-            };
-          }).filter(Boolean);
-          unusedDecIds = editor.deltaDecorations(unusedDecIds, newDecs);
-        }).catch(function() {});
-      }
-
-      // Initial check after a short delay (server cache may not be warm yet).
-      unusedTimer = setTimeout(refreshUnused, 3000);
-
-      // Re-check after each save event (model content stops changing).
-      unusedSaveDisposable = model.onDidChangeContent(function() {
-        clearTimeout(unusedTimer);
-        unusedTimer = setTimeout(refreshUnused, 5000);
-      });
-    }
-
     var contentDisposable = model.onDidChangeContent(function (event) {
       if (suppressInternalEdit) return;
       if (event.isUndoing || event.isRedoing) return;
@@ -561,9 +519,6 @@
         if (jsGotoMouseDisposable) jsGotoMouseDisposable.dispose();
         if (jsGotoActionDisposable) jsGotoActionDisposable.dispose();
         contentDisposable.dispose();
-        if (unusedSaveDisposable) unusedSaveDisposable.dispose();
-        clearTimeout(unusedTimer);
-        if (unusedDecIds.length > 0) { editor.deltaDecorations(unusedDecIds, []); }
       }
     };
   }
@@ -801,14 +756,6 @@
       });
     }
 
-    // CSS for greyed-out unused method names (applied via decoration inlineClassName).
-    if (!document.getElementById('mbeditor-unused-style')) {
-      var unusedStyle = document.createElement('style');
-      unusedStyle.id = 'mbeditor-unused-style';
-      unusedStyle.textContent = '.mbeditor-unused-def { opacity: 0.35; }';
-      document.head.appendChild(unusedStyle);
-    }
-
     monaco.languages.setLanguageConfiguration('ruby', {
       comments: { lineComment: '#', blockComment: ['=begin', '=end'] },
       brackets: [['(', ')'], ['{', '}'], ['[', ']']],
@@ -902,8 +849,9 @@
           [/%[qQ]?\[/, { token: 'string.quoted.double', next: '@percentDqBracket' }],
           [/%[qQ]?\{/, { token: 'string.quoted.double', next: '@percentDqCurly' }],
 
-          // Regexp literals — simplified: /pat/imxo not preceded by a word boundary that looks like division
-          [/\/(?!\s)(?:[^\/\\\n]|\\.)+\/[imxo]*/, 'string.regexp'],
+          // Regexp literals: /pat/imxo
+          // Negative lookbehind (?<![.\w]) prevents matching division operators like a/b or obj.method/n
+          [/(?<![.\w])\/(?!\s)(?:[^\/\\\n]|\\.)+\/[imxo]*/, 'string.regexp'],
 
           // Control-flow and other keywords
           [/\b(if|unless|while|until|for|do|case|when|then|else|elsif|end|return|yield|begin|rescue|ensure|raise|break|next|retry|and|or|not|in|__LINE__|__FILE__|__ENCODING__|__method__|__callee__|__dir__|alias|undef|defined\?)\b/, 'keyword.control'],

@@ -95,7 +95,7 @@ var FileService = (function () {
   }
 
   function runTests(path) {
-    return axios.post(window.mbeditorBasePath() + '/test', { path: path }).then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/test', { path: path }, { timeout: 120000 }).then(function(res) { return res.data; });
   }
 
   function ping() {
@@ -208,11 +208,6 @@ var FileService = (function () {
     return axios.get(window.mbeditorBasePath() + '/file_includes', config).then(function(res) { return res.data; });
   }
 
-  function getUnusedMethods(path, extraOptions) {
-    var config = Object.assign({ params: { path: path }, timeout: 30000 }, extraOptions || {});
-    return axios.get(window.mbeditorBasePath() + '/unused_methods', config).then(function(res) { return res.data; });
-  }
-
   function getClientConfig() {
     return axios.get(window.mbeditorBasePath() + '/client_config').then(function(res) { return res.data; });
   }
@@ -260,7 +255,6 @@ var FileService = (function () {
     cancelPrefetch: cancelPrefetch,
     getModuleMembers: getModuleMembers,
     getFileIncludes: getFileIncludes,
-    getUnusedMethods: getUnusedMethods,
     getClientConfig: getClientConfig,
     getRelatedFiles: getRelatedFiles,
     getModelSchema: getModelSchema,
