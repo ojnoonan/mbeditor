@@ -15,6 +15,7 @@ module Mbeditor
     before_action :verify_mbeditor_client, unless: -> { request.get? || request.head? }
 
     IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
+    helper_method :mbeditor_base_path
 
     # GET /mbeditor — renders the IDE shell
     def index
@@ -545,8 +546,7 @@ module Mbeditor
 
     # GET /mbeditor/manifest.webmanifest — PWA manifest
     def pwa_manifest
-      raw  = root_path.chomp("/")
-      base = raw.start_with?("/") || raw.empty? ? raw : "/#{raw}"
+      base = mbeditor_base_path
       manifest = {
         name: "Mbeditor — #{Rails.root.basename}",
         short_name: "Mbeditor",
@@ -786,6 +786,15 @@ module Mbeditor
     end
 
     private
+
+    # Normalized base prefix mbeditor renders URLs against. Sourced from
+    # MountPath (not the engine `root_path` helper) so it still resolves when a
+    # broken host config/routes.rb has wiped Mbeditor::Engine.routes — the exact
+    # state resilient routing exists to survive.
+    def mbeditor_base_path
+      raw = Mbeditor::MountPath.resolve.chomp("/")
+      raw.start_with?("/") || raw.empty? ? raw : "/#{raw}"
+    end
 
     def history_file_path(branch, rel_path)
       branch_hash = Digest::SHA256.hexdigest(branch.to_s)[0, 16]

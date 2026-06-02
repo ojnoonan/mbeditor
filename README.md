@@ -71,6 +71,10 @@ Mbeditor.configure do |config|
   # Optional Ruby/Rails side panel tuning
   # config.ruby_def_include_dirs = %w[app/models app/controllers app/helpers app/concerns]
   # config.related_files_custom_paths = %w[app/assets/javascripts/app app/policies]
+
+  # Resilient routing (see the "Resilient Routing" section below)
+  # config.mount_path = "/mbeditor"   # explicit prefix override; auto-detected when nil
+  # config.resilient_routing = false  # escape hatch; true keeps the editor up when host routes break
 end
 ```
 
@@ -91,6 +95,8 @@ Available options:
 - `redmine_ticket_source` controls how the current Redmine ticket is identified. `:commit` scans the 100 most recent branch commits for a `#123` reference in the commit message. `:branch` reads the leading digits from the branch name (e.g. `123-my-feature` → ticket 123). Default: `:commit`.
 - `ruby_def_include_dirs` sets which workspace-relative directories are searched when resolving Ruby go-to-definition jumps (e.g. clicking a class name). Add any extra directories that hold Ruby source files you want the engine to index. Default: `%w[app/models app/controllers app/helpers app/concerns]`.
 - `related_files_custom_paths` adds extra base directories to the Rails related-files side panel. For each entry the panel looks for a subdirectory named after the current resource (plural or singular) and lists its files. For example, `"app/assets/javascripts/app"` will surface `app/assets/javascripts/app/users/` when you are editing a `users` resource. Default: `[]`.
+- `mount_path` sets an explicit URL prefix for resilient routing to serve from. When `nil`, the prefix is auto-detected from your `mount Mbeditor::Engine, at: "..."` line on every healthy boot — so a custom mount works without setting this. Set it only to override detection. Default: `nil`. See [Resilient Routing](#resilient-routing).
+- `resilient_routing` keeps mbeditor reachable when the host app's `config/routes.rb` is broken, by serving mbeditor's traffic from middleware that dispatches to a private route set. Setting it to `false` is the escape hatch: no middleware is inserted and the private set is never built. Default: `true`. See [Resilient Routing](#resilient-routing).
 
 ## Test Runner
 
@@ -110,6 +116,22 @@ The Test button appears in the editor toolbar for any `.rb` file when a `test/` 
 **Default commands** (when `test_command` is not set):
 - Minitest: `bin/rails test <file>` if `bin/rails` exists, otherwise `bundle exec ruby -Itest <file>`
 - RSpec: `bin/rspec <file>` if `bin/rspec` exists, otherwise `bundle exec rspec --format json <file>`
+
+## Resilient Routing
+
+A broken `config/routes.rb` normally takes down the whole app — every request, including the one you'd use to fix it, raises while Rails tries to reload the route table. Mbeditor stays reachable anyway: it serves its own traffic from middleware that dispatches to a **private route set** built at boot and never registered with Rails' route reloader. When a bad route draw wipes the host route table, that private set survives the wipe, so `/mbeditor` keeps working while the rest of the app is down. This is on by default (`resilient_routing = true`); you don't need to configure anything.
+
+**Custom mount paths work with zero configuration.** On every healthy boot, mbeditor detects the prefix from your `mount Mbeditor::Engine, at: "..."` line and remembers it. If the route table later breaks, the remembered prefix is used — so resilient routing serves from your custom mount, not just `/mbeditor`. Detection only ever updates from a *healthy* load, so a broken reload can never overwrite a good prefix. Set `config.mount_path` only if you want to override detection explicitly.
+
+**What it cannot recover from: a host app that fails to *boot*.** Resilient routing relies on mbeditor's engine initializers running — that's when the middleware is inserted and the private route set is built. If the app can't boot at all, those initializers never run and there is nothing to fall back to. This includes:
+
+- a syntax error or raised exception in `config/application.rb` or other engine/initializer code,
+- a broken initializer in `config/initializers/`,
+- a bad or incompatible gem that fails to load.
+
+A *broken route* is recoverable in the browser; a *failed boot* is not. If the app won't boot, fix it from a terminal — mbeditor can't help until the app can start.
+
+**Turning it off.** Set `config.resilient_routing = false` as an escape hatch (e.g. to debug a middleware-ordering conflict). With the flag off, no mbeditor middleware is inserted and the private route set is never built; mbeditor is then served only through the normal mount and shares the fate of a broken `config/routes.rb`.
 
 ## Keyboard Shortcuts
 

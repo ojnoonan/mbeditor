@@ -2,6 +2,7 @@
 
 require "mbeditor/rack/silence_ping_request"
 require "mbeditor/rack/handle_pending_migrations"
+require "mbeditor/rack/resilient_router"
 require "mbeditor/cable_log_filter"
 
 module Mbeditor
@@ -10,6 +11,43 @@ module Mbeditor
 
     initializer "mbeditor.silence_ping_request" do |app|
       app.middleware.insert_before Rails::Rack::Logger, Mbeditor::Rack::SilencePingRequest
+    end
+
+    initializer "mbeditor.resilient_routing" do |app|
+      # Serve mbeditor's own traffic from middleware that dispatches to a
+      # private, isolated route set, so the editor survives a broken host
+      # config/routes.rb. Disabling the flag is the escape hatch: no middleware
+      # is inserted and the private set is never built.
+      next unless Mbeditor.configuration.resilient_routing
+
+      # ActionDispatch::Reloader is only in the stack when reloading is enabled
+      # (the same condition Rails uses to add it). Sitting just above it means
+      # mbeditor requests are intercepted before any route reload can raise,
+      # while staying below DebugExceptions/ShowExceptions (mbeditor's own
+      # errors still get Rails error pages) and below Executor (dispatch runs
+      # inside app.executor's connection management).
+      if app.config.reloading_enabled?
+        app.middleware.insert_before ActionDispatch::Reloader, Mbeditor::Rack::ResilientRouter
+      end
+
+      # Build the private set at boot so it is ready before the first request
+      # and before the host route table can ever break.
+      Mbeditor::PrivateRoutes.route_set
+
+      # Auto-detect the mount prefix from each *healthy* route load and cache it,
+      # so resilient routing works at a custom mount with zero configuration.
+      # after_routes_loaded fires only after a successful load — a raising
+      # routes.rb skips it — so the cache is never populated from the wiped
+      # break-time table. MountPath.refresh! is a no-op when the engine isn't
+      # found, so a stray load can never clobber a prefix from an earlier
+      # healthy one.
+      #
+      # The hook's yielded receiver is NOT reliably Rails.application — the
+      # reloader's to_run path fires it with the reloader callback context as
+      # self — so read the live route set through Rails.application directly.
+      app.config.after_routes_loaded do
+        Mbeditor::MountPath.refresh!(Rails.application.routes)
+      end
     end
 
     initializer "mbeditor.handle_pending_migrations" do |app|

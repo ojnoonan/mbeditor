@@ -7,7 +7,8 @@ module Mbeditor
                   :test_framework, :test_command, :test_timeout,
                   :authenticate_with, :authentication_cache_ttl,
                   :lint_timeout, :base_branch_candidates, :git_timeout,
-                  :ruby_def_include_dirs, :related_files_custom_paths
+                  :ruby_def_include_dirs, :related_files_custom_paths,
+                  :mount_path, :resilient_routing
 
     def initialize
       @allowed_environments = [:development]
@@ -27,6 +28,8 @@ module Mbeditor
       @ruby_def_include_dirs  = %w[app/models app/controllers app/helpers app/concerns]
       @related_files_custom_paths = []
       @authentication_cache_ttl = 0
+      @mount_path = nil # explicit URL prefix override; nil falls through to detection/"/mbeditor"
+      @resilient_routing = true # serve /mbeditor from middleware so the editor survives a broken host routes.rb; false is the escape hatch
     end
   end
 end

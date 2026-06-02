@@ -7,7 +7,8 @@ Rake::TestTask.new(:test) do |t|
     'test/controllers/**/*_test.rb',
     'test/channels/**/*_test.rb',
     'test/services/**/*_test.rb',
-    'test/lib/**/*_test.rb'
+    'test/lib/**/*_test.rb',
+    'test/integration/**/*_test.rb'
   ]
   t.verbose = false
 end

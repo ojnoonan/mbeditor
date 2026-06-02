@@ -16,3 +16,5 @@ gemfiles/*.lock
 /.worktrees/
 /.superpowers/
 /.claude/worktrees/
+/.understand-anything/
+.DS_Store
