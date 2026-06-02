@@ -97,32 +97,12 @@ module Mbeditor
 
     # POST /mbeditor/prune_branch_states — remove states for deleted branches
     def prune_branch_states
-<<<<<<< HEAD
-      state_path = workspace_root.join("tmp", "mbeditor_branch_states.json")
-
-=======
->>>>>>> c46510b7e07522403a9013a8ab0e700765934d04
       root = workspace_root.to_s
       out, _err, status = Open3.capture3("git", "-C", root, "branch", "--format=%(refname:short)")
       return render json: { pruned: [] } unless status.success?
 
       local_branches = out.split("\n").map(&:strip).reject(&:empty?)
-<<<<<<< HEAD
-      pruned = []
-
-      if File.exist?(state_path)
-        File.open(state_path, File::RDWR) do |f|
-          f.flock(File::LOCK_EX)
-          all    = JSON.parse(f.read) rescue {}
-          pruned = all.keys - local_branches
-          if pruned.any?
-            pruned.each { |b| all.delete(b) }
-            f.truncate(0)
-            f.rewind
-            f.write(all.to_json)
-          end
-        end
-      end
+      pruned = editor_state_service.prune_branch_states(active_branches: local_branches)
 
       hist_dir = workspace_root.join('tmp', 'mbeditor_history')
       if File.directory?(hist_dir)
@@ -133,9 +113,6 @@ module Mbeditor
         end
       end
 
-=======
-      pruned = editor_state_service.prune_branch_states(active_branches: local_branches)
->>>>>>> c46510b7e07522403a9013a8ab0e700765934d04
       render json: { pruned: pruned }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -909,141 +886,6 @@ module Mbeditor
       ExclusionMatcher.new(Mbeditor.configuration.excluded_paths).excluded?(rel)
     end
 
-<<<<<<< HEAD
-    # Stream search results using popen so we can stop reading early once we
-    # have collected `limit` matches (avoids buffering the entire rg/grep output
-    # in memory when searching large codebases for common tokens).
-    def stream_search_results(query, limit, use_regex: false, match_case: false, whole_word: false)
-      results = []
-
-      if RG_AVAILABLE
-        args = ["rg", "--json", "--no-ignore"]
-        args << "-F" unless use_regex
-        args << "--ignore-case" unless match_case
-        args << "--word-regexp" if whole_word
-        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).each { |p| args << "--glob=!#{p}" }
-        args += ["--", query, workspace_root.to_s]
-
-        IO.popen(args, err: File::NULL) do |io|
-          io.each_line do |raw|
-            break if results.length >= limit
-
-            begin
-              data = JSON.parse(raw)
-            rescue JSON::ParserError => e
-              Rails.logger.warn("[mbeditor] search: malformed rg JSON line: #{e.message}")
-              next
-            end
-            next unless data["type"] == "match"
-
-            md = data["data"]
-            # submatches[0].start is the 0-based byte offset within the line → 1-based column
-            col = md.dig("submatches", 0, "start").to_i + 1
-            results << {
-              file: relative_path(md.dig("path", "text").to_s),
-              line: md.dig("line_number"),
-              col:  col,
-              text: md.dig("lines", "text").to_s.strip
-            }
-          end
-        end
-      else
-        base_flags = use_regex ? "-E" : "-F"
-        args = ["grep", "-rn", base_flags]
-        args << "-i" unless match_case
-        args << "-w" if whole_word
-        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).reject { |p| p.include?("/") }.select { |d| d.match?(/\A[\w.\/-]+\z/) }.each { |d| args << "--exclude-dir=#{d}" }
-        args += [query, workspace_root.to_s]
-
-        IO.popen(args, err: File::NULL) do |io|
-          io.each_line do |raw|
-            break if results.length >= limit
-
-            raw.chomp!
-            next unless raw =~ /\A(.+?):(\d+):(.*)\z/
-
-            file_path = Regexp.last_match(1)
-            next unless file_path.start_with?(workspace_root.to_s)
-
-            rel = relative_path(file_path)
-            next if ExclusionMatcher.new(Mbeditor.configuration.excluded_paths).excluded?(rel)
-
-            line_text = Regexp.last_match(3)
-            # Find column for grep fallback: case-insensitive unless match_case requested
-            col_idx = match_case ? line_text.index(query) : line_text.downcase.index(query.downcase)
-            results << {
-              file: rel,
-              line: Regexp.last_match(2).to_i,
-              col:  col_idx ? col_idx + 1 : 1,
-              text: line_text.strip
-            }
-          end
-        end
-      end
-
-      results
-    end
-
-    # Count total matching lines across the workspace using rg --count (or grep -c).
-    # Fast: rg just counts without extracting context. Runs in a background thread.
-    def count_search_results(query, use_regex: false, match_case: false, whole_word: false)
-      total = 0
-      if RG_AVAILABLE
-        args = ["rg", "--count", "--no-ignore"]
-        args << "-F" unless use_regex
-        args << "--ignore-case" unless match_case
-        args << "--word-regexp" if whole_word
-        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).each { |p| args << "--glob=!#{p}" }
-        args += ["--", query, workspace_root.to_s]
-        IO.popen(args, err: File::NULL) do |io|
-          io.each_line { |line| total += line.strip.split(":").last.to_i rescue 0 }
-        end
-      else
-        base_flags = use_regex ? "-E" : "-F"
-        args = ["grep", "-rc", base_flags]
-        args << "-i" unless match_case
-        args << "-w" if whole_word
-        Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?).reject { |p| p.include?("/") }.each { |d| args << "--exclude-dir=#{d}" }
-        args += [query, workspace_root.to_s]
-        IO.popen(args, err: File::NULL) do |io|
-          io.each_line { |line| total += line.strip.split(":").last.to_i rescue 0 }
-        end
-      end
-      total
-    rescue StandardError
-      0
-    end
-
-    def build_tree(dir, max_depth: 10, depth: 0)
-      return [] if depth >= max_depth
-
-      matcher = ExclusionMatcher.new(Mbeditor.configuration.excluded_paths)
-      entries = Dir.entries(dir).sort.reject { |entry| entry == "." || entry == ".." }
-      entries.filter_map do |name|
-        full = File.join(dir, name)
-        rel = relative_path(full)
-        is_excl = matcher.excluded?(rel)
-
-        if File.directory?(full)
-          # Always traverse directories so they're visible and browsable in the tree.
-          # The excluded flag is respected by search and file operations, not tree rendering.
-          children = build_tree(full, max_depth: max_depth, depth: depth + 1)
-          node = { name: name, type: "folder", path: rel, children: children }
-          node[:excluded] = true if is_excl
-          node
-        else
-          node = { name: name, type: "file", path: rel }
-          node[:size] = (File.size(full) rescue nil) unless is_excl
-          node[:excluded] = true if is_excl
-          node
-        end
-      end
-    rescue Errno::EACCES
-      []
-    end
-
-=======
->>>>>>> c46510b7e07522403a9013a8ab0e700765934d04
     def ruby_def_include_dirs
       Array(Mbeditor.configuration.ruby_def_include_dirs).map(&:to_s).reject(&:blank?)
     end
