@@ -32,7 +32,11 @@ module Mbeditor
 
     def teardown
       FileUtils.rm_rf(@workspace)
-      Mbeditor.configure { |c| c.authenticate_with = nil }
+      Mbeditor.configure do |c|
+        c.authenticate_with = nil
+        c.rubocop_command   = "rubocop"
+      end
+      AvailabilityProbe.reset!
     end
 
     # ---------------------------------------------------------------------------
