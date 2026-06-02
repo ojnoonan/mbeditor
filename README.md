@@ -78,25 +78,54 @@ Mbeditor.configure do |config|
 end
 ```
 
-Available options:
+### Core
 
-- `allowed_environments` controls which Rails environments can access the engine. Default: `[:development]`.
-- `authenticate_with` accepts a proc that runs as a `before_action` in all engine controllers. Use it to plug in the host app's authentication. The proc executes via `instance_exec` inside the engine controller, so it has access to `session`, `cookies`, `redirect_to`, and auth library class methods (e.g. Authlogic's `UserSession.find`), but not helper methods defined in the host app's `ApplicationController`. Default: `nil` (no authentication).
-- `authentication_cache_ttl` caches the authentication result in the session for the given number of seconds (default: `0`, no caching). Set to e.g. `300` to avoid calling `authenticate_with` on every request — useful when the lambda is expensive (e.g. calls Authlogic's `current_user`). Trade-off: if the user logs out of the host app, mbeditor remains accessible for up to TTL seconds.
-- `workspace_root` sets the root directory exposed by Mbeditor. Default: `Rails.root` from the host app.
-- `excluded_paths` hides files and directories from the tree and path-based operations. Entries without `/` match names anywhere in the workspace path; entries with `/` match relative paths and their descendants. Default: `%w[.git tmp log node_modules .bundle coverage vendor/bundle]`.
-- `rubocop_command` sets the command used for inline Ruby linting and formatting. Default: `"rubocop"`.
-- `test_framework` sets the test framework. `:minitest` or `:rspec`. Auto-detected from file suffix, `.rspec`, or `test`/`spec` directory when `nil`. Default: `nil`.
-- `test_command` overrides the full command used to run a test file. When `nil`, the engine picks `bin/rails test` (Minitest) or `bin/rspec` / `bundle exec rspec` (RSpec). Default: `nil`.
-- `test_timeout` sets the maximum seconds a test run may take before being killed. Default: `60`.
-- `redmine_enabled` enables issue lookup integration. Default: `false`.
-- `redmine_url` sets the Redmine base URL. Required when `redmine_enabled` is `true`.
-- `redmine_api_key` sets the Redmine API key. Required when `redmine_enabled` is `true`.
-- `redmine_ticket_source` controls how the current Redmine ticket is identified. `:commit` scans the 100 most recent branch commits for a `#123` reference in the commit message. `:branch` reads the leading digits from the branch name (e.g. `123-my-feature` → ticket 123). Default: `:commit`.
-- `ruby_def_include_dirs` sets which workspace-relative directories are searched when resolving Ruby go-to-definition jumps (e.g. clicking a class name). Add any extra directories that hold Ruby source files you want the engine to index. Default: `%w[app/models app/controllers app/helpers app/concerns]`.
-- `related_files_custom_paths` adds extra base directories to the Rails related-files side panel. For each entry the panel looks for a subdirectory named after the current resource (plural or singular) and lists its files. For example, `"app/assets/javascripts/app"` will surface `app/assets/javascripts/app/users/` when you are editing a `users` resource. Default: `[]`.
-- `mount_path` sets an explicit URL prefix for resilient routing to serve from. When `nil`, the prefix is auto-detected from your `mount Mbeditor::Engine, at: "..."` line on every healthy boot — so a custom mount works without setting this. Set it only to override detection. Default: `nil`. See [Resilient Routing](#resilient-routing).
-- `resilient_routing` keeps mbeditor reachable when the host app's `config/routes.rb` is broken, by serving mbeditor's traffic from middleware that dispatches to a private route set. Setting it to `false` is the escape hatch: no middleware is inserted and the private set is never built. Default: `true`. See [Resilient Routing](#resilient-routing).
+| Option | Default | Description |
+|--------|---------|-------------|
+| `allowed_environments` | `[:development]` | Rails environments allowed to access the engine. |
+| `workspace_root` | `Rails.root` | Root directory exposed by Mbeditor. |
+| `excluded_paths` | `%w[.git tmp log node_modules .bundle coverage vendor/bundle]` | Files/directories hidden from the tree and path operations. Entries without `/` match a name anywhere in the path; entries with `/` match relative paths and their descendants. |
+| `rubocop_command` | `"rubocop"` | Command used for inline Ruby linting and formatting. |
+
+### Authentication
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `authenticate_with` | `nil` | Proc run as a `before_action` in all engine controllers. Executed via `instance_exec` inside the controller, so it has access to `session`, `cookies`, `redirect_to`, and auth-library class methods (e.g. Authlogic's `UserSession.find`) — but not helper methods from the host's `ApplicationController`. |
+| `authentication_cache_ttl` | `0` | Seconds to cache the auth result in the session (`0` = no caching). Set e.g. `300` to avoid calling `authenticate_with` on every request when the proc is expensive. Trade-off: after host logout, mbeditor stays accessible for up to TTL seconds. |
+
+### Test runner
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `test_framework` | `nil` | `:minitest` or `:rspec`. Auto-detected from file suffix, `.rspec`, or `test`/`spec` directory when `nil`. |
+| `test_command` | `nil` | Full command used to run a test file. When `nil`, picks `bin/rails test` (Minitest) or `bin/rspec` / `bundle exec rspec` (RSpec). |
+| `test_timeout` | `60` | Maximum seconds a test run may take before being killed. |
+
+### Redmine
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `redmine_enabled` | `false` | Enables issue-lookup integration. |
+| `redmine_url` | — | Redmine base URL. Required when `redmine_enabled` is `true`. |
+| `redmine_api_key` | — | Redmine API key. Required when `redmine_enabled` is `true`. |
+| `redmine_ticket_source` | `:commit` | How the current ticket is identified. `:commit` scans the 100 most recent branch commits for a `#123` reference; `:branch` reads leading digits from the branch name (e.g. `123-my-feature` → ticket 123). |
+
+### Ruby/Rails side panel
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ruby_def_include_dirs` | `%w[app/models app/controllers app/helpers app/concerns]` | Workspace-relative directories searched when resolving Ruby go-to-definition jumps. Add any extra dirs holding Ruby source you want indexed. |
+| `related_files_custom_paths` | `[]` | Extra base directories for the Rails related-files side panel. For each entry the panel looks for a subdirectory named after the current resource (plural or singular). E.g. `"app/assets/javascripts/app"` surfaces `app/assets/javascripts/app/users/` when editing a `users` resource. |
+
+### Resilient routing
+
+See [Resilient Routing](#resilient-routing) for details.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `mount_path` | `nil` | Explicit URL prefix to serve resilient routing from. When `nil`, auto-detected from your `mount Mbeditor::Engine, at: "..."` line on every healthy boot. Set only to override detection. |
+| `resilient_routing` | `true` | Keeps mbeditor reachable when the host's `config/routes.rb` is broken, by serving its traffic from middleware that dispatches to a private route set. Set to `false` as an escape hatch: no middleware is inserted and the private set is never built. |
 
 ## Test Runner
 
