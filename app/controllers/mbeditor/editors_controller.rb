@@ -15,7 +15,6 @@ module Mbeditor
     before_action :verify_mbeditor_client, unless: -> { request.get? || request.head? }
 
     IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
-    RG_AVAILABLE = system("which rg > /dev/null 2>&1")
 
     # GET /mbeditor — renders the IDE shell
     def index
@@ -33,11 +32,11 @@ module Mbeditor
       render json: {
         rootName: workspace_root.basename.to_s,
         rootPath: workspace_root.to_s,
-        rubocopAvailable: rubocop_available?,
+        rubocopAvailable: AvailabilityProbe.rubocop(workspace_root),
         rubocopConfigPath: rubocop_config_path,
-        hamlLintAvailable: haml_lint_available?,
-        gitAvailable: git_available?,
-        blameAvailable: git_blame_available?,
+        hamlLintAvailable: AvailabilityProbe.haml_lint(workspace_root),
+        gitAvailable: AvailabilityProbe.git(workspace_root),
+        blameAvailable: AvailabilityProbe.git(workspace_root),
         redmineEnabled: Mbeditor.configuration.redmine_enabled == true,
         testAvailable: test_available?,
         actionCableEnabled: action_cable_enabled?
@@ -46,69 +45,40 @@ module Mbeditor
 
     # GET /mbeditor/files — recursive file tree
     def files
-      root = workspace_root.to_s
-      cached = cached_file_tree(root)
-      return render json: cached if cached
-
-      tree = build_tree(root)
-      store_file_tree(root, tree)
-      render json: tree
+      render json: FileTreeService.build(workspace_root)
     end
 
     # GET /mbeditor/state — load workspace state
     def state
-      path = workspace_root.join("tmp", "mbeditor_workspace.json")
-      if File.exist?(path)
-        render json: JSON.parse(File.read(path))
-      else
-        render json: {}
-      end
-    rescue Errno::ENOENT
-      render json: {}
-    rescue JSON::ParserError
-      render json: {}
+      render json: editor_state_service.read_state
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
 
-    STATE_MAX_BYTES = 1 * 1024 * 1024
+    STATE_MAX_BYTES = EditorStateService::STATE_MAX_BYTES
 
     # POST /mbeditor/state — save workspace state
     def save_state
       raw = params[:state]
       raw = raw.to_unsafe_h if raw.respond_to?(:to_unsafe_h)
-      payload = raw.to_json
-      return render json: { error: "State payload too large" }, status: :content_too_large if payload.bytesize > STATE_MAX_BYTES
-
-      path = workspace_root.join("tmp", "mbeditor_workspace.json")
-      FileUtils.mkdir_p(workspace_root.join("tmp"))
-      File.open(path, File::RDWR | File::CREAT) do |f|
-        f.flock(File::LOCK_EX)
-        f.truncate(0)
-        f.rewind
-        f.write(payload)
-      end
+      editor_state_service.write_state(raw)
       render json: { ok: true }
+    rescue EditorStateService::PayloadTooLargeError
+      render json: { error: "State payload too large" }, status: :content_too_large
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
 
-    SAFE_BRANCH_NAME = /\A[a-zA-Z0-9._\-\/]+\z/
-    HISTORY_MAX_OPS      = 10_000
+    HISTORY_MAX_OPS        = 10_000
     HISTORY_COMPACT_TARGET = 5_000
+
 
     # GET /mbeditor/branch_state?branch=... — load per-branch pane state
     def branch_state
       branch = sanitize_branch_name(params[:branch])
       return render json: {}, status: :bad_request unless branch
 
-      path = workspace_root.join("tmp", "mbeditor_branch_states.json")
-      if File.exist?(path)
-        all = JSON.parse(File.read(path))
-        render json: (all[branch] || {})
-      else
-        render json: {}
-      end
+      render json: editor_state_service.read_branch_state(branch)
     rescue StandardError
       render json: {}
     end
@@ -117,32 +87,27 @@ module Mbeditor
       return render json: { error: "Invalid branch name" }, status: :bad_request unless branch
 
       payload = params[:state].to_unsafe_h
-      return render json: { error: "State payload too large" }, status: :content_too_large if payload.to_json.bytesize > STATE_MAX_BYTES
-
-      path = workspace_root.join("tmp", "mbeditor_branch_states.json")
-      FileUtils.mkdir_p(workspace_root.join("tmp"))
-      File.open(path, File::RDWR | File::CREAT) do |f|
-        f.flock(File::LOCK_EX)
-        existing = f.size > 0 ? JSON.parse(f.read) : {}
-        existing[branch] = payload
-        f.truncate(0)
-        f.rewind
-        f.write(existing.to_json)
-      end
+      editor_state_service.write_branch_state(branch, payload)
       render json: { ok: true }
+    rescue EditorStateService::PayloadTooLargeError
+      render json: { error: "State payload too large" }, status: :content_too_large
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
 
     # POST /mbeditor/prune_branch_states — remove states for deleted branches
     def prune_branch_states
+<<<<<<< HEAD
       state_path = workspace_root.join("tmp", "mbeditor_branch_states.json")
 
+=======
+>>>>>>> c46510b7e07522403a9013a8ab0e700765934d04
       root = workspace_root.to_s
       out, _err, status = Open3.capture3("git", "-C", root, "branch", "--format=%(refname:short)")
       return render json: { pruned: [] } unless status.success?
 
       local_branches = out.split("\n").map(&:strip).reject(&:empty?)
+<<<<<<< HEAD
       pruned = []
 
       if File.exist?(state_path)
@@ -168,6 +133,9 @@ module Mbeditor
         end
       end
 
+=======
+      pruned = editor_state_service.prune_branch_states(active_branches: local_branches)
+>>>>>>> c46510b7e07522403a9013a8ab0e700765934d04
       render json: { pruned: pruned }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -485,13 +453,7 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
 
-      # Ensure workspace is scanned so include_calls are populated in the cache.
-      # Fast no-op on subsequent calls (mtime checks only).
       excl_patterns = Array(Mbeditor.configuration.excluded_paths).map(&:to_s).reject(&:blank?)
-      RubyDefinitionService.scan(workspace_root,
-                                 excluded_paths: excl_patterns,
-                                 included_dirs:  ruby_def_include_dirs)
-
       module_names = RubyDefinitionService.includes_in_file(path)
       includes = module_names.filter_map do |mod_name|
         mod_file = RubyDefinitionService.module_defined_in(
@@ -526,9 +488,9 @@ module Mbeditor
       return render json: { error: "Query too long" }, status: :bad_request if query.length > 500
 
       # On first page, count total matches in parallel with fetching results.
-      count_thread = offset == 0 ? Thread.new { count_search_results(query, use_regex: use_regex, match_case: match_case, whole_word: whole_word) } : nil
+      count_thread = offset == 0 ? Thread.new { SearchReplaceService.count(workspace_root, query, use_regex: use_regex, match_case: match_case, whole_word: whole_word, excluded_paths: Mbeditor.configuration.excluded_paths) } : nil
 
-      results   = stream_search_results(query, needed, use_regex: use_regex, match_case: match_case, whole_word: whole_word)
+      results   = SearchReplaceService.search(workspace_root, query, limit: needed, use_regex: use_regex, match_case: match_case, whole_word: whole_word, excluded_paths: Mbeditor.configuration.excluded_paths)
       has_more  = results.length > offset + limit
       response  = { results: results[offset, limit] || [], has_more: has_more }
       if count_thread
@@ -543,8 +505,6 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
-    MAX_REPLACE_FILES = 500
-
     # POST /mbeditor/replace_in_files
     # Replaces a string/pattern across all matching files in the workspace.
     # Returns { replaced_count:, files_affected:[], errors:[], partial: }
@@ -558,85 +518,17 @@ module Mbeditor
       return render json: { error: "Query is required" }, status: :bad_request if query.blank?
       return render json: { error: "Query too long" }, status: :bad_request if query.length > 500
 
-      # Collect all unique file paths that have at least one match.
-      # Use a large limit to get all matching files; stream_search_results handles deduplication by file internally.
-      raw_results = stream_search_results(query, 10_000, use_regex: use_regex, match_case: match_case, whole_word: whole_word)
-      file_paths = raw_results.map { |r| r[:file] }.uniq
+      result = SearchReplaceService.replace(
+        workspace_root, query, replacement,
+        use_regex: use_regex, match_case: match_case, whole_word: whole_word,
+        excluded_paths: Mbeditor.configuration.excluded_paths
+      )
 
-      # Fix 3: Cap the number of files to process
-      if file_paths.length > MAX_REPLACE_FILES
-        return render json: { error: "Too many files matched (#{file_paths.length}). Narrow your search." }, status: :unprocessable_entity
+      if result.key?(:error)
+        render json: { error: result[:error] }, status: :unprocessable_entity
+      else
+        render json: result
       end
-
-      replaced_count = 0
-      files_affected = []
-      errors = []
-
-      # Build the Ruby Regexp to use for gsub
-      begin
-        pattern = if use_regex
-          flags = match_case ? 0 : Regexp::IGNORECASE
-          Regexp.new(whole_word ? "\\b(?:#{query})\\b" : query, flags)
-        else
-          flags = match_case ? 0 : Regexp::IGNORECASE
-          Regexp.new(whole_word ? "\\b#{Regexp.escape(query)}\\b" : Regexp.escape(query), flags)
-        end
-      rescue RegexpError => e
-        return render json: { error: "Invalid regex: #{e.message}" }, status: :bad_request
-      end
-
-      file_paths.each do |rel_path|
-        full_path = resolve_path(rel_path)
-        unless full_path
-          errors << { file: rel_path, error: "Forbidden" }
-          next
-        end
-
-        # Fix 2: Check path_blocked_for_operations?
-        if path_blocked_for_operations?(full_path)
-          errors << { file: rel_path, error: "Forbidden" }
-          next
-        end
-
-        unless File.file?(full_path)
-          errors << { file: rel_path, error: "File not found" }
-          next
-        end
-        if File.size(full_path) > FileOperationService::MAX_FILE_SIZE_BYTES
-          errors << { file: rel_path, error: "File too large" }
-          next
-        end
-
-        # Fix 1: Wrap per-file gsub/scan in a timeout to prevent ReDoS
-        begin
-          Timeout::timeout(5) do
-            content = File.binread(full_path).force_encoding("UTF-8")
-            replacements_in_file = content.scan(pattern).length
-            new_content = content.gsub(pattern, replacement)
-
-            # Fix 4: Use new_content != content instead of delta logic
-            if new_content != content
-              File.binwrite(full_path, new_content.encode("UTF-8", invalid: :replace, undef: :replace))
-              files_affected << rel_path
-              replaced_count += replacements_in_file
-            end
-          end
-        rescue Timeout::Error
-          errors << { file: rel_path, error: "Timed out processing file" }
-          next
-        rescue StandardError => e
-          errors << { file: rel_path, error: e.message }
-          next
-        end
-      end
-
-      # Fix 5: Surface partial failure
-      render json: {
-        replaced_count: replaced_count,
-        files_affected: files_affected,
-        errors: errors,
-        partial: errors.any? && files_affected.any?
-      }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -730,7 +622,7 @@ module Mbeditor
       code = params[:code] || File.read(path)
 
       if File.basename(filename).end_with?('.haml')
-        unless haml_lint_available?
+        unless AvailabilityProbe.haml_lint(workspace_root)
           return render json: { error: "haml-lint not available", markers: [] }, status: :unprocessable_content
         end
 
@@ -738,7 +630,7 @@ module Mbeditor
         return render json: { markers: markers }
       end
 
-      cmd = rubocop_command + ["--no-server", "--stdin", filename, "--format", "json", "--no-color"]
+      cmd = AvailabilityProbe.rubocop_command(workspace_root) + ["--no-server", "--stdin", filename, "--format", "json", "--no-color"]
       env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
       output = run_with_timeout(env, cmd, stdin_data: code)
 
@@ -799,7 +691,7 @@ module Mbeditor
         f.flush
         tmpfile = f.path
 
-        cmd = rubocop_command + ["--no-server", "-A", "--no-color", tmpfile]
+        cmd = AvailabilityProbe.rubocop_command(workspace_root) + ["--no-server", "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
         _out, _err, status = Open3.capture3(env, *cmd)
 
@@ -902,7 +794,7 @@ module Mbeditor
         f.flush
         tmpfile = f.path
 
-        cmd = rubocop_command + ["--no-server", "-A", "--no-color", tmpfile]
+        cmd = AvailabilityProbe.rubocop_command(workspace_root) + ["--no-server", "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
         _out, _err, status = Open3.capture3(env, *cmd)
         unless status.success? || status.exitstatus == 1
@@ -950,7 +842,7 @@ module Mbeditor
 
     def broadcast_files_changed
       root = workspace_root.to_s
-      invalidate_file_tree_cache(root)
+      FileTreeService.invalidate(root)
       Thread.new do
         GitInfoService.invalidate(root)
       rescue => e
@@ -964,11 +856,15 @@ module Mbeditor
       # Never let a broadcast failure affect the HTTP response
     end
 
+    def editor_state_service
+      @editor_state_service ||= EditorStateService.new(workspace_root)
+    end
+
     def sanitize_branch_name(branch)
       return nil if branch.blank?
       str = branch.to_s.strip
       return nil if str.include?('..')
-      str.match?(SAFE_BRANCH_NAME) ? str : nil
+      str.match?(EditorStateService::SAFE_BRANCH_NAME) ? str : nil
     end
 
     def action_cable_enabled?
@@ -1013,6 +909,7 @@ module Mbeditor
       ExclusionMatcher.new(Mbeditor.configuration.excluded_paths).excluded?(rel)
     end
 
+<<<<<<< HEAD
     # Stream search results using popen so we can stop reading early once we
     # have collected `limit` matches (avoids buffering the entire rg/grep output
     # in memory when searching large codebases for common tokens).
@@ -1145,6 +1042,8 @@ module Mbeditor
       []
     end
 
+=======
+>>>>>>> c46510b7e07522403a9013a8ab0e700765934d04
     def ruby_def_include_dirs
       Array(Mbeditor.configuration.ruby_def_include_dirs).map(&:to_s).reject(&:blank?)
     end
@@ -1208,109 +1107,14 @@ module Mbeditor
       }
     end
 
-    def rubocop_command
-      command = Mbeditor.configuration.rubocop_command.to_s.strip
-      command = "rubocop" if command.empty?
-      tokens = Shellwords.split(command)
-
-      local_bin = workspace_root.join("bin", "rubocop")
-      return [local_bin.to_s] if tokens == ["rubocop"] && local_bin.exist?
-
-      tokens
-    rescue ArgumentError
-      ["rubocop"]
-    end
-
     def rubocop_config_path
       candidate = workspace_root.join(".rubocop.yml")
       candidate.exist? ? ".rubocop.yml" : nil
     end
 
-    PROBE_MUTEX     = Mutex.new
-    FILE_TREE_MUTEX = Mutex.new
-    private_constant :PROBE_MUTEX, :FILE_TREE_MUTEX
-
-    def rubocop_available?
-      key = Mbeditor.configuration.rubocop_command.to_s
-      probe_cached(:@rubocop_available_cache, key) do
-        _out, _err, status = Open3.capture3(*rubocop_command, "--version")
-        status.success?
-      end
-    end
-
-    def haml_lint_available?
-      cmd = haml_lint_command
-      key = cmd.join(" ")
-      probe_cached(:@haml_lint_available_cache, key) do
-        _out, _err, status = Open3.capture3(*cmd, "--version")
-        status.success?
-      end
-    end
-
-    def git_available?
-      key = workspace_root.to_s
-      probe_cached(:@git_available_cache, key) do
-        _out, _err, status = Open3.capture3("git", "-C", key, "rev-parse", "--is-inside-work-tree")
-        status.success?
-      end
-    end
-
-    def cached_file_tree(root, ttl: 15)
-      FILE_TREE_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(:@file_tree_cache) || {}
-        entry = cache[root]
-        return entry[:data] if entry && (Process.clock_gettime(Process::CLOCK_MONOTONIC) - entry[:ts]) < ttl
-      end
-      nil
-    end
-
-    def store_file_tree(root, data)
-      FILE_TREE_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(:@file_tree_cache) || {}
-        cache[root] = { ts: Process.clock_gettime(Process::CLOCK_MONOTONIC), data: data }
-        self.class.instance_variable_set(:@file_tree_cache, cache)
-      end
-    end
-
-    def invalidate_file_tree_cache(root)
-      FILE_TREE_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(:@file_tree_cache) || {}
-        cache.delete(root)
-        self.class.instance_variable_set(:@file_tree_cache, cache)
-      end
-    end
-
-    def probe_cached(ivar, key, &block)
-      PROBE_MUTEX.synchronize do
-        cache = self.class.instance_variable_get(ivar) ||
-                self.class.instance_variable_set(ivar, {})
-        unless cache.key?(key)
-          cache[key] = begin
-            block.call
-          rescue StandardError
-            false
-          end
-        end
-        cache[key]
-      end
-    end
-
-    alias git_blame_available? git_available?
-
     def test_available?
       root = workspace_root.to_s
       File.directory?(File.join(root, "test")) || File.directory?(File.join(root, "spec"))
-    end
-
-    def haml_lint_command
-      workspace_bin = workspace_root.join("bin", "haml-lint")
-      return [workspace_bin.to_s] if workspace_bin.exist?
-
-      begin
-        [Gem.bin_path("haml_lint", "haml-lint")]
-      rescue Gem::Exception, Gem::GemNotFoundException
-        ["haml-lint"]
-      end
     end
 
     def run_haml_lint(code)
@@ -1318,7 +1122,7 @@ module Mbeditor
       Tempfile.create(["mbeditor_haml", ".haml"]) do |f|
         f.write(code)
         f.flush
-        output, _err, _status = Open3.capture3(*haml_lint_command, "--reporter", "json", "--no-color", f.path)
+        output, _err, _status = Open3.capture3(*AvailabilityProbe.haml_lint_command(workspace_root), "--reporter", "json", "--no-color", f.path)
         idx = output.index("{")
         result = idx ? JSON.parse(output[idx..]) : {}
         result = {} unless result.is_a?(Hash)

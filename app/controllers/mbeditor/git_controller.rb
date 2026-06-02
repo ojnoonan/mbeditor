@@ -80,38 +80,7 @@ module Mbeditor
       return render json: { error: "sha required" }, status: :bad_request if sha.blank?
       return render json: { error: "Invalid sha" }, status: :bad_request unless sha.match?(/\A[0-9a-fA-F]{1,40}\z/)
 
-      files_output, _err, files_status = Open3.capture3(
-        "git", "-C", workspace_root.to_s,
-        "diff-tree", "--no-commit-id", "-r", "--name-status", sha
-      )
-      numstat_output, _err, numstat_status = Open3.capture3(
-        "git", "-C", workspace_root.to_s,
-        "diff-tree", "--no-commit-id", "-r", "--numstat", sha
-      )
-
-      numstat_map = numstat_status.success? ? GitService.parse_numstat(numstat_output) : {}
-
-      files = []
-      if files_status.success?
-        files = files_output.lines.map do |line|
-          parts = line.strip.split("\t", 2)
-          next if parts.length < 2
-          file = { "status" => parts[0].strip, "path" => parts[1].strip }
-          file.merge(numstat_map.fetch(file["path"], {}))
-        end.compact
-      end
-
-      log_output, _err, log_status = Open3.capture3(
-        "git", "-C", workspace_root.to_s,
-        "log", "-1", "--pretty=format:%s%x1f%an%x1f%aI", sha
-      )
-      meta = {}
-      if log_status.success?
-        fields = log_output.strip.split("\x1f", 3)
-        meta = { "title" => fields[0].to_s, "author" => fields[1].to_s, "date" => fields[2].to_s }
-      end
-
-      render json: { sha: sha, title: meta["title"] || "", author: meta["author"] || "", date: meta["date"] || "", files: files }
+      render json: GitCommitDetailService.new(repo_path: workspace_root, sha: sha).call
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -122,35 +91,7 @@ module Mbeditor
     # scope=branch → git diff <branch-base>..HEAD (same baseline as git_info)
     def combined_diff
       scope = params[:scope] == 'branch' ? :branch : :local
-
-      if scope == :local
-        out, _err, status = Open3.capture3("git", "-C", workspace_root.to_s, "diff", "HEAD")
-        out = status.success? ? out : ""
-      else
-        repo = workspace_root.to_s
-        branch = GitService.current_branch(repo)
-        base_sha, = GitService.find_branch_base(repo, branch)
-
-        if base_sha.present?
-          out, _err, status = Open3.capture3("git", "-C", repo, "diff", "#{base_sha}..HEAD")
-          out = status.success? ? out : ""
-        else
-          upstream_out, _err, upstream_status = Open3.capture3(
-            "git", "-C", repo,
-            "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"
-          )
-          upstream = upstream_status.success? ? upstream_out.strip : nil
-          upstream = nil unless upstream&.match?(%r{\A[\w./-]+\z})
-
-          if upstream.present?
-            out, _err, status = Open3.capture3("git", "-C", repo, "diff", "#{upstream}..HEAD")
-            out = status.success? ? out : ""
-          else
-            return render plain: "", content_type: "text/plain"
-          end
-        end
-      end
-
+      out = GitCombinedDiffService.new(repo_path: workspace_root, scope: scope).call
       render plain: out, content_type: "text/plain"
     rescue StandardError
       render plain: "", content_type: "text/plain"

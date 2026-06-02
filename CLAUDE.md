@@ -6,7 +6,7 @@ Mbeditor (Mini Browser Editor) is a **mountable Rails engine** gem providing a b
 
 ```bash
 bundle install
-bundle exec rake test          # 403 tests, 1425 assertions
+bundle exec rake test          # 495 tests, 1681 assertions
 cd test/dummy && rails server  # http://localhost:3000/mbeditor
 ```
 
@@ -14,12 +14,16 @@ cd test/dummy && rails server  # http://localhost:3000/mbeditor
 
 **Backend:** Rails engine. Controllers are thin renderers; business logic lives in `app/services/mbeditor/`. Key services:
 - `GitInfoService` — concurrent git metadata fetch (wave orchestration, 5 s TTL cache)
-- `CodeSearchService` — rg/grep subprocess execution with fallback
+- `SearchReplaceService` — rg/grep subprocess execution, ReDoS guards, replace-in-files (supersedes `CodeSearchService`)
+- `EditorStateService` — JSON state persistence with file locking; used by both `EditorsController` and `EditorChannel`
 - `ExclusionMatcher` — unified path exclusion predicate
 - `FileOperationService` — all file mutations (save, create, rename, delete) with path-safety invariants
 - `ProcessRunner` — subprocess-with-timeout (used by `GitService`, `TestRunnerService`, lint path)
+- `AvailabilityProbe` — checks tool availability (rg, rubocop, haml_lint, etc.)
+- `FileTreeService` — builds the directory tree response
+- `RubyDefinitionService` — AST-based definition search with self-warming disk cache
 
-Git features in `git_controller.rb`. Git primitive wrappers in `GitService`.
+Git features in `git_controller.rb`. Git primitive wrappers in `GitService`. Dedicated services for each git operation (`GitDiffService`, `GitBlameService`, `GitFileHistoryService`, `GitCommitGraphService`, `GitCommitDetailService`, `GitCombinedDiffService`).
 
 **Frontend:** Plain JS + React + Monaco in `app/assets/javascripts/mbeditor/`. **No build step** — edit files directly. Vendored libs in `vendor/assets/`, Monaco in `public/monaco-editor/`.
 

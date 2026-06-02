@@ -27,55 +27,77 @@ module Mbeditor
 
     # ── save_state ─────────────────────────────────────────────────────────────
 
-    test "save_state writes workspace state to disk" do
+    test "save_state delegates to EditorStateService#write_state with the correct payload" do
       subscribe
-      state_dir = workspace_root.join("tmp")
-      FileUtils.mkdir_p(state_dir)
+      received_state = nil
+      fake_service = Object.new
+      fake_service.define_singleton_method(:write_state) { |s| received_state = s }
 
-      perform :save_state, state: { openTabs: ["foo.rb"] }
+      with_fake_editor_state_service(fake_service) do
+        perform :save_state, "state" => { "openTabs" => ["foo.rb"] }
+      end
 
-      path = workspace_root.join("tmp", "mbeditor_workspace.json")
-      assert File.exist?(path), "mbeditor_workspace.json should be written"
-      data = JSON.parse(File.read(path))
-      assert_equal ["foo.rb"], data["openTabs"]
-    ensure
-      File.delete(workspace_root.join("tmp", "mbeditor_workspace.json")) rescue nil
+      assert_equal ["foo.rb"], received_state["openTabs"]
     end
 
-    test "save_state silently ignores oversized payloads" do
+    test "save_state does not raise when EditorStateService raises" do
       subscribe
-      big = { data: "x" * (Mbeditor::EditorChannel::STATE_MAX_BYTES + 1) }
-      assert_nothing_raised { perform :save_state, state: big }
+      write_state_called = false
+      fake_service = Object.new
+      fake_service.define_singleton_method(:write_state) { |_| write_state_called = true; raise "boom" }
+
+      with_fake_editor_state_service(fake_service) do
+        assert_nothing_raised { perform :save_state, state: { x: 1 } }
+      end
+
+      assert write_state_called, "EditorStateService#write_state should have been called"
     end
 
     # ── save_branch_state ──────────────────────────────────────────────────────
 
-    test "save_branch_state writes branch state to disk" do
+    test "save_branch_state delegates to EditorStateService#write_branch_state with correct branch and state" do
       subscribe
-      FileUtils.mkdir_p(workspace_root.join("tmp"))
+      received_branch = nil
+      received_state  = nil
+      fake_service = Object.new
+      fake_service.define_singleton_method(:write_branch_state) { |b, s| received_branch = b; received_state = s }
 
-      perform :save_branch_state, branch: "main", state: { panes: [] }
+      with_fake_editor_state_service(fake_service) do
+        perform :save_branch_state, "branch" => "main", "state" => { "panes" => [] }
+      end
 
-      path = workspace_root.join("tmp", "mbeditor_branch_states.json")
-      assert File.exist?(path), "mbeditor_branch_states.json should be written"
-      data = JSON.parse(File.read(path))
-      assert data.key?("main")
-      assert_equal [], data["main"]["panes"]
-    ensure
-      File.delete(workspace_root.join("tmp", "mbeditor_branch_states.json")) rescue nil
+      assert_equal "main", received_branch
+      assert_equal [], received_state["panes"]
     end
 
-    test "save_branch_state rejects invalid branch names" do
+    test "save_branch_state does not raise when EditorStateService raises" do
       subscribe
-      assert_nothing_raised { perform :save_branch_state, branch: "bad name!", state: {} }
-      path = workspace_root.join("tmp", "mbeditor_branch_states.json")
-      assert_not File.exist?(path), "should not create state file for invalid branch"
+      write_branch_state_called = false
+      fake_service = Object.new
+      fake_service.define_singleton_method(:write_branch_state) do |_, _|
+        write_branch_state_called = true
+        raise "boom"
+      end
+
+      with_fake_editor_state_service(fake_service) do
+        assert_nothing_raised { perform :save_branch_state, branch: "main", state: {} }
+      end
+
+      assert write_branch_state_called, "EditorStateService#write_branch_state should have been called"
     end
 
     private
 
     def workspace_root
       Pathname.new(@workspace)
+    end
+
+    def with_fake_editor_state_service(fake_service)
+      original_new = EditorStateService.method(:new)
+      EditorStateService.define_singleton_method(:new) { |*| fake_service }
+      yield
+    ensure
+      EditorStateService.define_singleton_method(:new, original_new)
     end
   end
 end

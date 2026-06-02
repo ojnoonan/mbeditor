@@ -33,6 +33,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dirty marker in Rails panel** now uses the same orange (`#e5c07b`) as the tab bar dirty dot.
 - **Rails panel branch-switch UX** — tabs stay visible (read-only) during a branch switch instead of disappearing immediately; a `branch_state_restore` setting (default `true`) controls whether tab state is saved/restored across branch switches.
 
+## [Unreleased] — internal refactor (2026-05-23)
+
+### Changed (no user-visible behavior change)
+- **`AvailabilityProbe` extracted** — tool-availability checks (`rg`, `rubocop`, `haml_lint`, `git`, etc.) pulled out of `EditorsController` into `AvailabilityProbe`. Closes #22, #23, #24.
+- **`FileTreeService` extracted** — directory-tree construction pulled out of `EditorsController` into `FileTreeService`. Closes #22, #23, #24.
+- **`SearchReplaceService` extracted** — `rg`/`grep` detection, flag building, ReDoS guards, per-file timeout (`5 s`), size cap, encoding handling, and replace-in-files all unified in one service. `stream_search_results`, `count_search_results`, `RG_AVAILABLE`, and the inline 95-line `replace_in_files` action removed from the controller; replaced by thin delegators. Closes #25, #26, #27, #28.
+- **`EditorStateService` extracted** — JSON state persistence (file locking, size limits, error handling) was duplicated between `EditorsController` and `EditorChannel`. Both protocol layers now delegate to `EditorStateService`; fixing a locking bug requires editing one file. Closes #29, #30, #31, #32.
+- **`RubyDefinitionService` cache encapsulated** — `load_disk_cache_once`, `persist_cache`, `scan`, `file_cache`, and `mutex` removed from the public interface. `defs_in_file` and `includes_in_file` self-warm on cache miss; callers no longer need to manage lifecycle. Warmup hack in `UnusedMethodsService` removed. Closes #33, #34, #35, #36.
+- **`GitCommitDetailService` and `GitCombinedDiffService` extracted** — the two `GitController` actions that contained raw `Open3.capture3` calls (`commit_detail`, `combined_diff`) are now thin delegators. No `EditorsController` action contains subprocess logic. Closes #37, #38, #41.
+
+### Tests
+- 92 new tests and 256 new assertions across 6 new service test files; suite now at 495 tests / 1681 assertions (up from 403 / 1425).
+
+---
+
 ## [Unreleased] — internal refactor (2026-05-17)
 
 ### Changed (no user-visible behavior change)
