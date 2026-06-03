@@ -7,8 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.2] - 2026-06-03
 
-### Fixed
-- **What's New auto-open on first install** — the changelog tab now opens on first-ever use as well as on upgrades. Previously it required a prior `seen` version in localStorage, so users who had never opened the editor before (or whose storage was cleared) never saw the panel automatically.
+### Changed
+- **Changelog entries backfilled** — added full release notes for 0.7.1 (persistent undo history, `db/structure.sql` schema support, Rails panel fixes) so the What's New panel shows accurate content on upgrade.
+- **Release workflow documented** — `CLAUDE.md` now describes the release process so future releases can be triggered with a single instruction.
 
 ---
 
