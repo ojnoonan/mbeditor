@@ -1610,6 +1610,26 @@ var MbeditorApp = function MbeditorApp() {
 
   var resourceLabelFromPath = function(p) {
     if (!p) return null;
+
+    // Custom paths are checked first so they work regardless of top-level prefix.
+    // Paths under app/assets/, app/javascript/, etc. never match standard
+    // app/controllers|models|views|helpers, so the check must happen first.
+    var customPaths = customPathsRef.current;
+    for (var ci = 0; ci < customPaths.length; ci++) {
+      var base = customPaths[ci];
+      if (p.startsWith(base + '/')) {
+        var rest = p.slice(base.length + 1);
+        var resource = rest.split('/')[0].replace(/\.[^.]+$/, '');
+        resource = resource.replace(/_(controller|model|helper|service)$/, '');
+        if (resource) {
+          var seg = resource.replace(/ies$/, 'y')
+            .replace(/([^aeiou])es$/, '$1')
+            .replace(/([^s])s$/, '$1');
+          return seg.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+        }
+      }
+    }
+
     var parts = p.split('/');
     var file = parts[parts.length - 1];
     var name;
@@ -1624,22 +1644,9 @@ var MbeditorApp = function MbeditorApp() {
       else if (parts[1] === 'models') name = file.replace(/_(test|spec)\.rb$/, '');
       else return null;
     } else {
-      // Check custom paths
-      var customPaths = customPathsRef.current;
-      for (var ci = 0; ci < customPaths.length; ci++) {
-        var base = customPaths[ci];
-        if (p.startsWith(base + '/')) {
-          var rest = p.slice(base.length + 1);
-          var resource = rest.split('/')[0].replace(/\.[^.]+$/, '');
-          // Strip Rails-style suffixes so custom-path files group with their controller/model
-          resource = resource.replace(/_(controller|model|helper|service)$/, '');
-          if (resource) { name = resource; break; }
-        }
-      }
-      if (!name) return null;
+      return null;
     }
     var seg = (name || '').split('/').pop() || name || '';
-    // Normalize plural→singular so views/users and models/user share one group
     seg = seg.replace(/ies$/, 'y')
              .replace(/([^aeiou])es$/, '$1')
              .replace(/([^s])s$/, '$1');

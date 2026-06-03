@@ -5,10 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-06-03
+
+### Fixed
+- **Custom path reverse lookup (frontend)** — the v0.7.3 backend fix was complete, but the frontend's `resourceLabelFromPath` still returned `null` for paths under `app/` that weren't `controllers|models|views|helpers`, so custom paths like `app/assets/javascripts/…` were never recognized. Moved the custom-path check to the top of the function, matching the backend approach.
+
+---
+
 ## [0.7.3] - 2026-06-03
 
 ### Fixed
-- **Custom path reverse lookup** — moved the custom-path check in `extract_resource_names` before the `case` statement so paths under `app/assets/`, `app/javascript/`, etc. are handled. Stripped `_controller`/`_model`/`_helper`/`_service` suffixes from custom-path filenames in both backend and frontend for consistent label/grouping.
+- **Custom path reverse lookup (backend)** — moved the custom-path check in `extract_resource_names` before the `case` statement so paths under `app/assets/`, `app/javascript/`, etc. are handled. Stripped `_controller`/`_model`/`_helper`/`_service` suffixes from custom-path filenames for consistent label/grouping.
 - **Schema modal `self.table_name` support** — reads `self.table_name` from the model file before falling back to `ActiveSupport::Inflector.tableize`, enabling custom table names.
 - **Structure.sql broader schema-prefix regex** — handles quoted schemas, non-public schemas, and no prefix.
 - **PostgreSQL type coverage** — expanded `sql_type_to_rails` with full PostgreSQL type coverage (timestamptz, double precision, citext, hstore, geometric types, etc.).
