@@ -39,6 +39,59 @@ module Mbeditor
       assert_text "README.md", wait: 10
     end
 
+    test "collaborative-editing globals are reachable from the browser" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      # The vendored collab bundle publishes the exact contract the frontend
+      # collaboration slices bind against (matching the upstream npm names).
+      assert_equal "object", wait_for_global_typeof("window.Y"),
+                   "Yjs (window.Y) should be exposed by the vendored collab bundle"
+      assert_equal "function", wait_for_global_typeof("window.MonacoBinding"),
+                   "y-monaco (window.MonacoBinding) should be exposed by the vendored collab bundle"
+      assert_equal "object", wait_for_global_typeof("window.awarenessProtocol"),
+                   "y-protocols awareness (window.awarenessProtocol) should be exposed by the vendored collab bundle"
+
+      # Spot-check the members the later slices actually use, so a bad rebuild
+      # (e.g. tree-shaken exports) fails loudly rather than at runtime.
+      assert_equal "function", page.evaluate_script("typeof window.Y.Doc")
+      assert_equal "function", page.evaluate_script("typeof window.Y.UndoManager")
+      assert_equal "function", page.evaluate_script("typeof window.Y.applyUpdate")
+      assert_equal "function", page.evaluate_script("typeof window.awarenessProtocol.Awareness")
+      assert_equal "function", page.evaluate_script("typeof window.awarenessProtocol.encodeAwarenessUpdate")
+    end
+
+    test "external on-disk edit does not clobber a collaboratively-bound buffer" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      # Cable is mounted in the dummy app; establish the WebSocket up front so the
+      # first opener seeds and binds the shared Yjs document deterministically (the
+      # app's own auto-connect is timing-sensitive under headless Chrome).
+      page.execute_script("window.WebSocketService.connect(true);")
+      assert wait_for_js("window.WebSocketService.isCableAvailable()"),
+             "Action Cable should be available in the dummy app"
+
+      all(".tree-item-name", text: "README.md").first.click
+      assert_selector ".monaco-editor", wait: 10
+
+      # Wait until the collaborative binding is live for README.md.
+      assert wait_for_js("window.CollaborationService.isAttached('README.md')"),
+             "collaboration binding should attach for README.md"
+      wait_for_editor_value("# Hello\n")
+
+      # Another tool edits the file on disk while it's open and collab-bound.
+      File.write(File.join(@workspace, "README.md"), "# Changed on disk\n")
+
+      # Refresh-workspace runs the external-change detection
+      # (checkOpenTabsForExternalChanges) against the now-changed file on disk.
+      find("button[title='Refresh workspace']").click
+
+      # The live shared buffer wins: the external disk content is NOT applied over
+      # the collaborative buffer.
+      assert_editor_value_stays("# Hello\n")
+    end
+
     test "clicking a file opens it in the editor" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
@@ -521,6 +574,45 @@ module Mbeditor
         return found if found
         return nil if Time.now >= deadline
         sleep 0.2
+      end
+    end
+
+    # Polls until `typeof <expr>` settles to something other than "undefined"
+    # (the vendored collab bundle loads via a deferred <script>, so the global
+    # may not exist on the first tick). Returns the final typeof string.
+    def wait_for_global_typeof(expr, timeout: 10)
+      deadline = Time.now + timeout
+      loop do
+        kind = page.evaluate_script("typeof #{expr}")
+        return kind if kind != "undefined"
+        return kind if Time.now >= deadline
+
+        sleep 0.1
+      end
+    end
+
+    # Polls until the JS expression evaluates truthy (or timeout). Returns the bool.
+    def wait_for_js(expr, timeout: 10)
+      deadline = Time.now + timeout
+      loop do
+        return true if page.evaluate_script("!!(#{expr})")
+        return false if Time.now >= deadline
+
+        sleep 0.1
+      end
+    end
+
+    # Asserts the editor value equals +expected+ and stays that way for +hold+
+    # seconds — catching a late, asynchronous clobber that a single read would miss.
+    def assert_editor_value_stays(expected, hold: 1.5)
+      deadline = Time.now + hold
+      loop do
+        value = active_editor_value
+        assert_equal expected, value,
+                     "editor value changed to #{value.inspect}; the shared buffer was clobbered"
+        break if Time.now >= deadline
+
+        sleep 0.1
       end
     end
 

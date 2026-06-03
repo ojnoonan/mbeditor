@@ -25,6 +25,67 @@ module Mbeditor
       assert_nothing_raised { unsubscribe }
     end
 
+    test "subscription is rejected when authenticate_with halts" do
+      previous = Mbeditor.configuration.authenticate_with
+      Mbeditor.configuration.authenticate_with = proc { head :forbidden }
+
+      subscribe
+
+      assert subscription.rejected?
+      assert_no_streams
+    ensure
+      Mbeditor.configuration.authenticate_with = previous
+    end
+
+    # ── presence ─────────────────────────────────────────────────────────────
+
+    test "presence relays the participant heartbeat on the mbeditor_editor stream" do
+      subscribe
+
+      expected = {
+        "type"         => "presence",
+        "status"       => "here",
+        "client_id"    => "abc123",
+        "name"         => "Swift Otter",
+        "colour"       => "#61afef",
+        "current_file" => "app/models/user.rb"
+      }
+      assert_broadcast_on("mbeditor_editor", expected) do
+        perform :presence,
+                "client_id"    => "abc123",
+                "name"         => "Swift Otter",
+                "colour"       => "#61afef",
+                "current_file" => "app/models/user.rb"
+      end
+    end
+
+    test "unsubscribing broadcasts a leave for the last-seen presence client" do
+      subscribe
+      perform :presence, "client_id" => "abc123", "name" => "Swift Otter", "current_file" => "a.rb"
+
+      assert_broadcast_on("mbeditor_editor", "type" => "presence", "status" => "leave", "client_id" => "abc123") do
+        unsubscribe
+      end
+    end
+
+    test "unsubscribing without a presence heartbeat broadcasts no leave" do
+      subscribe
+
+      assert_no_broadcasts("mbeditor_editor") do
+        unsubscribe
+      end
+    end
+
+    test "a presence relay failure does not crash the socket" do
+      subscribe
+
+      with_broadcasting_unavailable do
+        assert_nothing_raised do
+          perform :presence, "client_id" => "abc123", "name" => "Swift Otter", "current_file" => "a.rb"
+        end
+      end
+    end
+
     # ── save_state ─────────────────────────────────────────────────────────────
 
     test "save_state delegates to EditorStateService#write_state with the correct payload" do
@@ -90,6 +151,17 @@ module Mbeditor
 
     def workspace_root
       Pathname.new(@workspace)
+    end
+
+    # Simulates ActionCable being unable to relay (server down / cable not mounted):
+    # broadcasting raises, and the channel action must swallow it.
+    def with_broadcasting_unavailable
+      server = ActionCable.server
+      original = server.method(:broadcast)
+      server.define_singleton_method(:broadcast) { |*| raise "no cable" }
+      yield
+    ensure
+      server.define_singleton_method(:broadcast, original)
     end
 
     def with_fake_editor_state_service(fake_service)

@@ -40,6 +40,10 @@ var EditorPanel = function EditorPanel(_ref) {
   var conflictBlocksRef = React.useRef([]);
   var aviBaseRef = useRef(0);
   var aviMaxRef = useRef(0);
+  // True while this file participates in collaborative editing (a live Yjs room).
+  // When set, the persistent-undo machinery (HistoryService + Phase-2 model swap)
+  // is suspended and undo is routed through the room's local Yjs UndoManager.
+  var collabActiveRef = useRef(false);
 
   var _conflictState = React.useState(0);
   var conflictCount = _conflictState[0];
@@ -529,7 +533,17 @@ var EditorPanel = function EditorPanel(_ref) {
       _modelEntry = window.__mbeditorModels[tab.path];
     }
 
-    if (typeof HistoryService !== 'undefined') {
+    // Collaboration: open the per-file Yjs room when cable is available and this
+    // is a real, editable file. When active, persistent-undo (HistoryService) and
+    // the Phase-2 background model-swap replay are suspended for this file — the
+    // model swap would detach a live binding and corrupt the shared document.
+    var _collabActive = typeof CollaborationService !== 'undefined' &&
+      !tab.truncated && !tab.fileNotFound &&
+      CollaborationService.isEnabledFor(tab.path) &&
+      CollaborationService.ensureRoom(tab.path);
+    collabActiveRef.current = _collabActive;
+
+    if (!_collabActive && typeof HistoryService !== 'undefined') {
       var _histBranch = EditorStore.getState().gitBranch || '';
       if (_histBranch) {
         if (_reusingModel) {
@@ -635,6 +649,30 @@ var EditorPanel = function EditorPanel(_ref) {
     // can identify which file they are operating on without needing React state.
     if (modelObj) modelObj._mbeditorPath = tab.path;
 
+    if (_collabActive) {
+      // Attach this editor to the file's Yjs room. onSeeded rebaselines the
+      // clean-state once the binding has set the model, so seeding / late-join
+      // does not spuriously mark the tab dirty.
+      CollaborationService.bindEditor(tab.path, editor, modelObj, {
+        onSeeded: function () {
+          var m = editor.getModel();
+          if (!m) return;
+          var v = m.getValue();
+          var avi = m.getAlternativeVersionId();
+          aviBaseRef.current = avi;
+          aviMaxRef.current = avi;
+          var _e = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+          if (_e) _e.cleanVersionId = avi;
+          latestContentRef.current = v;
+          lastAppliedExternalVersionRef.current = Math.max(
+            lastAppliedExternalVersionRef.current, tab.externalContentVersion || 0
+          );
+          EditorStore.setState({ canUndo: false, canRedo: false });
+          TabManager.markClean(paneId, tab.id, v);
+        }
+      });
+    }
+
     var formatActionDisposable = editor.addAction({
       id: 'mbeditor.formatDocument',
       label: 'Format Document',
@@ -707,7 +745,7 @@ var EditorPanel = function EditorPanel(_ref) {
     EditorStore.setState({ canUndo: avi > aviBaseRef.current, canRedo: avi < aviMaxRef.current });
 
     var contentDisposable = modelObj.onDidChangeContent(function (e) {
-      if (typeof HistoryService !== 'undefined') {
+      if (!_collabActive && typeof HistoryService !== 'undefined') {
         HistoryService.recordOps(tab.path, e.changes);
       }
       var currentAvi = modelObj.getAlternativeVersionId();
@@ -755,7 +793,7 @@ var EditorPanel = function EditorPanel(_ref) {
     // Phase 2: background undo-history replay.
     // Only run for newly-created models (reused models already have their undo stack).
     var _phase2CleanupFn = null;
-    if (!_reusingModel && typeof HistoryService !== 'undefined') {
+    if (!_collabActive && !_reusingModel && typeof HistoryService !== 'undefined') {
       var _phase2Branch  = EditorStore.getState().gitBranch || '';
       var _phase2Path    = tab.path;
       var _phase2Content = tab.content || '';
@@ -915,6 +953,7 @@ var EditorPanel = function EditorPanel(_ref) {
       contentDisposable.dispose();
       EditorStore.setState({ canUndo: false, canRedo: false });
       if (_phase2CleanupFn) _phase2CleanupFn();
+      if (_collabActive) CollaborationService.unbindEditor(tab.path);
       // Detach the model before disposing the editor so the model (and its undo
       // history) survives for when the user returns to this tab.
       editor.setModel(null);
@@ -931,6 +970,14 @@ var EditorPanel = function EditorPanel(_ref) {
 
     var extVersion = tab.externalContentVersion || 0;
     if (extVersion <= lastAppliedExternalVersionRef.current) return;
+
+    // For a collaboration late-join the shared document is authoritative; applying
+    // the disk content would clobber it. Mark this version consumed and skip.
+    if (collabActiveRef.current && typeof CollaborationService !== 'undefined' &&
+        CollaborationService.consumesDiskLoad(tab.path)) {
+      lastAppliedExternalVersionRef.current = extVersion;
+      return;
+    }
 
     lastAppliedExternalVersionRef.current = extVersion;
     latestContentRef.current = tab.content; // keep ref in sync for onDidChangeContent closure

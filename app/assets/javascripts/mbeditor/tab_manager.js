@@ -38,6 +38,10 @@ var TabManager = (function () {
         entry.model.dispose();
       }
       delete window.__mbeditorModels[candidate];
+      // The evicted file is not open in any pane — tear down its collaboration room.
+      if (typeof CollaborationService !== 'undefined') {
+        CollaborationService.leaveRoom(candidate);
+      }
     }
   }
 
@@ -409,6 +413,10 @@ var TabManager = (function () {
           _entry.model.dispose();
         }
         delete window.__mbeditorModels[path];
+        // File is no longer open in any pane — tear down its collaboration room.
+        if (typeof CollaborationService !== 'undefined') {
+          CollaborationService.leaveRoom(path);
+        }
       }
     }
   }

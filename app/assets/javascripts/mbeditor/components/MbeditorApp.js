@@ -571,6 +571,34 @@ var MbeditorApp = function MbeditorApp() {
   var setCustomPaths = _useStateCP2[1];
   var customPathsRef = useRef([]);
   customPathsRef.current = customPaths;
+  // Collaboration presence chip: shown only when ActionCable is available; tracks
+  // the live participant identity so the status bar reflects name edits/overrides.
+  var _useStateCollab = useState(false);
+  var _useStateCollab2 = _slicedToArray(_useStateCollab, 2);
+  var collabEnabled = _useStateCollab2[0];
+  var setCollabEnabled = _useStateCollab2[1];
+  var _useStateIdent = useState(
+    typeof CollaborationIdentity !== 'undefined' ? CollaborationIdentity.get() : null
+  );
+  var _useStateIdent2 = _slicedToArray(_useStateIdent, 2);
+  var collabIdentity = _useStateIdent2[0];
+  var setCollabIdentity = _useStateIdent2[1];
+  // Presence roster: other connected participants, keyed by client_id →
+  // { name, colour, current_file }. Fed by the global presence stream; rendered
+  // as click-to-jump chips in the status bar.
+  var _useStateRoster = useState({});
+  var _useStateRoster2 = _slicedToArray(_useStateRoster, 2);
+  var collabRoster = _useStateRoster2[0];
+  var setCollabRoster = _useStateRoster2[1];
+
+  // Follow mode (slice 8): the presence client_id of the participant whose file +
+  // viewport we're tracking, or null when navigating independently. Toggled from a
+  // roster chip. The file-open is driven by the effect below; the scroll-tracking
+  // lives in CollaborationService.setFollow().
+  var _useStateFollow = useState(null);
+  var _useStateFollow2 = _slicedToArray(_useStateFollow, 2);
+  var followedClientId = _useStateFollow2[0];
+  var setFollowedClientId = _useStateFollow2[1];
   var recentSavesRef = useRef({});
   var isSavingRef = useRef(false);
 
@@ -862,6 +890,10 @@ var MbeditorApp = function MbeditorApp() {
       }
       if (workspace && typeof workspace.actionCableEnabled === 'boolean') {
         WebSocketService.connect(workspace.actionCableEnabled);
+        setCollabEnabled(
+          typeof WebSocketService.isCableAvailable === 'function' &&
+          WebSocketService.isCableAvailable()
+        );
       }
     });
 
@@ -1292,6 +1324,41 @@ var MbeditorApp = function MbeditorApp() {
     return function () { WebSocketService.offFilesChanged(handleFilesChanged); };
   }, []);
 
+  // WebSocket push — when a peer saves a collaboratively-bound file, the CRDT has
+  // already kept our buffer byte-identical, so the single on-disk write is enough
+  // for everyone. Reset that tab's clean baseline and clear its dirty indicator
+  // without touching disk or undo history. Gated on the file being collab-bound:
+  // for non-collab tabs a peer's save is an external change handled by the
+  // files_changed path above (which respects local unsaved edits).
+  useEffect(function () {
+    function handleFileSaved(data) {
+      var path = data && data.path;
+      if (!path) return;
+      if (typeof CollaborationService === 'undefined' || !CollaborationService.isBound(path)) return;
+
+      var st = EditorStore.getState();
+      var changed = false;
+      var newPanes = st.panes.map(function (p) {
+        return Object.assign({}, p, {
+          tabs: p.tabs.map(function (t) {
+            if (t.path !== path || !t.dirty) return t;
+            changed = true;
+            return Object.assign({}, t, { dirty: false, cleanContent: t.content });
+          })
+        });
+      });
+      if (changed) EditorStore.setState({ panes: newPanes });
+
+      // Reset the AVI clean baseline so undo past this peer's save shows dirty correctly.
+      var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[path];
+      if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
+        _modelEntry.cleanVersionId = _modelEntry.model.getAlternativeVersionId();
+      }
+    }
+    WebSocketService.onFileSaved(handleFileSaved);
+    return function () { WebSocketService.offFileSaved(handleFileSaved); };
+  }, []);
+
   function checkOpenTabsForExternalChanges() {
     var st = EditorStore.getState();
     var allTabs = st.panes.reduce(function (acc, p) {
@@ -1312,6 +1379,16 @@ var MbeditorApp = function MbeditorApp() {
     fileTabs.forEach(function (pt) {
       var savedAt = recentSavesRef.current[pt.tab.path];
       if (savedAt && Date.now() - savedAt < 3000) return;
+      // A collaboratively-bound file's live buffer is the shared CRDT, kept
+      // converged across peers and reconciled with disk on save (file_saved).
+      // Re-applying an external on-disk snapshot over it would silently clobber
+      // everyone's shared state, so skip detection here — the CRDT is authoritative
+      // while peers are editing. Intentional local edits (Format/Load) still flow
+      // through the binding and are unaffected.
+      if (typeof CollaborationService !== 'undefined' &&
+          CollaborationService.isAttached(pt.tab.path)) {
+        return;
+      }
       FileService.getFile(pt.tab.path, { allowMissing: true }).then(function (data) {
         if (!data || typeof data.content !== 'string') return;
         var serverNorm = data.content.replace(/\r\n/g, '\n');
@@ -1592,7 +1669,19 @@ var MbeditorApp = function MbeditorApp() {
   useEffect(function() {
     FileService.getClientConfig().then(function(cfg) {
       setCustomPaths(Array.isArray(cfg.related_files_custom_paths) ? cfg.related_files_custom_paths : []);
+      // Host-app override for the collaboration display name (user_name_callback).
+      // Null/blank falls back to the browser-generated, user-editable name.
+      if (typeof CollaborationIdentity !== 'undefined') {
+        CollaborationIdentity.setServerName(cfg.user_name);
+      }
     })['catch'](function() {});
+  }, []);
+
+  // Keep the presence chip in sync with name edits / host overrides.
+  useEffect(function() {
+    if (typeof CollaborationIdentity === 'undefined') return;
+    setCollabIdentity(CollaborationIdentity.get());
+    return CollaborationIdentity.onChange(function(id) { setCollabIdentity(id); });
   }, []);
 
   // Version-update detection: open the changelog tab automatically when the
@@ -1732,6 +1821,127 @@ var MbeditorApp = function MbeditorApp() {
     return t.id === focusedPane.activeTabId;
   });
 
+  // ── Collaboration presence (slice 7) ──────────────────────────────────────
+  // Only real, openable files belong in presence — virtual tabs (diffs, previews,
+  // settings/changelog) are reported as "no file" so a peer's chip stays blank
+  // rather than pointing at something click-to-jump can't open.
+  var _presenceFileFor = function (tab) {
+    if (!tab || !tab.path) return null;
+    var p = tab.path;
+    if (tab.isDiff || tab.isCombinedDiff || tab.isCommitGraph || tab.isPreview || tab.isSettings || tab.isChangelog) return null;
+    if (p.indexOf('diff://') === 0 || p.indexOf('combined-diff://') === 0 || p.indexOf('mbeditor://') === 0) return null;
+    if (p.indexOf('::preview') !== -1 || p === '__settings__') return null;
+    return p;
+  };
+  var presenceFile = _presenceFileFor(activeTab);
+
+  // Latest heartbeat payload, read by the throttled sender and the late-join
+  // re-announce so both always relay our current identity + file.
+  var presencePayloadRef = useRef(null);
+  presencePayloadRef.current = collabIdentity ? {
+    client_id:    collabIdentity.clientId,
+    name:         collabIdentity.name,
+    colour:       collabIdentity.color,
+    current_file: presenceFile
+  } : null;
+
+  var _sendPresenceNow = function () {
+    if (!presencePayloadRef.current) return;
+    WebSocketService.perform('presence', presencePayloadRef.current);
+  };
+  // Throttle heartbeats (presence is coarse — not cursor-level), trailing edge so
+  // the final file/identity always lands.
+  var sendPresenceRef = useRef(null);
+  if (!sendPresenceRef.current) {
+    sendPresenceRef.current = (window._ && window._.throttle)
+      ? window._.throttle(_sendPresenceNow, 1000, { leading: true, trailing: true })
+      : _sendPresenceNow;
+  }
+
+  // Heartbeat: announce ourselves whenever cable comes up, the active file
+  // changes, or our identity changes. A keepalive interval refreshes peers that
+  // joined between edits and recovers from any dropped relay.
+  useEffect(function () {
+    if (!collabEnabled) return;
+    sendPresenceRef.current();
+    // Short keepalive: the first heartbeat may no-op if the cable handshake
+    // hasn't completed yet, so re-announce quickly. Once any peer's heartbeat
+    // lands the other re-announces instantly (see roster sync), so steady-state
+    // traffic stays low regardless of this interval.
+    var id = setInterval(function () { sendPresenceRef.current(); }, 5000);
+    return function () { clearInterval(id); };
+  }, [collabEnabled, presenceFile, collabIdentity ? collabIdentity.clientId : null,
+      collabIdentity ? collabIdentity.name : null, collabIdentity ? collabIdentity.color : null]);
+
+  // Roster sync: fold inbound presence into the roster, ignoring our own echo.
+  // A leave removes the participant; a brand-new peer triggers a re-announce so
+  // they learn about us without waiting for the keepalive (presence is not
+  // server-persisted — peers reconcile by re-broadcasting).
+  useEffect(function () {
+    if (!collabEnabled) {
+      setCollabRoster({});
+      setFollowedClientId(null);
+      if (typeof CollaborationService !== 'undefined') CollaborationService.clearFollow();
+      return;
+    }
+    var handler = function (data) {
+      if (!data || !data.client_id) return;
+      var me = (typeof CollaborationIdentity !== 'undefined') ? CollaborationIdentity.get().clientId : null;
+      if (data.client_id === me) return;
+      if (data.status === 'leave') {
+        // If we were following them, stop — there's nothing left to track.
+        setFollowedClientId(function (cur) {
+          if (cur === data.client_id) {
+            if (typeof CollaborationService !== 'undefined') CollaborationService.clearFollow();
+            return null;
+          }
+          return cur;
+        });
+        setCollabRoster(function (prev) {
+          if (!prev[data.client_id]) return prev;
+          var next = Object.assign({}, prev);
+          delete next[data.client_id];
+          return next;
+        });
+        return;
+      }
+      var isNew = false;
+      setCollabRoster(function (prev) {
+        if (!prev[data.client_id]) isNew = true;
+        var next = Object.assign({}, prev);
+        next[data.client_id] = { name: data.name, colour: data.colour, current_file: data.current_file };
+        return next;
+      });
+      if (isNew) _sendPresenceNow();
+    };
+    WebSocketService.onPresence(handler);
+    return function () { WebSocketService.offPresence(handler); };
+  }, [collabEnabled]);
+
+  // Follow mode (slice 8): toggle tracking a roster participant. Following sets up
+  // the viewport scroll-tracking in CollaborationService; the file-open is handled
+  // by the effect below (it also re-fires when the followed peer switches files).
+  var followedFile = (followedClientId && collabRoster[followedClientId])
+    ? collabRoster[followedClientId].current_file : null;
+  var toggleFollow = function (cid) {
+    if (followedClientId === cid) {
+      setFollowedClientId(null);
+      if (typeof CollaborationService !== 'undefined') CollaborationService.clearFollow();
+    } else {
+      setFollowedClientId(cid);
+      if (typeof CollaborationService !== 'undefined') CollaborationService.setFollow(cid);
+    }
+  };
+
+  // While following, open/focus whatever file the followed participant currently
+  // has open, and re-open when they switch files. Viewport tracking within that
+  // file is handled by CollaborationService once both peers share the room.
+  useEffect(function () {
+    if (!followedClientId || !followedFile) return;
+    if (activeTab && activeTab.path === followedFile) return;
+    handleSelectFile(followedFile, followedFile.split('/').pop());
+  }, [followedClientId, followedFile]);
+
   // Phase 7: Per-file last-commit info shown in the status bar
   var _useState31 = useState(null);
   var _useState32 = _slicedToArray(_useState31, 2);
@@ -1869,6 +2079,10 @@ var MbeditorApp = function MbeditorApp() {
       var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
       if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
         _modelEntry.cleanVersionId = _modelEntry.model.getAlternativeVersionId();
+      }
+      // Collab: push a fresh snapshot so the server compacts the buffered deltas.
+      if (typeof CollaborationService !== 'undefined' && CollaborationService.isBound(tab.path)) {
+        CollaborationService.pushSnapshot(tab.path);
       }
       EditorStore.setStatus("Saved", "success");
       _clearDraft(tab.path);
@@ -3132,6 +3346,56 @@ var MbeditorApp = function MbeditorApp() {
             React.createElement("i", { className: "fas fa-code-branch" }),
             !editorPrefs.toolbarIconOnly && " Git"
           )
+        ),
+        collabEnabled && collabIdentity && React.createElement(
+          React.Fragment,
+          null,
+          React.createElement("div", { className: "statusbar-sep" }),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "statusbar-btn",
+              title: "Collaborating as \"" + collabIdentity.name + "\" — click to change your name",
+              onClick: function () { CollaborationIdentity.editName(); }
+            },
+            React.createElement("i", {
+              className: "fas fa-circle",
+              style: { color: collabIdentity.color, fontSize: "0.7em", marginRight: "2px" }
+            }),
+            !editorPrefs.toolbarIconOnly && (" " + collabIdentity.name)
+          )
+        ),
+        collabEnabled && Object.keys(collabRoster).length > 0 && React.createElement(
+          React.Fragment,
+          null,
+          React.createElement("div", { className: "statusbar-sep" }),
+          Object.keys(collabRoster).map(function (cid) {
+            var peer = collabRoster[cid];
+            var file = peer.current_file;
+            var name = peer.name || 'Anonymous';
+            var colour = peer.colour || '#888888';
+            var following = followedClientId === cid;
+            return React.createElement(
+              "button",
+              {
+                key: cid,
+                type: "button",
+                className: "statusbar-btn",
+                style: following
+                  ? { background: 'color-mix(in srgb, ' + colour + ' 28%, transparent)' }
+                  : undefined,
+                title: name + (file ? ' — ' + file : ' — no file open') +
+                  (following ? ' (following — click to stop)' : ' (click to follow)'),
+                onClick: function () { toggleFollow(cid); }
+              },
+              React.createElement("i", {
+                className: following ? "fas fa-eye" : "fas fa-circle",
+                style: { color: colour, fontSize: "0.7em", marginRight: "2px" }
+              }),
+              !editorPrefs.toolbarIconOnly && (" " + name)
+            );
+          })
         ),
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
