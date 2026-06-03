@@ -24,9 +24,9 @@ var CollaborationIdentity = (function () {
     'Swift', 'Calm', 'Bright', 'Bold', 'Quiet', 'Clever', 'Brave', 'Lucky',
     'Sunny', 'Witty', 'Nimble', 'Mellow', 'Eager', 'Jolly', 'Keen', 'Spry'
   ];
-  var ANIMALS = [
-    'Otter', 'Fox', 'Heron', 'Lynx', 'Wren', 'Tapir', 'Marten', 'Finch',
-    'Gecko', 'Ibis', 'Koala', 'Panda', 'Raven', 'Seal', 'Yak', 'Newt'
+  var ROLES = [
+    'Developer', 'Designer', 'Architect', 'Engineer', 'Coder', 'Hacker', 'Builder', 'Debugger',
+    'Tester', 'Analyst', 'Maker', 'Pioneer', 'Wizard', 'Operator', 'Scripter', 'Tinkerer'
   ];
 
   var _serverName = null;        // set by setServerName() from /client_config
@@ -65,7 +65,7 @@ var CollaborationIdentity = (function () {
 
   function _generateName() {
     var a = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-    var n = ANIMALS[Math.floor(Math.random() * ANIMALS.length)];
+    var n = ROLES[Math.floor(Math.random() * ROLES.length)];
     return a + ' ' + n;
   }
 
