@@ -1601,7 +1601,7 @@ var MbeditorApp = function MbeditorApp() {
     var SEEN_KEY = 'mbeditor_seen_version';
     var current = document.body.dataset.mbeditorVersion || '';
     var seen = localStorage.getItem(SEEN_KEY) || '';
-    if (current && seen && seen !== current) {
+    if (current && seen !== current) {
       // Delay slightly so the editor finishes restoring saved tabs first
       setTimeout(function() { openChangelogTab(); }, 800);
     }

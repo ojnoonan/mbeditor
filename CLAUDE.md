@@ -45,6 +45,16 @@ Git features in `git_controller.rb`. Git primitive wrappers in `GitService`. Ded
 ## Dependencies
 Ruby >= 3.0, Rails 7.1–8.x, `sprockets-rails >= 3.4`. Dev: `minitest-reporters`, `webmock`. Host optional: `rubocop`, `rubocop-rails`, `haml_lint`.
 
+## Release workflow
+
+Say **"make a release for vX.Y.Z"** (or just "make a release") and Claude will:
+1. Bump `lib/mbeditor/version.rb`
+2. Add a changelog entry in `CHANGELOG.md` based on commits since the previous tag
+3. Commit `version.rb` + `CHANGELOG.md` together
+4. Create and push the `vX.Y.Z` tag — this triggers `publish.yml` automatically
+
+The `publish.yml` workflow runs the full test suite, publishes to RubyGems, and creates a GitHub Release.
+
 ## Agent skills
 
 ### Issue tracker

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-06-03
+
+### Fixed
+- **What's New auto-open on first install** — the changelog tab now opens on first-ever use as well as on upgrades. Previously it required a prior `seen` version in localStorage, so users who had never opened the editor before (or whose storage was cleared) never saw the panel automatically.
+
+---
+
+## [0.7.1] - 2026-06-03
+
+### Added
+- **Persistent undo history** — edit operations are captured in the browser and flushed to the server on save and tab close, then replayed the next time the file is opened. Undo/redo now reaches back further than the current session. Stale history is pruned automatically when old branches are cleaned up.
+- **`db/structure.sql` schema support** — the model schema modal now reads `db/structure.sql` when `db/schema.rb` is absent (SQL-format migrations).
+
+### Fixed
+- **Rails panel long filenames** — long filenames in the Rails panel are now truncated correctly and custom-path entries populate reliably.
+- **Schema lookup error logging** — failures to parse the schema file now emit a diagnostic log entry to aid debugging.
+
+---
+
 ## [0.7.0] - 2026-05-21
 
 ### Added
