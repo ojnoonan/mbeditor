@@ -1631,13 +1631,12 @@ var MbeditorApp = function MbeditorApp() {
         if (p.startsWith(base + '/')) {
           var rest = p.slice(base.length + 1);
           var resource = rest.split('/')[0].replace(/\.[^.]+$/, '');
-          if (resource) {
-            var seg = resource.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
-            return seg;
-          }
+          // Strip Rails-style suffixes so custom-path files group with their controller/model
+          resource = resource.replace(/_(controller|model|helper|service)$/, '');
+          if (resource) { name = resource; break; }
         }
       }
-      return null;
+      if (!name) return null;
     }
     var seg = (name || '').split('/').pop() || name || '';
     // Normalize plural→singular so views/users and models/user share one group

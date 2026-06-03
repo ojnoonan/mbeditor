@@ -240,5 +240,94 @@ module Mbeditor
 
       assert_nil call("Widget")
     end
+
+    test "parses structure.sql with quoted schema prefix" do
+      FileUtils.rm(File.join(@workspace, "db", "schema.rb"))
+      File.write(File.join(@workspace, "db", "structure.sql"), <<~SQL)
+        CREATE TABLE "public"."users" (
+            id bigint NOT NULL,
+            name character varying NOT NULL
+        );
+      SQL
+
+      result = call("User")
+      assert result, "should parse table with quoted schema prefix"
+      assert_equal "users", result[:table]
+      assert result[:columns].any? { |c| c[:name] == "name" }
+    end
+
+    test "parses structure.sql with non-public schema prefix" do
+      FileUtils.rm(File.join(@workspace, "db", "schema.rb"))
+      File.write(File.join(@workspace, "db", "structure.sql"), <<~SQL)
+        CREATE TABLE myschema.users (
+            id bigint NOT NULL,
+            email character varying NOT NULL
+        );
+      SQL
+
+      result = call("User")
+      assert result, "should parse table with non-public schema prefix"
+      assert_equal "users", result[:table]
+    end
+
+    test "parses structure.sql with no schema prefix" do
+      FileUtils.rm(File.join(@workspace, "db", "schema.rb"))
+      File.write(File.join(@workspace, "db", "structure.sql"), <<~SQL)
+        CREATE TABLE users (
+            id bigint NOT NULL,
+            name character varying NOT NULL
+        );
+      SQL
+
+      result = call("User")
+      assert result, "should parse table with no schema prefix"
+      assert_equal "users", result[:table]
+    end
+
+    test "reads custom table_name from model file" do
+      models_dir = File.join(@workspace, "app", "models")
+      FileUtils.mkdir_p(models_dir)
+      File.write(File.join(models_dir, "user.rb"), <<~RUBY)
+        class User < ApplicationRecord
+          self.table_name = "accounts"
+        end
+      RUBY
+
+      # Rewrite schema.rb with the custom table name
+      File.write(File.join(@workspace, "db", "schema.rb"), <<~RUBY)
+        ActiveRecord::Schema[7.1].define(version: 1) do
+          create_table "accounts", force: :cascade do |t|
+            t.string "name", null: false
+          end
+        end
+      RUBY
+
+      result = call("User")
+      assert result, "should find table via custom self.table_name"
+      assert_equal "accounts", result[:table]
+      assert result[:columns].any? { |c| c[:name] == "name" }
+    end
+
+    test "reads custom table_name declared with symbol" do
+      models_dir = File.join(@workspace, "app", "models")
+      FileUtils.mkdir_p(models_dir)
+      File.write(File.join(models_dir, "user.rb"), <<~RUBY)
+        class User < ApplicationRecord
+          self.table_name = :legacy_users
+        end
+      RUBY
+
+      File.write(File.join(@workspace, "db", "schema.rb"), <<~RUBY)
+        ActiveRecord::Schema[7.1].define(version: 1) do
+          create_table "legacy_users", force: :cascade do |t|
+            t.string "email", null: false
+          end
+        end
+      RUBY
+
+      result = call("User")
+      assert result, "should find table via symbol self.table_name"
+      assert_equal "legacy_users", result[:table]
+    end
   end
 end
