@@ -64,6 +64,14 @@ var CollaborationService = (function () {
            WebSocketService.isCableAvailable();
   }
 
+  // Is collaboration available at all right now? The Yjs globals and the cable
+  // connection come up asynchronously after page load, so this can flip from false
+  // to true shortly after the editor first mounts. EditorPanel polls it to join
+  // already-open tabs once it turns true (path-independent — no per-file checks).
+  function isAvailable() {
+    return _globalsReady();
+  }
+
   // Synchronous predicate: should this path participate in collaboration at all?
   // Excludes virtual/preview/image paths. EditorPanel uses this up-front to decide
   // whether to suspend its persistent-undo machinery.
@@ -603,6 +611,7 @@ var CollaborationService = (function () {
   }
 
   return {
+    isAvailable: isAvailable,
     isEnabledFor: isEnabledFor,
     ensureRoom: ensureRoom,
     bindEditor: bindEditor,

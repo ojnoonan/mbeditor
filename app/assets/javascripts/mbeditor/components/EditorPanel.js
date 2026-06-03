@@ -45,6 +45,19 @@ var EditorPanel = function EditorPanel(_ref) {
   // is suspended and undo is routed through the room's local Yjs UndoManager.
   var collabActiveRef = useRef(false);
 
+  // Collaboration availability (Yjs globals + cable) settles asynchronously after
+  // page load, so a tab restored on first paint can build its editor before a room
+  // can activate. This flips false->true once collaboration is reachable and is a
+  // dependency of the editor-creation effect below, so an already-open tab rebuilds
+  // and joins the room then — reusing the persistent model, exactly like reopening.
+  var _collabReadyState = useState(function () {
+    return typeof CollaborationService !== 'undefined' &&
+      typeof CollaborationService.isAvailable === 'function' &&
+      CollaborationService.isAvailable();
+  });
+  var collabReady = _collabReadyState[0];
+  var setCollabReady = _collabReadyState[1];
+
   var _conflictState = React.useState(0);
   var conflictCount = _conflictState[0];
   var setConflictCount = _conflictState[1];
@@ -169,6 +182,28 @@ var EditorPanel = function EditorPanel(_ref) {
     }
     return null;
   };
+
+  // Watch for collaboration becoming available after the editor already mounted
+  // (cable connects a moment after page load). Poll until it is reachable, then
+  // flip collabReady so the editor-creation effect re-runs and joins the room.
+  // Stops once ready, or after a bounded window when no cable is coming.
+  useEffect(function () {
+    if (collabReady) return;
+    if (typeof CollaborationService === 'undefined' ||
+        typeof CollaborationService.isAvailable !== 'function') return;
+
+    var attempts = 0;
+    var id = setInterval(function () {
+      attempts += 1;
+      if (CollaborationService.isAvailable()) {
+        setCollabReady(true);
+        clearInterval(id);
+      } else if (attempts >= 40) { // ~30s; cable isn't going to appear
+        clearInterval(id);
+      }
+    }, 750);
+    return function () { clearInterval(id); };
+  }, [collabReady]);
 
   useEffect(function () {
     if (tab.isPreview) return;
@@ -959,7 +994,7 @@ var EditorPanel = function EditorPanel(_ref) {
       editor.setModel(null);
       editor.dispose();
     };
-  }, [tab.id, tab.isPreview, monacoReady]); // re-run on tab switch or when Monaco becomes ready
+  }, [tab.id, tab.isPreview, monacoReady, collabReady]); // re-run on tab switch, when Monaco becomes ready, or when collaboration becomes available
 
   // Listen for external content changes (e.g. after Format/Load)
   // Only applies when externalContentVersion advances — prevents stale typing-originated

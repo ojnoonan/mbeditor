@@ -263,6 +263,16 @@ config.action_cable.allowed_request_origins = [
 
 When you finish pairing, close the tunnel / stop the forward so the editor is local-only again.
 
+**4. Run a single web process.**
+The shared document buffer is held in process memory and relayed over Action Cable's
+default in-process (`async`) adapter, so collaboration state is **per-process**. If your
+server runs multiple workers (e.g. Puma with `workers > 0` / `WEB_CONCURRENCY`), two
+browsers can land on different workers and each see an empty or stale document — the most
+common cause of *"the other person's edits never show up."* For pairing, run a single
+worker (`WEB_CONCURRENCY=0`, or `bundle exec rails server` which is single-process by
+default). A multi-worker setup would additionally need a cross-process cable adapter, but
+the in-memory buffer still would not be shared — single-process is the supported mode.
+
 ### Syntax Highlighting Support
 Monaco runtime assets are served from the engine route namespace (`/mbeditor/monaco-editor/*` and `/mbeditor/monaco_worker.js`).
 The gem includes syntax highlighting for common Rails and React development file types:
