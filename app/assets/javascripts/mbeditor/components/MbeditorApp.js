@@ -1549,6 +1549,7 @@ var MbeditorApp = function MbeditorApp() {
               dirty: t.dirty,
               viewState: t.viewState,
               isSettings: !!t.isSettings,
+              isChangelog: !!t.isChangelog,
               isPreview: !!t.isPreview,
               previewFor: t.previewFor || null,
               isDiff: !!t.isDiff,
@@ -3038,8 +3039,18 @@ var MbeditorApp = function MbeditorApp() {
       }
     });
     if (foundTab) {
+      // If the tab was restored from a persisted state that didn't include
+      // isChangelog (pre-v0.7.4), patch it so the pane renders ChangelogView.
       var switchPanes = st.panes.map(function(p) {
-        if (p.id === foundPaneId) return Object.assign({}, p, { activeTabId: CHANGELOG_TAB_ID });
+        if (p.id === foundPaneId) {
+          var patchedTabs = p.tabs.map(function(t) {
+            if (t.id === CHANGELOG_TAB_ID && !t.isChangelog) {
+              return Object.assign({}, t, { isChangelog: true });
+            }
+            return t;
+          });
+          return Object.assign({}, p, { tabs: patchedTabs, activeTabId: CHANGELOG_TAB_ID });
+        }
         return p;
       });
       EditorStore.setState({ panes: switchPanes, focusedPaneId: foundPaneId });

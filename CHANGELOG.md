@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - 2026-06-03
+
+### Fixed
+- **What's New tab restored blank** — `isChangelog` was stripped during periodic tab persistence (`MbeditorApp.js:1540`), so the changelog tab was restored without the flag on page reload. The pane rendered it as a normal file tab (Monaco) instead of `ChangelogView`. Added `isChangelog` to the serialized tab properties and patched `openChangelogTab` to set the flag on any restored tabs that lack it.
+
+---
+
 ## [0.7.4] - 2026-06-03
 
 ### Fixed
