@@ -25,7 +25,9 @@ cd test/dummy && rails server  # http://localhost:3000/mbeditor
 
 Git features in `git_controller.rb`. Git primitive wrappers in `GitService`. Dedicated services for each git operation (`GitDiffService`, `GitBlameService`, `GitFileHistoryService`, `GitCommitGraphService`, `GitCommitDetailService`, `GitCombinedDiffService`).
 
-**Frontend:** Plain JS + React + Monaco in `app/assets/javascripts/mbeditor/`. **No build step** — edit files directly. Vendored libs in `vendor/assets/`, Monaco in `public/monaco-editor/`.
+**Frontend:** Plain JS + React + Monaco in `app/assets/javascripts/mbeditor/`. **No build step for app code or vendored libs** — edit files directly. Vendored libs in `vendor/assets/`.
+
+**Monaco** is the one exception (ADR 0002): consumed as ESM, bundled by a **maintainer-only** esbuild step into `public/monaco-editor/` (committed, shipped in the gem — consumers still need zero JS tooling). The output (`monaco.js`, `*.worker.js`, `monaco.css`, `codicon.ttf`, `monaco-vim.js`) is **generated — never hand-edit it**. To upgrade Monaco: `npm install monaco-editor@X monaco-vim@Y && npm run build:monaco`, then commit `public/monaco-editor/`. Build script: `build/monaco/build.mjs`. Loaded via plain `<script>`/`<link>` tags (no AMD/loader.js); workers wired through `MonacoEnvironment.getWorker`.
 
 ## Security (non-negotiable)
 - All file paths must go through `resolve_path()` — uses `File.realpath` to prevent symlink escape, caps at 5 MB

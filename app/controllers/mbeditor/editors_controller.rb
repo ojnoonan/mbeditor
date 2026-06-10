@@ -536,14 +536,6 @@ module Mbeditor
       send_file path, disposition: "inline", type: Mime::Type.lookup_by_extension(File.extname(path).delete_prefix(".")) || "application/octet-stream"
     end
 
-    # GET /mbeditor/monaco_worker.js — serve packaged Monaco worker entrypoint
-    def monaco_worker
-      path = monaco_worker_file.to_s
-      return render plain: "Not found", status: :not_found unless File.file?(path)
-
-      send_file path, disposition: "inline", type: "application/javascript"
-    end
-
     # GET /mbeditor/manifest.webmanifest — PWA manifest
     def pwa_manifest
       base = mbeditor_base_path
@@ -577,17 +569,6 @@ module Mbeditor
       return render plain: "Not found", status: :not_found unless File.file?(path)
 
       send_file path, disposition: "inline", type: "image/svg+xml"
-    end
-
-    # GET /mbeditor/ts_worker.js — serve TypeScript/JavaScript Monaco worker
-    def ts_worker
-      path = [
-        Mbeditor::Engine.root.join("public", "ts_worker.js"),
-        Rails.root.join("public", "ts_worker.js")
-      ].find { |p| p.file? }.to_s
-      return render plain: "Not found", status: :not_found unless File.file?(path)
-
-      send_file path, disposition: "inline", type: "application/javascript"
     end
 
     # POST /mbeditor/lint — run rubocop --stdin (or haml-lint for .haml files)
@@ -998,13 +979,6 @@ module Mbeditor
       when "warning" then "warning"
       else "info"
       end
-    end
-
-    def monaco_worker_file
-      engine_path = Mbeditor::Engine.root.join("public", "monaco_worker.js")
-      return engine_path if engine_path.file?
-
-      Rails.root.join("public", "monaco_worker.js")
     end
 
     def resolve_monaco_asset_path(asset_path)
