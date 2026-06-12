@@ -123,7 +123,11 @@ module Mbeditor
                       document.head.appendChild(s);
                     });
                   }
-                  window._monacoVimPromise.then(function() { cb(window.MonacoVim); });
+                  window._monacoVimPromise.then(function() { cb(window.MonacoVim); }, function(err) {
+                    // Clear the cached promise so the next vim-mode toggle retries the load.
+                    window._monacoVimPromise = null;
+                    console.error('Mbeditor: ' + err.message);
+                  });
                 };
 
                 function proceed() {
