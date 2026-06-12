@@ -1314,14 +1314,14 @@ module Mbeditor
     # monaco_asset
     # ---------------------------------------------------------------------------
 
-    test "monaco_asset serves an existing Monaco file" do
-      get "/mbeditor/monaco-editor/vs/loader.js"
+    test "monaco_asset serves the main editor bundle" do
+      get "/mbeditor/monaco-editor/monaco.js"
       assert_response :ok
       assert_includes response.content_type, "javascript"
     end
 
     test "monaco_asset returns 404 for a missing file" do
-      get "/mbeditor/monaco-editor/vs/nonexistent.js"
+      get "/mbeditor/monaco-editor/nonexistent.js"
       assert_response :not_found
     end
 
@@ -1330,30 +1330,26 @@ module Mbeditor
       assert_response :not_found
     end
 
-    test "monaco_asset serves a language file" do
-      get "/mbeditor/monaco-editor/vs/basic-languages/ruby/ruby.js"
+    test "monaco_asset serves the editor web worker" do
+      get "/mbeditor/monaco-editor/editor.worker.js"
       assert_response :ok
       assert_includes response.content_type, "javascript"
     end
 
-    test "monaco_asset serves the TypeScript language file" do
-      get "/mbeditor/monaco-editor/vs/basic-languages/typescript/typescript.js"
+    test "monaco_asset serves the TypeScript web worker" do
+      get "/mbeditor/monaco-editor/ts.worker.js"
       assert_response :ok
       assert_includes response.content_type, "javascript"
     end
 
-    test "monaco_asset serves the shell language file" do
-      get "/mbeditor/monaco-editor/vs/basic-languages/shell/shell.js"
+    test "monaco_asset serves the editor stylesheet" do
+      get "/mbeditor/monaco-editor/monaco.css"
       assert_response :ok
-      assert_includes response.content_type, "javascript"
+      assert_includes response.content_type, "css"
     end
 
-    # ---------------------------------------------------------------------------
-    # monaco_worker
-    # ---------------------------------------------------------------------------
-
-    test "monaco_worker serves the worker JS file" do
-      get "/mbeditor/monaco_worker.js"
+    test "monaco_asset serves the bundled monaco-vim" do
+      get "/mbeditor/monaco-editor/monaco-vim.js"
       assert_response :ok
       assert_includes response.content_type, "javascript"
     end

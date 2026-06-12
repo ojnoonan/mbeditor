@@ -62,8 +62,7 @@ module Mbeditor
             <script defer src="#{base}/assets/marked.min.js"></script>
             <script defer src="#{base}/assets/emmet.js"></script>
             <script defer src="#{base}/assets/monaco-themes-bundle.js"></script>
-            <script>var require = { paths: { vs: '#{base}/monaco-editor/vs', 'monaco-editor/esm/vs': '#{base}/monaco-editor/vs', 'monaco-vim': '#{base}/assets/monaco-vim' } };</script>
-            <script src="#{base}/monaco-editor/vs/loader.js"></script>
+            <link rel="stylesheet" href="#{base}/monaco-editor/monaco.css" />
           </head>
           <body>
             <script>
@@ -81,10 +80,14 @@ module Mbeditor
             </div>
             <script>
               window.MonacoEnvironment = {
-                getWorkerUrl: function(workerId, label) {
-                  var b = window.MBEDITOR_BASE_PATH || '';
-                  if (label === 'typescript' || label === 'javascript') return b + '/ts_worker.js';
-                  return b + '/monaco_worker.js';
+                getWorker: function(_workerId, label) {
+                  var b = (window.MBEDITOR_BASE_PATH || '') + '/monaco-editor/';
+                  var file = 'editor.worker.js';
+                  if (label === 'json') file = 'json.worker.js';
+                  else if (label === 'css' || label === 'scss' || label === 'less') file = 'css.worker.js';
+                  else if (label === 'html' || label === 'handlebars' || label === 'razor') file = 'html.worker.js';
+                  else if (label === 'typescript' || label === 'javascript') file = 'ts.worker.js';
+                  return new Worker(b + file);
                 }
               };
               (function() {
@@ -109,6 +112,24 @@ module Mbeditor
                   return window._prettierLoadPromise;
                 };
 
+                window.loadMonacoVim = function(cb) {
+                  if (window.MonacoVim) { cb(window.MonacoVim); return; }
+                  if (!window._monacoVimPromise) {
+                    window._monacoVimPromise = new Promise(function(resolve, reject) {
+                      var s = document.createElement('script');
+                      s.src = '#{base}/monaco-editor/monaco-vim.js';
+                      s.onload = resolve;
+                      s.onerror = function() { reject(new Error('Failed to load monaco-vim')); };
+                      document.head.appendChild(s);
+                    });
+                  }
+                  window._monacoVimPromise.then(function() { cb(window.MonacoVim); }, function(err) {
+                    // Clear the cached promise so the next vim-mode toggle retries the load.
+                    window._monacoVimPromise = null;
+                    console.error('Mbeditor: ' + err.message);
+                  });
+                };
+
                 function proceed() {
                   window.MbeditorRuntime = { React: window.React, ReactDOM: window.ReactDOM };
                   window.React    = window._mbeditorHostReact;
@@ -131,14 +152,17 @@ module Mbeditor
                   };
                   document.body.appendChild(appScript);
 
-                  require(['vs/editor/editor.main'], function() {
+                  var monacoScript = document.createElement('script');
+                  monacoScript.src = '#{base}/monaco-editor/monaco.js';
+                  monacoScript.onload = function() {
                     if (window.MBEDITOR_CUSTOM_THEMES && window.monaco) {
                       Object.keys(window.MBEDITOR_CUSTOM_THEMES).forEach(function(id) {
                         window.monaco.editor.defineTheme(id, window.MBEDITOR_CUSTOM_THEMES[id]);
                       });
                     }
                     _monacoResolve();
-                  });
+                  };
+                  document.body.appendChild(monacoScript);
                 }
 
                 if (window._mbeditorDOMReady) proceed();

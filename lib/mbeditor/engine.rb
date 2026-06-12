@@ -118,7 +118,6 @@ module Mbeditor
         prettier-plugin-html.js
         prettier-plugin-postcss.js
         prettier-plugin-markdown.js
-        monaco-vim.js
         emmet.js
         monaco-themes-bundle.js
         fa-brands-400.woff2

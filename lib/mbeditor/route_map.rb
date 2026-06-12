@@ -42,10 +42,7 @@ module Mbeditor
     get    'manifest.webmanifest',            to: 'editors#pwa_manifest',   format: false
     get    'sw.js',                           to: 'editors#pwa_sw',         format: false
     get    'mbeditor-icon.svg',               to: 'editors#pwa_icon',       format: false
-    get    'monaco_worker.js',                to: 'editors#monaco_worker',  format: false
-    get    'ts_worker.js',                    to: 'editors#ts_worker',      format: false
     get    'monaco-editor/*asset_path',       to: 'editors#monaco_asset', format: false
-    get    'min-maps/*asset_path',            to: 'editors#monaco_asset', format: false
     post   'lint',            to: 'editors#lint'
     post   'quick_fix',       to: 'editors#quick_fix'
     post   'format',          to: 'editors#format_file'

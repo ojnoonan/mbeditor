@@ -31,10 +31,9 @@
   <script defer src="<%= asset_path('lodash.min.js') %>"></script>
   <script defer src="<%= asset_path('minisearch.min.js') %>"></script>
   <script defer src="<%= asset_path('marked.min.js') %>"></script>
-  <!-- ── Monaco loader (sync — inline body script calls require()) ── -->
+  <!-- ── Monaco (ESM bundle, ADR 0002): stylesheet here, JS loaded in body ── -->
   <% base_path = pwa_base %>
-  <script>var require = { paths: { vs: '<%= json_escape("#{base_path}/monaco-editor/vs") %>', 'monaco-editor/esm/vs': '<%= json_escape("#{base_path}/monaco-editor/vs") %>', 'monaco-vim': '<%= json_escape(asset_path("monaco-vim.js").sub(/\.js$/, "")) %>' } };</script>
-  <script src="<%= "#{base_path}/monaco-editor/vs/loader.js" %>"></script>
+  <link rel="stylesheet" href="<%= "#{base_path}/monaco-editor/monaco.css" %>" media="all" />
   <!-- ── Emmet + Extra themes (non-AMD, deferred — used inside Monaco callback) ── -->
   <script defer src="<%= asset_path('emmet.js') %>"></script>
   <script defer src="<%= asset_path('monaco-themes-bundle.js') %>"></script>
@@ -60,12 +59,14 @@
 
   <script>
     window.MonacoEnvironment = {
-      getWorkerUrl: function(workerId, label) {
-        var base = window.MBEDITOR_BASE_PATH || '';
-        if (label === 'typescript' || label === 'javascript') {
-          return base + '/ts_worker.js';
-        }
-        return base + '/monaco_worker.js';
+      getWorker: function(_workerId, label) {
+        var base = (window.MBEDITOR_BASE_PATH || '') + '/monaco-editor/';
+        var file = 'editor.worker.js';
+        if (label === 'json') file = 'json.worker.js';
+        else if (label === 'css' || label === 'scss' || label === 'less') file = 'css.worker.js';
+        else if (label === 'html' || label === 'handlebars' || label === 'razor') file = 'html.worker.js';
+        else if (label === 'typescript' || label === 'javascript') file = 'ts.worker.js';
+        return new Worker(base + file);
       }
     };
 
@@ -113,6 +114,27 @@
         return window._prettierLoadPromise;
       };
 
+      // Lazy-load monaco-vim on first use. Drop-in for the old AMD
+      // `require(['monaco-vim'], cb)`: invokes cb(window.MonacoVim) once ready.
+      // The UMD's browser branch binds to the window.monaco set by the bundle.
+      window.loadMonacoVim = function(cb) {
+        if (window.MonacoVim) { cb(window.MonacoVim); return; }
+        if (!window._monacoVimPromise) {
+          window._monacoVimPromise = new Promise(function(resolve, reject) {
+            var s = document.createElement('script');
+            s.src = '<%= "#{base_path}/monaco-editor/monaco-vim.js" %>';
+            s.onload = resolve;
+            s.onerror = function() { reject(new Error('Failed to load monaco-vim')); };
+            document.head.appendChild(s);
+          });
+        }
+        window._monacoVimPromise.then(function() { cb(window.MonacoVim); }, function(err) {
+          // Clear the cached promise so the next vim-mode toggle retries the load.
+          window._monacoVimPromise = null;
+          console.error('Mbeditor: ' + err.message);
+        });
+      };
+
       // Deferred vendor scripts (React, ReactDOM, etc.) run before DOMContentLoaded.
       // Restoring window.define before they execute would cause them to register
       // as AMD modules instead of setting window globals, so wait for DOMContentLoaded first.
@@ -154,8 +176,10 @@
         };
         document.body.appendChild(appScript);
 
-        // Load Monaco in parallel — resolves the promise when done.
-        require(['vs/editor/editor.main'], function() {
+        // Load Monaco in parallel — the bundle is an IIFE that sets window.monaco.
+        var monacoScript = document.createElement('script');
+        monacoScript.src = '<%= "#{base_path}/monaco-editor/monaco.js" %>';
+        monacoScript.onload = function() {
           // Register custom themes from the vendored bundle
           if (window.MBEDITOR_CUSTOM_THEMES && window.monaco) {
             Object.keys(window.MBEDITOR_CUSTOM_THEMES).forEach(function(id) {
@@ -163,7 +187,12 @@
             });
           }
           _monacoResolve();
-        });
+        };
+        monacoScript.onerror = function() {
+          console.error('Mbeditor: failed to load Monaco bundle');
+          document.getElementById('mbeditor-root').innerHTML = '<div style="padding:2rem;font-family:sans-serif;color:#c00">Editor failed to load. Please refresh the page.</div>';
+        };
+        document.body.appendChild(monacoScript);
       }
 
       if (window._mbeditorDOMReady) {

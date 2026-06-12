@@ -1069,8 +1069,8 @@ var EditorPanel = function EditorPanel(_ref) {
     if (!editor) return;
 
     if (editorPrefs.vimMode) {
-      // Lazy-load monaco-vim via the same AMD loader that Monaco uses
-      require(['monaco-vim'], function(MonacoVim) {
+      // Lazy-load monaco-vim (bundled UMD; binds to the window.monaco global)
+      window.loadMonacoVim(function(MonacoVim) {
         // Dispose any previous instance first (e.g. editorPrefs changed rapidly)
         if (vimModeObjRef.current) {
           try { vimModeObjRef.current.dispose(); } catch (e) {}
