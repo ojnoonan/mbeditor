@@ -528,7 +528,7 @@ module Mbeditor
 
     # GET /mbeditor/monaco-editor/*asset_path — serve packaged Monaco files
     def monaco_asset
-      # path_info is the path within the engine, e.g. "/monaco-editor/vs/loader.js"
+      # path_info is the path within the engine, e.g. "/monaco-editor/monaco.js"
       relative = request.path_info.delete_prefix("/")
       path = resolve_monaco_asset_path(relative)
       return head :not_found unless path

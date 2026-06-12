@@ -11,7 +11,7 @@
 // the monaco-editor / monaco-vim devDependencies are bumped.
 
 import * as esbuild from 'esbuild';
-import { rmSync, mkdirSync, readdirSync, copyFileSync } from 'node:fs';
+import { rmSync, mkdirSync, readdirSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -72,6 +72,18 @@ copyFileSync(
   resolve(root, 'node_modules/monaco-vim/dist/monaco-vim.umd.js'),
   resolve(outdir, 'monaco-vim.js'),
 );
+
+// 4. VERSIONS stamp — records exactly which package versions produced the
+// committed artifacts, so they can be audited against package.json.
+const versions = ['monaco-editor', 'monaco-vim', 'esbuild']
+  .map((pkg) => {
+    const { version } = JSON.parse(
+      readFileSync(resolve(root, 'node_modules', pkg, 'package.json'), 'utf8'),
+    );
+    return `${pkg} ${version}`;
+  })
+  .join('\n');
+writeFileSync(resolve(outdir, 'VERSIONS'), versions + '\n');
 
 console.log('Built Monaco artifacts in public/monaco-editor/:');
 for (const f of readdirSync(outdir).sort()) console.log('  ' + f);
