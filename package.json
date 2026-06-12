@@ -16,8 +16,8 @@
     "react-dom": "18.3.1"
   },
   "devDependencies": {
-    "esbuild": "^0.28.0",
-    "monaco-editor": "^0.55.1",
-    "monaco-vim": "^0.4.4"
+    "esbuild": "0.28.0",
+    "monaco-editor": "0.55.1",
+    "monaco-vim": "0.4.4"
   }
 }

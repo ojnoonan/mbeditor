@@ -5,6 +5,7 @@ require "mbeditor/configuration"
 require "mbeditor/mount_path"
 require "mbeditor/route_map"
 require "mbeditor/private_routes"
+require "mbeditor/editor_bootstrap"
 require "mbeditor/engine"
 
 module Mbeditor
