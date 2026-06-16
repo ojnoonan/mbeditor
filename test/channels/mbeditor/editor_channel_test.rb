@@ -86,6 +86,33 @@ module Mbeditor
       assert write_branch_state_called, "EditorStateService#write_branch_state should have been called"
     end
 
+    # ── log tail ───────────────────────────────────────────────────────────────
+
+    test "push_log_lines transmits new lines only while watching" do
+      subscribe
+      fake = Object.new
+      def fake.read_since(_offset)
+        { lines: ["GET /things 200 OK"], offset: 42, reset: false }
+      end
+
+      with_fake_log_tail_service(fake) do
+        # Not watching yet -> nothing transmitted.
+        subscription.send(:push_log_lines)
+        assert_empty transmissions
+
+        subscription.start_log_tail("offset" => 0)
+        subscription.send(:push_log_lines)
+      end
+
+      msg = transmissions.last
+      assert_equal "log", msg["type"]
+      assert_equal ["GET /things 200 OK"], msg["lines"]
+      assert_equal 42, msg["offset"]
+
+      subscription.stop_log_tail
+      assert_equal false, subscription.instance_variable_get(:@log_watching)
+    end
+
     private
 
     def workspace_root
@@ -98,6 +125,14 @@ module Mbeditor
       yield
     ensure
       EditorStateService.define_singleton_method(:new, original_new)
+    end
+
+    def with_fake_log_tail_service(fake_service)
+      original_new = LogTailService.method(:new)
+      LogTailService.define_singleton_method(:new) { |*| fake_service }
+      yield
+    ensure
+      LogTailService.define_singleton_method(:new, original_new)
     end
   end
 end
