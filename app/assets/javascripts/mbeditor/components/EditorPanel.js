@@ -647,6 +647,14 @@ var EditorPanel = function EditorPanel(_ref) {
       }
     });
 
+    // Ctrl/Cmd+P → quick-open. Bound at the Monaco level (not just the window
+    // listener) so the editor intercepts the key while it has focus; otherwise
+    // the browser's native print dialog fires before the bubbled window handler
+    // can preventDefault. The vim-mode mapping handles this separately.
+    editor.addCommand(window.monaco.KeyMod.CtrlCmd | window.monaco.KeyCode.KeyP, function() {
+      EditorStore.setState({ isQuickOpenVisible: true });
+    });
+
     var editorPluginDisposable = null;
     if (window.MbeditorEditorPlugins && window.MbeditorEditorPlugins.attachEditorFeatures) {
       editorPluginDisposable = window.MbeditorEditorPlugins.attachEditorFeatures(editor, language);
