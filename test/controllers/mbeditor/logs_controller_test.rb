@@ -7,7 +7,21 @@ module Mbeditor
     include Engine.routes.url_helpers
 
     def log_path
-      Rails.root.join("log", "#{Rails.env}.log")
+      @log_path
+    end
+
+    setup do
+      @log_path = Rails.root.join("log", "#{Rails.env}.log")
+      @log_existed = File.exist?(@log_path)
+      @log_backup = @log_existed ? File.read(@log_path) : nil
+    end
+
+    teardown do
+      if @log_existed
+        File.write(@log_path, @log_backup)
+      elsif File.exist?(@log_path)
+        File.delete(@log_path)
+      end
     end
 
     test "GET /logs/tail returns lines, offset and reset as JSON" do
