@@ -13,7 +13,46 @@ var LogPanel = function LogPanel(_ref) {
   var _autoScroll = React.useState(true);
   var autoScroll = _autoScroll[0], setAutoScroll = _autoScroll[1];
 
+  var MIN_HEIGHT = 120;
+  var _height = React.useState(function () {
+    var saved = parseInt(window.localStorage.getItem('mbeditorLogHeight'), 10);
+    return (saved && saved >= MIN_HEIGHT) ? saved : 240;
+  });
+  var height = _height[0], setHeight = _height[1];
+
   var bodyRef = React.useRef(null);
+  // Mirror height into a ref so the drag end-handler can persist the final value
+  // (setHeight is async, so reading state in onMouseUp would be stale).
+  var heightRef = React.useRef(height);
+  heightRef.current = height;
+
+  // Drag the top edge to resize the drawer. Delta-based: track how far the
+  // pointer has moved from where the drag started and add that to the starting
+  // height. Dragging up grows the drawer. This is independent of where the
+  // drawer is anchored and survives a zero/unknown viewport height.
+  var onResizeMouseDown = function (e) {
+    e.preventDefault();
+    var startY = e.clientY;
+    var startHeight = heightRef.current;
+    var onMove = function (ev) {
+      var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+      var maxH = vh > 0 ? Math.round(vh * 0.85) : Infinity;
+      var next = Math.min(maxH, Math.max(MIN_HEIGHT, startHeight + (startY - ev.clientY)));
+      heightRef.current = next;
+      setHeight(next);
+    };
+    var onUp = function () {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.localStorage.setItem('mbeditorLogHeight', String(heightRef.current));
+    };
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
 
   React.useEffect(function () {
     LogService.start();
@@ -47,7 +86,12 @@ var LogPanel = function LogPanel(_ref) {
 
   return React.createElement(
     'div',
-    { className: 'ide-log-drawer' },
+    { className: 'ide-log-drawer', style: { height: height + 'px' } },
+    React.createElement('div', {
+      className: 'ide-log-resize',
+      title: 'Drag to resize',
+      onMouseDown: onResizeMouseDown
+    }),
     React.createElement(
       'div',
       { className: 'ide-log-header' },

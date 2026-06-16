@@ -2657,12 +2657,21 @@ button:not(.pico-btn) { margin-bottom: 0; }
   left: 0;
   right: 0;
   bottom: 22px; /* sit above the status bar */
-  height: 240px;
+  height: 240px; /* default; overridden by the drag-resized inline height */
   display: flex;
   flex-direction: column;
   background: var(--ide-panel-bg, #1e1e1e);
   border-top: 1px solid var(--ide-border, #333);
   z-index: 40;
+}
+.ide-log-resize {
+  flex: 0 0 auto;
+  height: 6px;
+  cursor: ns-resize;
+  background: transparent;
+}
+.ide-log-resize:hover {
+  background: var(--ide-accent, #569cd6);
 }
 .ide-log-header {
   display: flex;
