@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Rails log viewer** — a bottom-drawer panel (toggle via the status bar or
+  `Ctrl+Shift+L`) that streams the active environment's `log/<env>.log` in real
+  time over ActionCable, with an HTTP polling fallback. Read-only.
+
+### Security
+- The log viewer displays log contents **verbatim**, which may include request
+  params, tokens, or SQL values. It is read-only and gated by the host app's
+  auth like every other editor route, but operators should be aware that logs
+  can contain secrets.
+
+---
+
 ## [0.7.5] - 2026-06-03
 
 ### Fixed
