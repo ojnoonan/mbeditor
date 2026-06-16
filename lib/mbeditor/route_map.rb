@@ -47,6 +47,7 @@ module Mbeditor
     post   'quick_fix',       to: 'editors#quick_fix'
     post   'format',          to: 'editors#format_file'
     post   'test',            to: 'editors#run_test'
+    get    'logs/tail',       to: 'logs#tail'
 
     # ── Git & Code Review ──────────────────────────────────────────────────────
     get 'git/diff',           to: 'git#diff'
