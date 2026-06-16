@@ -895,16 +895,36 @@ var MbeditorApp = function MbeditorApp() {
       })).then(function (results) {
         var resIdx = 0;
         var restoredPanes = panesToLoad.map(function (p) {
+          // Drop duplicate file tabs within a pane — a single file must never
+          // appear twice in the same pane. A race between persisted state and an
+          // in-flight reopen can otherwise rebuild the pane with the same path
+          // twice (the "duplicated file twice over" symptom). Only plain file
+          // tabs are de-duplicated by path; diff/preview/settings/changelog tabs
+          // encode their identity elsewhere and are left untouched. resIdx is
+          // advanced for every original tab so it stays aligned with `results`.
+          var seenPaths = {};
+          var tabs = [];
+          p.tabs.forEach(function (t) {
+            var res = results[resIdx++];
+            var isPlainFile = t.path && !t.isDiff && !t.isCombinedDiff && !t.isSettings &&
+              !t.isChangelog && !t.isPreview &&
+              !/^(diff|combined-diff):\/\//.test(t.path) && !/::preview$/.test(t.path);
+            if (isPlainFile) {
+              if (seenPaths[t.path]) return;
+              seenPaths[t.path] = true;
+            }
+            tabs.push(_extends({}, t, {
+              content: res.content,
+              externalContentVersion: (t.externalContentVersion || 0) + 1
+            }, res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {},
+            typeof res.fileNotFound === 'boolean' ? { fileNotFound: res.fileNotFound, dirty: res.fileNotFound ? false : t.dirty } : {},
+            res.image === true ? { isImage: true } : {}));
+          });
+          // If activeTabId pointed at a dropped duplicate, fall back to the first tab.
+          var activeStillPresent = tabs.some(function (t) { return t.id === p.activeTabId; });
           return _extends({}, p, {
-            tabs: p.tabs.map(function (t) {
-              var res = results[resIdx++];
-              return _extends({}, t, {
-                content: res.content,
-                externalContentVersion: (t.externalContentVersion || 0) + 1
-              }, res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {},
-              typeof res.fileNotFound === 'boolean' ? { fileNotFound: res.fileNotFound, dirty: res.fileNotFound ? false : t.dirty } : {},
-              res.image === true ? { isImage: true } : {});
-            })
+            tabs: tabs,
+            activeTabId: activeStillPresent ? p.activeTabId : ((tabs[0] && tabs[0].id) || null)
           });
         });
         EditorStore.setState({ panes: restoredPanes, focusedPaneId: focusedPaneId || 1 });
@@ -981,6 +1001,18 @@ var MbeditorApp = function MbeditorApp() {
       if (!oldBranch || isSwitchingBranchRef.current) return;
       // Ignore spurious branch changes triggered by saves (race condition)
       if (isSavingRef.current) return;
+
+      // Never auto-swap per-branch tab state while there are unsaved edits. The
+      // swap clears every pane and reloads each tab's content from disk, which
+      // would silently discard in-progress work — the "reverts changes
+      // completely" symptom, now triggered more often by the periodic git
+      // status poll picking up external branch changes. Keep the current tabs
+      // and edits in place; the new branch's saved layout loads on the next
+      // switch once the work is saved.
+      var hasUnsavedEdits = (EditorStore.getState().panes || []).some(function (p) {
+        return (p.tabs || []).some(function (t) { return t.dirty; });
+      });
+      if (hasUnsavedEdits) return;
 
       isSwitchingBranchRef.current = true;
       setIsSwitchingBranch(true);
@@ -1189,9 +1221,34 @@ var MbeditorApp = function MbeditorApp() {
       ctrlWTimeoutRef.current = setTimeout(function() { ctrlWPendingRef.current = false; }, 1500);
     };
 
+    // Capture-phase listener for Ctrl/Cmd+F. Monaco only intercepts Find while
+    // the editor DOM node has focus (bubble phase); once focus leaves the editor
+    // (e.g. clicking a tab) the browser's native Find takes over. This routes
+    // Find back to the active editor unless the user is typing in another input
+    // (sidebar search, rename box) or focus is already inside a Monaco editor.
+    var onFindCapture = function(e) {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+      if (e.key !== 'f' && e.key !== 'F') return;
+      var ed = window.__mbeditorActiveEditor;
+      if (!ed) return;
+      var ae = document.activeElement;
+      if (ae && ae.closest) {
+        // Already in a Monaco editor — let Monaco's own binding handle it.
+        if (ae.closest('.monaco-editor')) return;
+        // Don't hijack Find while typing in another input region.
+        if (ae.closest('.ide-sidebar, .git-panel, .quick-open-overlay, .schema-modal, input, textarea, [contenteditable="true"]')) return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      ed.focus();
+      var action = ed.getAction && ed.getAction('actions.find');
+      if (action) action.run();
+    };
+
     window.addEventListener('keydown', onKeyDown);
     document.addEventListener('keydown', onZenCapture, true);
     document.addEventListener('keydown', onCtrlWCapture, true);
+    document.addEventListener('keydown', onFindCapture, true);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
     return function () {
@@ -1206,6 +1263,7 @@ var MbeditorApp = function MbeditorApp() {
       window.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('keydown', onZenCapture, true);
       document.removeEventListener('keydown', onCtrlWCapture, true);
+      document.removeEventListener('keydown', onFindCapture, true);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
       document.body.style.cursor = '';
@@ -1366,8 +1424,6 @@ var MbeditorApp = function MbeditorApp() {
     var intervalId = setInterval(function () {
       if (document.hidden) return;
       if (WebSocketService.isConnected()) return; // WebSocket is handling refreshes
-      // Refresh tree and check for git branch changes (to trigger per-branch tab state swap)
-      GitService.fetchStatus()["catch"](function () {});
       FileService.getTree().then(function (data) {
         var newData = data || [];
         setTreeData(function (prevData) {
@@ -1378,6 +1434,27 @@ var MbeditorApp = function MbeditorApp() {
       }).catch(function () {}); // silently ignore auto-refresh errors
     }, 10000);
     return function () { clearInterval(intervalId); };
+  }, []);
+
+  // Git branch/status must be polled independently of the WebSocket. The WS only
+  // broadcasts after mbeditor-initiated mutations, so an external `git checkout`
+  // (e.g. switching branches in a terminal) is never pushed. Poll on a short
+  // interval and refresh immediately when the tab regains focus so branch
+  // changes are picked up promptly instead of requiring a manual git-panel reload.
+  useEffect(function () {
+    var refresh = function () {
+      if (document.hidden) return;
+      GitService.fetchStatus()["catch"](function () {});
+    };
+    var intervalId = setInterval(refresh, 5000);
+    var onVisible = function () { if (!document.hidden) refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', refresh);
+    return function () {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', refresh);
+    };
   }, []);
 
   var handleSelectFile = function handleSelectFile(path, name, line, col) {
@@ -1624,7 +1701,7 @@ var MbeditorApp = function MbeditorApp() {
         resource = resource.replace(/_(controller|model|helper|service)$/, '');
         if (resource) {
           var seg = resource.replace(/ies$/, 'y')
-            .replace(/([^aeiou])es$/, '$1')
+            .replace(/(ss|sh|ch|x|z)es$/, '$1')
             .replace(/([^s])s$/, '$1');
           return seg.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
         }
@@ -1649,7 +1726,7 @@ var MbeditorApp = function MbeditorApp() {
     }
     var seg = (name || '').split('/').pop() || name || '';
     seg = seg.replace(/ies$/, 'y')
-             .replace(/([^aeiou])es$/, '$1')
+             .replace(/(ss|sh|ch|x|z)es$/, '$1')
              .replace(/([^s])s$/, '$1');
     return seg.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
   };
@@ -3459,11 +3536,20 @@ var MbeditorApp = function MbeditorApp() {
           React.createElement(
             "div",
             { className: "search-input-shell" },
-            React.createElement("input", {
-              className: "search-input",
+            React.createElement("textarea", {
+              className: "search-input search-query-input",
+              rows: 2,
               placeholder: "Find in files…",
               value: searchQuery,
-              onChange: handleSearchChange
+              onChange: handleSearchChange,
+              // Enter triggers the search without inserting a newline; Shift+Enter
+              // still adds one for multi-line queries.
+              onKeyDown: function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  if (searchQuery) _debouncedSearch(searchQuery);
+                }
+              }
             }),
             React.createElement(
               "div",

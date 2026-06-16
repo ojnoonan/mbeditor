@@ -34,6 +34,16 @@ module Mbeditor
 
         return @app.call(env) unless matches_prefix?(path, prefix)
 
+        # Only hijack the request when the host route table is actually broken
+        # (a raising routes.rb wipes every registered route set, including the
+        # engine's). On a healthy request, fall through to the normal engine
+        # mount so the host stack handles it with the correct SCRIPT_NAME and a
+        # working main_app proxy — dispatching healthy traffic through the
+        # private set instead makes the host's own url helpers (e.g. an
+        # authenticate_with redirect) inherit SCRIPT_NAME="/mbeditor" and
+        # wrongly prepend the mount prefix.
+        return @app.call(env) unless host_routes_broken?
+
         remainder = path[prefix.length..] || ""
         remainder = "/" if remainder.empty?
         env["SCRIPT_NAME"] = prefix
@@ -43,6 +53,14 @@ module Mbeditor
       end
 
       private
+
+      # True when the engine's own route set has been wiped — the signature of a
+      # broken host config/routes.rb, whose failed reload clears every route set
+      # the RoutesReloader knows about. When healthy, the engine routes are
+      # populated and the request belongs on the normal mount.
+      def host_routes_broken?
+        Mbeditor::Engine.routes.routes.empty?
+      end
 
       def matches_prefix?(path, prefix)
         path == prefix || path.start_with?("#{prefix}/")

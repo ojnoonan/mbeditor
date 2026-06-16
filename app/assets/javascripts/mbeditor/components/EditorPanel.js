@@ -579,6 +579,8 @@ var EditorPanel = function EditorPanel(_ref) {
       hover: { above: false }
     });
 
+    applyLargeFileTuning(editor, modelObj);
+
     if (tab.viewState) {
       editor.restoreViewState(tab.viewState);
     }
@@ -1060,6 +1062,9 @@ var EditorPanel = function EditorPanel(_ref) {
         linkedEditing: !!(editorPrefs.linkedEditing),
         acceptSuggestionOnEnter: editorPrefs.acceptSuggestionOnEnter || 'on'
       });
+      // Re-apply large-file tuning last so a prefs change can't re-enable the
+      // expensive features for a big file.
+      applyLargeFileTuning(monacoRef.current, monacoRef.current.getModel());
     }
   }, [editorPrefs]);
 
@@ -1586,6 +1591,26 @@ var EditorPanel = function EditorPanel(_ref) {
     document.addEventListener('mousedown', handleClickOutside);
     return function() { document.removeEventListener('mousedown', handleClickOutside); };
   }, [methodsOpen]);
+
+  // Large-file performance tuning. Above this many lines, scroll- and edit-time
+  // work from these features (minimap canvas repaint on every scroll,
+  // sticky-scroll scope recompute, folding-range and bracket-pair recomputation,
+  // occurrence highlighting, whole-document suggestion scans) dominates and makes
+  // the editor feel sluggish. Disabling them for big files keeps scrolling and
+  // typing responsive. This only ever downgrades — it never turns a feature on —
+  // so it cannot override a lighter user preference.
+  function applyLargeFileTuning(editor, model) {
+    if (!editor || !model) return;
+    if (model.getLineCount() < 2500) return;
+    editor.updateOptions({
+      minimap: { enabled: false },
+      stickyScroll: { enabled: false },
+      bracketPairColorization: { enabled: false },
+      folding: false,
+      occurrencesHighlight: 'off',
+      wordBasedSuggestions: 'off'
+    });
+  }
 
   // Parse all method definitions from the current Monaco model
   function parseRubyMethods(model) {

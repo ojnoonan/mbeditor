@@ -168,7 +168,7 @@ module Mbeditor
       FileUtils.mkdir_p(File.dirname(hist))
 
       File.open(hist, File::RDWR | File::CREAT) do |f|
-        f.flock(File::LOCK_EX)
+        flock_exclusive_with_timeout!(f)
         existing = f.size > 0 ? (JSON.parse(f.read) rescue {}) : {}
 
         if existing.empty?
@@ -825,6 +825,19 @@ module Mbeditor
 
     def editor_state_service
       @editor_state_service ||= EditorStateService.new(workspace_root)
+    end
+
+    # Acquire an exclusive lock without blocking forever, so a stuck holder (e.g.
+    # a request paused at a breakpoint mid-write) cannot wedge history saves and
+    # pin a worker indefinitely. Raises on timeout; the caller's rescue turns it
+    # into a fast error response instead of a hang.
+    HISTORY_LOCK_TIMEOUT = 5.0
+    def flock_exclusive_with_timeout!(file, timeout: HISTORY_LOCK_TIMEOUT)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+      until file.flock(File::LOCK_EX | File::LOCK_NB)
+        raise "could not acquire history lock within #{timeout}s" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+        sleep 0.01
+      end
     end
 
     def sanitize_branch_name(branch)

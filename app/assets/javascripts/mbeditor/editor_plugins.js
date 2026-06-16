@@ -535,7 +535,15 @@
       monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
         noSemanticValidation: false,
         noSyntaxValidation: false,
-        noSuggestionDiagnostics: false
+        noSuggestionDiagnostics: false,
+        // JSX/JS here is untyped and frequently reads data whose shape is only
+        // known at runtime (server props, state seeded with `{}`). TypeScript
+        // infers those as type `{}` and flags every property/element access as
+        // an error (2339 "Property X does not exist on type '{}'", 2551 its
+        // "did you mean" variant, 7053 dynamic index access). Suppress that
+        // false-positive family while keeping genuinely useful checks such as
+        // 2304 "Cannot find name" (undefined variables/typos).
+        diagnosticCodesToIgnore: [2339, 2551, 7053]
       });
       monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
         target: monaco.languages.typescript.ScriptTarget.ES2020,

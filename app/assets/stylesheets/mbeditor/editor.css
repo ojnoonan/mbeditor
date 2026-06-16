@@ -860,22 +860,36 @@ html, body, #mbeditor-root {
 .search-input-shell {
   width: 100%;
   position: relative;
-  display: flex;
-  align-items: center;
   min-width: 0;
 }
 
-/* The input grows to fill; right padding makes room for adornments */
-.search-input-shell .search-input {
-  padding-right: 88px; /* 3 × 22px buttons + 4px clear + gaps */
+/* Multi-line query field: wraps long queries onto new lines instead of letting
+   them run under the option buttons, and is taller/roomier than a single-line
+   input. The two-class selector and explicit padding shorthand guarantee this
+   wins the cascade over the base `.search-input` rule (same specificity but
+   declared later in the file). The right padding reserves a gutter for the
+   option buttons (anchored top-right inside the field, VS Code style) so
+   wrapped text never overlaps them. */
+.search-input-shell .search-query-input {
+  width: 100%;
+  min-height: 46px;
+  max-height: 160px;
+  resize: vertical;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+  font-size: 13px;
+  font-family: inherit;
+  padding: 6px 116px 6px 8px; /* right gutter clears the 5 option buttons */
 }
 
-/* Adornment container — absolutely positioned inside the shell */
+/* Option buttons — anchored to the top-right inside the field (not vertically
+   centred) so they stay put as the query wraps to multiple lines. */
 .search-input-adornments {
   position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
+  right: 5px;
+  top: 5px;
   display: flex;
   align-items: center;
   gap: 1px;
@@ -2449,7 +2463,6 @@ textarea {
 .git-header-btn,
 .git-action-btn,
 .project-action-btn,
-.tab-close,
 .search-clear-btn,
 .quick-open-clear-btn,
 .shelp-close {

@@ -4,12 +4,21 @@ module Mbeditor
   class EditorStateService
     PayloadTooLargeError = Class.new(StandardError)
     InvalidBranchError   = Class.new(StandardError)
+    LockTimeoutError     = Class.new(StandardError)
 
-    STATE_MAX_BYTES  = 1 * 1024 * 1024
-    SAFE_BRANCH_NAME = /\A[a-zA-Z0-9._\-\/]+\z/
+    STATE_MAX_BYTES   = 1 * 1024 * 1024
+    SAFE_BRANCH_NAME  = /\A[a-zA-Z0-9._\-\/]+\z/
+    # State writes take an exclusive file lock shared with EditorChannel. A
+    # blocking acquire would let a single stuck holder (e.g. a request paused at
+    # a breakpoint mid-write) wedge every later save indefinitely, so the lock
+    # is acquired non-blocking with a bounded retry and gives up with a clear
+    # error rather than hanging the worker.
+    DEFAULT_LOCK_TIMEOUT = 5.0
+    LOCK_RETRY_INTERVAL  = 0.01
 
-    def initialize(workspace_root)
+    def initialize(workspace_root, lock_timeout: DEFAULT_LOCK_TIMEOUT)
       @root = workspace_root
+      @lock_timeout = lock_timeout
     end
 
     def read_state
@@ -36,7 +45,7 @@ module Mbeditor
       path = branch_states_path
       FileUtils.mkdir_p(path.dirname)
       File.open(path, File::RDWR | File::CREAT) do |f|
-        f.flock(File::LOCK_EX)
+        lock_exclusive!(f)
         existing = f.size > 0 ? JSON.parse(f.read) : {}
         existing[branch] = state
         f.truncate(0)
@@ -51,7 +60,7 @@ module Mbeditor
       return [] unless File.exist?(path)
       pruned = []
       File.open(path, File::RDWR) do |f|
-        f.flock(File::LOCK_EX)
+        lock_exclusive!(f)
         all = JSON.parse(f.read) rescue {}
         pruned = all.keys - active_branches
         if pruned.any?
@@ -70,7 +79,7 @@ module Mbeditor
       path = workspace_path
       FileUtils.mkdir_p(path.dirname)
       File.open(path, File::RDWR | File::CREAT) do |f|
-        f.flock(File::LOCK_EX)
+        lock_exclusive!(f)
         f.truncate(0)
         f.rewind
         f.write(payload)
@@ -79,6 +88,19 @@ module Mbeditor
     end
 
     private
+
+    # Acquire an exclusive lock without blocking forever. Retries the
+    # non-blocking flock until @lock_timeout elapses, then raises so the caller
+    # fails fast instead of pinning a worker on a stuck holder.
+    def lock_exclusive!(file)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + @lock_timeout
+      until file.flock(File::LOCK_EX | File::LOCK_NB)
+        if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+          raise LockTimeoutError, "could not acquire state lock within #{@lock_timeout}s"
+        end
+        sleep LOCK_RETRY_INTERVAL
+      end
+    end
 
     def workspace_path
       @root.join("tmp", "mbeditor_workspace.json")
