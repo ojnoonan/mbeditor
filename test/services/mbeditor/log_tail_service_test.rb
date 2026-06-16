@@ -36,7 +36,7 @@ module Mbeditor
     end
 
     test "never emits a partial trailing line; it is delivered once the newline arrives" do
-      with_log("a\n", offset_after: true) do |svc, path|
+      with_log("a\n") do |svc, path|
         File.open(path, "a") { |f| f.write("partial") }
         mid = svc.read_since(2)
         assert_equal [], mid[:lines]
@@ -72,7 +72,7 @@ module Mbeditor
 
     private
 
-    def with_log(content, offset_after: false)
+    def with_log(content)
       Dir.mktmpdir do |dir|
         path = File.join(dir, "development.log")
         File.write(path, content)
