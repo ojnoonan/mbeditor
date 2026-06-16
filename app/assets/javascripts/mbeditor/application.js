@@ -5,6 +5,7 @@
 //= require mbeditor/history_service
 //= require mbeditor/websocket_service
 //= require mbeditor/git_service
+//= require mbeditor/log_service
 //= require mbeditor/conflict_parser
 //= require mbeditor/search_service
 //= require mbeditor/tab_manager
