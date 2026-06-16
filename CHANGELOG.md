@@ -8,9 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Rails log viewer** — a bottom-drawer panel (toggle via the status bar or
-  `Ctrl+Shift+L`) that streams the active environment's `log/<env>.log` in real
-  time over ActionCable, with an HTTP polling fallback. Read-only.
+- **Rails log viewer** — a drag-resizable bottom-drawer panel (toggle via the
+  status bar or `Ctrl+Shift+L`) that streams the active environment's
+  `log/<env>.log` in real time over ActionCable, with an HTTP polling fallback.
+  Includes a substring filter; height persists across sessions. Read-only.
 
 ### Security
 - The log viewer displays log contents **verbatim**, which may include request
