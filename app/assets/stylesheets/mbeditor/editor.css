@@ -2650,3 +2650,57 @@ button:not(.pico-btn) { margin-bottom: 0; }
 .mbeditor-format-changed {
   background-color: rgba(80, 200, 100, 0.15);
 }
+
+/* ── Rails log drawer ─────────────────────────────────────────────────────── */
+.ide-log-drawer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 22px; /* sit above the status bar */
+  height: 240px;
+  display: flex;
+  flex-direction: column;
+  background: var(--ide-panel-bg, #1e1e1e);
+  border-top: 1px solid var(--ide-border, #333);
+  z-index: 40;
+}
+.ide-log-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--ide-border, #333);
+  font-size: 12px;
+  color: var(--ide-fg-muted, #ccc);
+}
+.ide-log-title { font-weight: 600; }
+.ide-log-filter {
+  margin-left: auto;
+  background: var(--ide-input-bg, #2d2d2d);
+  color: var(--ide-fg, #eee);
+  border: 1px solid var(--ide-border, #333);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 12px;
+  width: 180px;
+}
+.ide-log-paused { color: #cca700; font-size: 11px; }
+.ide-log-btn {
+  background: transparent;
+  border: none;
+  color: var(--ide-fg-muted, #ccc);
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.ide-log-btn:hover { color: var(--ide-fg, #fff); }
+.ide-log-body {
+  flex: 1;
+  overflow: auto;
+  padding: 6px 10px;
+  font-family: var(--ide-mono, monospace);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ide-log-line { color: var(--ide-fg, #d4d4d4); }
