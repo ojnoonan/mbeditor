@@ -425,6 +425,11 @@ var MbeditorApp = function MbeditorApp() {
   var showGitPanelRef = useRef(showGitPanel);
   showGitPanelRef.current = showGitPanel;
 
+  var _useStateLog = useState(false);
+  var _useStateLog2 = _slicedToArray(_useStateLog, 2);
+  var showLogPanel = _useStateLog2[0];
+  var setShowLogPanel = _useStateLog2[1];
+
   var _useState18g = useState(320);
   var _useState18g2 = _slicedToArray(_useState18g, 2);
   var gitPanelWidth = _useState18g2[0];
@@ -1103,6 +1108,10 @@ var MbeditorApp = function MbeditorApp() {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'G') {
         e.preventDefault();
         toggleGitPanel();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'L' || e.key === 'l')) {
+        e.preventDefault();
+        setShowLogPanel(function (prev) { return !prev; });
       }
       // Ctrl+Shift+Z is handled in capture phase below so Monaco cannot swallow it.
       if (e.key === 'Escape') {
@@ -2535,6 +2544,10 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
+  var toggleLogPanel = function toggleLogPanel() {
+    setShowLogPanel(function (prev) { return !prev; });
+  };
+
   var toggleZenMode = function toggleZenMode() {
     setZenMode(function (prev) {
       var next = !prev;
@@ -3226,6 +3239,13 @@ var MbeditorApp = function MbeditorApp() {
             React.createElement("i", { className: "fas fa-code-branch" }),
             !editorPrefs.toolbarIconOnly && " Git"
           )
+        ),
+        React.createElement("div", { className: "statusbar-sep" }),
+        React.createElement(
+          "button",
+          { type: "button", className: "statusbar-btn", onClick: toggleLogPanel, title: "Toggle Rails log (Ctrl+Shift+L)" },
+          React.createElement("i", { className: "fas fa-stream" }),
+          !editorPrefs.toolbarIconOnly && " Logs"
         ),
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
@@ -4726,7 +4746,10 @@ var MbeditorApp = function MbeditorApp() {
           onOpenAllChanges: function(scope, label) { TabManager.openCombinedDiffTab(scope, label); },
           onSelectCommit: handleSelectCommit
         })
-      )
+      ),
+      showLogPanel && !zenMode && React.createElement(window.LogPanel || LogPanel, {
+        onClose: function () { setShowLogPanel(false); }
+      })
     ),
     React.createElement(
       "div",

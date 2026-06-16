@@ -104,6 +104,7 @@ var ShortcutHelp = function ShortcutHelp(_ref) {
                   React.createElement(Row, { keys: 'Ctrl+P', desc: 'Quick-open any file by name' }),
                   React.createElement(Row, { keys: 'Ctrl+S', desc: 'Save the active file' }),
                   React.createElement(Row, { keys: 'Ctrl+Shift+G', desc: 'Toggle git panel' }),
+                  React.createElement(Row, { keys: 'Ctrl+Shift+L', desc: 'Toggle Rails log panel' }),
                   React.createElement(Row, { keys: 'Ctrl+Shift+Z', desc: 'Toggle zen / focus mode' }),
                   React.createElement(Row, { keys: 'Escape', desc: 'Close quick-open / context menus' })
                 )
