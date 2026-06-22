@@ -193,6 +193,31 @@ module Mbeditor
       assert_equal '/some/root', result
     end
 
+    def test_resolve_path_resolves_real_file_inside_repo
+      Dir.mktmpdir do |repo|
+        FileUtils.mkdir_p(File.join(repo, 'lib'))
+        File.write(File.join(repo, 'lib', 'foo.rb'), 'x')
+
+        result = GitService.resolve_path(repo, 'lib/foo.rb')
+
+        assert_equal File.join(repo, 'lib', 'foo.rb'), result
+      end
+    end
+
+    def test_resolve_path_returns_nil_for_symlink_escape
+      Dir.mktmpdir do |outside|
+        Dir.mktmpdir do |repo|
+          # A symlink inside the repo that resolves to a directory outside it.
+          File.write(File.join(outside, 'secret.txt'), 'top secret')
+          File.symlink(outside, File.join(repo, 'escape'))
+
+          result = GitService.resolve_path(repo, 'escape/secret.txt')
+
+          assert_nil result, 'symlink resolving outside the repo must be rejected'
+        end
+      end
+    end
+
     # -------------------------------------------------------------------------
     # parse_porcelain_status
     # -------------------------------------------------------------------------
