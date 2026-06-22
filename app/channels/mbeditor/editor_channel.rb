@@ -1,11 +1,14 @@
 # frozen_string_literal: true
 
+require "open3"
 require "pathname"
 
 module Mbeditor
   CableBaseClass = defined?(ActionCable::Channel::Base) ? ActionCable::Channel::Base : Object
 
   class EditorChannel < CableBaseClass
+    WORKSPACE_ROOT_MUTEX = Mutex.new
+    private_constant :WORKSPACE_ROOT_MUTEX
     def subscribed
       stream_from "mbeditor_editor" if respond_to?(:stream_from)
     end
@@ -35,11 +38,22 @@ module Mbeditor
       configured = Mbeditor.configuration.workspace_root
       return Pathname.new(configured.to_s) if configured.present?
 
-      rails_root = Rails.root.to_s
-      out, _err, status = Open3.capture3("git", "-C", rails_root, "rev-parse", "--show-toplevel")
-      Pathname.new(status.success? && out.strip.present? ? out.strip : rails_root)
-    rescue StandardError
-      Rails.root
+      # Fast path: already cached on this channel class.
+      cached = self.class.instance_variable_get(:@workspace_root_cache)
+      return cached if cached
+
+      # Slow path: compute once under a mutex so heavy auto-save traffic doesn't
+      # spawn a `git rev-parse` subprocess on every WebSocket action.
+      WORKSPACE_ROOT_MUTEX.synchronize do
+        self.class.instance_variable_get(:@workspace_root_cache) ||
+          self.class.instance_variable_set(:@workspace_root_cache, begin
+            rails_root = Rails.root.to_s
+            out, _err, status = Open3.capture3("git", "-C", rails_root, "rev-parse", "--show-toplevel")
+            Pathname.new(status.success? && out.strip.present? ? out.strip : rails_root)
+          rescue StandardError
+            Rails.root
+          end)
+      end
     end
   end
 end

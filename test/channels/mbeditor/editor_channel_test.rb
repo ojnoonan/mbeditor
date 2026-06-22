@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "open3"
 
 module Mbeditor
   class EditorChannelTest < ActionCable::Channel::TestCase
@@ -86,10 +87,67 @@ module Mbeditor
       assert write_branch_state_called, "EditorStateService#write_branch_state should have been called"
     end
 
+    # ── workspace_root caching ─────────────────────────────────────────────────
+
+    test "computes the git toplevel only once across multiple actions when workspace_root is unconfigured" do
+      Mbeditor.configure { |c| c.workspace_root = nil }
+      subscribe
+
+      fake_service = Object.new
+      fake_service.define_singleton_method(:write_state) { |_| }
+
+      git_calls = count_git_rev_parse do
+        with_fake_editor_state_service(fake_service) do
+          perform :save_state, state: { x: 1 }
+          perform :save_state, state: { y: 2 }
+        end
+      end
+
+      assert_equal 1, git_calls,
+        "git rev-parse should run once and then be served from the class-level cache"
+    end
+
+    test "reuses the cached git toplevel across different action types" do
+      Mbeditor.configure { |c| c.workspace_root = nil }
+      subscribe
+
+      fake_service = Object.new
+      fake_service.define_singleton_method(:write_state)        { |_| }
+      fake_service.define_singleton_method(:write_branch_state) { |_, _| }
+
+      git_calls = count_git_rev_parse do
+        with_fake_editor_state_service(fake_service) do
+          perform :save_state,        state: { x: 1 }
+          perform :save_branch_state, branch: "main", state: { y: 2 }
+        end
+      end
+
+      assert_equal 1, git_calls,
+        "save_branch_state should reuse the toplevel cached by save_state"
+    end
+
     private
+
+    def teardown
+      # The cache lives in a class ivar; clear it so it doesn't leak between tests.
+      Mbeditor::EditorChannel.instance_variable_set(:@workspace_root_cache, nil)
+    end
 
     def workspace_root
       Pathname.new(@workspace)
+    end
+
+    def count_git_rev_parse
+      count = 0
+      original = Open3.method(:capture3)
+      Open3.define_singleton_method(:capture3) do |*args|
+        count += 1 if args.include?("rev-parse")
+        original.call(*args)
+      end
+      yield
+      count
+    ensure
+      Open3.define_singleton_method(:capture3, original)
     end
 
     def with_fake_editor_state_service(fake_service)
