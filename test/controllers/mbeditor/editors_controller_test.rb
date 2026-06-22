@@ -1555,6 +1555,52 @@ module Mbeditor
       Mbeditor.configure { |c| c.related_files_custom_paths = [] }
     end
 
+    # ---------------------------------------------------------------------------
+    # Origin / Referer validation (CSRF defense-in-depth) — issue #75
+    # ---------------------------------------------------------------------------
+
+    test "non-GET request with cross-origin Origin header is forbidden" do
+      post "/mbeditor/state",
+           params: { state: { openTabs: ["foo.rb"] } },
+           as: :json,
+           headers: { "HTTP_ORIGIN" => "http://evil.example.com" }
+      assert_response :forbidden
+    end
+
+    test "non-GET request with same-origin Origin header is allowed" do
+      post "/mbeditor/state",
+           params: { state: { openTabs: ["foo.rb"] } },
+           as: :json,
+           headers: { "HTTP_ORIGIN" => "http://www.example.com" }
+      assert_response :ok
+      assert_equal true, json["ok"]
+    end
+
+    test "non-GET request with cross-origin Referer (no Origin) is forbidden" do
+      post "/mbeditor/state",
+           params: { state: { openTabs: ["foo.rb"] } },
+           as: :json,
+           headers: { "HTTP_REFERER" => "http://evil.example.com/page" }
+      assert_response :forbidden
+    end
+
+    test "non-GET request with same-origin Referer (no Origin) is allowed" do
+      post "/mbeditor/state",
+           params: { state: { openTabs: ["foo.rb"] } },
+           as: :json,
+           headers: { "HTTP_REFERER" => "http://www.example.com/mbeditor" }
+      assert_response :ok
+      assert_equal true, json["ok"]
+    end
+
+    test "non-GET request with neither Origin nor Referer is allowed" do
+      post "/mbeditor/state",
+           params: { state: { openTabs: ["foo.rb"] } },
+           as: :json
+      assert_response :ok
+      assert_equal true, json["ok"]
+    end
+
     private
 
     def json

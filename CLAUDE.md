@@ -33,7 +33,7 @@ The inline editor-boot JS (worker wiring, lazy Prettier/monaco-vim loaders, app 
 
 ## Security (non-negotiable)
 - All file paths must go through `resolve_path()` — uses `File.realpath` to prevent symlink escape, caps at 5 MB
-- All non-GET/HEAD requests require `X-Mbeditor-Client: 1` header (`verify_mbeditor_client`)
+- All non-GET/HEAD requests require `X-Mbeditor-Client: 1` header AND a same-origin `Origin`/`Referer` (CSRF defense-in-depth, both in `verify_mbeditor_client`); rejects on Origin/Referer mismatch, allows when both absent (browsers force-set Origin on cross-origin state changes)
 - Git ref names validated against `SAFE_GIT_REF = %r{\A[\w./-]+\z}` before interpolation
 
 ## Test Gotchas

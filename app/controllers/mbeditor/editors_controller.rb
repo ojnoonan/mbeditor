@@ -7,6 +7,7 @@ require "shellwords"
 require "tempfile"
 require "timeout"
 require "tmpdir"
+require "uri"
 
 module Mbeditor
   class EditorsController < ApplicationController
@@ -864,9 +865,25 @@ module Mbeditor
     end
 
     def verify_mbeditor_client
-      return if request.headers['X-Mbeditor-Client'] == '1'
+      unless request.headers['X-Mbeditor-Client'] == '1' && same_origin_request?
+        render plain: 'Forbidden', status: :forbidden
+      end
+    end
 
-      render plain: 'Forbidden', status: :forbidden
+    # CSRF defense-in-depth: validate Origin/Referer against the request host.
+    # We only reject on a *mismatch* — a request that carries neither header is
+    # allowed (browsers force-set Origin on cross-origin state-changing requests,
+    # so a forged cross-origin request can never reach the "absent" branch).
+    def same_origin_request?
+      if (origin = request.origin).present?
+        origin == request.base_url
+      elsif (referer = request.referer).present?
+        URI.parse(referer).origin == request.base_url
+      else
+        true
+      end
+    rescue URI::InvalidURIError
+      false
     end
 
     def path_blocked_for_operations?(full_path)
