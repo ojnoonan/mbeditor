@@ -71,6 +71,22 @@ module Mbeditor
       assert_includes [true, false], result
     end
 
+    def test_rg_returns_boolean
+      assert_includes [true, false], AvailabilityProbe.rg
+    end
+
+    def test_rg_returns_false_when_not_on_path
+      Dir.mktmpdir do |empty_bin|
+        original_path = ENV["PATH"]
+        ENV["PATH"] = empty_bin
+        AvailabilityProbe.reset!
+
+        assert_equal false, AvailabilityProbe.rg
+      ensure
+        ENV["PATH"] = original_path
+      end
+    end
+
     # caching
 
     def test_rubocop_result_is_cached_subprocess_called_once
@@ -91,6 +107,27 @@ module Mbeditor
       Mbeditor.configuration.rubocop_command = nil
     end
 
+    def test_rg_result_is_cached_subprocess_called_once
+      with_fake_rg_on_path do |counter|
+        AvailabilityProbe.reset!
+        AvailabilityProbe.rg
+        AvailabilityProbe.rg
+
+        assert_equal "1\n", File.read(counter)
+      end
+    end
+
+    def test_reset_clears_rg_cache_so_next_call_re_probes
+      with_fake_rg_on_path do |counter|
+        AvailabilityProbe.reset!
+        AvailabilityProbe.rg
+        AvailabilityProbe.reset!
+        AvailabilityProbe.rg
+
+        assert_equal "2\n", File.read(counter)
+      end
+    end
+
     def test_reset_clears_cache_so_next_call_re_probes
       Dir.mktmpdir do |dir|
         counter = File.join(dir, "count")
@@ -108,6 +145,28 @@ module Mbeditor
       end
     ensure
       Mbeditor.configuration.rubocop_command = nil
+    end
+
+    private
+
+    # Puts a fake, counting `rg` executable first on PATH for the block's
+    # duration, yielding the path to its invocation-counter file.
+    def with_fake_rg_on_path
+      Dir.mktmpdir do |dir|
+        counter = File.join(dir, "count")
+        File.write(counter, "0")
+        script = File.join(dir, "rg")
+        File.write(script, "#!/bin/sh\nc=$(cat #{counter}); echo $((c+1)) > #{counter}; exit 0\n")
+        File.chmod(0o755, script)
+
+        original_path = ENV["PATH"]
+        ENV["PATH"] = "#{dir}:#{original_path}"
+        begin
+          yield counter
+        ensure
+          ENV["PATH"] = original_path
+        end
+      end
     end
   end
 end

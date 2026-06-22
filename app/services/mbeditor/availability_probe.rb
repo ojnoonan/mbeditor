@@ -60,6 +60,13 @@ module Mbeditor
       end
     end
 
+    def self.rg
+      probe_cached("rg") do
+        _out, _err, status = Open3.capture3("rg", "--version")
+        status.success?
+      end
+    end
+
     def self.reset!
       MUTEX.synchronize { @cache = {} }
       nil

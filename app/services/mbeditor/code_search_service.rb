@@ -8,7 +8,7 @@ module Mbeditor
 
     class << self
       def call(pattern, workspace_root, globs: JS_GLOBS)
-        if SearchReplaceService::RG_AVAILABLE
+        if AvailabilityProbe.rg
           run_rg(pattern, workspace_root, globs)
         else
           run_grep(pattern, workspace_root, globs)

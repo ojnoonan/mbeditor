@@ -6,7 +6,6 @@ require "timeout"
 
 module Mbeditor
   class SearchReplaceService
-    RG_AVAILABLE = system("which rg > /dev/null 2>&1")
     MAX_REPLACE_FILES = 500
     PER_FILE_TIMEOUT = 5
 
@@ -14,7 +13,7 @@ module Mbeditor
       def search(workspace_root, query, limit:, use_regex:, match_case:, whole_word:, excluded_paths:)
         results = []
 
-        if RG_AVAILABLE
+        if AvailabilityProbe.rg
           args = ["rg", "--json", "--no-ignore"]
           args << "-F" unless use_regex
           args << "--ignore-case" unless match_case
@@ -77,7 +76,7 @@ module Mbeditor
 
       def count(workspace_root, query, use_regex:, match_case:, whole_word:, excluded_paths:)
         total = 0
-        if RG_AVAILABLE
+        if AvailabilityProbe.rg
           args = ["rg", "--count", "--no-ignore"]
           args << "-F" unless use_regex
           args << "--ignore-case" unless match_case

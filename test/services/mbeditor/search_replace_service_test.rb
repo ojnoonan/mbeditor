@@ -19,17 +19,12 @@ module Mbeditor
     end
 
     def with_rg_available(value)
-      original = SearchReplaceService::RG_AVAILABLE
-      $VERBOSE = nil
-      SearchReplaceService.send(:remove_const, :RG_AVAILABLE)
-      SearchReplaceService.const_set(:RG_AVAILABLE, value)
-      $VERBOSE = true
+      original = AvailabilityProbe.method(:rg)
+      AvailabilityProbe.define_singleton_method(:rg) { value }
       yield
     ensure
-      $VERBOSE = nil
-      SearchReplaceService.send(:remove_const, :RG_AVAILABLE)
-      SearchReplaceService.const_set(:RG_AVAILABLE, original)
-      $VERBOSE = true
+      AvailabilityProbe.singleton_class.send(:remove_method, :rg)
+      AvailabilityProbe.define_singleton_method(:rg, original)
     end
 
     def search(query, **opts)

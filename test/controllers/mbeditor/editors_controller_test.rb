@@ -922,11 +922,8 @@ module Mbeditor
 
       Mbeditor.configure { |c| c.excluded_paths = %w[.git tmp log public/assets] }
 
-      original_rg_available = Mbeditor::SearchReplaceService::RG_AVAILABLE
-      $VERBOSE = nil
-      Mbeditor::SearchReplaceService.send(:remove_const, :RG_AVAILABLE)
-      Mbeditor::SearchReplaceService.const_set(:RG_AVAILABLE, false)
-      $VERBOSE = true
+      original_rg = Mbeditor::AvailabilityProbe.method(:rg)
+      Mbeditor::AvailabilityProbe.define_singleton_method(:rg) { false }
 
       get "/mbeditor/search", params: { q: "NEEDLE_TOKEN" }
       assert_response :ok
@@ -937,10 +934,8 @@ module Mbeditor
       assert json.key?("total_count"), "grep fallback must include total_count when thread completes in time"
       assert json["total_count"] >= 1, "grep total_count must reflect at least the one matched file"
     ensure
-      $VERBOSE = nil
-      Mbeditor::SearchReplaceService.send(:remove_const, :RG_AVAILABLE)
-      Mbeditor::SearchReplaceService.const_set(:RG_AVAILABLE, original_rg_available)
-      $VERBOSE = true
+      Mbeditor::AvailabilityProbe.singleton_class.send(:remove_method, :rg)
+      Mbeditor::AvailabilityProbe.define_singleton_method(:rg, original_rg)
     end
 
     test 'search accepts query of exactly 500 characters' do
