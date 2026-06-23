@@ -883,7 +883,11 @@ module Mbeditor
       if (origin = request.origin).present?
         origin == request.base_url
       elsif (referer = request.referer).present?
-        URI.parse(referer).origin == request.base_url
+        # Compare scheme/host/port components rather than URI#origin: the latter
+        # is unavailable on the `uri` gem bundled with Ruby 3.0 (added in 0.11.0)
+        # and would raise NoMethodError there, surfacing as a 500.
+        ref = URI.parse(referer)
+        ref.scheme == request.scheme && ref.host == request.host && ref.port == request.port
       else
         true
       end
