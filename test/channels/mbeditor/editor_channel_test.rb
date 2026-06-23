@@ -187,6 +187,7 @@ module Mbeditor
     test "computes the git toplevel only once across multiple actions when workspace_root is unconfigured" do
       Mbeditor.configure { |c| c.workspace_root = nil }
       subscribe
+      clear_workspace_root_cache!
 
       fake_service = Object.new
       fake_service.define_singleton_method(:write_state) { |_| }
@@ -205,6 +206,7 @@ module Mbeditor
     test "reuses the cached git toplevel across different action types" do
       Mbeditor.configure { |c| c.workspace_root = nil }
       subscribe
+      clear_workspace_root_cache!
 
       fake_service = Object.new
       fake_service.define_singleton_method(:write_state)        { |_| }
@@ -225,7 +227,19 @@ module Mbeditor
 
     def teardown
       # The cache lives in a class ivar; clear it so it doesn't leak between tests.
-      Mbeditor::EditorChannel.instance_variable_set(:@workspace_root_cache, nil)
+      clear_workspace_root_cache!
+    end
+
+    # Clears the process-wide @workspace_root_cache on the *exact* channel class
+    # the test harness instantiates. After a Rails code reload (which other test
+    # files can trigger), the Mbeditor::EditorChannel constant points at a fresh
+    # class object while the running subscription is still an instance of the
+    # class captured by `tests Mbeditor::EditorChannel` at load time — so clearing
+    # the constant alone leaves the instance's cache warm. Use subscription.class
+    # when a subscription exists; fall back to the constant otherwise.
+    def clear_workspace_root_cache!
+      channel_class = defined?(subscription) && subscription ? subscription.class : Mbeditor::EditorChannel
+      channel_class.instance_variable_set(:@workspace_root_cache, nil)
     end
 
     def workspace_root
