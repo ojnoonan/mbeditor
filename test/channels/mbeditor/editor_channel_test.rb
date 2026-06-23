@@ -129,6 +129,48 @@ module Mbeditor
       end
     end
 
+    test "save_branch_state logs a warning when an invalid branch name is rejected" do
+      Dir.mktmpdir do |dir|
+        Mbeditor.configure { |c| c.workspace_root = dir }
+        subscribe
+
+        warnings = capture_logger_warnings do
+          perform :save_branch_state, "branch" => "bad name!", "state" => { "x" => 1 }
+        end
+
+        assert warnings.any? { |m| m.include?("[mbeditor]") },
+          "rejecting an invalid branch name should be observable via a logged warning"
+      end
+    end
+
+    test "save_branch_state rejection warning names the offending branch" do
+      Dir.mktmpdir do |dir|
+        Mbeditor.configure { |c| c.workspace_root = dir }
+        subscribe
+
+        warnings = capture_logger_warnings do
+          perform :save_branch_state, "branch" => "bad name!", "state" => { "x" => 1 }
+        end
+
+        assert warnings.any? { |m| m.include?("bad name!") },
+          "the warning should name the rejected branch so misconfiguration is diagnosable"
+      end
+    end
+
+    test "save_branch_state does not log a warning for a valid branch name" do
+      Dir.mktmpdir do |dir|
+        Mbeditor.configure { |c| c.workspace_root = dir }
+        subscribe
+
+        warnings = capture_logger_warnings do
+          perform :save_branch_state, "branch" => "feature/ok", "state" => { "x" => 1 }
+        end
+
+        assert_empty warnings,
+          "a valid branch name must not produce a rejection warning (no false positives)"
+      end
+    end
+
     test "save_branch_state writes to a real tmp workspace that read_branch_state round-trips" do
       Dir.mktmpdir do |dir|
         Mbeditor.configure { |c| c.workspace_root = dir }
@@ -201,6 +243,21 @@ module Mbeditor
       count
     ensure
       Open3.define_singleton_method(:capture3, original)
+    end
+
+    def capture_logger_warnings
+      warnings = []
+      capturer = Object.new
+      capturer.define_singleton_method(:warn) { |msg = nil, &blk| warnings << (msg || blk&.call).to_s }
+      capturer.define_singleton_method(:method_missing) { |*| nil }
+      capturer.define_singleton_method(:respond_to_missing?) { |*| true }
+
+      original_logger = Rails.logger
+      Rails.logger = capturer
+      yield
+      warnings
+    ensure
+      Rails.logger = original_logger
     end
 
     def with_fake_editor_state_service(fake_service)
