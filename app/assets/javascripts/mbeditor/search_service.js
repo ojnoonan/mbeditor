@@ -162,7 +162,7 @@ var SearchService = (function () {
   function fetchPage(query, pageIndex) {
     if (!query) return Promise.resolve({ results: [], hasMore: false });
     var offset = pageIndex * SEARCH_PAGE_SIZE;
-    return axios.get(basePath() + '/search', {
+    return axios.get(window.mbeditorBasePath() + '/search', {
       params: { q: query, offset: offset, limit: SEARCH_PAGE_SIZE }
     }).then(function(res) {
       var data = res.data;
