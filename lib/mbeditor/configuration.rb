@@ -6,7 +6,7 @@ module Mbeditor
                   :redmine_enabled, :redmine_url, :redmine_api_key, :redmine_ticket_source,
                   :test_framework, :test_command, :test_timeout,
                   :authenticate_with, :authentication_cache_ttl,
-                  :lint_timeout, :base_branch_candidates, :git_timeout,
+                  :lint_timeout, :base_branch_candidates, :git_timeout, :search_timeout,
                   :ruby_def_include_dirs, :related_files_custom_paths,
                   :mount_path, :resilient_routing
 
@@ -25,6 +25,7 @@ module Mbeditor
       @lint_timeout     = 15  # seconds for RuboCop/haml-lint subprocesses
       @base_branch_candidates = %w[origin/develop origin/main origin/master develop main master]
       @git_timeout            = nil # seconds; nil disables (no timeout on git subprocesses)
+      @search_timeout         = 10  # seconds for CodeSearchService rg/grep subprocesses (JS definition/member search)
       @ruby_def_include_dirs  = %w[app/models app/controllers app/helpers app/concerns]
       @related_files_custom_paths = []
       @authentication_cache_ttl = 0

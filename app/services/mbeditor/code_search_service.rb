@@ -1,41 +1,44 @@
 # frozen_string_literal: true
 
-require "open3"
-
 module Mbeditor
   class CodeSearchService
     JS_GLOBS = %w[*.js *.jsx *.ts *.tsx *.js.jsx *.js.erb *.jsx.erb].freeze
 
     class << self
       def call(pattern, workspace_root, globs: JS_GLOBS)
-        if AvailabilityProbe.rg
-          run_rg(pattern, workspace_root, globs)
-        else
-          run_grep(pattern, workspace_root, globs)
-        end
+        args =
+          if AvailabilityProbe.rg
+            rg_args(pattern, workspace_root, globs)
+          else
+            grep_args(pattern, workspace_root, globs)
+          end
+
+        # Route through ProcessRunner so a hung rg/grep over a large workspace
+        # is killed (process-group SIGKILL) rather than blocking the Puma
+        # thread. A timeout is treated as a non-result, matching the graceful
+        # degradation already used for every other subprocess failure here.
+        result = ProcessRunner.call(args, timeout: timeout)
+        result[:stdout].lines
       rescue StandardError
         []
       end
 
       private
 
-      def run_rg(pattern, workspace_root, globs)
+      def timeout
+        secs = Mbeditor.configuration.search_timeout&.to_i
+        secs && secs.positive? ? secs : nil
+      end
+
+      def rg_args(pattern, workspace_root, globs)
         args = ["rg", "--no-heading", "-n", "--color=never", "-e", pattern]
         args += globs.flat_map { |g| ["-g", g] }
         args << workspace_root
-        out, = Open3.capture2(*args)
-        out.lines
-      rescue StandardError
-        []
       end
 
-      def run_grep(pattern, workspace_root, globs)
+      def grep_args(pattern, workspace_root, globs)
         includes = globs.map { |g| "--include=#{g}" }
-        args = ["grep", "-rn", "--color=never", "-E", pattern] + includes + [workspace_root]
-        out, = Open3.capture2(*args)
-        out.lines
-      rescue StandardError
-        []
+        ["grep", "-rn", "--color=never", "-E", pattern] + includes + [workspace_root]
       end
     end
   end
