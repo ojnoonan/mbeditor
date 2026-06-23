@@ -100,7 +100,7 @@ module Mbeditor
     # POST /mbeditor/prune_branch_states — remove states for deleted branches
     def prune_branch_states
       root = workspace_root.to_s
-      out, _err, status = Open3.capture3("git", "-C", root, "branch", "--format=%(refname:short)")
+      out, status = GitService.run_git(root, "branch", "--format=%(refname:short)")
       return render json: { pruned: [] } unless status.success?
 
       local_branches = out.split("\n").map(&:strip).reject(&:empty?)
@@ -519,7 +519,7 @@ module Mbeditor
 
     # GET /mbeditor/git_status
     def git_status
-      output, _err, status = Open3.capture3("git", "-C", workspace_root.to_s, "status", "--porcelain")
+      output, status = GitService.run_git(workspace_root.to_s, "status", "--porcelain")
       branch = GitService.current_branch(workspace_root.to_s) || ""
       files = GitService.parse_porcelain_status(output)
       render json: { ok: status.success?, files: files, branch: branch }

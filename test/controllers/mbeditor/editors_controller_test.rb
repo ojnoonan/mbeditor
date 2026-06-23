@@ -283,6 +283,27 @@ module Mbeditor
       assert_includes json["pruned"], "definitely-not-a-real-branch-xyz"
     end
 
+    test "prune_branch_states routes its git subprocess through ProcessRunner with configured timeout" do
+      system("git", "-C", @workspace, "init", "-q")
+      system("git", "-C", @workspace, "-c", "user.email=t@t.com", "-c", "user.name=T", "commit", "--allow-empty", "-m", "init", "-q")
+
+      original = Mbeditor.configuration.git_timeout
+      Mbeditor.configuration.git_timeout = 9
+
+      captured = []
+      with_process_runner_recorder(captured) { post "/mbeditor/prune_branch_states", as: :json }
+      assert_response :ok
+
+      branch_call = captured.find { |c| c[:cmd].include?("branch") }
+      refute_nil branch_call,
+                 "expected `git branch` to run through ProcessRunner, " \
+                 "but it bypassed the timeout mechanism"
+      assert_equal 9, branch_call[:timeout],
+                   "expected the configured git_timeout to be applied to the prune_branch_states call"
+    ensure
+      Mbeditor.configuration.git_timeout = original
+    end
+
     # ---------------------------------------------------------------------------
     # file_history
     # ---------------------------------------------------------------------------
@@ -1129,6 +1150,24 @@ module Mbeditor
       assert_kind_of Array, json["files"]
     end
 
+    test "git_status routes its git subprocess through ProcessRunner with configured timeout" do
+      original = Mbeditor.configuration.git_timeout
+      Mbeditor.configuration.git_timeout = 7
+
+      captured = []
+      with_process_runner_recorder(captured) { get "/mbeditor/git_status" }
+      assert_response :ok
+
+      status_call = captured.find { |c| c[:cmd].include?("status") }
+      refute_nil status_call,
+                 "expected `git status` to run through ProcessRunner, " \
+                 "but it bypassed the timeout mechanism"
+      assert_equal 7, status_call[:timeout],
+                   "expected the configured git_timeout to be applied to the git_status call"
+    ensure
+      Mbeditor.configuration.git_timeout = original
+    end
+
     # ---------------------------------------------------------------------------
     # git_info
     # ---------------------------------------------------------------------------
@@ -1624,6 +1663,25 @@ module Mbeditor
 
     def json
       JSON.parse(response.body)
+    end
+
+    # Temporarily wrap ProcessRunner.call so every subprocess invocation is
+    # recorded (cmd + timeout) while still delegating to the real runner.
+    # Mirrors the recorder used in git_info_service_test.rb (issue #70/#71).
+    def with_process_runner_recorder(captured)
+      real = ProcessRunner.method(:call)
+      verbose = $VERBOSE
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call) do |cmd, **kwargs|
+        captured << { cmd: cmd, timeout: kwargs[:timeout] }
+        real.call(cmd, **kwargs)
+      end
+      $VERBOSE = verbose
+      yield
+    ensure
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call, real)
+      $VERBOSE = verbose
     end
   end
 end
