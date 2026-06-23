@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "open3"
-
 module Mbeditor
   module GitInfoService
     module_function
@@ -19,19 +17,19 @@ module Mbeditor
       end
 
       # Wave 1: all independent git reads run in parallel
-      status_t   = Thread.new { Open3.capture3("git", "-C", repo_path, "status", "--porcelain") }
-      numstat_t  = Thread.new { Open3.capture3("git", "-C", repo_path, "diff", "--numstat", "HEAD") }
-      upstream_t = Thread.new { Open3.capture3("git", "-C", repo_path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}") }
+      status_t   = Thread.new { GitService.run_git(repo_path, "status", "--porcelain") }
+      numstat_t  = Thread.new { GitService.run_git(repo_path, "diff", "--numstat", "HEAD") }
+      upstream_t = Thread.new { GitService.run_git(repo_path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}") }
       base_t     = Thread.new { GitService.find_branch_base(repo_path, branch) }
 
-      working_output, _err, working_status = status_t.value
+      working_output, working_status = status_t.value
       working_tree = working_status.success? ? GitService.parse_porcelain_status(working_output) : []
 
       numstat_out = numstat_t.value.first
       numstat_map = GitService.parse_numstat(numstat_out)
       working_tree = working_tree.map { |f| f.merge(numstat_map.fetch(f[:path], {})) }
 
-      upstream_output, _err, upstream_status = upstream_t.value
+      upstream_output, upstream_status = upstream_t.value
       upstream_branch = upstream_status.success? ? upstream_output.strip : nil
       upstream_branch = nil unless upstream_branch&.match?(%r{\A[\w./-]+\z})
 
@@ -45,24 +43,24 @@ module Mbeditor
 
       # Wave 2: conditional parallel reads that depend on Wave 1 results
       wave2 = {}
-      wave2[:counts]    = Thread.new { Open3.capture3("git", "-C", repo_path, "rev-list", "--left-right", "--count", "HEAD...#{upstream_branch}") } if upstream_branch.to_s != ""
-      wave2[:unp_log]   = Thread.new { Open3.capture3("git", "-C", repo_path, "log", "#{upstream_branch}..HEAD", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e") } if upstream_branch.to_s != ""
-      wave2[:diff_name] = Thread.new { Open3.capture3("git", "-C", repo_path, "diff", "--name-status", "#{diff_base}..HEAD") } if diff_base.to_s != ""
-      wave2[:diff_num]  = Thread.new { Open3.capture3("git", "-C", repo_path, "diff", "--numstat", "#{diff_base}..HEAD") } if diff_base.to_s != ""
+      wave2[:counts]    = Thread.new { GitService.run_git(repo_path, "rev-list", "--left-right", "--count", "HEAD...#{upstream_branch}") } if upstream_branch.to_s != ""
+      wave2[:unp_log]   = Thread.new { GitService.run_git(repo_path, "log", "#{upstream_branch}..HEAD", "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e") } if upstream_branch.to_s != ""
+      wave2[:diff_name] = Thread.new { GitService.run_git(repo_path, "diff", "--name-status", "#{diff_base}..HEAD") } if diff_base.to_s != ""
+      wave2[:diff_num]  = Thread.new { GitService.run_git(repo_path, "diff", "--numstat", "#{diff_base}..HEAD") } if diff_base.to_s != ""
       wave2[:branch_log] = Thread.new do
         if base_sha
-          Open3.capture3("git", "-C", repo_path, "log", "--first-parent", "#{base_sha}..HEAD",
-                         "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
+          GitService.run_git(repo_path, "log", "--first-parent", "#{base_sha}..HEAD",
+                             "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
         else
-          Open3.capture3("git", "-C", repo_path, "log", "--first-parent", branch, "-n", "100",
-                         "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
+          GitService.run_git(repo_path, "log", "--first-parent", branch, "-n", "100",
+                             "--pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e")
         end
       end
 
       wave2.each_value(&:join)
 
       if (ct = wave2[:counts])
-        counts_output, _err, counts_status = ct.value
+        counts_output, counts_status = ct.value
         if counts_status.success?
           ahead_str, behind_str = counts_output.strip.split("\t", 2)
           ahead_count  = ahead_str.to_i
@@ -71,12 +69,12 @@ module Mbeditor
       end
 
       if (ul = wave2[:unp_log])
-        unpushed_log_output, _err, unpushed_log_status = ul.value
+        unpushed_log_output, unpushed_log_status = ul.value
         unpushed_commits = GitService.parse_git_log(unpushed_log_output) if unpushed_log_status.success?
       end
 
       if (dn = wave2[:diff_name]) && (dnum = wave2[:diff_num])
-        diff_name_out, _err, diff_name_status = dn.value
+        diff_name_out, diff_name_status = dn.value
         if diff_name_status.success?
           unpushed_files  = GitService.parse_name_status(diff_name_out)
           unp_numstat_out = dnum.value.first
@@ -85,7 +83,7 @@ module Mbeditor
         end
       end
 
-      branch_log_output, _err, branch_log_status = wave2[:branch_log].value
+      branch_log_output, branch_log_status = wave2[:branch_log].value
       branch_commits = branch_log_status.success? ? GitService.parse_git_log(branch_log_output) : []
 
       redmine_ticket_id = nil

@@ -69,6 +69,42 @@ module Mbeditor
       end
     end
 
+    # Temporarily wrap ProcessRunner.call so every subprocess invocation is
+    # recorded (cmd + timeout) while still delegating to the real runner.
+    def with_process_runner_recorder(captured)
+      real = ProcessRunner.method(:call)
+      verbose = $VERBOSE
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call) do |cmd, **kwargs|
+        captured << { cmd: cmd, timeout: kwargs[:timeout] }
+        real.call(cmd, **kwargs)
+      end
+      $VERBOSE = verbose
+      yield
+    ensure
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call, real)
+      $VERBOSE = verbose
+    end
+
+    # Records any direct Open3.capture3 subprocess (one that bypasses
+    # ProcessRunner, and therefore config.git_timeout) during the block.
+    def with_capture3_recorder(captured)
+      real = Open3.method(:capture3)
+      verbose = $VERBOSE
+      $VERBOSE = nil
+      Open3.singleton_class.send(:define_method, :capture3) do |*args, **kwargs|
+        captured << args
+        real.call(*args, **kwargs)
+      end
+      $VERBOSE = verbose
+      yield
+    ensure
+      $VERBOSE = nil
+      Open3.singleton_class.send(:define_method, :capture3, real)
+      $VERBOSE = verbose
+    end
+
     def make_commit(dir, message: "Initial commit", filename: "a.txt")
       File.write(File.join(dir, filename), "content")
       system("git", "-C", dir, "add", ".", exception: true)
@@ -144,6 +180,48 @@ module Mbeditor
 
       assert_equal false, result[:ok]
       assert_kind_of String, result[:error]
+    end
+
+    # -------------------------------------------------------------------------
+    # Timeout governance — git subprocesses route through ProcessRunner so
+    # config.git_timeout is honored (issue #70).
+    # -------------------------------------------------------------------------
+
+    def test_wave_git_calls_run_through_process_runner_with_configured_timeout
+      with_tmp_repo do |dir|
+        make_commit(dir)
+        original = Mbeditor.configuration.git_timeout
+        Mbeditor.configuration.git_timeout = 7
+
+        captured = []
+        GitInfoService.invalidate(dir)
+        result = with_process_runner_recorder(captured) { GitInfoService.call(dir) }
+
+        assert result[:ok], "expected ok: true, got: #{result.inspect}"
+
+        status_call = captured.find { |c| c[:cmd].include?("status") }
+        refute_nil status_call,
+                   "expected wave-1 `git status` to run through ProcessRunner, " \
+                   "but it bypassed the timeout mechanism"
+        assert_equal 7, status_call[:timeout],
+                     "expected the configured git_timeout to be applied to the wave git call"
+      ensure
+        Mbeditor.configuration.git_timeout = original
+      end
+    end
+
+    def test_full_call_makes_no_raw_open3_subprocess
+      # The real project repo exercises wave-1 plus the wave-2 branch_log (and
+      # ahead/behind + unpushed when an upstream exists).  None of those git
+      # invocations may bypass ProcessRunner via a raw Open3.capture3.
+      captured = []
+      GitInfoService.invalidate(REPO_PATH)
+      result = with_capture3_recorder(captured) { GitInfoService.call(REPO_PATH) }
+
+      assert result[:ok], "expected ok: true, got: #{result.inspect}"
+      assert_empty captured,
+                   "expected no raw Open3.capture3 calls, but these git commands " \
+                   "bypassed the timeout mechanism: #{captured.inspect}"
     end
   end
 end

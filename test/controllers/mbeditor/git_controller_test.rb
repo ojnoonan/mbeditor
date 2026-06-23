@@ -145,14 +145,13 @@ module Mbeditor
 
     test "git_info branch history uses the current branch log" do
       git_service_singleton = class << GitService; self; end
-      open3_singleton = class << Open3; self; end
 
       git_service_singleton.alias_method :__original_current_branch_for_test, :current_branch
       git_service_singleton.alias_method :__original_find_branch_base_for_test, :find_branch_base
-      open3_singleton.alias_method :__original_capture3_for_test, :capture3
+      git_service_singleton.alias_method :__original_run_git_for_test, :run_git
       git_service_singleton.remove_method :current_branch
       git_service_singleton.remove_method :find_branch_base
-      open3_singleton.remove_method :capture3
+      git_service_singleton.remove_method :run_git
 
       git_status_ok = Object.new
       def git_status_ok.success?
@@ -167,22 +166,24 @@ module Mbeditor
         [nil, nil]
       end
 
-      Open3.define_singleton_method(:capture3) do |*args|
+      # GitInfoService routes its wave git calls through GitService.run_git
+      # (which honors config.git_timeout). run_git returns [stdout, status].
+      GitService.define_singleton_method(:run_git) do |_repo_path, *args|
         command = args.map(&:to_s)
 
         if command.include?("rev-parse") && command.include?("@{u}")
-          ["origin/main\n", "", git_status_ok]
+          ["origin/main\n", git_status_ok]
         elsif command.include?("rev-list")
-          ["2\t1\n", "", git_status_ok]
+          ["2\t1\n", git_status_ok]
         elsif command.include?("diff") && command.include?("--name-status")
-          ["M\tGemfile.lock\n", "", git_status_ok]
+          ["M\tGemfile.lock\n", git_status_ok]
         elsif command.include?("diff") && command.include?("--numstat")
-          ["3\t1\n", "", git_status_ok]
+          ["3\t1\n", git_status_ok]
         elsif command.include?("log") && command.include?("--first-parent")
           raise "expected current branch log" unless command.include?("feature/history-scope")
-          ["aaa1111\x1fbranch commit\x1fAlice\x1f2026-03-24T10:00:00Z\x1e", "", git_status_ok]
+          ["aaa1111\x1fbranch commit\x1fAlice\x1f2026-03-24T10:00:00Z\x1e", git_status_ok]
         else
-          ["", "", git_status_ok]
+          ["", git_status_ok]
         end
       end
 
@@ -200,9 +201,9 @@ module Mbeditor
       git_service_singleton.remove_method :find_branch_base
       git_service_singleton.alias_method :find_branch_base, :__original_find_branch_base_for_test
       git_service_singleton.remove_method :__original_find_branch_base_for_test
-      open3_singleton.remove_method :capture3
-      open3_singleton.alias_method :capture3, :__original_capture3_for_test
-      open3_singleton.remove_method :__original_capture3_for_test
+      git_service_singleton.remove_method :run_git
+      git_service_singleton.alias_method :run_git, :__original_run_git_for_test
+      git_service_singleton.remove_method :__original_run_git_for_test
     end
 
     # ─── git/file_history ──────────────────────────────────────────────────────
