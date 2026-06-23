@@ -446,6 +446,30 @@ module Mbeditor
       assert_not File.exist?(hist_file), "history file should be deleted after prune"
     end
 
+    test "prune_branch_states logs an error for a corrupt history file" do
+      system("git", "-C", @workspace, "init", "-q")
+      system("git", "-C", @workspace, "-c", "user.email=t@t.com", "-c", "user.name=T", "commit", "--allow-empty", "-m", "init", "-q")
+
+      hist_dir = File.join(@workspace, "tmp", "mbeditor_history")
+      FileUtils.mkdir_p(hist_dir)
+      corrupt = File.join(hist_dir, "deadbeef_cafebabe.json")
+      File.write(corrupt, "{ not valid json")
+
+      log = StringIO.new
+      original_logger = Rails.logger
+      Rails.logger = ActiveSupport::Logger.new(log)
+      begin
+        post "/mbeditor/prune_branch_states", as: :json
+        assert_response :ok
+      ensure
+        Rails.logger = original_logger
+      end
+
+      assert_match(/mbeditor/, log.string)
+      assert_match(/deadbeef_cafebabe\.json/, log.string)
+      assert File.exist?(corrupt), "corrupt history file with no parseable branch should be left in place"
+    end
+
     # ---------------------------------------------------------------------------
     # show (GET /file)
     # ---------------------------------------------------------------------------

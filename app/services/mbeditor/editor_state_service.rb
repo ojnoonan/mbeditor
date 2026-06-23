@@ -52,7 +52,12 @@ module Mbeditor
       pruned = []
       File.open(path, File::RDWR) do |f|
         f.flock(File::LOCK_EX)
-        all = JSON.parse(f.read) rescue {}
+        all = begin
+          JSON.parse(f.read)
+        rescue JSON::ParserError => e
+          Rails.logger.error("[mbeditor] EditorStateService#prune_branch_states: discarding corrupt branch_states JSON at #{path}: #{e.message}")
+          {}
+        end
         pruned = all.keys - active_branches
         if pruned.any?
           pruned.each { |b| all.delete(b) }

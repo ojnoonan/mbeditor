@@ -109,7 +109,12 @@ module Mbeditor
       hist_dir = workspace_root.join('tmp', 'mbeditor_history')
       if File.directory?(hist_dir)
         Dir.glob(File.join(hist_dir, '*.json')) do |hist_file|
-          data = JSON.parse(File.read(hist_file)) rescue nil
+          data = begin
+            JSON.parse(File.read(hist_file))
+          rescue JSON::ParserError => e
+            Rails.logger.error("[mbeditor] prune_branch_states: skipping corrupt history file #{hist_file}: #{e.message}")
+            nil
+          end
           next unless data.is_a?(Hash) && data['branch']
           FileUtils.rm_f(hist_file) unless local_branches.include?(data['branch'])
         end
