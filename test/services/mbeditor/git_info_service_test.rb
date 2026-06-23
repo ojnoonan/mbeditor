@@ -210,6 +210,59 @@ module Mbeditor
       end
     end
 
+    # -------------------------------------------------------------------------
+    # Upstream-ref sanitization — the upstream branch reported by git is
+    # validated against GitService::SAFE_GIT_REF before it is preserved and
+    # interpolated into later git commands (issue #73).
+    # -------------------------------------------------------------------------
+
+    UPSTREAM_REVPARSE = ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"].freeze
+
+    # Substitute +value+ as the stdout of the upstream `git rev-parse @{u}`
+    # call (with a success status borrowed from a real `rev-parse HEAD`), while
+    # delegating every other git invocation to the real subprocess boundary.
+    def with_upstream_stub(value)
+      real = GitService.method(:run_git)
+      verbose = $VERBOSE
+      $VERBOSE = nil
+      GitService.singleton_class.send(:define_method, :run_git) do |repo_path, *args|
+        if args == UPSTREAM_REVPARSE
+          [value, real.call(repo_path, "rev-parse", "HEAD").last]
+        else
+          real.call(repo_path, *args)
+        end
+      end
+      $VERBOSE = verbose
+      yield
+    ensure
+      $VERBOSE = nil
+      GitService.singleton_class.send(:define_method, :run_git, real)
+      $VERBOSE = verbose
+    end
+
+    def test_safe_upstream_ref_is_preserved
+      with_tmp_repo do |dir|
+        make_commit(dir)
+        GitInfoService.invalidate(dir)
+        result = with_upstream_stub("origin/main") { GitInfoService.call(dir) }
+
+        assert result[:ok], "expected ok: true, got: #{result.inspect}"
+        assert_equal "origin/main", result[:upstreamBranch]
+      end
+    end
+
+    def test_unsafe_upstream_ref_is_nullified
+      with_tmp_repo do |dir|
+        make_commit(dir)
+        GitInfoService.invalidate(dir)
+        result = with_upstream_stub("origin/main; rm -rf /") { GitInfoService.call(dir) }
+
+        assert result[:ok], "expected ok: true, got: #{result.inspect}"
+        assert_nil result[:upstreamBranch],
+                   "expected an upstream ref with unsafe characters to be rejected"
+      end
+    end
+
     def test_full_call_makes_no_raw_open3_subprocess
       # The real project repo exercises wave-1 plus the wave-2 branch_log (and
       # ahead/behind + unpushed when an upstream exists).  None of those git
