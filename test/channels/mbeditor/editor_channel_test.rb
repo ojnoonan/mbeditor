@@ -87,6 +87,59 @@ module Mbeditor
       assert write_branch_state_called, "EditorStateService#write_branch_state should have been called"
     end
 
+    # ── real EditorStateService validation paths (unstubbed) ───────────────────
+
+    test "save_state writes to a real tmp workspace that read_state round-trips" do
+      Dir.mktmpdir do |dir|
+        Mbeditor.configure { |c| c.workspace_root = dir }
+        subscribe
+        perform :save_state, "state" => { "openTabs" => ["foo.rb"] }
+
+        persisted = EditorStateService.new(Pathname.new(dir)).read_state
+        assert_equal ["foo.rb"], persisted["openTabs"]
+      end
+    end
+
+    test "save_state rejects an oversized payload without writing over existing state" do
+      Dir.mktmpdir do |dir|
+        Mbeditor.configure { |c| c.workspace_root = dir }
+        service = EditorStateService.new(Pathname.new(dir))
+        service.write_state({ "openTabs" => ["keep.rb"] })
+
+        subscribe
+        oversized = { "x" => "y" * (EditorStateService::STATE_MAX_BYTES + 1) }
+        assert_nothing_raised { perform :save_state, "state" => oversized }
+
+        assert_equal ["keep.rb"], service.read_state["openTabs"],
+          "an oversized payload (real PayloadTooLargeError) must not clobber existing state"
+      end
+    end
+
+    test "save_branch_state rejects an invalid branch name without writing the branch states file" do
+      Dir.mktmpdir do |dir|
+        Mbeditor.configure { |c| c.workspace_root = dir }
+        subscribe
+        assert_nothing_raised do
+          perform :save_branch_state, "branch" => "bad name!", "state" => { "x" => 1 }
+        end
+
+        branch_file = Pathname.new(dir).join("tmp", "mbeditor_branch_states.json")
+        refute File.exist?(branch_file),
+          "an invalid branch name (real InvalidBranchError) must not be persisted"
+      end
+    end
+
+    test "save_branch_state writes to a real tmp workspace that read_branch_state round-trips" do
+      Dir.mktmpdir do |dir|
+        Mbeditor.configure { |c| c.workspace_root = dir }
+        subscribe
+        perform :save_branch_state, "branch" => "feature/x", "state" => { "panes" => ["a.rb"] }
+
+        persisted = EditorStateService.new(Pathname.new(dir)).read_branch_state("feature/x")
+        assert_equal ["a.rb"], persisted["panes"]
+      end
+    end
+
     # ── workspace_root caching ─────────────────────────────────────────────────
 
     test "computes the git toplevel only once across multiple actions when workspace_root is unconfigured" do
