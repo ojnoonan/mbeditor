@@ -8,10 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Inline color swatches + picker (all file types)** — color literals
+  (`#rgb`/`#rrggbb`/`#rrggbbaa`, `rgb()`/`rgba()`, `hsl()`/`hsla()`) now show a
+  clickable color square before them in any language, opening Monaco's native
+  color picker; choosing a color rewrites the literal in its original notation.
+  The CSS family (css/scss/less) keeps Monaco's own built-in provider.
+- **Title-bar search box** — a "Search files…" box in the title bar opens
+  quick-open (same as `Ctrl/Cmd+P`); its empty state now lists recently opened
+  files before Favourites and Recent Searches.
+- **Tab context menu** — right-clicking an editor tab now offers Close, Close
+  Others, Close Saved, and Close All (alongside File History / Find in Explorer).
+- **New-file button in the tab bar** — a `+` button after the last tab creates a
+  new file in the active file's directory via the file-tree inline-create flow.
 - **Rails log viewer** — a drag-resizable bottom-drawer panel (toggle via the
   status bar or `Ctrl+Shift+L`) that streams the active environment's
   `log/<env>.log` in real time over ActionCable, with an HTTP polling fallback.
   Includes a substring filter; height persists across sessions. Read-only.
+
+### Fixed
+- **Optional React props flagged as required** — Monaco's JS type-checking
+  (`checkJs`) inferred every referenced prop of a plain-JS component as required
+  and flagged call sites that omitted it (TS 2741/2739). Those false positives
+  are now suppressed while genuinely useful checks remain.
 
 ### Security
 - The log viewer displays log contents **verbatim**, which may include request
