@@ -63,6 +63,23 @@ html, body, #mbeditor-root {
   font-weight: 500;
 }
 
+.ide-titlebar-search {
+  display: flex;
+  align-items: center;
+  margin: 0 auto;
+  min-width: 220px;
+  max-width: 340px;
+  padding: 3px 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  color: #aaa;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ide-titlebar-search:hover { background: rgba(255, 255, 255, 0.10); }
+.ide-titlebar-search-text { opacity: 0.8; }
+
 .ide-body {
   display: flex;
   flex: 1;

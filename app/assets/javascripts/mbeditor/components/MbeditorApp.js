@@ -3180,6 +3180,17 @@ var MbeditorApp = function MbeditorApp() {
         window.location.host
       ),
       React.createElement(
+        'button',
+        {
+          type: 'button',
+          className: 'ide-titlebar-search',
+          title: 'Search files (Ctrl/Cmd+P)',
+          onClick: function () { setQuickOpen(true); }
+        },
+        React.createElement('i', { className: 'fas fa-search', style: { marginRight: '6px', opacity: 0.7 } }),
+        React.createElement('span', { className: 'ide-titlebar-search-text' }, 'Search files…')
+      ),
+      React.createElement(
         "div",
         { style: { marginLeft: "auto", display: "flex", gap: "4px", height: "100%", alignItems: "center" } },
         React.createElement(
