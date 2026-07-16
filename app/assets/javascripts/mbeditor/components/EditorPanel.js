@@ -174,6 +174,10 @@ var EditorPanel = function EditorPanel(_ref) {
       window.MbeditorEditorPlugins.registerGlobalExtensions(window.monaco);
     }
 
+    if (window.MbeditorColorProvider) {
+      window.MbeditorColorProvider.register(window.monaco);
+    }
+
     // Register HAML Monarch grammar once
     if (!_hamlLangRegistered) {
       _hamlLangRegistered = true;
