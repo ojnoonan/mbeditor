@@ -1,5 +1,28 @@
 var TabManager = (function () {
   var MAX_MODELS = 25;
+  var RECENT_FILES_KEY = 'mbeditor_recent_files';
+  var MAX_RECENT_FILES = 12;
+
+  function _loadRecentFiles() {
+    try { return JSON.parse(localStorage.getItem(RECENT_FILES_KEY)) || []; }
+    catch (e) { return []; }
+  }
+
+  function _recordRecentFile(path, name) {
+    if (!path) return;
+    // Skip virtual/special tabs — only real files belong in recents.
+    if (path.indexOf('diff://') === 0 || path.indexOf('combined-diff://') === 0 ||
+        path.indexOf('mbeditor://') === 0 || path === '__settings__') return;
+    var list = _loadRecentFiles().filter(function (e) { return e.path !== path; });
+    list.unshift({ path: path, name: name || path.split('/').pop() });
+    list = list.slice(0, MAX_RECENT_FILES);
+    try { localStorage.setItem(RECENT_FILES_KEY, JSON.stringify(list)); } catch (e) {}
+  }
+
+  function getRecentFiles() {
+    // Return a defensive copy.
+    return _loadRecentFiles().slice();
+  }
 
   // Evict the least-recently-used Monaco model that is not currently open in
   // any pane. Call this before creating a new model entry.
@@ -133,6 +156,8 @@ var TabManager = (function () {
     }
 
     if (!pane) return;
+
+    _recordRecentFile(path, name);
 
     var existing = pane.tabs.find(function(t) { return t.path === path; });
 
@@ -423,6 +448,24 @@ var TabManager = (function () {
     });
   }
 
+  function closeOtherTabsInPane(paneId, keepId) {
+    var state = EditorStore.getState();
+    var pane = state.panes.find(function(p) { return p.id === paneId; });
+    if (!pane) return;
+    pane.tabs.slice().forEach(function(tab) {
+      if (tab.id !== keepId) closeTab(paneId, tab.id);
+    });
+  }
+
+  function closeSavedTabsInPane(paneId) {
+    var state = EditorStore.getState();
+    var pane = state.panes.find(function(p) { return p.id === paneId; });
+    if (!pane) return;
+    pane.tabs.slice().forEach(function(tab) {
+      if (!tab.dirty) closeTab(paneId, tab.id);
+    });
+  }
+
   function closeAllTabs() {
     var state = EditorStore.getState();
     var paneIds = state.panes.map(function(p) { return p.id; }).sort(function(a, b) { return b - a; });
@@ -561,6 +604,7 @@ var TabManager = (function () {
 
   return {
     openTab: openTab,
+    getRecentFiles: getRecentFiles,
     openDiffTab: openDiffTab,
     openCombinedDiffTab: openCombinedDiffTab,
     closeTab: closeTab,
@@ -574,6 +618,8 @@ var TabManager = (function () {
     moveTabToPane: moveTabToPane,
     clearGotoLine: clearGotoLine,
     closeAllTabsInPane: closeAllTabsInPane,
+    closeOtherTabsInPane: closeOtherTabsInPane,
+    closeSavedTabsInPane: closeSavedTabsInPane,
     closeAllTabs: closeAllTabs,
     syncMarkdownPreview: _syncMarkdownPreviewContent,
     evictLruModel: _evictLruModel
