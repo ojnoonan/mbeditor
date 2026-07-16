@@ -543,7 +543,13 @@
         // "did you mean" variant, 7053 dynamic index access). Suppress that
         // false-positive family while keeping genuinely useful checks such as
         // 2304 "Cannot find name" (undefined variables/typos).
-        diagnosticCodesToIgnore: [2339, 2551, 7053]
+        //
+        // A plain-JS component that reads `props.foo` gives TS no way to know
+        // `foo` is optional, so it infers every referenced prop as REQUIRED and
+        // flags call sites that omit it (2741 "Property X is missing … but
+        // required", 2739 its multi-property form). Since optional props can't
+        // be expressed without JSDoc/TS, suppress that family too.
+        diagnosticCodesToIgnore: [2339, 2551, 7053, 2739, 2741]
       });
       monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
         target: monaco.languages.typescript.ScriptTarget.ES2020,

@@ -241,6 +241,41 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     );
   }
 
+  function renderRecentFilesSection() {
+    var recentFiles = (typeof TabManager !== 'undefined' && TabManager.getRecentFiles)
+      ? TabManager.getRecentFiles() : [];
+    if (recentFiles.length === 0) return null;
+    var rows = recentFiles.map(function (entry) {
+      var path = entry.path;
+      var name = entry.name || (path.split('/').pop());
+      return React.createElement(
+        'div',
+        {
+          key: 'recentfile-' + path,
+          className: 'quick-open-result',
+          onClick: function () { onSelect(path, name); }
+        },
+        getQuickOpenIcon(path, name),
+        React.createElement(
+          'div',
+          { className: 'quick-open-result-body' },
+          React.createElement('div', { className: 'quick-open-result-name' }, name),
+          React.createElement('div', { className: 'quick-open-result-path' }, path)
+        ),
+        renderStarBtn(path)
+      );
+    });
+    return React.createElement(
+      'div',
+      { className: 'quick-open-section' },
+      React.createElement('div', { className: 'quick-open-section-header' },
+        React.createElement('i', { className: 'fas fa-clock', style: { marginRight: '6px', fontSize: '10px' } }),
+        'Recently Opened'
+      ),
+      rows
+    );
+  }
+
   // ── Main render ───────────────────────────────────────────────────────────
 
   return React.createElement(
@@ -280,6 +315,7 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
           ? React.createElement(
               React.Fragment,
               null,
+              renderRecentFilesSection(),
               renderFavouritesSection(),
               renderRecentSection(),
               favourites.length === 0 && recentSearches.length === 0 && React.createElement(

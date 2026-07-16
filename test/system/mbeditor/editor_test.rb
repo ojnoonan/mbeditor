@@ -294,6 +294,25 @@ module Mbeditor
       assert_no_selector ".tab-item.active .tab-dirty-dot", wait: 5
     end
 
+    test "file stays dirty-trackable after undo-history replay swaps the model" do
+      seed_git_workspace_with_history("README.md", "# Hello\n")
+
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      all(".tree-item-name", text: "README.md").first.click
+      assert_selector ".monaco-editor", wait: 10
+
+      # Wait for the background replay to swap in the history-bearing model.
+      assert_replayed_model("README.md")
+
+      page.execute_script(<<~'JS')
+        window.__mbeditorActiveEditor.focus();
+        window.__mbeditorActiveEditor.trigger('keyboard', 'type', { text: 'x' });
+      JS
+
+      assert_selector ".tab-item.active .tab-dirty-dot", wait: 5
+    end
+
     test "LRU eviction keeps Monaco model count at or below 15" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
@@ -473,6 +492,48 @@ module Mbeditor
     end
 
     private
+
+    # Turn the tmp workspace into a git repo and pre-seed a stored undo history for
+    # `rel_path`, so opening the file triggers the background history replay that
+    # swaps the Monaco model out from under the editor.
+    def seed_git_workspace_with_history(rel_path, content)
+      Dir.chdir(@workspace) do
+        system("git", "init", "--quiet", out: File::NULL, err: File::NULL)
+        system("git", "config", "user.email", "test@example.com")
+        system("git", "config", "user.name", "Test")
+        system("git", "add", ".", out: File::NULL, err: File::NULL)
+        system("git", "commit", "--quiet", "-m", "init", out: File::NULL, err: File::NULL)
+      end
+      branch = `git -C #{@workspace} rev-parse --abbrev-ref HEAD`.strip
+
+      # base + ops must reproduce the file's on-disk content, or the replay bails out.
+      branch_hash = Digest::SHA256.hexdigest(branch)[0, 16]
+      file_hash   = Digest::SHA256.hexdigest(rel_path)[0, 16]
+      hist_path   = File.join(@workspace, "tmp", "mbeditor_history", "#{branch_hash}_#{file_hash}.json")
+      FileUtils.mkdir_p(File.dirname(hist_path))
+      File.write(hist_path, JSON.dump(
+        "base" => "",
+        "ops"  => [[1, 1, 1, 1, content]],
+        "t"    => Time.now.utc.iso8601
+      ))
+    end
+
+    # Blocks until the replayed model (AVI > 1 because ops were pushed onto it) is
+    # installed for `rel_path`, or fails if the replay never happens.
+    def assert_replayed_model(rel_path)
+      deadline = Time.now + 10
+      loop do
+        avi = page.evaluate_script(<<~JS)
+          (function () {
+            var e = window.__mbeditorModels && window.__mbeditorModels[#{rel_path.to_json}];
+            return e && e.model && !e.model.isDisposed() ? e.model.getAlternativeVersionId() : 0;
+          })()
+        JS
+        break if avi.to_i > 1
+        flunk "undo-history replay never swapped in a model for #{rel_path}" if Time.now > deadline
+        sleep 0.1
+      end
+    end
 
     def active_editor_value
       page.evaluate_script("window.__mbeditorActiveEditor && window.__mbeditorActiveEditor.getValue()")

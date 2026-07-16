@@ -9,6 +9,7 @@
 //= require mbeditor/conflict_parser
 //= require mbeditor/search_service
 //= require mbeditor/tab_manager
+//= require mbeditor/color_provider
 //= require mbeditor/editor_plugins
 //= require mbeditor/components/CollapsibleSection
 //= require mbeditor/components/ShortcutHelp

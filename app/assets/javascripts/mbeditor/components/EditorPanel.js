@@ -174,6 +174,10 @@ var EditorPanel = function EditorPanel(_ref) {
       window.MbeditorEditorPlugins.registerGlobalExtensions(window.monaco);
     }
 
+    if (window.MbeditorColorProvider) {
+      window.MbeditorColorProvider.register(window.monaco);
+    }
+
     // Register HAML Monarch grammar once
     if (!_hamlLangRegistered) {
       _hamlLangRegistered = true;
@@ -716,51 +720,58 @@ var EditorPanel = function EditorPanel(_ref) {
     }
     EditorStore.setState({ canUndo: avi > aviBaseRef.current, canRedo: avi < aviMaxRef.current });
 
-    var contentDisposable = modelObj.onDidChangeContent(function (e) {
-      if (typeof HistoryService !== 'undefined') {
-        HistoryService.recordOps(tab.path, e.changes);
-      }
-      var currentAvi = modelObj.getAlternativeVersionId();
-      if (!e.isUndoing && !e.isRedoing) {
-        // New edit: redo stack discarded at this point, so max resets here
-        aviMaxRef.current = currentAvi;
-      } else if (currentAvi > aviMaxRef.current) {
-        aviMaxRef.current = currentAvi;
-      }
-      var newCanUndo = currentAvi > aviBaseRef.current;
-      var newCanRedo = currentAvi < aviMaxRef.current;
-      var _st = EditorStore.getState();
-      if (_st.canUndo !== newCanUndo || _st.canRedo !== newCanRedo) {
-        EditorStore.setState({ canUndo: newCanUndo, canRedo: newCanRedo });
-      }
-
-      var val = editor.getValue();
-
-      // Dirty-state tracking via alternativeVersionId — O(1), no string comparison.
-      // AVI decrements on undo so it returns to cleanVersionId after a full undo.
-      // Skip entirely when cleanVersionId is null — file is mid-load, not yet settled.
-      var _entry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
-      var _cleanAvi = _entry && _entry.cleanVersionId;
-      if (_cleanAvi !== null && _cleanAvi !== undefined) {
-        if (currentAvi !== _cleanAvi) {
-          TabManager.markDirty(paneId, tab.id, val);
-        } else {
-          TabManager.markClean(paneId, tab.id, val);
+    // Attached to whichever model the editor currently holds. The phase-2 replay
+    // below can swap the model, so this must be re-attached to the replacement —
+    // a listener left on the old model would silently stop tracking edits.
+    var _attachContentListener = function (model) {
+      return model.onDidChangeContent(function (e) {
+        if (typeof HistoryService !== 'undefined') {
+          HistoryService.recordOps(tab.path, e.changes);
         }
-      }
+        var currentAvi = model.getAlternativeVersionId();
+        if (!e.isUndoing && !e.isRedoing) {
+          // New edit: redo stack discarded at this point, so max resets here
+          aviMaxRef.current = currentAvi;
+        } else if (currentAvi > aviMaxRef.current) {
+          aviMaxRef.current = currentAvi;
+        }
+        var newCanUndo = currentAvi > aviBaseRef.current;
+        var newCanRedo = currentAvi < aviMaxRef.current;
+        var _st = EditorStore.getState();
+        if (_st.canUndo !== newCanUndo || _st.canRedo !== newCanRedo) {
+          EditorStore.setState({ canUndo: newCanUndo, canRedo: newCanRedo });
+        }
 
-      var currentContent = latestContentRef.current;
+        var val = model.getValue();
 
-      // Normalize before comparing to prevent false positive dirty edits
-      var vNorm = val.replace(/\r\n/g, '\n');
-      var cNorm = currentContent.replace(/\r\n/g, '\n');
-      if (vNorm !== cNorm) {
-        // Update the ref immediately so rapid undo/redo events compare against the
-        // latest content rather than a stale snapshot from a previous React render.
-        latestContentRef.current = val;
-        onContentChange(val);
-      }
-    });
+        // Dirty-state tracking via alternativeVersionId — O(1), no string comparison.
+        // AVI decrements on undo so it returns to cleanVersionId after a full undo.
+        // Skip entirely when cleanVersionId is null — file is mid-load, not yet settled.
+        var _entry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+        var _cleanAvi = _entry && _entry.cleanVersionId;
+        if (_cleanAvi !== null && _cleanAvi !== undefined) {
+          if (currentAvi !== _cleanAvi) {
+            TabManager.markDirty(paneId, tab.id, val);
+          } else {
+            TabManager.markClean(paneId, tab.id, val);
+          }
+        }
+
+        var currentContent = latestContentRef.current;
+
+        // Normalize before comparing to prevent false positive dirty edits
+        var vNorm = val.replace(/\r\n/g, '\n');
+        var cNorm = currentContent.replace(/\r\n/g, '\n');
+        if (vNorm !== cNorm) {
+          // Update the ref immediately so rapid undo/redo events compare against the
+          // latest content rather than a stale snapshot from a previous React render.
+          latestContentRef.current = val;
+          onContentChange(val);
+        }
+      });
+    };
+
+    var contentDisposable = _attachContentListener(modelObj);
 
     // Phase 2: background undo-history replay.
     // Only run for newly-created models (reused models already have their undo stack).
@@ -852,24 +863,31 @@ var EditorPanel = function EditorPanel(_ref) {
           var _oldEntry = window.__mbeditorModels[_phase2Path];
           if (_oldEntry && _oldEntry.model !== modelB) {
             var _oldModel = _oldEntry.model;
+            // modelB holds the same text as modelA but its own version-id sequence,
+            // so re-anchor the clean baseline. Carry the dirty state across: when the
+            // tab was already dirty, -1 can never match a real AVI, so it stays dirty.
+            var _oldClean = _oldEntry.cleanVersionId;
+            var _wasDirty = _oldClean !== null && _oldClean !== undefined &&
+                            _oldModel.getAlternativeVersionId() !== _oldClean;
+            var _newAvi = modelB.getAlternativeVersionId();
             window.__mbeditorModels[_phase2Path] = {
               model:          modelB,
               aviBase:        aviBaseRef.current,
-              aviMax:         modelB.getAlternativeVersionId(),
+              aviMax:         _newAvi,
               lastAccessed:   Date.now(),
-              cleanVersionId: _oldEntry.cleanVersionId
+              cleanVersionId: _wasDirty ? -1 : _newAvi
             };
+            aviMaxRef.current = _newAvi;
             setTimeout(function () {
               if (_oldModel && !_oldModel.isDisposed()) _oldModel.dispose();
             }, 0);
           }
 
-          // Re-attach the HistoryService content listener to modelB so ops recorded
-          // after the swap are captured without waiting for the next tab switch.
-          var _modelBListener = modelB.onDidChangeContent(function (ev) {
-            HistoryService.recordOps(_phase2Path, ev.changes);
-          });
-          _phase2CleanupFn = function () { _modelBListener.dispose(); };
+          // Move the content listener onto modelB. It carries dirty tracking, content
+          // sync and history recording — leaving it on modelA strands all three.
+          contentDisposable.dispose();
+          contentDisposable = _attachContentListener(modelB);
+          _phase2CleanupFn = function () { _phase2Active = false; };
         }).catch(function () {
           _phase2Listener.dispose();
         });

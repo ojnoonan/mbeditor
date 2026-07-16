@@ -1616,6 +1616,47 @@ var MbeditorApp = function MbeditorApp() {
     EditorStore.setStatus("Closed " + pane.tabs.length + " editor" + (pane.tabs.length === 1 ? "" : "s") + " in Group " + paneId, "info");
   };
 
+  var handleCloseOtherTabs = function handleCloseOtherTabs(paneId, keepId) {
+    var pane = state.panes.find(function (p) { return p.id === paneId; });
+    if (!pane) return;
+    var others = pane.tabs.filter(function (t) { return t.id !== keepId; });
+    if (others.length === 0) return;
+    if (!confirmBulkClose(others, "other editors")) return;
+    TabManager.closeOtherTabsInPane(paneId, keepId);
+    EditorStore.setStatus("Closed " + others.length + " editor" + (others.length === 1 ? "" : "s"), "info");
+  };
+
+  var handleCloseSavedTabs = function handleCloseSavedTabs(paneId) {
+    var pane = state.panes.find(function (p) { return p.id === paneId; });
+    if (!pane) return;
+    var saved = pane.tabs.filter(function (t) { return !t.dirty; });
+    if (saved.length === 0) return;
+    TabManager.closeSavedTabsInPane(paneId);
+    EditorStore.setStatus("Closed " + saved.length + " saved editor" + (saved.length === 1 ? "" : "s"), "info");
+  };
+
+  var handleNewFileInTabDir = function handleNewFileInTabDir(paneId) {
+    var pane = state.panes.find(function (p) { return p.id === paneId; });
+    var activeForPane = pane && pane.tabs.find(function (t) { return t.id === pane.activeTabId; });
+    var activePath = activeForPane && activeForPane.path;
+    var isReal = activePath && activePath.indexOf('://') < 0 && activePath !== '__settings__';
+    var baseDir = isReal ? parentDir(activePath) : '';
+    // Make sure the explorer is visible so the inline-create row shows.
+    setActiveSidebarTab('explorer');
+    setSidebarCollapsed(false);
+    // Expand ancestors of the target dir.
+    if (baseDir) {
+      var parts = baseDir.split('/');
+      var ancestors = {};
+      for (var i = 1; i <= parts.length; i++) {
+        ancestors[parts.slice(0, i).join('/')] = true;
+      }
+      setExpandedDirs(function (prev) { return Object.assign({}, prev, ancestors); });
+    }
+    setPendingRename(null);
+    setPendingCreate({ type: 'file', parentPath: baseDir });
+  };
+
   // Persist state when panes, focusedPaneId, or collapsedSections changes
   useEffect(function () {
     // Don't overwrite server state with React defaults before the initial load completes.
@@ -3083,7 +3124,11 @@ var MbeditorApp = function MbeditorApp() {
           }
           return Object.assign({}, prev, updates);
         });
-      }
+      },
+      onCloseOthers: function (id) { handleCloseOtherTabs(paneId, id); },
+      onCloseSaved: function () { handleCloseSavedTabs(paneId); },
+      onCloseAll: function () { handleCloseEditorsInGroup(paneId); },
+      onNewFile: function () { handleNewFileInTabDir(paneId); }
     });
   };
 
@@ -3178,6 +3223,17 @@ var MbeditorApp = function MbeditorApp() {
         { className: "ide-titlebar-title" },
         "Mini Browser Editor — ",
         window.location.host
+      ),
+      React.createElement(
+        'button',
+        {
+          type: 'button',
+          className: 'ide-titlebar-search',
+          title: 'Search files (Ctrl/Cmd+P)',
+          onClick: function () { setQuickOpen(true); }
+        },
+        React.createElement('i', { className: 'fas fa-search', style: { marginRight: '6px', opacity: 0.7 } }),
+        React.createElement('span', { className: 'ide-titlebar-search-text' }, 'Search files…')
       ),
       React.createElement(
         "div",

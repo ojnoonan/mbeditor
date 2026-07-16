@@ -18,6 +18,10 @@ var TabBar = function TabBar(_ref) {
   var onHardenTab = _ref.onHardenTab;
   var onShowHistory = _ref.onShowHistory;
   var onRevealInExplorer = _ref.onRevealInExplorer;
+  var onCloseOthers = _ref.onCloseOthers;
+  var onCloseSaved = _ref.onCloseSaved;
+  var onCloseAll = _ref.onCloseAll;
+  var onNewFile = _ref.onNewFile;
   var tabDisplayMode = _ref.tabDisplayMode || 'scroll';
 
   var containerRef = useRef(null);
@@ -192,6 +196,16 @@ var TabBar = function TabBar(_ref) {
         )
       );
     })
+    ,
+    onNewFile && React.createElement(
+      'div',
+      {
+        className: 'tab-new-file-btn',
+        title: 'New File',
+        onClick: function (e) { e.stopPropagation(); onNewFile(); }
+      },
+      React.createElement('i', { className: 'fas fa-plus' })
+    )
   ),
   tabContextMenu && React.createElement(
     'div',
@@ -211,6 +225,55 @@ var TabBar = function TabBar(_ref) {
       },
       onMouseDown: function(e) { e.stopPropagation(); }
     },
+    React.createElement(
+      'div',
+      {
+        className: 'ide-tab-context-menu-item',
+        style: { padding: '6px 14px', cursor: 'pointer', color: '#ccc', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' },
+        onMouseEnter: function(e) { e.currentTarget.style.background = '#094771'; },
+        onMouseLeave: function(e) { e.currentTarget.style.background = 'transparent'; },
+        onClick: function() { setTabContextMenu(null); onClose(tabContextMenu.tab.id); }
+      },
+      React.createElement('i', { className: 'fas fa-times', style: { width: '14px', textAlign: 'center' } }),
+      'Close'
+    ),
+    onCloseOthers && React.createElement(
+      'div',
+      {
+        className: 'ide-tab-context-menu-item',
+        style: { padding: '6px 14px', cursor: 'pointer', color: '#ccc', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' },
+        onMouseEnter: function(e) { e.currentTarget.style.background = '#094771'; },
+        onMouseLeave: function(e) { e.currentTarget.style.background = 'transparent'; },
+        onClick: function() { setTabContextMenu(null); onCloseOthers(tabContextMenu.tab.id); }
+      },
+      React.createElement('i', { className: 'fas fa-times-circle', style: { width: '14px', textAlign: 'center' } }),
+      'Close Others'
+    ),
+    onCloseSaved && React.createElement(
+      'div',
+      {
+        className: 'ide-tab-context-menu-item',
+        style: { padding: '6px 14px', cursor: 'pointer', color: '#ccc', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' },
+        onMouseEnter: function(e) { e.currentTarget.style.background = '#094771'; },
+        onMouseLeave: function(e) { e.currentTarget.style.background = 'transparent'; },
+        onClick: function() { setTabContextMenu(null); onCloseSaved(); }
+      },
+      React.createElement('i', { className: 'fas fa-check', style: { width: '14px', textAlign: 'center' } }),
+      'Close Saved'
+    ),
+    onCloseAll && React.createElement(
+      'div',
+      {
+        className: 'ide-tab-context-menu-item',
+        style: { padding: '6px 14px', cursor: 'pointer', color: '#ccc', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' },
+        onMouseEnter: function(e) { e.currentTarget.style.background = '#094771'; },
+        onMouseLeave: function(e) { e.currentTarget.style.background = 'transparent'; },
+        onClick: function() { setTabContextMenu(null); onCloseAll(); }
+      },
+      React.createElement('i', { className: 'fas fa-times', style: { width: '14px', textAlign: 'center' } }),
+      'Close All'
+    ),
+    React.createElement('div', { style: { height: '1px', background: '#454545', margin: '4px 0' } }),
     onShowHistory && React.createElement(
       'div',
       {
