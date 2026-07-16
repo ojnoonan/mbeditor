@@ -343,6 +343,18 @@ html, body, #mbeditor-root {
 .tab-bar::-webkit-scrollbar { height: 3px; }
 .tab-bar::-webkit-scrollbar-thumb { background: var(--ide-hover-bg); }
 
+.tab-new-file-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  padding: 0 8px;
+  color: #888;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.tab-new-file-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
+
 /* Wrap (multi-row) tab layout */
 .tab-bar.tab-bar-wrap {
   flex-wrap: wrap;
