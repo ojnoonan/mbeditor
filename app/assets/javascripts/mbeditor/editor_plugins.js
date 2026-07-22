@@ -151,10 +151,48 @@
 
   // Navigate to the first workspace definition of a JS symbol.
   // Returns a Promise<boolean> — true if a definition was found and opened.
-  function navigateToJsWord(editor, word) {
+  // Extract the parent object name for a word at a position, when the usage
+  // is `Parent.word` or `const { ..., word, ... } = Parent`. Returns null for
+  // plain references. The parent lets the backend resolve nested member
+  // definitions instead of falling back to the (ranked) global search.
+  function extractJsParentContext(model, lineNumber, wordInfo) {
+    if (!model || !wordInfo) return null;
+    var line = model.getLineContent(lineNumber);
+
+    // Dot form: SomeParent.word — back-walk the identifier before the dot.
+    if (line[wordInfo.startColumn - 2] === '.') {
+      var end = wordInfo.startColumn - 2; // index of the '.'
+      var start = end;
+      while (start > 0 && /[a-zA-Z0-9_$]/.test(line[start - 1])) start--;
+      var parent = line.substring(start, end);
+      // Reject call/index results like foo().word or foo[0].word — those
+      // aren't a named parent object.
+      if (parent && /^[a-zA-Z_$]/.test(parent) && (start === 0 || !/[)\]]/.test(line[start - 1]))) {
+        return parent;
+      }
+      return null;
+    }
+
+    // Destructuring form: const { a, word, b } = SomeParent
+    var m = line.match(/(?:const|let|var)\s*\{([^}]*)\}\s*=\s*([a-zA-Z_$][a-zA-Z0-9_$]*)/);
+    if (m) {
+      var braceStart = line.indexOf('{', m.index) + 2; // 1-based column after '{'
+      var braceEnd = braceStart + m[1].length;
+      if (wordInfo.startColumn >= braceStart && wordInfo.endColumn <= braceEnd + 1) {
+        var names = m[1].split(',').map(function (seg) {
+          // `source: alias` renames — the SOURCE property lives on the parent.
+          return seg.split(':')[0].trim();
+        });
+        if (names.indexOf(wordInfo.word) !== -1) return m[2];
+      }
+    }
+    return null;
+  }
+
+  function navigateToJsWord(editor, word, parent) {
     if (typeof FileService === 'undefined' || !FileService.getJsDefinition) return Promise.resolve(false);
     var currentPath = editor.getModel && editor.getModel() && editor.getModel()._mbeditorPath;
-    return FileService.getJsDefinition(word)
+    return FileService.getJsDefinition(word, null, parent)
       .then(function(data) {
         var results = data && data.results;
         if (!results || !results.length) {
@@ -162,9 +200,10 @@
           return false;
         }
         var r = results[0];
-        // Only declare as a global when the definition lives in a different file.
-        // Locally-defined functions/classes must not get a duplicate declare var.
-        if (r.file !== currentPath) addDiscoveredGlobal(word);
+        // Only declare as a global when the definition is itself a top-level
+        // (Sprockets-global) declaration in a different file. Nested/member
+        // definitions must not get an ambient declare var.
+        if (r.topLevel && r.file !== currentPath) addDiscoveredGlobal(word);
         if (typeof TabManager !== 'undefined' && TabManager.openTab) {
           TabManager.openTab(r.file, r.file.split('/').pop(), r.line);
         }
@@ -507,7 +546,8 @@
         var wordInfo = model.getWordAtPosition(position);
         if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
         event.event.preventDefault();
-        navigateToJsWord(editor, wordInfo.word).then(function(found) {
+        var parentCtx = extractJsParentContext(model, position.lineNumber, wordInfo);
+        navigateToJsWord(editor, wordInfo.word, parentCtx).then(function(found) {
           if (!found) editor.trigger('', 'editor.action.revealDefinition', null);
         });
       });
@@ -525,7 +565,8 @@
           if (!pos) return;
           var wordInfo = model.getWordAtPosition(pos);
           if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
-          navigateToJsWord(ed, wordInfo.word).then(function(found) {
+          var parentCtx = extractJsParentContext(model, pos.lineNumber, wordInfo);
+          navigateToJsWord(ed, wordInfo.word, parentCtx).then(function(found) {
             if (!found) ed.trigger('', 'editor.action.revealDefinition', null);
           });
         }
@@ -1429,7 +1470,11 @@
           return new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn);
         }
 
-        var cached = jsHoverCache[word];
+        var parentCtx = extractJsParentContext(model, position.lineNumber, wordInfo);
+        // Parent-qualified hovers cache separately: Parent.myFunction and a
+        // bare myFunction can resolve to different definitions.
+        var cacheKey = (parentCtx ? parentCtx + '.' : '') + word;
+        var cached = jsHoverCache[cacheKey];
         if (cached && (Date.now() - cached.ts) < JS_HOVER_CACHE_TTL_MS) {
           if (!cached.contents) return null;
           return { range: makeHoverRange(), contents: cached.contents };
@@ -1439,7 +1484,7 @@
         if (controller && token && token.onCancellationRequested) {
           token.onCancellationRequested(function() { controller.abort(); });
         }
-        return FileService.getJsDefinition(word, controller ? { signal: controller.signal } : {})
+        return FileService.getJsDefinition(word, controller ? { signal: controller.signal } : {}, parentCtx)
           .then(function(data) {
             if (token && token.isCancellationRequested) return null;
             var results = data && data.results;
@@ -1448,22 +1493,23 @@
                 addDiscoveredGlobal(word);
                 var kind = typeof window[word];
                 var rtContents = [{ value: '**' + word + '** — runtime global (`' + kind + '`)' }];
-                jsHoverCache[word] = { ts: Date.now(), contents: rtContents };
+                jsHoverCache[cacheKey] = { ts: Date.now(), contents: rtContents };
                 return { range: makeHoverRange(), contents: rtContents };
               }
-              jsHoverCache[word] = { ts: Date.now(), contents: null };
+              jsHoverCache[cacheKey] = { ts: Date.now(), contents: null };
               return null;
             }
             var r = results[0];
-            // Only declare as global when the definition is in a different file —
-            // locally-defined functions must not get a duplicate declare var.
-            if (r.file !== model._mbeditorPath) addDiscoveredGlobal(word);
+            // Only declare as global when the definition is a top-level
+            // (Sprockets-global) declaration in a different file — nested and
+            // member definitions must not get a duplicate declare var.
+            if (r.topLevel && r.file !== model._mbeditorPath) addDiscoveredGlobal(word);
             var fileRef = r.file + ':' + r.line;
             var contents = [
               { value: '```javascript\n' + r.snippet + '\n```', isTrusted: true },
               { value: '<span style="opacity:0.55;font-size:0.9em;">' + fileRef + '</span>', isTrusted: true, supportHtml: true }
             ];
-            jsHoverCache[word] = { ts: Date.now(), contents: contents };
+            jsHoverCache[cacheKey] = { ts: Date.now(), contents: contents };
             return { range: makeHoverRange(), contents: contents };
           }).catch(function() { return null; });
       }

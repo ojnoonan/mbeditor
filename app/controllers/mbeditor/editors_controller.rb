@@ -416,7 +416,15 @@ module Mbeditor
       return render json: { error: "Invalid symbol" }, status: :bad_request \
         unless symbol.match?(/\A[a-zA-Z_$][a-zA-Z0-9_$]{0,59}\z/)
 
-      results = JsDefinitionService.new(symbol, workspace_root).call
+      parent = params[:parent].to_s.strip
+      if parent.present?
+        return render json: { error: "Invalid parent" }, status: :bad_request \
+          unless parent.match?(/\A[a-zA-Z_$][a-zA-Z0-9_$]{0,59}\z/)
+      else
+        parent = nil
+      end
+
+      results = JsDefinitionService.new(symbol, workspace_root, parent: parent).call
       render json: { results: results }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content

@@ -71,6 +71,31 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # js_definition parent context
+    # ---------------------------------------------------------------------------
+
+    test "js_definition rejects an invalid parent identifier" do
+      get "/mbeditor/js_definition", params: { symbol: "myFunc", parent: "bad-name!" }
+      assert_response :bad_request
+      assert_equal "Invalid parent", json["error"]
+    end
+
+    test "js_definition with parent resolves the member assignment" do
+      FileUtils.mkdir_p(File.join(@workspace, "app", "assets", "javascripts"))
+      File.write(File.join(@workspace, "app", "assets", "javascripts", "parent.js"),
+                 "var SomeParent = {};\nSomeParent.myFunc = function() {};\n")
+      File.write(File.join(@workspace, "app", "assets", "javascripts", "global.js"),
+                 "function myFunc() {}\n")
+
+      get "/mbeditor/js_definition", params: { symbol: "myFunc", parent: "SomeParent" }
+      assert_response :ok
+      first = json["results"].first
+      assert_equal "app/assets/javascripts/parent.js", first["file"]
+      assert_equal 2, first["line"]
+      assert first["member"]
+    end
+
+    # ---------------------------------------------------------------------------
     # lint language=javascript (babel syntax check)
     # ---------------------------------------------------------------------------
 

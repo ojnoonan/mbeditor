@@ -190,8 +190,10 @@ var FileService = (function () {
     prefetchCache.delete(path);
   }
 
-  function getJsDefinition(symbol, extraOptions) {
-    var config = Object.assign({ params: { symbol: symbol }, timeout: 5000 }, extraOptions || {});
+  function getJsDefinition(symbol, extraOptions, parent) {
+    var params = { symbol: symbol };
+    if (parent) params.parent = parent;
+    var config = Object.assign({ params: params, timeout: 5000 }, extraOptions || {});
     return axios.get(window.mbeditorBasePath() + '/js_definition', config).then(function(res) { return res.data; });
   }
 
