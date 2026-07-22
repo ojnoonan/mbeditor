@@ -26,7 +26,7 @@ module Mbeditor
       @workspace_root = Pathname(workspace_root)
     end
 
-    # entries: [{ target_path: <absolute String>, io: <#read, #rewind> }]
+    # entries: [{ target_path: <absolute String>, io: <#read, #rewind, #size> }]
     # => { imported: [{path:, name:}], conflicts: [{path:}], errors: [{path:, error:}] }
     def import(entries, on_conflict: :ask)
       mode = on_conflict.to_s.to_sym
@@ -59,6 +59,10 @@ module Mbeditor
         }
       end
 
+      # Every bail-out has run by now, and that ordering is load-bearing:
+      # free_path picks its counter by probing the filesystem, so a batch
+      # renaming onto one name only works because each write lands before the
+      # next entry probes. Any new early return belongs above this line.
       if File.exist?(target)
         case mode
         when :ask
