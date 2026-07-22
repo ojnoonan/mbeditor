@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **ruby-lsp integration (optional)** — when the host app has
+  [ruby-lsp](https://github.com/Shopify/ruby-lsp) installed, Ruby
+  go-to-definition, hover, and completion are answered by a persistent
+  ruby-lsp process (unsaved buffer contents included), with automatic
+  fallback to the built-in grep/Ripper services on timeout, crash, or
+  absence — hosts without ruby-lsp see no change. New config:
+  `ruby_lsp` (`:auto`/`false`), `ruby_lsp_command`, `ruby_lsp_timeout`.
+
+### Fixed
+- **JS go-to-definition picked nested functions over globals** — with two
+  same-named functions (one top-level, one inside an IIFE/object), Ctrl+click
+  navigated to whichever grep match came first. Top-level declarations
+  (column 0, `window.X =`, `export`) now rank first, and clicking
+  `SomeParent.myFunction` or a name in `const { myFunction } = SomeParent`
+  resolves the parent's member definition directly. Hover follows the same
+  rules, and nested matches no longer pollute the ambient-globals list.
+- **JS definition lookups were silently broken on rg-less machines in git
+  workspaces** — the search patterns used `(?:`, `\b`, and `\s`, which
+  `git grep`'s POSIX ERE engine rejects or treats as literals, so the
+  git-grep tier returned nothing. All patterns are now pure POSIX ERE.
 - **Format on save** — new editor setting (off by default): saving runs
   RuboCop `-A` for Ruby or Prettier for JS/JSX/JSON/CSS/SCSS/HTML/Markdown
   before writing, and never blocks the save if the formatter fails.

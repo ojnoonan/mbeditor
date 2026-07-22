@@ -10,6 +10,7 @@ gem 'capybara',           require: false
 gem 'cuprite',            require: false
 gem 'haml_lint',          require: false
 gem 'mini_racer',         require: false  # exercises JsSyntaxCheckService in tests; host-provided in production
+gem 'ruby-lsp',           require: false  # exercises the RubyLspClient bridge in dev; host-provided in production
 gem 'minitest-reporters', require: false
 gem 'puma'
 gem 'rubocop',            require: false

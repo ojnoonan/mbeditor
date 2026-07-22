@@ -216,6 +216,21 @@ var FileService = (function () {
     return axios.get(window.mbeditorBasePath() + '/client_config').then(function(res) { return res.data; });
   }
 
+  // Bridge to the host's ruby-lsp process. lspMethod: 'definition' | 'hover'
+  // | 'completion'; line/character are Monaco 1-based. The server answers in
+  // provider-ready shapes, or { fallback: true } when the LSP can't answer in
+  // time (caller then uses the legacy grep/Ripper path).
+  function rubyLspRequest(lspMethod, path, content, line, character, extraOptions) {
+    var config = Object.assign({ timeout: 6000 }, extraOptions || {});
+    return axios.post(window.mbeditorBasePath() + '/ruby_lsp', {
+      lsp_method: lspMethod,
+      path: path,
+      content: content,
+      line: line,
+      character: character
+    }, config).then(function(res) { return res.data; });
+  }
+
   function getJsGlobals() {
     return axios.get(window.mbeditorBasePath() + '/js_globals', { timeout: 20000 })
       .then(function(res) { return res.data; });
@@ -266,6 +281,7 @@ var FileService = (function () {
     getFileIncludes: getFileIncludes,
     getClientConfig: getClientConfig,
     getJsGlobals: getJsGlobals,
+    rubyLspRequest: rubyLspRequest,
     getRelatedFiles: getRelatedFiles,
     getModelSchema: getModelSchema,
     getChangelog: getChangelog

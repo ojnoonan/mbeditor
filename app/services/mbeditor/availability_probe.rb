@@ -70,6 +70,40 @@ module Mbeditor
       supported ? "--server" : "--no-server"
     end
 
+    def self.ruby_lsp_command(workspace_root)
+      configured = Mbeditor.configuration.ruby_lsp_command
+      if configured
+        return configured.map(&:to_s) if configured.is_a?(Array)
+
+        begin
+          return Shellwords.split(configured.to_s)
+        rescue ArgumentError
+          return ["ruby-lsp"]
+        end
+      end
+
+      root = Pathname.new(workspace_root)
+      local_bin = root.join("bin", "ruby-lsp")
+      return [local_bin.to_s] if local_bin.exist?
+
+      begin
+        [Gem.bin_path("ruby-lsp", "ruby-lsp")]
+      rescue Gem::Exception, Gem::GemNotFoundException
+        ["bundle", "exec", "ruby-lsp"]
+      end
+    end
+
+    def self.ruby_lsp(workspace_root)
+      return false if Mbeditor.configuration.ruby_lsp == false
+
+      cmd = ruby_lsp_command(workspace_root)
+      key = "ruby_lsp:#{cmd.join(' ')}"
+      probe_cached(key) do
+        result = ProcessRunner.call(cmd + ["--version"], timeout: 10, chdir: workspace_root.to_s)
+        result[:exit_status]&.success? || false
+      end
+    end
+
     def self.git(workspace_root)
       key = "git:#{workspace_root}"
       probe_cached(key) do

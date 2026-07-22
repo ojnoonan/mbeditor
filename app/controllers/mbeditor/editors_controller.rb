@@ -66,7 +66,8 @@ module Mbeditor
         redmineEnabled: Mbeditor.configuration.redmine_enabled == true,
         testAvailable: test_available?,
         actionCableEnabled: action_cable_enabled?,
-        jsSyntaxCheckAvailable: JsSyntaxCheckService.available?
+        jsSyntaxCheckAvailable: JsSyntaxCheckService.available?,
+        rubyLspAvailable: AvailabilityProbe.ruby_lsp(workspace_root)
       }
     end
 
@@ -453,6 +454,45 @@ module Mbeditor
       render json: JsGlobalsService.call(workspace_root)
     rescue StandardError => e
       render json: { ok: false, error: e.message }, status: :unprocessable_content
+    end
+
+    RUBY_LSP_METHODS = {
+      "definition" => "textDocument/definition",
+      "hover"      => "textDocument/hover",
+      "completion" => "textDocument/completion"
+    }.freeze
+
+    # POST /mbeditor/ruby_lsp — bridge to the host's ruby-lsp process.
+    # Body: { path:, content:, line: (1-based), character: (1-based), lsp_method: }
+    # Translates LSP responses into the shapes the frontend providers already
+    # consume; { fallback: true } tells the frontend to use the legacy path.
+    def ruby_lsp
+      lsp_method = RUBY_LSP_METHODS[params[:lsp_method].to_s]
+      return render json: { error: "Invalid lsp_method" }, status: :bad_request unless lsp_method
+
+      path = resolve_path(params[:path])
+      return render json: { error: "Invalid path" }, status: :bad_request unless path
+
+      content = params[:content].to_s
+      if content.bytesize > FileOperationService::MAX_FILE_SIZE_BYTES
+        return render json: { error: "Content too large" }, status: :content_too_large
+      end
+
+      unless AvailabilityProbe.ruby_lsp(workspace_root)
+        return render json: { error: "ruby-lsp unavailable", rubyLspAvailable: false }, status: :unprocessable_content
+      end
+
+      position = {
+        line: [params[:line].to_i - 1, 0].max,
+        character: [params[:character].to_i - 1, 0].max
+      }
+      client = RubyLspClient.for(workspace_root.to_s)
+      result = client.request_with_document(lsp_method, path, content, position: position)
+      render json: translate_ruby_lsp_result(params[:lsp_method].to_s, result)
+    rescue RubyLspClient::TimeoutError, RubyLspClient::NotReadyError
+      render json: { fallback: true }
+    rescue StandardError => e
+      render json: { error: e.message, fallback: true }
     end
 
     # GET /mbeditor/module_members?name=ArticlesHelper
@@ -1020,6 +1060,69 @@ module Mbeditor
       timeout = timeout_seconds && timeout_seconds > 0 ? timeout_seconds : nil
       result = ProcessRunner.call(cmd, timeout: timeout, env: env, stdin_data: stdin_data)
       result[:stdout]
+    end
+
+    def translate_ruby_lsp_result(kind, result)
+      case kind
+      when "definition" then { results: translate_lsp_locations(result) }
+      when "hover"      then { markdown: translate_lsp_hover(result) }
+      when "completion" then { suggestions: translate_lsp_completions(result) }
+      end
+    end
+
+    def translate_lsp_locations(result)
+      items = result.is_a?(Array) ? result : [result].compact
+      root = workspace_root.to_s
+      items.filter_map do |loc|
+        next unless loc.is_a?(Hash)
+
+        uri   = loc["uri"] || loc["targetUri"]
+        range = loc["range"] || loc["targetSelectionRange"] || loc["targetRange"]
+        next unless uri.to_s.start_with?("file://")
+
+        fpath = uri.delete_prefix("file://")
+        # Drop gem/stdlib locations the editor can't open; an empty list makes
+        # the frontend fall back to the legacy services (ri covers stdlib).
+        next unless fpath.start_with?("#{root}/")
+
+        { file: fpath.delete_prefix("#{root}/"), line: (range&.dig("start", "line") || 0) + 1 }
+      end
+    end
+
+    def translate_lsp_hover(result)
+      contents = result.is_a?(Hash) ? result["contents"] : nil
+      return nil if contents.nil?
+
+      case contents
+      when Hash  then contents["value"].to_s
+      when Array then contents.map { |c| c.is_a?(Hash) ? c["value"].to_s : c.to_s }.join("\n\n")
+      else contents.to_s
+      end
+    end
+
+    def translate_lsp_completions(result)
+      items = result.is_a?(Hash) ? Array(result["items"]) : Array(result)
+      items.first(100).filter_map do |item|
+        next unless item.is_a?(Hash)
+
+        {
+          label: item["label"].to_s,
+          kind: lsp_completion_kind(item["kind"]),
+          insertText: (item.dig("textEdit", "newText") || item["insertText"] || item["label"]).to_s,
+          detail: item["detail"].to_s,
+          isSnippet: item["insertTextFormat"] == 2
+        }
+      end
+    end
+
+    LSP_COMPLETION_KINDS = {
+      2 => "Method", 3 => "Function", 4 => "Constructor", 5 => "Field",
+      6 => "Variable", 7 => "Class", 8 => "Interface", 9 => "Module",
+      10 => "Property", 14 => "Keyword", 15 => "Snippet", 21 => "Constant"
+    }.freeze
+
+    def lsp_completion_kind(kind)
+      LSP_COMPLETION_KINDS[kind] || "Text"
     end
 
     def cop_severity(severity)

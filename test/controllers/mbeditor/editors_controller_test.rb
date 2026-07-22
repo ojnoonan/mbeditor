@@ -71,6 +71,98 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # ruby_lsp bridge
+    # ---------------------------------------------------------------------------
+
+    FAKE_LSP_SERVER = File.expand_path("../../fixtures/fake_lsp_server.rb", __dir__)
+
+    def with_ruby_lsp_available(value)
+      singleton = class << AvailabilityProbe; self; end
+      singleton.alias_method :__orig_ruby_lsp, :ruby_lsp
+      AvailabilityProbe.define_singleton_method(:ruby_lsp) { |*| value }
+      yield
+    ensure
+      singleton.remove_method :ruby_lsp
+      singleton.alias_method :ruby_lsp, :__orig_ruby_lsp
+      singleton.remove_method :__orig_ruby_lsp
+    end
+
+    test "ruby_lsp requires the client header" do
+      ActionDispatch::Integration::Session.new(Rails.application).tap do |sess|
+        sess.post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "a.rb" }, as: :json
+        assert_equal 403, sess.response.status
+      end
+    end
+
+    test "ruby_lsp rejects an unknown lsp_method" do
+      post "/mbeditor/ruby_lsp", params: { lsp_method: "rename", path: "a.rb", content: "", line: 1, character: 1 }
+      assert_response :bad_request
+    end
+
+    test "ruby_lsp rejects a traversal path" do
+      post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "../../etc/passwd", content: "", line: 1, character: 1 }
+      assert_response :bad_request
+    end
+
+    test "ruby_lsp rejects oversized content" do
+      # as: :json — the real client posts JSON; Rack's urlencoded parser has
+      # its own 4MB body limit that would 400 before reaching the action.
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "app/models/user.rb",
+                                             content: "x" * (5 * 1024 * 1024 + 1), line: 1, character: 1 },
+             as: :json
+        assert_response :content_too_large
+      end
+    end
+
+    test "ruby_lsp returns 422 with the availability flag when the probe fails" do
+      with_ruby_lsp_available(false) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 1 }
+        assert_response :unprocessable_content
+        assert_equal false, json["rubyLspAvailable"]
+      end
+    end
+
+    test "ruby_lsp translates definition, hover, and completion responses" do
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        first = json["results"].first
+        assert_equal "app/models/user.rb", first["file"]
+        assert_equal 5, first["line"], "0-based LSP line 4 becomes 1-based 5"
+
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "hover", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        assert_includes json["markdown"], "fake hover"
+
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "completion", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        suggestion = json["suggestions"].first
+        assert_equal "fake_method", suggestion["label"]
+        assert_equal "Method", suggestion["kind"]
+      end
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
+    end
+
+    test "workspace reports rubyLspAvailable" do
+      with_ruby_lsp_available(false) do
+        get "/mbeditor/workspace"
+        assert_response :ok
+        assert_equal false, json["rubyLspAvailable"]
+      end
+    end
+
+    # ---------------------------------------------------------------------------
     # js_definition parent context
     # ---------------------------------------------------------------------------
 

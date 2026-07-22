@@ -869,6 +869,9 @@ var MbeditorApp = function MbeditorApp() {
       if (workspace && typeof workspace.jsSyntaxCheckAvailable === 'boolean') {
         jsSyntaxCheckAvailableRef.current = workspace.jsSyntaxCheckAvailable;
       }
+      if (workspace && typeof workspace.rubyLspAvailable === 'boolean') {
+        window.MBEDITOR_RUBY_LSP_AVAILABLE = workspace.rubyLspAvailable;
+      }
       if (workspace && typeof workspace.gitAvailable === 'boolean') {
         setGitAvailable(workspace.gitAvailable);
       }

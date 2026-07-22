@@ -151,6 +151,37 @@
 
   // Navigate to the first workspace definition of a JS symbol.
   // Returns a Promise<boolean> — true if a definition was found and opened.
+  // Try the host's ruby-lsp (via the /ruby_lsp bridge) for a Ruby language
+  // request. Resolves to the translated payload, or null whenever the legacy
+  // grep/Ripper path should run instead: flag off, oversized buffer, HTTP
+  // error, server-side fallback signal, or an empty result. A 422 means the
+  // server has decided ruby-lsp is unavailable — flip the flag off so we stop
+  // asking.
+  function tryRubyLsp(lspMethod, model, position) {
+    try {
+      if (!window.MBEDITOR_RUBY_LSP_AVAILABLE) return Promise.resolve(null);
+      if (typeof FileService === 'undefined' || !FileService.rubyLspRequest) return Promise.resolve(null);
+      if (!model || !model._mbeditorPath || !position) return Promise.resolve(null);
+      if (model.getValueLength() > 5 * 1024 * 1024) return Promise.resolve(null);
+      return FileService.rubyLspRequest(lspMethod, model._mbeditorPath, model.getValue(), position.lineNumber, position.column)
+        .then(function (data) {
+          if (!data || data.fallback || data.error) return null;
+          if (lspMethod === 'definition') return (data.results && data.results.length) ? data : null;
+          if (lspMethod === 'hover') return data.markdown ? data : null;
+          if (lspMethod === 'completion') return (data.suggestions && data.suggestions.length) ? data : null;
+          return null;
+        })
+        .catch(function (err) {
+          if (err && err.response && err.response.status === 422) {
+            window.MBEDITOR_RUBY_LSP_AVAILABLE = false;
+          }
+          return null;
+        });
+    } catch (e) {
+      return Promise.resolve(null);
+    }
+  }
+
   // Extract the parent object name for a word at a position, when the usage
   // is `Parent.word` or `const { ..., word, ... } = Parent`. Returns null for
   // plain references. The parent lets the backend resolve nested member
@@ -473,9 +504,10 @@
         event.stopPropagation();
       });
 
-      // Navigate to a Ruby symbol: modules/classes go to their definition file,
-      // lowercase symbols go to their def line.
-      function navigateToWord(word) {
+      // Navigate to a Ruby symbol: ruby-lsp first when available (accurate,
+      // position-aware), else modules/classes go to their definition file and
+      // lowercase symbols go to their def line via the grep/Ripper services.
+      function legacyNavigateToWord(word) {
         if (/^[A-Z]/.test(word) && typeof FileService !== 'undefined' && FileService.getModuleMembers) {
           FileService.getModuleMembers(word).then(function(data) {
             if (!data || !data.file) return;
@@ -497,6 +529,19 @@
         }).catch(function() {});
       }
 
+      function navigateToWord(word, position) {
+        tryRubyLsp('definition', model, position).then(function (lsp) {
+          if (lsp && lsp.results && lsp.results.length) {
+            var r = lsp.results[0];
+            if (typeof TabManager !== 'undefined' && TabManager.openTab) {
+              TabManager.openTab(r.file, r.file.split('/').pop(), r.line);
+            }
+            return;
+          }
+          legacyNavigateToWord(word);
+        });
+      }
+
       // Ctrl/Cmd+click — navigate to definition
       gotoMouseDisposable = editor.onMouseDown(function(event) {
         var ctrlOrCmd = event.event.ctrlKey || event.event.metaKey;
@@ -513,7 +558,7 @@
         if (RUBY_CORE_METHODS[wordInfo.word]) return;
 
         event.event.preventDefault();
-        navigateToWord(wordInfo.word);
+        navigateToWord(wordInfo.word, position);
       });
 
       // F12 — go to definition from keyboard
@@ -530,7 +575,7 @@
           if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
           if (RUBY_KEYWORDS[wordInfo.word]) return;
           if (RUBY_CORE_METHODS[wordInfo.word]) return;
-          navigateToWord(wordInfo.word);
+          navigateToWord(wordInfo.word, pos);
         }
       });
     }
@@ -1290,6 +1335,39 @@
         if (RUBY_CORE_METHODS[word]) return null;
         if (typeof FileService === 'undefined' || !FileService.getDefinition) return null;
 
+        // ruby-lsp first: accurate, position-aware documentation. The LSP
+        // hover cache is keyed by location, not just word — the same method
+        // name can mean different things at different positions.
+        if (window.MBEDITOR_RUBY_LSP_AVAILABLE) {
+          var lspKey = '__lsp__' + (model._mbeditorPath || '') + ':' + position.lineNumber + ':' + word;
+          var lspCached = hoverCache[lspKey];
+          if (lspCached && (Date.now() - lspCached.ts) < HOVER_CACHE_TTL_MS) {
+            if (lspCached.result) return lspCached.result;
+            // Cached LSP miss — fall through to the legacy paths below.
+          } else {
+            return tryRubyLsp('hover', model, position).then(function (lsp) {
+              if (token && token.isCancellationRequested) return null;
+              if (lsp && lsp.markdown) {
+                var lspResult = {
+                  range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
+                  contents: [{ value: lsp.markdown, isTrusted: true }]
+                };
+                hoverCache[lspKey] = { ts: Date.now(), result: lspResult };
+                return lspResult;
+              }
+              hoverCache[lspKey] = { ts: Date.now(), result: null };
+              return legacyRubyHover(model, position, token, wordInfo);
+            });
+          }
+        }
+
+        return legacyRubyHover(model, position, token, wordInfo);
+      }
+    });
+
+    function legacyRubyHover(model, position, token, wordInfo) {
+      var word = wordInfo.word;
+      {
         // Uppercase first letter → likely a module/class name.
         // Look up the module's exposed methods via /module_members.
         if (/^[A-Z]/.test(word) && FileService.getModuleMembers) {
@@ -1356,7 +1434,7 @@
           return buildHoverResult(results);
         }).catch(function() { return null; });
       }
-    });
+    }
 
     function buildHoverResult(results) {
       var first = results[0];
@@ -1403,9 +1481,44 @@
       }).filter(function(p) { return p.length > 0; });
     }
 
+    // Map server-translated LSP completion items to Monaco suggestion objects.
+    function mapLspCompletionSuggestions(suggestions) {
+      return {
+        suggestions: suggestions.map(function (s) {
+          var kind = monaco.languages.CompletionItemKind[s.kind];
+          var item = {
+            label: s.label,
+            kind: kind != null ? kind : monaco.languages.CompletionItemKind.Text,
+            detail: s.detail || '',
+            insertText: s.insertText || s.label
+          };
+          if (s.isSnippet) {
+            item.insertTextRules = monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
+          }
+          return item;
+        })
+      };
+    }
+
     monaco.languages.registerCompletionItemProvider('ruby', {
       triggerCharacters: ['.'],
       provideCompletionItems: function(model, position) {
+        // ruby-lsp first — real scope-aware completions; the include-based
+        // provider below stays as the fallback.
+        if (window.MBEDITOR_RUBY_LSP_AVAILABLE) {
+          return tryRubyLsp('completion', model, position).then(function (lsp) {
+            if (lsp && lsp.suggestions && lsp.suggestions.length) {
+              return mapLspCompletionSuggestions(lsp.suggestions);
+            }
+            return legacyRubyCompletions(model, position);
+          });
+        }
+        return legacyRubyCompletions(model, position);
+      }
+    });
+
+    function legacyRubyCompletions(model, position) {
+      {
         var path = model._mbeditorPath;
         if (!path || typeof FileService === 'undefined' || !FileService.getFileIncludes) {
           return { suggestions: [] };
@@ -1450,7 +1563,7 @@
           return buildSuggestions(result);
         }).catch(function() { return { suggestions: [] }; });
       }
-    });
+    }
 
     // JS/JSX hover provider: looks up workspace definitions for window globals.
     // Fires for mixed-case identifiers and for any symbol already in discoveredJsGlobals.

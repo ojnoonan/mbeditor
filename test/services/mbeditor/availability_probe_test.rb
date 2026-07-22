@@ -91,6 +91,32 @@ module Mbeditor
       Mbeditor.configuration.rubocop_command = nil
     end
 
+    def test_ruby_lsp_probe_short_circuits_when_disabled
+      original = Mbeditor.configuration.ruby_lsp
+      Mbeditor.configuration.ruby_lsp = false
+
+      refute AvailabilityProbe.ruby_lsp(@workspace)
+    ensure
+      Mbeditor.configuration.ruby_lsp = original
+    end
+
+    def test_ruby_lsp_command_prefers_config_then_bin_stub
+      original = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = "custom-lsp --stdio"
+      assert_equal ["custom-lsp", "--stdio"], AvailabilityProbe.ruby_lsp_command(@workspace)
+
+      Mbeditor.configuration.ruby_lsp_command = nil
+      Dir.mktmpdir do |dir|
+        FileUtils.mkdir_p(File.join(dir, "bin"))
+        stub = File.join(dir, "bin", "ruby-lsp")
+        File.write(stub, "#!/bin/sh\nexit 0\n")
+        File.chmod(0o755, stub)
+        assert_equal [stub], AvailabilityProbe.ruby_lsp_command(dir)
+      end
+    ensure
+      Mbeditor.configuration.ruby_lsp_command = original
+    end
+
     def test_rubocop_server_flag_uses_server_for_modern_rubocop
       Dir.mktmpdir do |dir|
         script = File.join(dir, "fake-rubocop")
