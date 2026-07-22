@@ -10,7 +10,8 @@ module Mbeditor
                   :ruby_def_include_dirs, :related_files_custom_paths,
                   :mount_path, :resilient_routing, :js_global_identifiers,
                   :js_syntax_check, :babel_standalone_path,
-                  :ruby_lsp, :ruby_lsp_command, :ruby_lsp_timeout
+                  :ruby_lsp, :ruby_lsp_command, :ruby_lsp_timeout,
+                  :search_respect_gitignore
 
     def initialize
       @allowed_environments = [:development]
@@ -29,6 +30,7 @@ module Mbeditor
       @base_branch_candidates = %w[origin/develop origin/main origin/master develop main master]
       @git_timeout            = 10 # seconds; nil disables (no timeout on git subprocesses)
       @search_timeout         = 15 # seconds; wall-clock bound on search subprocesses, nil disables
+      @search_respect_gitignore = false # true skips .gitignore'd files in project search and definition lookups
       @ruby_def_include_dirs  = %w[app/models app/controllers app/helpers app/concerns]
       @related_files_custom_paths = []
       @authentication_cache_ttl = 0

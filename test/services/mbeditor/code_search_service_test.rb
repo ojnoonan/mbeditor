@@ -72,6 +72,38 @@ module Mbeditor
       sr_singleton.remove_method :__orig_rg_available?
     end
 
+    test "the rg tier honours search_respect_gitignore like the search service" do
+      captured = nil
+      singleton = class << ProcessRunner; self; end
+      singleton.alias_method :__orig_call, :call
+      ProcessRunner.define_singleton_method(:call) do |cmd, **opts|
+        captured = cmd if cmd.first == "rg"
+        { stdout: "", stderr: "", exit_status: nil }
+      end
+
+      sr_singleton = class << SearchReplaceService; self; end
+      sr_singleton.alias_method :__orig_rg_available?, :rg_available?
+      SearchReplaceService.define_singleton_method(:rg_available?) { true }
+
+      original = Mbeditor.configuration.search_respect_gitignore
+
+      Mbeditor.configuration.search_respect_gitignore = false
+      CodeSearchService.call("pattern", @workspace)
+      assert_includes captured, "--no-ignore"
+
+      Mbeditor.configuration.search_respect_gitignore = true
+      CodeSearchService.call("pattern", @workspace)
+      assert_not_includes captured, "--no-ignore"
+    ensure
+      Mbeditor.configuration.search_respect_gitignore = original
+      singleton.remove_method :call
+      singleton.alias_method :call, :__orig_call
+      singleton.remove_method :__orig_call
+      sr_singleton.remove_method :rg_available?
+      sr_singleton.alias_method :rg_available?, :__orig_rg_available?
+      sr_singleton.remove_method :__orig_rg_available?
+    end
+
     test "returns empty array when a search subprocess times out" do
       singleton = class << ProcessRunner; self; end
       singleton.alias_method :__orig_call, :call

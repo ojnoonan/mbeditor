@@ -31,6 +31,9 @@ module Mbeditor
     MAX_RESULTS = 20
     MAX_COMMENT_LOOKAHEAD = 15
     MAX_FILES_SCANNED = 10_000
+    # Upper bound on cached files. Entries carry full file contents, so this
+    # caps both the on-disk JSON and the resident hash.
+    MAX_CACHE_ENTRIES = 2_000
 
     # In-process file-index cache.
     # Structure: { absolute_path => {
@@ -155,7 +158,15 @@ module Mbeditor
         path = @cache_path.to_s
         return if path.empty?
 
-        snapshot = @mutex.synchronize { @file_cache.dup }
+        snapshot = @mutex.synchronize do
+          # Each entry holds the file's full source lines, so an uncapped cache
+          # grows to tens of MB on a large workspace and is rewritten in full on
+          # every change. Drop least-recently-used entries (oldest insertion
+          # first) before writing. Trimming only here means an in-flight
+          # scan_workspace still gets hits from everything it just parsed.
+          @file_cache.shift while @file_cache.length > MAX_CACHE_ENTRIES
+          @file_cache.dup
+        end
         tmp_path = "#{path}.tmp"
         File.write(tmp_path, JSON.generate(snapshot))
         File.rename(tmp_path, path)
@@ -290,7 +301,16 @@ module Mbeditor
     # been modified since the last parse.  Returns nil on any read/parse error.
     def cache_entry_for(path)
       mtime = File.mtime(path).to_f
-      cached = @shared_mutex.synchronize { @shared_cache[path] }
+      cached = @shared_mutex.synchronize do
+        entry = @shared_cache[path]
+        # Ruby hashes keep insertion order, so delete+reinsert marks this the
+        # most recently used entry for the LRU trim in persist_cache.
+        if entry
+          @shared_cache.delete(path)
+          @shared_cache[path] = entry
+        end
+        entry
+      end
       return cached if cached && cached[:mtime] == mtime && !cached[:module_names].nil?
 
       source                              = File.read(path, encoding: "UTF-8", invalid: :replace, undef: :replace)
@@ -299,7 +319,10 @@ module Mbeditor
       all_defs, module_names, include_calls = sexp ? collect_all_defs(sexp) : [{}, [], []]
       entry = { mtime: mtime, lines: lines, all_defs: all_defs,
                 module_names: module_names, include_calls: include_calls }
-      @shared_mutex.synchronize { @shared_cache[path] = entry }
+      @shared_mutex.synchronize do
+        @shared_cache.delete(path)
+        @shared_cache[path] = entry
+      end
       @new_entries = true
       entry
     rescue StandardError

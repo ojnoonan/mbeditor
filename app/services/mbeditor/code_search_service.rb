@@ -47,7 +47,12 @@ module Mbeditor
       end
 
       def run_rg(pattern, workspace_root, globs)
-        args = ["rg", "--no-heading", "-n", "--color=never", "-e", pattern]
+        args = ["rg", "--no-heading", "-n", "--color=never"]
+        # Matches SearchReplaceService: both search paths honour the same
+        # config so definition lookups and project search can't disagree about
+        # which files exist.
+        args << "--no-ignore" unless SearchReplaceService.respect_gitignore?
+        args += ["-e", pattern]
         args += globs.flat_map { |g| ["-g", g] }
         excluded_paths.each { |p| args << "--glob=!#{p}" }
         args << workspace_root
@@ -55,7 +60,8 @@ module Mbeditor
       end
 
       def run_git_grep(pattern, workspace_root, globs)
-        args = ["git", "-C", workspace_root, "grep", "-I", "-n", "--no-color", "--untracked", "-E", "-e", pattern, "--"]
+        gitignore_flag = SearchReplaceService.respect_gitignore? ? "--untracked" : "--no-index"
+        args = ["git", "-C", workspace_root, "grep", "-I", "-n", "--no-color", gitignore_flag, "-E", "-e", pattern, "--"]
         args += globs
         lines = run_command(args, env: { "LC_ALL" => "C" })
         # git grep prints workspace-relative paths; callers expect absolute

@@ -413,6 +413,73 @@ module Mbeditor
       end
     end
 
+    # ---------------------------------------------------------------------------
+    # search_respect_gitignore
+    # ---------------------------------------------------------------------------
+
+    def with_respect_gitignore(value)
+      original = Mbeditor.configuration.search_respect_gitignore
+      Mbeditor.configuration.search_respect_gitignore = value
+      yield
+    ensure
+      Mbeditor.configuration.search_respect_gitignore = original
+    end
+
+    test "the rg tier drops --no-ignore only when gitignore is respected" do
+      args_for = lambda do
+        SearchReplaceService.send(:build_command, :rg, @workspace, "x",
+                                  use_regex: false, match_case: true, whole_word: false,
+                                  excluded_paths: [], paths: nil).last
+      end
+
+      with_respect_gitignore(false) { assert_includes args_for.call, "--no-ignore" }
+      with_respect_gitignore(true) { assert_not_includes args_for.call, "--no-ignore" }
+    end
+
+    test "the git tier swaps --untracked and --no-index, which cannot be combined" do
+      args_for = lambda do
+        SearchReplaceService.send(:build_command, :git, @workspace, "x",
+                                  use_regex: false, match_case: true, whole_word: false,
+                                  excluded_paths: [], paths: nil).last
+      end
+
+      with_respect_gitignore(true) do
+        args = args_for.call
+        assert_includes args, "--untracked"
+        assert_not_includes args, "--no-index"
+      end
+      with_respect_gitignore(false) do
+        args = args_for.call
+        assert_includes args, "--no-index"
+        assert_not_includes args, "--untracked"
+      end
+    end
+
+    test "gitignored files are searched only when the config allows it" do
+      system("git", "-C", @workspace, "init", "-q", exception: true)
+      File.write(File.join(@workspace, ".gitignore"), "ignored/\n")
+      write_file("ignored/hidden.rb", "GITIGNORE_NEEDLE\n")
+      write_file("visible.rb", "GITIGNORE_NEEDLE\n")
+
+      with_rg_available(false) do
+        with_respect_gitignore(false) do
+          SearchReplaceService.invalidate_cache(@workspace)
+          files = search("GITIGNORE_NEEDLE").map { |r| r[:file] }
+          assert_includes files, "visible.rb"
+          assert_includes files, "ignored/hidden.rb", "default behaviour searches ignored files"
+        end
+
+        with_respect_gitignore(true) do
+          SearchReplaceService.invalidate_cache(@workspace)
+          files = search("GITIGNORE_NEEDLE").map { |r| r[:file] }
+          assert_includes files, "visible.rb"
+          assert_not_includes files, "ignored/hidden.rb"
+        end
+      end
+    ensure
+      SearchReplaceService.invalidate_cache(@workspace)
+    end
+
     test "grep tier command uses LC_ALL=C, -I, and drops slashed exclude-dirs" do
       env, args = SearchReplaceService.send(:build_command, :grep, @workspace, "x",
                                             use_regex: false, match_case: false, whole_word: false,

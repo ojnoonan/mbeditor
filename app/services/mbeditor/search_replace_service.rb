@@ -27,6 +27,12 @@ module Mbeditor
     private_constant :STATE_MUTEX
 
     class << self
+      # Whether searches should honour .gitignore. Shared by CodeSearchService
+      # so the two search paths can't drift apart again.
+      def respect_gitignore?
+        Mbeditor.configuration.search_respect_gitignore == true
+      end
+
       # Probed with a TTL (not frozen at boot) so installing ripgrep while the
       # server is running is picked up within a minute.
       def rg_available?
@@ -243,7 +249,8 @@ module Mbeditor
 
         case tier
         when :rg
-          args = ["rg", "--json", "--no-ignore"]
+          args = ["rg", "--json"]
+          args << "--no-ignore" unless respect_gitignore?
           args << "-F" unless use_regex
           args << "--ignore-case" unless match_case
           args << "--word-regexp" if whole_word
@@ -253,7 +260,11 @@ module Mbeditor
           args += paths ? paths.map { |p| File.expand_path(p, root) } : [root]
           [{}, args]
         when :git
-          args = ["git", "-C", root, "grep", "-I", "-n", "--no-color", "--untracked"]
+          args = ["git", "-C", root, "grep", "-I", "-n", "--no-color"]
+          # --untracked adds untracked-but-not-ignored files; --no-index
+          # searches the working tree including ignored files. git rejects the
+          # two together.
+          args << (respect_gitignore? ? "--untracked" : "--no-index")
           args << "-F" unless use_regex
           args << "-E" if use_regex
           args << "-i" unless match_case
