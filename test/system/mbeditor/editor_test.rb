@@ -439,6 +439,36 @@ module Mbeditor
                    "Second identical search should use cache with no new network request"
     end
 
+    test "fetchPage loads a results page without throwing" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      # The virtual-scroll loader calls SearchService.fetchPage directly (no UI
+      # control), so drive it through its public interface. Capture both a
+      # synchronous throw (the latent basePath ReferenceError) and any async
+      # rejection so the failure message is informative.
+      page.execute_script(<<~'JS')
+        window.__fetchPageResult = null;
+        try {
+          Promise.resolve(SearchService.fetchPage('Hello', 0))
+            .then(function (r) { window.__fetchPageResult = { ok: true, count: (r.results || []).length }; })
+            .catch(function (e) { window.__fetchPageResult = { ok: false, error: String(e) }; });
+        } catch (e) {
+          window.__fetchPageResult = { ok: false, error: String(e) };
+        }
+      JS
+
+      result = nil
+      50.times do
+        result = page.evaluate_script("window.__fetchPageResult")
+        break if result
+        sleep 0.1
+      end
+
+      assert result, "SearchService.fetchPage never settled"
+      assert result["ok"], "SearchService.fetchPage threw instead of completing: #{result["error"]}"
+    end
+
     test "monaco flags undefined variable used in jsx" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10

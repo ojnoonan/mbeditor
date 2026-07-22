@@ -21,7 +21,6 @@ module Mbeditor
     MAX_RESULTS = 10_000
     RESULT_CACHE_TTL = 30 # seconds; also invalidated on mbeditor file mutations
     RESULT_CACHE_MAX_ENTRIES = 3
-    RG_PROBE_TTL = 60 # seconds between re-probes for rg on PATH
 
     STATE_MUTEX = Mutex.new
     private_constant :STATE_MUTEX
@@ -33,17 +32,11 @@ module Mbeditor
         Mbeditor.configuration.search_respect_gitignore == true
       end
 
-      # Probed with a TTL (not frozen at boot) so installing ripgrep while the
-      # server is running is picked up within a minute.
+      # Delegated so there is one rg probe for the whole engine. It is lazy
+      # (not frozen at boot) and re-checks negative results, so installing
+      # ripgrep while the server runs is picked up within a minute.
       def rg_available?
-        now = monotonic
-        STATE_MUTEX.synchronize do
-          if @rg_checked_at.nil? || (now - @rg_checked_at) > RG_PROBE_TTL
-            @rg_available = system("which rg > /dev/null 2>&1")
-            @rg_checked_at = now
-          end
-          @rg_available
-        end
+        AvailabilityProbe.rg
       end
 
       # Returns up to +limit+ result rows. When +paths+ is given the scan is

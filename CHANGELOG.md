@@ -135,7 +135,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Search crashed with `ArgumentError: invalid byte sequence in UTF-8` when a
   match line contained invalid UTF-8 (subprocess output is now scrubbed).
 - Search pagination's virtual-scroll loader called an undefined `basePath()`
-  (latent `ReferenceError`).
+  (latent `ReferenceError`) (#69).
+- The CSRF Referer check used `URI#origin`, raising a 500 on Ruby 3.0.
+- Corrupt branch-state JSON was discarded silently; `prune_branch_states` now
+  logs it (#68), and `EditorChannel#save_branch_state` logs rejected invalid
+  branch names (#74).
 - `EditorChannel` spawned a `git rev-parse` subprocess on every WebSocket action
   (including every auto-save); the workspace root is now resolved once per
   process and shared with the controllers.
@@ -156,6 +160,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explorer panel's button geometry, radius, and hover treatment.
 
 ### Security
+- **Origin/Referer validation for non-GET requests** (#75) — mutating requests
+  are now checked against the request's own origin, closing the last gap left
+  by the `X-Mbeditor-Client` header guard alone.
+- **Symlink escape hardening** — the file tree no longer recurses into
+  symlinked directories (#65), and `GitService.resolve_path` resolves symlinks
+  before its containment check (#66), matching the guarantee `resolve_path`
+  already made elsewhere.
+- Bumped the bundled `form-data` dev dependency to 4.0.6 to clear a HIGH npm
+  advisory.
 - The log viewer displays log contents **verbatim**, which may include request
   params, tokens, or SQL values. It is read-only and gated by the host app's
   auth like every other editor route, but operators should be aware that logs

@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Mbeditor (Mini Browser Editor) is a **mountable Rails engine** gem providing a browser-based code editor UI for Rails apps. Development-time only.
 
@@ -33,7 +33,7 @@ The inline editor-boot JS (worker wiring, lazy Prettier/monaco-vim loaders, app 
 
 ## Security (non-negotiable)
 - All file paths must go through `resolve_path()` — uses `File.realpath` to prevent symlink escape, caps at 5 MB
-- All non-GET/HEAD requests require `X-Mbeditor-Client: 1` header AND a same-origin `Origin`/`Referer` (CSRF defense-in-depth, both in `verify_mbeditor_client`); rejects on Origin/Referer mismatch, allows when both absent (browsers force-set Origin on cross-origin state changes)
+- All non-GET/HEAD requests require `X-Mbeditor-Client: 1` header (`verify_mbeditor_client`)
 - Git ref names validated against `SAFE_GIT_REF = %r{\A[\w./-]+\z}` before interpolation
 
 ## Test Gotchas
@@ -51,7 +51,7 @@ Ruby >= 3.0, Rails 7.1–8.x, `sprockets-rails >= 3.4`. Dev: `minitest-reporters
 
 ## Release workflow
 
-Say **"make a release for vX.Y.Z"** (or just "make a release") and Claude will:
+Say **"make a release for vX.Y.Z"** (or just "make a release") and Codex will:
 1. Bump `lib/mbeditor/version.rb`
 2. Add a changelog entry in `CHANGELOG.md` based on commits since the previous tag
 3. Commit `version.rb` + `CHANGELOG.md` together

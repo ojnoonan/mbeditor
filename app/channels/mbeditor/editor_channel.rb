@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "open3"
 require "pathname"
 
 module Mbeditor
@@ -30,6 +31,10 @@ module Mbeditor
       branch = data["branch"].to_s.strip
       state  = data["state"]
       EditorStateService.new(workspace_root).write_branch_state(branch, state)
+    rescue EditorStateService::InvalidBranchError
+      # A misbehaving client sent a malformed branch name. Don't crash the
+      # connection, but log it so the misconfiguration is observable.
+      Rails.logger.warn("[mbeditor] EditorChannel#save_branch_state: rejected invalid branch name #{branch.inspect}")
     rescue StandardError
       # Never let a state-save failure crash the WebSocket connection
     end

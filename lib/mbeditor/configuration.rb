@@ -29,7 +29,7 @@ module Mbeditor
       @lint_timeout     = 15  # seconds for RuboCop/haml-lint subprocesses
       @base_branch_candidates = %w[origin/develop origin/main origin/master develop main master]
       @git_timeout            = 10 # seconds; nil disables (no timeout on git subprocesses)
-      @search_timeout         = 15 # seconds; wall-clock bound on search subprocesses, nil disables
+      @search_timeout         = 15 # seconds; wall-clock bound on every search subprocess, nil disables
       @search_respect_gitignore = false # true skips .gitignore'd files in project search and definition lookups
       @ruby_def_include_dirs  = %w[app/models app/controllers app/helpers app/concerns]
       @related_files_custom_paths = []

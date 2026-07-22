@@ -7,6 +7,7 @@ require "shellwords"
 require "tempfile"
 require "timeout"
 require "tmpdir"
+require "uri"
 
 module Mbeditor
   class EditorsController < ApplicationController
@@ -126,7 +127,7 @@ module Mbeditor
     # POST /mbeditor/prune_branch_states — remove states for deleted branches
     def prune_branch_states
       root = workspace_root.to_s
-      out, _err, status = Open3.capture3("git", "-C", root, "branch", "--format=%(refname:short)")
+      out, status = GitService.run_git(root, "branch", "--format=%(refname:short)")
       return render json: { pruned: [] } unless status.success?
 
       local_branches = out.split("\n").map(&:strip).reject(&:empty?)
@@ -135,7 +136,12 @@ module Mbeditor
       hist_dir = workspace_root.join('tmp', 'mbeditor_history')
       if File.directory?(hist_dir)
         Dir.glob(File.join(hist_dir, '*.json')) do |hist_file|
-          data = JSON.parse(File.read(hist_file)) rescue nil
+          data = begin
+            JSON.parse(File.read(hist_file))
+          rescue JSON::ParserError => e
+            Rails.logger.error("[mbeditor] prune_branch_states: skipping corrupt history file #{hist_file}: #{e.message}")
+            nil
+          end
           next unless data.is_a?(Hash) && data['branch']
           FileUtils.rm_f(hist_file) unless local_branches.include?(data['branch'])
         end
@@ -1063,9 +1069,29 @@ module Mbeditor
     end
 
     def verify_mbeditor_client
-      return if request.headers['X-Mbeditor-Client'] == '1'
+      unless request.headers['X-Mbeditor-Client'] == '1' && same_origin_request?
+        render plain: 'Forbidden', status: :forbidden
+      end
+    end
 
-      render plain: 'Forbidden', status: :forbidden
+    # CSRF defense-in-depth: validate Origin/Referer against the request host.
+    # We only reject on a *mismatch* — a request that carries neither header is
+    # allowed (browsers force-set Origin on cross-origin state-changing requests,
+    # so a forged cross-origin request can never reach the "absent" branch).
+    def same_origin_request?
+      if (origin = request.origin).present?
+        origin == request.base_url
+      elsif (referer = request.referer).present?
+        # Compare scheme/host/port components rather than URI#origin: the latter
+        # is unavailable on the `uri` gem bundled with Ruby 3.0 (added in 0.11.0)
+        # and would raise NoMethodError there, surfacing as a 500.
+        ref = URI.parse(referer)
+        ref.scheme == request.scheme && ref.host == request.host && ref.port == request.port
+      else
+        true
+      end
+    rescue URI::InvalidURIError
+      false
     end
 
     def path_blocked_for_operations?(full_path)

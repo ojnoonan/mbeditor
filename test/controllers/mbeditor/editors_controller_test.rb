@@ -524,6 +524,27 @@ module Mbeditor
       assert_includes json["pruned"], "definitely-not-a-real-branch-xyz"
     end
 
+    test "prune_branch_states routes its git subprocess through ProcessRunner with configured timeout" do
+      system("git", "-C", @workspace, "init", "-q")
+      system("git", "-C", @workspace, "-c", "user.email=t@t.com", "-c", "user.name=T", "commit", "--allow-empty", "-m", "init", "-q")
+
+      original = Mbeditor.configuration.git_timeout
+      Mbeditor.configuration.git_timeout = 9
+
+      captured = []
+      with_process_runner_recorder(captured) { post "/mbeditor/prune_branch_states", as: :json }
+      assert_response :ok
+
+      branch_call = captured.find { |c| c[:cmd].include?("branch") }
+      refute_nil branch_call,
+                 "expected `git branch` to run through ProcessRunner, " \
+                 "but it bypassed the timeout mechanism"
+      assert_equal 9, branch_call[:timeout],
+                   "expected the configured git_timeout to be applied to the prune_branch_states call"
+    ensure
+      Mbeditor.configuration.git_timeout = original
+    end
+
     # ---------------------------------------------------------------------------
     # file_history
     # ---------------------------------------------------------------------------
@@ -685,6 +706,30 @@ module Mbeditor
       post "/mbeditor/prune_branch_states", as: :json
       assert_response :ok
       assert_not File.exist?(hist_file), "history file should be deleted after prune"
+    end
+
+    test "prune_branch_states logs an error for a corrupt history file" do
+      system("git", "-C", @workspace, "init", "-q")
+      system("git", "-C", @workspace, "-c", "user.email=t@t.com", "-c", "user.name=T", "commit", "--allow-empty", "-m", "init", "-q")
+
+      hist_dir = File.join(@workspace, "tmp", "mbeditor_history")
+      FileUtils.mkdir_p(hist_dir)
+      corrupt = File.join(hist_dir, "deadbeef_cafebabe.json")
+      File.write(corrupt, "{ not valid json")
+
+      log = StringIO.new
+      original_logger = Rails.logger
+      Rails.logger = ActiveSupport::Logger.new(log)
+      begin
+        post "/mbeditor/prune_branch_states", as: :json
+        assert_response :ok
+      ensure
+        Rails.logger = original_logger
+      end
+
+      assert_match(/mbeditor/, log.string)
+      assert_match(/deadbeef_cafebabe\.json/, log.string)
+      assert File.exist?(corrupt), "corrupt history file with no parseable branch should be left in place"
     end
 
     # ---------------------------------------------------------------------------
@@ -1167,6 +1212,8 @@ module Mbeditor
       singleton = class << Mbeditor::SearchReplaceService; self; end
       singleton.alias_method :__orig_rg_available?, :rg_available?
       Mbeditor::SearchReplaceService.define_singleton_method(:rg_available?) { false }
+      original_rg = Mbeditor::AvailabilityProbe.method(:rg)
+      Mbeditor::AvailabilityProbe.define_singleton_method(:rg) { false }
 
       get "/mbeditor/search", params: { q: "NEEDLE_TOKEN" }
       assert_response :ok
@@ -1181,6 +1228,8 @@ module Mbeditor
       singleton.remove_method :rg_available?
       singleton.alias_method :rg_available?, :__orig_rg_available?
       singleton.remove_method :__orig_rg_available?
+      Mbeditor::AvailabilityProbe.singleton_class.send(:remove_method, :rg)
+      Mbeditor::AvailabilityProbe.define_singleton_method(:rg, original_rg)
     end
 
     test 'search accepts query of exactly 500 characters' do
@@ -1348,6 +1397,24 @@ module Mbeditor
       assert json.key?("files")
       assert json.key?("branch")
       assert_kind_of Array, json["files"]
+    end
+
+    test "git_status routes its git subprocess through ProcessRunner with configured timeout" do
+      original = Mbeditor.configuration.git_timeout
+      Mbeditor.configuration.git_timeout = 7
+
+      captured = []
+      with_process_runner_recorder(captured) { get "/mbeditor/git_status" }
+      assert_response :ok
+
+      status_call = captured.find { |c| c[:cmd].include?("status") }
+      refute_nil status_call,
+                 "expected `git status` to run through ProcessRunner, " \
+                 "but it bypassed the timeout mechanism"
+      assert_equal 7, status_call[:timeout],
+                   "expected the configured git_timeout to be applied to the git_status call"
+    ensure
+      Mbeditor.configuration.git_timeout = original
     end
 
     # ---------------------------------------------------------------------------
@@ -1843,10 +1910,75 @@ module Mbeditor
       Mbeditor.configure { |c| c.related_files_custom_paths = [] }
     end
 
+    # ---------------------------------------------------------------------------
+    # Origin / Referer validation (CSRF defense-in-depth) — issue #75
+    # ---------------------------------------------------------------------------
+
+    test "non-GET request with cross-origin Origin header is forbidden" do
+      post "/mbeditor/state",
+           params: { state: { openTabs: ["foo.rb"] } },
+           as: :json,
+           headers: { "HTTP_ORIGIN" => "http://evil.example.com" }
+      assert_response :forbidden
+    end
+
+    test "non-GET request with same-origin Origin header is allowed" do
+      post "/mbeditor/state",
+           params: { state: { openTabs: ["foo.rb"] } },
+           as: :json,
+           headers: { "HTTP_ORIGIN" => "http://www.example.com" }
+      assert_response :ok
+      assert_equal true, json["ok"]
+    end
+
+    test "non-GET request with cross-origin Referer (no Origin) is forbidden" do
+      post "/mbeditor/state",
+           params: { state: { openTabs: ["foo.rb"] } },
+           as: :json,
+           headers: { "HTTP_REFERER" => "http://evil.example.com/page" }
+      assert_response :forbidden
+    end
+
+    test "non-GET request with same-origin Referer (no Origin) is allowed" do
+      post "/mbeditor/state",
+           params: { state: { openTabs: ["foo.rb"] } },
+           as: :json,
+           headers: { "HTTP_REFERER" => "http://www.example.com/mbeditor" }
+      assert_response :ok
+      assert_equal true, json["ok"]
+    end
+
+    test "non-GET request with neither Origin nor Referer is allowed" do
+      post "/mbeditor/state",
+           params: { state: { openTabs: ["foo.rb"] } },
+           as: :json
+      assert_response :ok
+      assert_equal true, json["ok"]
+    end
+
     private
 
     def json
       JSON.parse(response.body)
+    end
+
+    # Temporarily wrap ProcessRunner.call so every subprocess invocation is
+    # recorded (cmd + timeout) while still delegating to the real runner.
+    # Mirrors the recorder used in git_info_service_test.rb (issue #70/#71).
+    def with_process_runner_recorder(captured)
+      real = ProcessRunner.method(:call)
+      verbose = $VERBOSE
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call) do |cmd, **kwargs|
+        captured << { cmd: cmd, timeout: kwargs[:timeout] }
+        real.call(cmd, **kwargs)
+      end
+      $VERBOSE = verbose
+      yield
+    ensure
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call, real)
+      $VERBOSE = verbose
     end
   end
 end

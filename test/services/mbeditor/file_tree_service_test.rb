@@ -123,6 +123,41 @@ module Mbeditor
       assert_nil FileTreeService.reset!
     end
 
+    # --- symlinks (issue #65) ---
+
+    def test_symlink_to_external_directory_is_not_recursed
+      external = Dir.mktmpdir("mbeditor_tree_external_")
+      File.write(File.join(external, "secret.txt"), "leaked")
+      File.symlink(external, File.join(@workspace, "link"))
+
+      tree = FileTreeService.build(@workspace)
+
+      node = tree.find { |n| n[:name] == "link" }
+      assert node, "expected the symlink to appear in the tree"
+      assert_equal "file", node[:type], "symlinked directory must not be treated as a folder"
+      refute node.key?(:children), "symlinked directory must not expose a children subtree"
+    ensure
+      FileUtils.remove_entry(external)
+    end
+
+    def test_symlink_to_internal_directory_is_not_recursed
+      FileUtils.mkdir_p(File.join(@workspace, "real"))
+      File.write(File.join(@workspace, "real", "inside.rb"), "x")
+      File.symlink(File.join(@workspace, "real"), File.join(@workspace, "alias"))
+
+      tree = FileTreeService.build(@workspace)
+
+      link = tree.find { |n| n[:name] == "alias" }
+      assert link, "expected the symlink to appear in the tree"
+      assert_equal "file", link[:type], "a symlinked directory must never be recursed, even in-workspace"
+      refute link.key?(:children)
+
+      # the real directory is still traversed normally
+      real = tree.find { |n| n[:name] == "real" }
+      assert_equal "folder", real[:type]
+      assert real[:children].any? { |c| c[:name] == "inside.rb" }
+    end
+
     def test_build_returns_file_node_with_correct_fields
       File.write(File.join(@workspace, "hello.rb"), "puts 1\n")
 

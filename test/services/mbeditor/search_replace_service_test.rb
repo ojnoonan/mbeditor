@@ -19,14 +19,12 @@ module Mbeditor
     end
 
     def with_rg_available(value)
-      singleton = class << SearchReplaceService; self; end
-      singleton.alias_method :__orig_rg_available?, :rg_available?
-      SearchReplaceService.define_singleton_method(:rg_available?) { value }
+      original = AvailabilityProbe.method(:rg)
+      AvailabilityProbe.define_singleton_method(:rg) { value }
       yield
     ensure
-      singleton.remove_method :rg_available?
-      singleton.alias_method :rg_available?, :__orig_rg_available?
-      singleton.remove_method :__orig_rg_available?
+      AvailabilityProbe.singleton_class.send(:remove_method, :rg)
+      AvailabilityProbe.define_singleton_method(:rg, original)
     end
 
     def search(query, **opts)
@@ -369,26 +367,15 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
-    # rg availability re-probe
+    # rg availability
     # ---------------------------------------------------------------------------
+    # The probe itself (caching + re-probing after a negative result) is owned
+    # by AvailabilityProbe and covered in its own test; here we only assert the
+    # delegation, so the two can't drift apart.
 
-    test "rg_available? re-probes after the TTL expires" do
-      singleton = class << SearchReplaceService; self; end
-      probes = 0
-      SearchReplaceService.define_singleton_method(:system) { |*| probes += 1; false }
-      SearchReplaceService.instance_variable_set(:@rg_checked_at, nil)
-
-      SearchReplaceService.rg_available?
-      SearchReplaceService.rg_available?
-      assert_equal 1, probes, "second call within TTL must not re-probe"
-
-      expired = Process.clock_gettime(Process::CLOCK_MONOTONIC) - SearchReplaceService::RG_PROBE_TTL - 1
-      SearchReplaceService.instance_variable_set(:@rg_checked_at, expired)
-      SearchReplaceService.rg_available?
-      assert_equal 2, probes, "expired TTL must trigger a re-probe"
-    ensure
-      singleton.remove_method :system
-      SearchReplaceService.instance_variable_set(:@rg_checked_at, nil)
+    test "rg_available? delegates to the shared AvailabilityProbe" do
+      with_rg_available(true)  { assert SearchReplaceService.rg_available? }
+      with_rg_available(false) { assert_not SearchReplaceService.rg_available? }
     end
 
     # ---------------------------------------------------------------------------

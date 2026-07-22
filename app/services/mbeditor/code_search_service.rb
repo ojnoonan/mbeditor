@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "open3"
-
 module Mbeditor
   # Line-oriented regex search over the workspace's JS-family files. Backs the
   # JS definition/member lookups. Same three-tier backend as

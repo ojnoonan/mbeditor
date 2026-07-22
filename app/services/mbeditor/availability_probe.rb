@@ -114,8 +114,15 @@ module Mbeditor
 
     # A tool that was found stays cached forever (nothing uninstalls
     # mid-session), but a missing tool is re-probed after this many seconds so
-    # installing e.g. rubocop while the server runs is picked up.
+    # installing e.g. rubocop or ripgrep while the server runs is picked up.
     NEGATIVE_PROBE_TTL = 60
+
+    def self.rg
+      probe_cached("rg") do
+        _out, _err, status = Open3.capture3("rg", "--version")
+        status.success?
+      end
+    end
 
     def self.reset!
       MUTEX.synchronize { @cache = {} }

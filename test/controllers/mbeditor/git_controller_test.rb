@@ -166,6 +166,8 @@ module Mbeditor
         [nil, nil]
       end
 
+      # GitInfoService routes its wave git calls through GitService.run_git
+      # (which honors config.git_timeout). run_git returns [stdout, status].
       GitService.define_singleton_method(:run_git) do |_repo_path, *args|
         command = args.map(&:to_s)
 

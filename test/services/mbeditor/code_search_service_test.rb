@@ -183,5 +183,115 @@ module Mbeditor
       assert lines.any? { |l| l.include?("notes.rb") }
       assert lines.none? { |l| l.include?("app.js") }
     end
+
+    # -------------------------------------------------------------------------
+    # Timeout: rg path routes through ProcessRunner with configured timeout
+    # -------------------------------------------------------------------------
+
+    test "rg path runs through ProcessRunner with the configured search_timeout" do
+      skip "rg not available" unless AvailabilityProbe.rg
+
+      write_file("app.js", "function myFunction() {}")
+
+      captured = []
+      with_search_timeout(7) do
+        with_process_runner_recorder(captured) do
+          lines = CodeSearchService.call("myFunction", @workspace)
+          assert lines.any? { |l| l.include?("myFunction") }
+        end
+      end
+
+      rg_call = captured.find { |c| c[:cmd].first == "rg" }
+      assert rg_call, "expected the rg search to run through ProcessRunner"
+      assert_equal 7, rg_call[:timeout]
+    end
+
+    # -------------------------------------------------------------------------
+    # Timeout: grep path routes through ProcessRunner with configured timeout
+    # -------------------------------------------------------------------------
+
+    test "grep path runs through ProcessRunner with the configured search_timeout" do
+      write_file("app.js", "function myFunction() {}")
+
+      captured = []
+      with_rg_available(false) do
+        with_search_timeout(3) do
+          with_process_runner_recorder(captured) do
+            lines = CodeSearchService.call("myFunction", @workspace)
+            assert lines.any? { |l| l.include?("myFunction") }
+          end
+        end
+      end
+
+      grep_call = captured.find { |c| c[:cmd].first == "grep" }
+      assert grep_call, "expected the grep search to run through ProcessRunner"
+      assert_equal 3, grep_call[:timeout]
+    end
+
+    # -------------------------------------------------------------------------
+    # Timeout: graceful degradation
+    # -------------------------------------------------------------------------
+
+    test "returns empty array when the search subprocess times out" do
+      write_file("app.js", "function myFunction() {}")
+
+      stub_process_runner_raising(ProcessRunner::TimeoutError.new("timed out")) do
+        lines = CodeSearchService.call("myFunction", @workspace)
+        assert_equal [], lines
+      end
+    end
+
+    private
+
+    def with_rg_available(value)
+      original = AvailabilityProbe.method(:rg)
+      AvailabilityProbe.define_singleton_method(:rg) { value }
+      yield
+    ensure
+      AvailabilityProbe.singleton_class.send(:remove_method, :rg)
+      AvailabilityProbe.define_singleton_method(:rg, original)
+    end
+
+    def with_search_timeout(seconds)
+      previous = Mbeditor.configuration.search_timeout
+      Mbeditor.configuration.search_timeout = seconds
+      yield
+    ensure
+      Mbeditor.configuration.search_timeout = previous
+    end
+
+    # Temporarily wrap ProcessRunner.call to record cmd + timeout while still
+    # delegating to the real runner. Mirrors the recorder in
+    # editors_controller_test.rb / git_info_service_test.rb.
+    def with_process_runner_recorder(captured)
+      real = ProcessRunner.method(:call)
+      verbose = $VERBOSE
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call) do |cmd, **kwargs|
+        captured << { cmd: cmd, timeout: kwargs[:timeout] }
+        real.call(cmd, **kwargs)
+      end
+      $VERBOSE = verbose
+      yield
+    ensure
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call, real)
+      $VERBOSE = verbose
+    end
+
+    def stub_process_runner_raising(error)
+      real = ProcessRunner.method(:call)
+      verbose = $VERBOSE
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call) do |*, **|
+        raise error
+      end
+      $VERBOSE = verbose
+      yield
+    ensure
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call, real)
+      $VERBOSE = verbose
+    end
   end
 end

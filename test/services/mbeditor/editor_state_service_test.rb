@@ -130,6 +130,28 @@ module Mbeditor
       end
     end
 
+    test "prune_branch_states logs an error when the branch states file is corrupt" do
+      Dir.mktmpdir do |dir|
+        path = Pathname.new(dir).join("tmp")
+        FileUtils.mkdir_p(path)
+        File.write(path.join("mbeditor_branch_states.json"), "{ not valid json")
+
+        log = StringIO.new
+        original_logger = Rails.logger
+        Rails.logger = Logger.new(log)
+        begin
+          service = EditorStateService.new(Pathname.new(dir))
+          pruned = service.prune_branch_states(active_branches: ["main"])
+          assert_equal [], pruned
+        ensure
+          Rails.logger = original_logger
+        end
+
+        assert_match(/mbeditor/, log.string)
+        assert_match(/branch_states/i, log.string)
+      end
+    end
+
     test "write_state raises PayloadTooLargeError when payload exceeds STATE_MAX_BYTES" do
       Dir.mktmpdir do |dir|
         service = EditorStateService.new(Pathname.new(dir))

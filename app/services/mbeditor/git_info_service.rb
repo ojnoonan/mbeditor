@@ -61,7 +61,7 @@ module Mbeditor
 
       upstream_output, upstream_ok = upstream_t.value
       upstream_branch = upstream_ok ? upstream_output.strip : nil
-      upstream_branch = nil unless upstream_branch&.match?(%r{\A[\w./-]+\z})
+      upstream_branch = nil unless upstream_branch&.match?(GitService::SAFE_GIT_REF)
 
       base_sha, base_ref = base_t.value
 
