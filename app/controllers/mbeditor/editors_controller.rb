@@ -435,6 +435,17 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
+    # GET /mbeditor/js_globals
+    # All top-level JS declarations across the workspace (the Sprockets global
+    # scope), plus config.js_global_identifiers. The editor declares these as
+    # ambient globals so cross-file component references don't produce
+    # "Cannot find name" diagnostics.
+    def js_globals
+      render json: JsGlobalsService.call(workspace_root)
+    rescue StandardError => e
+      render json: { ok: false, error: e.message }, status: :unprocessable_content
+    end
+
     # GET /mbeditor/module_members?name=ArticlesHelper
     # Returns methods defined in the workspace file that defines the named module/class.
     def module_members
@@ -851,6 +862,7 @@ module Mbeditor
       root = workspace_root.to_s
       FileTreeService.invalidate(root)
       SearchReplaceService.invalidate_cache(root)
+      JsGlobalsService.invalidate(root)
       Thread.new do
         GitInfoService.invalidate(root)
       rescue => e

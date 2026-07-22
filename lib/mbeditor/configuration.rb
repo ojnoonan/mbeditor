@@ -8,7 +8,7 @@ module Mbeditor
                   :authenticate_with, :authentication_cache_ttl,
                   :lint_timeout, :base_branch_candidates, :git_timeout, :search_timeout,
                   :ruby_def_include_dirs, :related_files_custom_paths,
-                  :mount_path, :resilient_routing
+                  :mount_path, :resilient_routing, :js_global_identifiers
 
     def initialize
       @allowed_environments = [:development]
@@ -29,6 +29,7 @@ module Mbeditor
       @ruby_def_include_dirs  = %w[app/models app/controllers app/helpers app/concerns]
       @related_files_custom_paths = []
       @authentication_cache_ttl = 0
+      @js_global_identifiers = [] # extra ambient JS globals for the editor (runtime-only names invisible to static scan, e.g. %w[Routes I18n])
       @mount_path = nil # explicit URL prefix override; nil falls through to detection/"/mbeditor"
       @resilient_routing = true # serve /mbeditor from middleware so the editor survives a broken host routes.rb; false is the escape hatch
     end

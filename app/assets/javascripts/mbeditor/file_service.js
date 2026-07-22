@@ -212,6 +212,11 @@ var FileService = (function () {
     return axios.get(window.mbeditorBasePath() + '/client_config').then(function(res) { return res.data; });
   }
 
+  function getJsGlobals() {
+    return axios.get(window.mbeditorBasePath() + '/js_globals', { timeout: 20000 })
+      .then(function(res) { return res.data; });
+  }
+
   function getRelatedFiles(path) {
     return axios.get(window.mbeditorBasePath() + '/related_files', { params: { path: path } })
       .then(function(res) { return res.data; });
@@ -256,6 +261,7 @@ var FileService = (function () {
     getModuleMembers: getModuleMembers,
     getFileIncludes: getFileIncludes,
     getClientConfig: getClientConfig,
+    getJsGlobals: getJsGlobals,
     getRelatedFiles: getRelatedFiles,
     getModelSchema: getModelSchema,
     getChangelog: getChangelog

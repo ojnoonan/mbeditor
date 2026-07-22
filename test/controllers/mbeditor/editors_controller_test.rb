@@ -40,6 +40,34 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # js_globals
+    # ---------------------------------------------------------------------------
+
+    test "js_globals returns top-level declarations and refreshes after a save" do
+      FileUtils.mkdir_p(File.join(@workspace, "app", "assets", "javascripts"))
+      File.write(File.join(@workspace, "app", "assets", "javascripts", "widget.js.jsx"),
+                 "function GlobalWidget() {}\n")
+      JsGlobalsService.invalidate(@workspace)
+
+      get "/mbeditor/js_globals"
+      assert_response :ok
+      assert json["ok"]
+      names = json["symbols"].map { |s| s["name"] }
+      assert_includes names, "GlobalWidget"
+
+      # A save through mbeditor invalidates the cache, so a fresh symbol
+      # appears without waiting out the TTL.
+      post "/mbeditor/create_file", params: { path: "app/assets/javascripts/fresh.js", code: "var FreshGlobal = 1;\n" }
+      assert_response :ok
+
+      get "/mbeditor/js_globals"
+      names = json["symbols"].map { |s| s["name"] }
+      assert_includes names, "FreshGlobal"
+    ensure
+      JsGlobalsService.invalidate(@workspace)
+    end
+
+    # ---------------------------------------------------------------------------
     # authenticate_with
     # ---------------------------------------------------------------------------
 

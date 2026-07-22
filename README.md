@@ -212,8 +212,18 @@ The gem includes syntax highlighting for common Rails and React development file
 - **CSS** and **SCSS** stylesheets
 
 **JavaScript & React:**
-- **JavaScript** (.js, .jsx)
-- **TypeScript** for JSX with full language server support
+- **JavaScript / JSX** (.js, .jsx, .js.jsx) — Monaco's TypeScript worker runs in
+  checked-JS mode with JSX enabled. Built for the Sprockets world where every
+  top-level `var`/`function`/`class` (and `window.X =` assignment) is a global:
+  the editor scans the workspace once at boot (`GET /js_globals`) and declares
+  all of them as ambient globals, so cross-file component references need no
+  `import` and produce no "Cannot find name" diagnostics. The list refreshes
+  automatically when files change. Runtime-only globals the static scan can't
+  see (e.g. `Routes`, `I18n`) can be declared via
+  `config.js_global_identifiers = %w[Routes I18n]`.
+  Known limits: everything is typed `any` (no cross-file type inference), and
+  genuinely undefined names are shown as warnings, not errors.
+- **TypeScript** (.ts, .tsx)
 
 **Configuration & Documentation:**
 - **YAML** (.yml, .yaml)

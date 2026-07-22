@@ -118,6 +118,37 @@
     mts.javascriptDefaults.addExtraLib(decls, 'inmemory://mbeditor/discovered-globals.d.ts');
   }
 
+  // Bulk ambient globals: fetch every top-level declaration in the workspace
+  // (the Sprockets global scope — /js_globals greps var/function/class at
+  // column 0 plus window.X assignments across *.js/*.jsx/*.js.jsx/...) and
+  // declare them all in ONE extraLib. This proactively prevents TS2304
+  // ("Cannot find name") for cross-file component references instead of the
+  // reactive one-network-lookup-per-symbol path below, which stays as a
+  // fallback for anything the static scan can't see.
+  // Same-URI addExtraLib replaces content in place, which is the refresh
+  // mechanism (called again on files_changed broadcasts).
+  function loadWorkspaceGlobals(monaco) {
+    if (typeof FileService === 'undefined' || !FileService.getJsGlobals) return;
+    var mts = monaco && monaco.languages && monaco.languages.typescript;
+    if (!mts || !mts.javascriptDefaults) return;
+    FileService.getJsGlobals().then(function (data) {
+      if (!data || !data.ok || !data.symbols) return;
+      var names = [];
+      data.symbols.forEach(function (s) {
+        var name = s && s.name;
+        if (!name || !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name)) return;
+        if (REACT_MINI_UMD_GLOBALS[name]) return;
+        if (discoveredJsGlobals[name]) return; // already in discovered-globals.d.ts
+        names.push(name);
+        // Pre-seed the reactive resolver so the marker patcher never fires a
+        // per-symbol /js_definition request for these.
+        attemptedJsGlobals[name] = true;
+      });
+      var decls = names.map(function (n) { return 'declare var ' + n + ': any;'; }).join('\n');
+      mts.javascriptDefaults.addExtraLib(decls, 'inmemory://mbeditor/workspace-globals.d.ts');
+    }).catch(function () { /* endpoint unavailable — reactive path still works */ });
+  }
+
   // Navigate to the first workspace definition of a JS symbol.
   // Returns a Promise<boolean> — true if a definition was found and opened.
   function navigateToJsWord(editor, word) {
@@ -679,6 +710,23 @@
         );
       }
 
+      // Workspace-wide ambient globals, loaded once now and refreshed when
+      // files change (debounced) or on refocus (throttled, for the no-WS case).
+      loadWorkspaceGlobals(monaco);
+      var refreshWorkspaceGlobals = function () { loadWorkspaceGlobals(monaco); };
+      if (window._ && window._.debounce) {
+        refreshWorkspaceGlobals = window._.debounce(refreshWorkspaceGlobals, 2000);
+      }
+      if (typeof WebSocketService !== 'undefined' && WebSocketService.onFilesChanged) {
+        WebSocketService.onFilesChanged(function () { refreshWorkspaceGlobals(); });
+      }
+      var _lastGlobalsFocusRefresh = Date.now();
+      window.addEventListener('focus', function () {
+        if (Date.now() - _lastGlobalsFocusRefresh < 60000) return;
+        _lastGlobalsFocusRefresh = Date.now();
+        loadWorkspaceGlobals(monaco);
+      });
+
       // Downgrade certain TypeScript diagnostic codes from Error to Warning.
       // TypeScript has no built-in way to emit these as warnings, so we intercept
       // the marker set after the worker fires and re-apply with lower severity.
@@ -693,7 +741,12 @@
       //   open files share a global script context in Monaco's TS worker, so a
       //   component defined in file_a.jsx looks like a redeclaration when file_b.jsx
       //   is also open. This is a structural false positive, not a real error.
-      var JS_SUPPRESS_CODES = { '2300': true, '2451': true };
+      // TS2403 ("Subsequent variable declarations must have the same type")
+      // joins the suppress list because the ambient `declare var Foo: any`
+      // from workspace-globals.d.ts coexists with the real `function Foo()`
+      // when its defining file is open — inherently a false positive in the
+      // shared-global-scope model.
+      var JS_SUPPRESS_CODES = { '2300': true, '2451': true, '2403': true };
       var JS_WARN_CODES    = { '2304': true, '6133': true };
       var TS_WARN_CODES    = { '6133': true };
       var _severityPatchActive = false;

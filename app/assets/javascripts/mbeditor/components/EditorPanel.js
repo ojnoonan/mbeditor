@@ -479,6 +479,10 @@ var EditorPanel = function EditorPanel(_ref) {
       case 'rb':case 'ruby':case 'gemspec':case 'rake':
           language = 'ruby';break;
       case 'js':case 'jsx':
+        // Deliberate: .jsx and .js.jsx map to 'javascript' — Monaco's
+        // standalone TS worker has no 'javascriptreact' language; JSX is
+        // enabled globally via compilerOptions (jsx: JsxEmit.React) in
+        // editor_plugins.js. Do not add a compound-extension case for .js.jsx.
         language = 'javascript';break;
       case 'ts':case 'tsx':
         language = 'typescript';break;
