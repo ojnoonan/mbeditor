@@ -1603,6 +1603,54 @@ module Mbeditor
       assert_response :forbidden
     end
 
+    test "run_test rejects a non-numeric line" do
+      FileUtils.mkdir_p(File.join(@workspace, "test"))
+      File.write(File.join(@workspace, "test", "direct_test.rb"), "require \"minitest/autorun\"\n")
+
+      post "/mbeditor/test", params: { path: "test/direct_test.rb", line: "3; rm -rf /" }, as: :json
+      assert_response :bad_request
+      assert_equal "Invalid line", json["error"]
+    end
+
+    test "run_test reports the filtered line when running a test file at a cursor" do
+      FileUtils.mkdir_p(File.join(@workspace, "test"))
+      File.write(File.join(@workspace, "test", "direct_test.rb"), <<~RUBY)
+        require "minitest/autorun"
+
+        class DirectTest < Minitest::Test
+          def test_one
+            assert true
+          end
+
+          def test_two
+            assert true
+          end
+        end
+      RUBY
+
+      post "/mbeditor/test", params: { path: "test/direct_test.rb", line: 5 }, as: :json
+      assert_response :ok
+      assert_equal 5, json["filteredLine"]
+      assert_equal 1, json.dig("summary", "total"), "only the test at the cursor should run"
+    end
+
+    test "run_test ignores a line when resolving from a source file" do
+      FileUtils.mkdir_p(File.join(@workspace, "test", "models"))
+      File.write(File.join(@workspace, "test", "models", "user_test.rb"), <<~RUBY)
+        require "minitest/autorun"
+
+        class UserTest < Minitest::Test
+          def test_one
+            assert true
+          end
+        end
+      RUBY
+
+      post "/mbeditor/test", params: { path: "app/models/user.rb", line: 4 }, as: :json
+      assert_response :ok
+      assert_nil json["filteredLine"], "a line in the source file cannot filter the test file"
+    end
+
     test "run_test returns 404 when no matching test file exists" do
       post "/mbeditor/test", params: { path: "app/models/user.rb" }, as: :json
       assert_response :not_found

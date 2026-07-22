@@ -23,6 +23,7 @@ var EditorPanel = function EditorPanel(_ref) {
   var onFormat = _ref.onFormat;
   var onSave = _ref.onSave;
   var onRunTest = _ref.onRunTest;
+  var onRunTestAtCursor = _ref.onRunTestAtCursor;
   var onShowHistory = _ref.onShowHistory;
   var treeData = _ref.treeData || [];
   var testResult = _ref.testResult;
@@ -117,6 +118,11 @@ var EditorPanel = function EditorPanel(_ref) {
 
   var onFormatRef = useRef(onFormat);
   onFormatRef.current = onFormat;
+
+  // Kept in a ref so the long-lived Monaco action closure always calls the
+  // current handler rather than the one captured at registration.
+  var onRunTestAtCursorRef = useRef(onRunTestAtCursor);
+  onRunTestAtCursorRef.current = onRunTestAtCursor;
 
   var onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
@@ -645,6 +651,21 @@ var EditorPanel = function EditorPanel(_ref) {
     // can identify which file they are operating on without needing React state.
     if (modelObj) modelObj._mbeditorPath = tab.path;
 
+    // Run only the test under the cursor. Registered as an editor action so it
+    // gets a context-menu entry and a keybinding without another toolbar button;
+    // the flask button stays whole-file.
+    var runTestAtCursorDisposable = editor.addAction({
+      id: 'mbeditor.runTestAtCursor',
+      label: 'Run Test at Cursor',
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1.6,
+      keybindings: [window.monaco.KeyMod.CtrlCmd | window.monaco.KeyMod.Shift | window.monaco.KeyCode.KeyT],
+      run: function(ed) {
+        var pos = ed.getPosition();
+        if (pos && onRunTestAtCursorRef.current) onRunTestAtCursorRef.current(pos.lineNumber);
+      }
+    });
+
     var formatActionDisposable = editor.addAction({
       id: 'mbeditor.formatDocument',
       label: 'Format Document',
@@ -943,6 +964,7 @@ var EditorPanel = function EditorPanel(_ref) {
       }
       if (editorPluginDisposable) editorPluginDisposable.dispose();
       formatActionDisposable.dispose();
+      runTestAtCursorDisposable.dispose();
       columnSelectDisposable.dispose();
       contentDisposable.dispose();
       EditorStore.setState({ canUndo: false, canRedo: false });

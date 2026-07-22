@@ -96,8 +96,12 @@ var FileService = (function () {
     return axios.post(window.mbeditorBasePath() + '/format', { path: path, code: code }).then(function(res) { return res.data; });
   }
 
-  function runTests(path) {
-    return axios.post(window.mbeditorBasePath() + '/test', { path: path }, { timeout: 120000 }).then(function(res) { return res.data; });
+  // line (1-based, optional) narrows the run to the single test at that line;
+  // the server ignores it unless `path` IS the test file.
+  function runTests(path, line) {
+    var payload = { path: path };
+    if (line) payload.line = line;
+    return axios.post(window.mbeditorBasePath() + '/test', payload, { timeout: 120000 }).then(function(res) { return res.data; });
   }
 
   function ping() {

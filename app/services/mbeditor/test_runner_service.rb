@@ -20,11 +20,11 @@ module Mbeditor
     #     tests:    [{ name:, status:, line:, message: }],
     #     raw:      String   # full stdout+stderr for fallback display
     #   }
-    def run(repo_path, test_path, framework: nil, command: nil, timeout: 60)
+    def run(repo_path, test_path, framework: nil, command: nil, timeout: 60, line: nil)
       framework = detect_framework(repo_path, test_path) if framework.nil?
       return error_result("Could not detect test framework") unless framework
 
-      cmd = build_command(repo_path, test_path, framework, command)
+      cmd = build_command(repo_path, test_path, framework, command, line: line)
       raw = execute_with_timeout(repo_path, cmd, timeout)
       tests, summary = parse_output(raw, framework)
       {
@@ -99,29 +99,76 @@ module Mbeditor
       :minitest if File.exist?(File.join(repo_path, "test"))
     end
 
-    def build_command(repo_path, test_path, framework, custom_command)
+    # Builds the argv for a run. When +line+ is given the run is narrowed to the
+    # single test at that line; the filter syntax follows the detected
+    # framework, not the runner binary, so custom commands still get filtering.
+    def build_command(repo_path, test_path, framework, custom_command, line: nil)
       full_path = File.join(repo_path, test_path)
+      line = nil unless line.is_a?(Integer) && line.positive?
 
       if custom_command.present?
         tokens = Shellwords.split(custom_command)
-        return tokens + [full_path]
+        return tokens + [full_path] unless line
+
+        # rspec understands path:line; the minitest runners need a name filter.
+        return tokens + ["#{full_path}:#{line}"] if framework.to_sym == :rspec
+
+        return tokens + [full_path] + minitest_name_filter(full_path, line)
       end
 
       case framework.to_sym
       when :rspec
         bin = File.join(repo_path, "bin", "rspec")
         cmd = File.exist?(bin) ? [bin] : ["bundle", "exec", "rspec"]
-        cmd + ["--format", "json", full_path]
+        target = line ? "#{full_path}:#{line}" : full_path
+        cmd + ["--format", "json", target]
       when :minitest
         bin = File.join(repo_path, "bin", "rails")
         if File.exist?(bin)
-          [bin, "test", "--verbose", full_path]
+          # `bin/rails test path:line` (Rails >= 6); the gemspec floor is 7.1.
+          target = line ? "#{full_path}:#{line}" : full_path
+          [bin, "test", "--verbose", target]
         else
-          ["bundle", "exec", "ruby", "-Itest", full_path, "--verbose"]
+          ["bundle", "exec", "ruby", "-Itest", full_path, "--verbose"] +
+            (line ? minitest_name_filter(full_path, line) : [])
         end
       else
         ["bundle", "exec", "ruby", "-Itest", full_path]
       end
+    end
+
+    # `-n /\Atest_name\z/` for the plain minitest runner. Returns [] when no
+    # enclosing test can be identified, so the run degrades to the whole file.
+    def minitest_name_filter(full_path, line)
+      name = test_name_at_line(full_path, line)
+      return [] unless name
+
+      ["-n", "/\\A#{Regexp.escape(name)}\\z/"]
+    end
+
+    # Name of the test enclosing (or immediately preceding) +line+.
+    # Handles both `def test_foo` and Rails' `test "foo bar" do` macro, whose
+    # generated method name is "test_foo_bar".
+    def test_name_at_line(full_path, line)
+      return nil unless File.file?(full_path)
+      return nil if File.size(full_path) > FileOperationService::MAX_FILE_SIZE_BYTES
+
+      lines = File.readlines(full_path, encoding: "UTF-8", invalid: :replace, undef: :replace)
+      index = [line - 1, lines.length - 1].min
+      return nil if index.negative?
+
+      index.downto(0) do |i|
+        text = lines[i]
+        if (m = text.match(/^\s*def\s+(test_\w+[?!]?)/))
+          return m[1]
+        end
+        if (m = text.match(/^\s*test\s+(["'])(.+?)\1\s+do\b/))
+          return "test_#{m[2].strip.gsub(/\s+/, '_')}"
+        end
+      end
+      nil
+    rescue StandardError
+      nil
     end
 
     def execute_with_timeout(repo_path, cmd, timeout)

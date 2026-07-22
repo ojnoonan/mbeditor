@@ -2501,11 +2501,11 @@ var MbeditorApp = function MbeditorApp() {
     } catch (e) {}
   };
 
-  var executeTestRun = function executeTestRun(filePath) {
+  var executeTestRun = function executeTestRun(filePath, line) {
     setTestLoading(true);
-    EditorStore.setStatus('Running tests...', 'info');
+    EditorStore.setStatus(line ? 'Running test at line ' + line + '...' : 'Running tests...', 'info');
 
-    FileService.runTests(filePath).then(function (res) {
+    FileService.runTests(filePath, line).then(function (res) {
       var resultWithMeta = Object.assign({}, res, { cachedAt: Date.now() });
       var targetFile = res.testFile || filePath;
       setTestResult(resultWithMeta);
@@ -2555,6 +2555,14 @@ var MbeditorApp = function MbeditorApp() {
     if (!activeTab || !activeTab.path) return;
     if (testLoading) return;
     executeTestRun(activeTab.path);
+  };
+
+  // Run only the test enclosing the cursor. Always re-runs (never serves the
+  // cached whole-file result) since the filter changes with the cursor.
+  var handleRunTestAtCursor = function handleRunTestAtCursor(line) {
+    if (!activeTab || !activeTab.path) return;
+    if (testLoading) return;
+    executeTestRun(activeTab.path, line);
   };
 
   var onFormatRef = useRef(handleFormat);
@@ -4764,6 +4772,7 @@ var MbeditorApp = function MbeditorApp() {
                   onFormat: function() { onFormatRef.current(); },
                   onSave: function() { handleSave(pane.id, pActiveTab); },
                   onRunTest: handleRunTest,
+                  onRunTestAtCursor: handleRunTestAtCursor,
                   onShowHistory: function(path) { setHistoryPanelPath(path); },
                   onContentChange: function onContentChange(val) {
                     // Dirty/clean state is now set in EditorPanel via AVI comparison.

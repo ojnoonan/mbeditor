@@ -813,16 +813,27 @@ module Mbeditor
       full_test = File.join(workspace_root.to_s, test_file)
       return render json: { error: "Test file does not exist: #{test_file}" }, status: :not_found unless File.file?(full_test)
 
+      raw_line = params[:line].to_s
+      unless raw_line.empty? || raw_line.match?(/\A\d+\z/)
+        return render json: { error: "Invalid line" }, status: :bad_request
+      end
+
+      # A line filter only makes sense when the user is in the test file
+      # itself — running from a source file resolves to a whole test file.
+      line = raw_line.empty? ? nil : raw_line.to_i
+      line = nil unless line&.positive? && test_file == relative
+
       config = Mbeditor.configuration
       result = TestRunnerService.run(
         workspace_root.to_s,
         test_file,
         framework: config.test_framework&.to_sym,
         command: config.test_command,
-        timeout: config.test_timeout || 60
+        timeout: config.test_timeout || 60,
+        line: line
       )
 
-      render json: result.merge(testFile: test_file)
+      render json: result.merge(testFile: test_file, filteredLine: line)
     rescue StandardError => e
       render json: { error: e.message, ok: false }, status: :unprocessable_content
     end
