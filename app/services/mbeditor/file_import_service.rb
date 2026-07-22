@@ -10,8 +10,10 @@ module Mbeditor
   # runs with on_conflict: :ask — every entry whose target is free is written,
   # and the rest come back under :conflicts untouched. The client resolves
   # them and re-sends just those entries with :overwrite or :rename. Because
-  # the existence check and the write happen inside the same call there is no
-  # window between checking and writing.
+  # the existence check and the write happen inside the same call, the window
+  # is closed at the protocol level: the client never gets to check in one
+  # round trip and write in another. (File.exist? and File.open are still two
+  # syscalls, so this is not an atomic guarantee against other processes.)
   #
   # Callers must hand over target paths that have already cleared the
   # controller's resolve_path / path_blocked_for_operations? guards; this
@@ -24,10 +26,10 @@ module Mbeditor
       @workspace_root = Pathname(workspace_root)
     end
 
-    # entries: [{ target_path: <absolute String>, io: <#read, #size> }]
+    # entries: [{ target_path: <absolute String>, io: <#read, #rewind> }]
     # => { imported: [{path:, name:}], conflicts: [{path:}], errors: [{path:, error:}] }
     def import(entries, on_conflict: :ask)
-      mode = on_conflict.to_sym
+      mode = on_conflict.to_s.to_sym
       raise ArgumentError, "unknown on_conflict: #{on_conflict}" unless CONFLICT_MODES.include?(mode)
 
       result = { imported: [], conflicts: [], errors: [] }
