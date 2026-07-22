@@ -157,5 +157,65 @@ module Mbeditor
         assert_equal ["logo 2.png", "logo 3.png"], result[:imported].map { |e| e[:path] }
       end
     end
+
+    test "an oversized entry becomes an error and is not written" do
+      Dir.mktmpdir do |dir|
+        big = "x" * (FileImportService::MAX_FILE_SIZE_BYTES + 1)
+
+        result = FileImportService.new(dir).import([entry(dir, "big.bin", big)])
+
+        assert_empty result[:imported]
+        assert_equal ["big.bin"], result[:errors].map { |e| e[:path] }
+        assert_match(/too large/i, result[:errors].first[:error])
+        refute File.exist?(File.join(dir, "big.bin"))
+      end
+    end
+
+    test "an oversized entry does not stop its siblings from importing" do
+      Dir.mktmpdir do |dir|
+        big = "x" * (FileImportService::MAX_FILE_SIZE_BYTES + 1)
+
+        result = FileImportService.new(dir).import(
+          [entry(dir, "big.bin", big), entry(dir, "small.txt", "ok")]
+        )
+
+        assert_equal ["small.txt"], result[:imported].map { |e| e[:path] }
+        assert_equal ["big.bin"], result[:errors].map { |e| e[:path] }
+      end
+    end
+
+    test "a target occupied by a directory is an error under every mode" do
+      FileImportService::CONFLICT_MODES.each do |mode|
+        Dir.mktmpdir do |dir|
+          FileUtils.mkdir_p(File.join(dir, "assets"))
+
+          result = FileImportService.new(dir).import(
+            [entry(dir, "assets", "not a folder")], on_conflict: mode
+          )
+
+          assert_empty result[:imported], "mode #{mode} imported over a directory"
+          assert_empty result[:conflicts], "mode #{mode} reported a directory as a conflict"
+          assert_equal ["assets"], result[:errors].map { |e| e[:path] }
+          assert File.directory?(File.join(dir, "assets"))
+        end
+      end
+    end
+
+    test "an unwritable target becomes an error rather than raising" do
+      skip "root ignores directory permissions" if Process.uid.zero?
+
+      Dir.mktmpdir do |dir|
+        locked = File.join(dir, "locked")
+        FileUtils.mkdir_p(locked)
+        File.chmod(0o500, locked)
+
+        result = FileImportService.new(dir).import([entry(dir, "locked/x.txt", "nope")])
+
+        assert_empty result[:imported]
+        assert_equal ["locked/x.txt"], result[:errors].map { |e| e[:path] }
+      ensure
+        File.chmod(0o700, locked) if locked && File.directory?(locked)
+      end
+    end
   end
 end

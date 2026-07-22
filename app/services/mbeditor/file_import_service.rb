@@ -43,6 +43,22 @@ module Mbeditor
       target = entry[:target_path].to_s
       io     = entry[:io]
 
+      if io.size.to_i > MAX_FILE_SIZE_BYTES
+        return result[:errors] << {
+          path: relative_path(target),
+          error: "File is too large (limit is #{MAX_FILE_SIZE_BYTES / 1024 / 1024} MB)"
+        }
+      end
+
+      # A directory is never replaced, whatever the mode: overwriting one would
+      # mean deleting a subtree the user cannot see from the drop.
+      if File.directory?(target)
+        return result[:errors] << {
+          path: relative_path(target),
+          error: "A folder already exists at this path"
+        }
+      end
+
       if File.exist?(target)
         case mode
         when :ask
@@ -54,6 +70,8 @@ module Mbeditor
 
       write(target, io)
       result[:imported] << { path: relative_path(target), name: File.basename(target) }
+    rescue SystemCallError, IOError => e
+      result[:errors] << { path: relative_path(entry[:target_path].to_s), error: e.message }
     end
 
     def write(target, io)
