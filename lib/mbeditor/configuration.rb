@@ -8,7 +8,8 @@ module Mbeditor
                   :authenticate_with, :authentication_cache_ttl,
                   :lint_timeout, :base_branch_candidates, :git_timeout, :search_timeout,
                   :ruby_def_include_dirs, :related_files_custom_paths,
-                  :mount_path, :resilient_routing, :js_global_identifiers
+                  :mount_path, :resilient_routing, :js_global_identifiers,
+                  :js_syntax_check, :babel_standalone_path
 
     def initialize
       @allowed_environments = [:development]
@@ -30,6 +31,8 @@ module Mbeditor
       @related_files_custom_paths = []
       @authentication_cache_ttl = 0
       @js_global_identifiers = [] # extra ambient JS globals for the editor (runtime-only names invisible to static scan, e.g. %w[Routes I18n])
+      @js_syntax_check = :auto # save-time babel parse check via host mini_racer + babel-standalone; false disables
+      @babel_standalone_path = nil # explicit path to babel-standalone JS; nil auto-detects via the asset pipeline
       @mount_path = nil # explicit URL prefix override; nil falls through to detection/"/mbeditor"
       @resilient_routing = true # serve /mbeditor from middleware so the editor survives a broken host routes.rb; false is the escape hatch
     end

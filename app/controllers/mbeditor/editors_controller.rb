@@ -65,7 +65,8 @@ module Mbeditor
         blameAvailable: AvailabilityProbe.git(workspace_root),
         redmineEnabled: Mbeditor.configuration.redmine_enabled == true,
         testAvailable: test_available?,
-        actionCableEnabled: action_cable_enabled?
+        actionCableEnabled: action_cable_enabled?,
+        jsSyntaxCheckAvailable: JsSyntaxCheckService.available?
       }
     end
 
@@ -629,6 +630,28 @@ module Mbeditor
 
       filename = path.to_s
       code = params[:code] || File.read(path)
+
+      if params[:language] == "javascript"
+        unless JsSyntaxCheckService.available?
+          return render json: { error: "JS syntax check not available", markers: [] }, status: :unprocessable_content
+        end
+
+        err = JsSyntaxCheckService.check(code)
+        markers = if err
+          line = err["line"] || 1
+          col  = (err["column"] || 0) + 1
+          [{
+            severity: "error",
+            copName: "Babel",
+            correctable: false,
+            message: "[babel] #{err['message']}",
+            startLine: line, startCol: col, endLine: line, endCol: col + 1
+          }]
+        else
+          []
+        end
+        return render json: { markers: markers }
+      end
 
       if File.basename(filename).end_with?('.haml')
         unless AvailabilityProbe.haml_lint(workspace_root)

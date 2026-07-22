@@ -9,6 +9,7 @@ gem 'mcp',                '>= 0.9.2',   require: false  # CVE: CVE-2026-33946
 gem 'capybara',           require: false
 gem 'cuprite',            require: false
 gem 'haml_lint',          require: false
+gem 'mini_racer',         require: false  # exercises JsSyntaxCheckService in tests; host-provided in production
 gem 'minitest-reporters', require: false
 gem 'puma'
 gem 'rubocop',            require: false

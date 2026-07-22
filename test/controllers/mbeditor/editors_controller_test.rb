@@ -35,6 +35,9 @@ module Mbeditor
       Mbeditor.configure do |c|
         c.authenticate_with = nil
         c.rubocop_command   = "rubocop"
+        # setup narrows excluded_paths per-test; restore the gem default so
+        # suites running after this one see the real configuration.
+        c.excluded_paths    = Configuration.new.excluded_paths
       end
       AvailabilityProbe.reset!
     end
@@ -65,6 +68,65 @@ module Mbeditor
       assert_includes names, "FreshGlobal"
     ensure
       JsGlobalsService.invalidate(@workspace)
+    end
+
+    # ---------------------------------------------------------------------------
+    # lint language=javascript (babel syntax check)
+    # ---------------------------------------------------------------------------
+
+    test "lint with language javascript returns 422 when the checker is unavailable" do
+      File.write(File.join(@workspace, "app.js"), "var x = 1;\n")
+      original = Mbeditor.configuration.js_syntax_check
+      Mbeditor.configuration.js_syntax_check = false
+
+      post "/mbeditor/lint", params: { path: "app.js", code: "var x = 1;", language: "javascript" }
+      assert_response :unprocessable_content
+      assert_equal [], json["markers"]
+    ensure
+      Mbeditor.configuration.js_syntax_check = original
+    end
+
+    test "lint with language javascript maps a babel parse error to a marker" do
+      skip "mini_racer not available" unless defined?(::MiniRacer) || begin
+        require "mini_racer"
+        true
+      rescue LoadError
+        false
+      end
+
+      File.write(File.join(@workspace, "babel-stub.js"), <<~JS)
+        var Babel = { transform: function (src) {
+          if (src.indexOf("BROKEN") !== -1) {
+            var e = new Error("Unexpected token (1:3)");
+            e.loc = { line: 1, column: 3 };
+            throw e;
+          }
+          return { code: null };
+        } };
+      JS
+      File.write(File.join(@workspace, "app.js"), "ok\n")
+      original_check = Mbeditor.configuration.js_syntax_check
+      original_path  = Mbeditor.configuration.babel_standalone_path
+      Mbeditor.configuration.js_syntax_check = :auto
+      Mbeditor.configuration.babel_standalone_path = File.join(@workspace, "babel-stub.js")
+      JsSyntaxCheckService.reset!
+
+      post "/mbeditor/lint", params: { path: "app.js", code: "var BROKEN = ;", language: "javascript" }
+      assert_response :ok
+      marker = json["markers"].first
+      assert marker, "expected a babel marker"
+      assert_equal "error", marker["severity"]
+      assert_includes marker["message"], "Unexpected token"
+      assert_equal 1, marker["startLine"]
+      assert_equal 4, marker["startCol"]
+
+      post "/mbeditor/lint", params: { path: "app.js", code: "var fine = 1;", language: "javascript" }
+      assert_response :ok
+      assert_equal [], json["markers"]
+    ensure
+      Mbeditor.configuration.js_syntax_check = original_check
+      Mbeditor.configuration.babel_standalone_path = original_path
+      JsSyntaxCheckService.reset!
     end
 
     # ---------------------------------------------------------------------------

@@ -578,7 +578,7 @@ var EditorPanel = function EditorPanel(_ref) {
       autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
       autoIndent: editorPrefs.autoIndent || 'full',
       formatOnPaste: editorPrefs.formatOnPaste !== false,
-      formatOnType: editorPrefs.formatOnType !== false,
+      formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
       quickSuggestions: editorPrefs.quickSuggestions !== false,
       wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',
       acceptSuggestionOnEnter: editorPrefs.acceptSuggestionOnEnter || 'on',
@@ -1086,7 +1086,7 @@ var EditorPanel = function EditorPanel(_ref) {
         autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
         autoIndent: editorPrefs.autoIndent || 'full',
         formatOnPaste: editorPrefs.formatOnPaste !== false,
-        formatOnType: editorPrefs.formatOnType !== false,
+        formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
         quickSuggestions: editorPrefs.quickSuggestions !== false,
         wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',
         linkedEditing: !!(editorPrefs.linkedEditing),

@@ -44,7 +44,7 @@ var DEFAULT_EDITOR_PREFS = {
   autoClosingQuotes: 'always',
   autoIndent: 'full',
   formatOnPaste: true,
-  formatOnType: true,
+  formatOnType: false,
   quickSuggestions: true,
   wordBasedSuggestions: 'matchingDocuments',
   acceptSuggestionOnEnter: 'on',
@@ -330,6 +330,10 @@ var MbeditorApp = function MbeditorApp() {
   // empty-dependency effects (live search refresh on files_changed).
   var searchPanelVisibleRef = useRef(false);
   searchPanelVisibleRef.current = !sidebarCollapsed && activeSidebarTab === 'search';
+
+  // Whether the server can run the save-time babel syntax check
+  // (host-provided mini_racer + babel-standalone; see /workspace payload).
+  var jsSyntaxCheckAvailableRef = useRef(false);
 
   var _useStateRFMap = useState({});
   var _useStateRFMap2 = _slicedToArray(_useStateRFMap, 2);
@@ -860,6 +864,9 @@ var MbeditorApp = function MbeditorApp() {
       }
       if (workspace && typeof workspace.hamlLintAvailable === 'boolean') {
         setHamlLintAvailable(workspace.hamlLintAvailable);
+      }
+      if (workspace && typeof workspace.jsSyntaxCheckAvailable === 'boolean') {
+        jsSyntaxCheckAvailableRef.current = workspace.jsSyntaxCheckAvailable;
       }
       if (workspace && typeof workspace.gitAvailable === 'boolean') {
         setGitAvailable(workspace.gitAvailable);
@@ -2054,6 +2061,27 @@ var MbeditorApp = function MbeditorApp() {
       // Hot reload for Markdown: sync preview tab after save
       if (/\.(md|markdown)$/i.test(tab.path)) {
         TabManager.syncMarkdownPreview(tab.path, tab.content);
+      }
+
+      // Save-time babel syntax check for JS/JSX: catches code the host's
+      // sprockets/react-rails pipeline can't transform (errors Monaco's TS
+      // worker misses). Save only — never per keystroke.
+      if (jsSyntaxCheckAvailableRef.current && /\.(js|jsx)$/i.test(tab.path)) {
+        FileService.lintFile(tab.path, tab.content, 'javascript').then(function (res) {
+          var babelMarkers = (res && res.markers) || [];
+          if (babelMarkers.length > 0) {
+            applyMarkersForTab(paneId, tab.id, babelMarkers);
+            EditorStore.setStatus('Saved — babel: ' + babelMarkers[0].message, 'warning');
+          } else {
+            // Clear any previous babel marker for this tab (keep others none —
+            // JS tabs have no rubocop markers, so replacing is safe).
+            var existing = (EditorStore.getState().panes.find(function (p) { return p.id === paneId; }) || { tabs: [] })
+              .tabs.find(function (t) { return t.id === tab.id; });
+            if (existing && existing.markers && existing.markers.length) {
+              applyMarkersForTab(paneId, tab.id, []);
+            }
+          }
+        })["catch"](function () {});
       }
 
       GitService.fetchStatus();
@@ -4411,7 +4439,7 @@ var MbeditorApp = function MbeditorApp() {
                       React.createElement('input', {
                         type: 'checkbox',
                         className: 'ide-settings-checkbox',
-                        checked: editorPrefs.formatOnType !== false,
+                        checked: editorPrefs.formatOnType === true,
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { formatOnType: v }); }); }
                       })
                     ),

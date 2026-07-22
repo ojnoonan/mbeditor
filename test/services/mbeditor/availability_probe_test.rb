@@ -91,6 +91,33 @@ module Mbeditor
       Mbeditor.configuration.rubocop_command = nil
     end
 
+    def test_negative_result_is_reprobed_after_ttl
+      Dir.mktmpdir do |dir|
+        counter = File.join(dir, "count")
+        File.write(counter, "0")
+        script = File.join(dir, "fake-rubocop")
+        # Always fails — probe result stays false
+        File.write(script, "#!/bin/sh\nc=$(cat #{counter}); echo $((c+1)) > #{counter}; exit 1\n")
+        File.chmod(0o755, script)
+        Mbeditor.configuration.rubocop_command = script
+
+        refute AvailabilityProbe.rubocop(@workspace)
+        refute AvailabilityProbe.rubocop(@workspace)
+        assert_equal "1\n", File.read(counter), "within TTL the false result is cached"
+
+        # Expire the negative entry by backdating its timestamp
+        cache = AvailabilityProbe.instance_variable_get(:@cache)
+        key = cache.keys.find { |k| k.start_with?("rubocop:") }
+        cache[key][:ts] -= AvailabilityProbe::NEGATIVE_PROBE_TTL + 1
+
+        refute AvailabilityProbe.rubocop(@workspace)
+        assert_equal "2\n", File.read(counter), "expired negative result must re-probe"
+      end
+    ensure
+      Mbeditor.configuration.rubocop_command = nil
+      AvailabilityProbe.reset!
+    end
+
     def test_reset_clears_cache_so_next_call_re_probes
       Dir.mktmpdir do |dir|
         counter = File.join(dir, "count")

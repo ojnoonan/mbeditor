@@ -82,8 +82,10 @@ var FileService = (function () {
     return axios.delete(window.mbeditorBasePath() + '/delete', { data: { path: path } }).then(function(res) { return res.data; });
   }
 
-  function lintFile(path, code) {
-    return axios.post(window.mbeditorBasePath() + '/lint', { path: path, code: code }).then(function(res) { return res.data; });
+  function lintFile(path, code, language) {
+    var payload = { path: path, code: code };
+    if (language) payload.language = language;
+    return axios.post(window.mbeditorBasePath() + '/lint', payload).then(function(res) { return res.data; });
   }
 
   function quickFixOffense(path, code, copName) {

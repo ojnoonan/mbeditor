@@ -8,6 +8,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Workspace-wide JS ambient globals** (`GET /js_globals`) — every top-level
+  `var`/`let`/`const`/`function`/`class` declaration and `window.X =`
+  assignment across the workspace's JS-family files (incl. `.js.jsx`,
+  `.js.erb`) is declared to Monaco's TypeScript worker in one shot, so
+  cross-file component references in Sprockets/react-rails apps no longer show
+  "Cannot find name" — no imports needed. Refreshes automatically on file
+  changes. New `config.js_global_identifiers` declares runtime-only globals
+  (e.g. `%w[Routes I18n]`).
+- **Save-time babel syntax check for JS/JSX** — when the host app has
+  `mini_racer` and a babel-standalone asset (the react-rails no-node setup),
+  saving a `.js`/`.jsx` file runs the same babel transform the asset pipeline
+  will, surfacing pipeline-breaking parse errors as editor markers. Auto-
+  detected; `config.js_syntax_check = false` disables,
+  `config.babel_standalone_path` overrides asset lookup.
+- **`git grep` search tier** — project search now picks rg > `git grep`
+  (multithreaded, respects `.gitignore`) > plain grep, so hosts without
+  ripgrep get fast search instead of the slow grep fallback.
+- **Live search results** — saving a file through mbeditor re-scans just that
+  file and updates its rows in the open search panel in place.
+
+### Changed
+- **Search executes one subprocess per query** (previously two — the second, a
+  full-workspace count scan, could not terminate early). The capped full
+  result set is cached ~30s, so pagination and total counts are served from
+  memory; a new query kills the previous still-running search. New
+  `config.search_timeout` (default 15s) bounds every search subprocess.
+  Case-insensitive grep now runs under `LC_ALL=C` (10-50× faster on BSD grep;
+  non-ASCII case folding is not attempted on the grep tier).
+- **`config.git_timeout` now defaults to 10 seconds** (was unbounded). All
+  git subprocesses in the info fan-out are individually bounded; a timed-out
+  call blanks its own field instead of failing the payload. Set
+  `config.git_timeout = nil` to restore unbounded behavior.
+- **Git polling is two-tier** — the 5s background poll now hits the cheap
+  `/git_status` (2 subprocesses) and only runs the full `/git_info` fan-out
+  (~10 subprocesses) when the branch or working tree actually changed.
+  `GitInfoService` gained single-flight computation and stale-while-error.
+- **`formatOnType` is now off by default** — on-type formatting added
+  per-keystroke latency on slower machines; enable it in editor settings.
+  Format-on-paste and the explicit Format action are unchanged.
+- Default `excluded_paths` now also covers `public/assets` and `storage`.
+- Unavailable lint tools are re-probed every 60s, so installing rubocop or
+  ripgrep while the server is running is picked up without a restart.
+
+### Fixed
+- Search crashed with `ArgumentError: invalid byte sequence in UTF-8` when a
+  match line contained invalid UTF-8 (subprocess output is now scrubbed).
+- Search pagination's virtual-scroll loader called an undefined `basePath()`
+  (latent `ReferenceError`).
+- `EditorChannel` spawned a `git rev-parse` subprocess on every WebSocket
+  action (including every auto-save); the workspace root is now resolved once
+  per process and shared with the controllers.
+- The first go-to-definition after boot no longer blocks the request on a
+  full workspace Ripper scan — the definition cache warms in a background
+  thread on the first `/workspace` call.
+- JS definition lookups' grep fallback scanned `node_modules` and vendor
+  trees with no exclusions and no timeout.
 - **Inline color swatches + picker (all file types)** — color literals
   (`#rgb`/`#rrggbb`/`#rrggbbaa`, `rgb()`/`rgba()`, `hsl()`/`hsla()`) now show a
   clickable color square before them in any language, opening Monaco's native

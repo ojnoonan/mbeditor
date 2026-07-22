@@ -60,6 +60,8 @@ module Mbeditor
     end
 
     test "excluded directories are not scanned" do
+      original_excluded = Mbeditor.configuration.excluded_paths
+      Mbeditor.configuration.excluded_paths = %w[.git tmp log node_modules]
       write_file("node_modules/pkg/index.js", "var VendorGlobal = 1;\n")
       write_file("app/real.js", "var RealGlobal = 1;\n")
 
@@ -67,6 +69,9 @@ module Mbeditor
 
       assert_includes names, "RealGlobal"
       assert_not_includes names, "VendorGlobal"
+    ensure
+      Mbeditor.configuration.excluded_paths = original_excluded
+      JsGlobalsService.invalidate(@workspace)
     end
 
     test "merges configured js_global_identifiers and drops invalid names" do

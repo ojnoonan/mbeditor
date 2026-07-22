@@ -60,6 +60,11 @@ module Mbeditor
       end
     end
 
+    # A tool that was found stays cached forever (nothing uninstalls
+    # mid-session), but a missing tool is re-probed after this many seconds so
+    # installing e.g. rubocop while the server runs is picked up.
+    NEGATIVE_PROBE_TTL = 60
+
     def self.reset!
       MUTEX.synchronize { @cache = {} }
       nil
@@ -68,14 +73,19 @@ module Mbeditor
     def self.probe_cached(key)
       MUTEX.synchronize do
         @cache ||= {}
-        unless @cache.key?(key)
-          @cache[key] = begin
+        entry = @cache[key]
+        now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+        if entry.nil? || (entry[:value] == false && (now - entry[:ts]) > NEGATIVE_PROBE_TTL)
+          value = begin
             yield
           rescue StandardError
             false
           end
+          entry = @cache[key] = { value: value, ts: now }
         end
-        @cache[key]
+
+        entry[:value]
       end
     end
     private_class_method :probe_cached
