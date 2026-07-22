@@ -5,18 +5,111 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] - 2026-07-22
 
 ### Added
-- **ruby-lsp integration (optional)** — when the host app has
-  [ruby-lsp](https://github.com/Shopify/ruby-lsp) installed, Ruby
-  go-to-definition, hover, and completion are answered by a persistent
-  ruby-lsp process (unsaved buffer contents included), with automatic
-  fallback to the built-in grep/Ripper services on timeout, crash, or
-  absence — hosts without ruby-lsp see no change. New config:
-  `ruby_lsp` (`:auto`/`false`), `ruby_lsp_command`, `ruby_lsp_timeout`.
+- **Ruby language-server integration (optional)** — when the host app has
+  [ruby-lsp](https://github.com/Shopify/ruby-lsp) installed, go-to-definition,
+  hover, completion, and diagnostics for Ruby are answered by a persistent
+  ruby-lsp process (unsaved buffer contents included), with automatic fallback
+  to the built-in grep/Ripper services on timeout, crash, or absence — hosts
+  without ruby-lsp see no change. Adding `ruby-lsp-rails` alongside it needs no
+  mbeditor configuration. New config: `ruby_lsp` (`:auto`/`false`),
+  `ruby_lsp_command`, `ruby_lsp_timeout`.
+- **Ruby diagnostics from ruby-lsp** — Ruby files are checked by the language
+  server instead of booting RuboCop over HTTP on every debounce, adding Prism
+  syntax errors and warnings alongside RuboCop offenses. Quick-fix lightbulbs
+  still work for correctable cops; non-RuboCop diagnostics correctly get none.
+- **Run the test under the cursor** — `Ctrl/Cmd+Shift+T`, or *Run Test at
+  Cursor* in the editor context menu, runs only the enclosing test. The filter
+  follows the detected framework (`path:line` for RSpec and `bin/rails test`, a
+  `-n` name filter for the plain Minitest runner), so it works with a custom
+  `test_command` too, and falls back to the whole file when the cursor isn't
+  inside a test.
+- **Ruby intellisense inside ERB** — hover, completion, go-to-definition, and
+  auto-`end` now work inside `<% %>` tags in `.html.erb` views and stay inert in
+  the surrounding HTML. ERB uses the built-in workspace services (ruby-lsp
+  cannot parse ERB), and Rails view helpers are filtered out.
+- **Workspace-wide JS ambient globals** (`GET /js_globals`) — every top-level
+  `var`/`let`/`const`/`function`/`class` declaration and `window.X =` assignment
+  across the workspace's JS-family files (incl. `.js.jsx`, `.js.erb`) is
+  declared to Monaco's TypeScript worker in one shot, so cross-file component
+  references in Sprockets/react-rails apps no longer show "Cannot find name" —
+  no imports needed. Refreshes automatically on file changes. New
+  `config.js_global_identifiers` declares runtime-only globals (e.g.
+  `%w[Routes I18n]`).
+- **Save-time babel syntax check for JS/JSX** — when the host app has
+  `mini_racer` and a babel-standalone asset (the react-rails no-node setup),
+  saving a `.js`/`.jsx` file runs the same babel transform the asset pipeline
+  will, surfacing pipeline-breaking parse errors as editor markers.
+  Auto-detected; `config.js_syntax_check = false` disables,
+  `config.babel_standalone_path` overrides asset lookup.
+- **Format on save** — new editor setting (off by default): saving runs RuboCop
+  `-A` for Ruby or Prettier for JS/JSX/JSON/CSS/SCSS/HTML/Markdown before
+  writing, and never blocks the save if the formatter fails.
+- **RuboCop server mode** — lint/quick-fix/format use `rubocop --server` when
+  the workspace's rubocop supports it (>= 1.31), cutting per-lint latency from
+  seconds (cold boot per request) to ~100 ms. `config.rubocop_server = false`
+  restores `--no-server`.
+- **`git grep` search tier** — project search picks rg > `git grep`
+  (multithreaded) > plain grep, so hosts without ripgrep get fast search instead
+  of the slow grep fallback.
+- **Live search results** — saving a file through mbeditor re-scans just that
+  file and updates its rows in the open search panel in place.
+- **`config.search_respect_gitignore`** (default `false`) — when enabled,
+  project search and definition lookups skip `.gitignore`d files.
+- **Inline color swatches + picker (all file types)** — color literals
+  (`#rgb`/`#rrggbb`/`#rrggbbaa`, `rgb()`/`rgba()`, `hsl()`/`hsla()`) show a
+  clickable color square, opening Monaco's native color picker; choosing a color
+  rewrites the literal in its original notation. The CSS family (css/scss/less)
+  keeps Monaco's own built-in provider.
+- **Title-bar search box** — a "Search files…" box opens quick-open (same as
+  `Ctrl/Cmd+P`); its empty state lists recently opened files before Favourites
+  and Recent Searches.
+- **Tab context menu** — right-clicking an editor tab offers Close, Close
+  Others, Close Saved, and Close All (alongside File History / Find in
+  Explorer).
+- **New-file button in the tab bar** — a `+` button after the last tab creates a
+  new file in the active file's directory via the file-tree inline-create flow.
+- **Rails log viewer** — a drag-resizable bottom-drawer panel (toggle via the
+  status bar or `Ctrl+Shift+L`) that streams the active environment's
+  `log/<env>.log` in real time over ActionCable, with an HTTP polling fallback.
+  Includes a substring filter; height persists across sessions. Read-only.
+
+### Changed
+- **Search executes one subprocess per query** (previously two — the second, a
+  full-workspace count scan, could not terminate early). The capped full result
+  set is cached ~30 s, so pagination and total counts are served from memory; a
+  new query kills the previous still-running search. New `config.search_timeout`
+  (default 15 s) bounds every search subprocess. Case-insensitive grep runs
+  under `LC_ALL=C` (10–50× faster on BSD grep; non-ASCII case folding is not
+  attempted on the grep tier).
+- **`config.git_timeout` now defaults to 10 seconds** (was unbounded). All git
+  subprocesses in the info fan-out are individually bounded; a timed-out call
+  blanks its own field instead of failing the payload. Set
+  `config.git_timeout = nil` to restore unbounded behavior.
+- **Git polling is two-tier** — the 5 s background poll hits the cheap
+  `/git_status` (2 subprocesses) and only runs the full `/git_info` fan-out
+  (~10 subprocesses) when the branch or working tree actually changed.
+  `GitInfoService` gained single-flight computation and stale-while-error.
+- **`formatOnType` is now off by default** — on-type formatting added
+  per-keystroke latency on slower machines; enable it in editor settings.
+  Format-on-paste and the explicit Format action are unchanged.
+- **The Ruby definition cache is now bounded.** Entries carry each file's full
+  source, and the whole cache was rewritten on every change, so a large
+  workspace grew to tens of megabytes. Entries are LRU-ordered and trimmed to
+  2000 before each persist.
+- Default `excluded_paths` also covers `public/assets` and `storage`.
+- Unavailable lint tools are re-probed every 60 s, so installing rubocop or
+  ripgrep while the server is running is picked up without a restart.
 
 ### Fixed
+- **ruby-lsp answered from stale buffers.** ruby-lsp supports only incremental
+  document sync, so mbeditor's full-text change notification raised inside the
+  server and left it holding the content from the first open — every hover,
+  definition, and completion on an edited buffer used out-of-date text. Changed
+  buffers are now re-opened, which is correct without computing incremental
+  ranges.
 - **JS go-to-definition picked nested functions over globals** — with two
   same-named functions (one top-level, one inside an IIFE/object), Ctrl+click
   navigated to whichever grep match came first. Top-level declarations
@@ -26,17 +119,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rules, and nested matches no longer pollute the ambient-globals list.
 - **JS definition lookups were silently broken on rg-less machines in git
   workspaces** — the search patterns used `(?:`, `\b`, and `\s`, which
-  `git grep`'s POSIX ERE engine rejects or treats as literals, so the
-  git-grep tier returned nothing. All patterns are now pure POSIX ERE.
-- **Format on save** — new editor setting (off by default): saving runs
-  RuboCop `-A` for Ruby or Prettier for JS/JSX/JSON/CSS/SCSS/HTML/Markdown
-  before writing, and never blocks the save if the formatter fails.
-- **RuboCop server mode** — lint/quick-fix/format now use `rubocop --server`
-  when the workspace's rubocop supports it (>= 1.31), cutting per-lint latency
-  from seconds (cold boot per request) to ~100ms. `config.rubocop_server =
-  false` restores `--no-server`.
-
-### Fixed
+  `git grep`'s POSIX ERE engine rejects or treats as literals, so the git-grep
+  tier returned nothing. All patterns are now pure POSIX ERE.
+- **Project search and definition lookups disagreed about `.gitignore`** —
+  search ignored it while definition lookups honoured it. Both now follow
+  `config.search_respect_gitignore`.
 - **Ruby auto-`end` failed in the most common case** — typing a new
   `def`/`class`/`if` *above* an existing sibling block: the sibling's `end`
   (same indentation) was mistaken for the new block's, so Enter inserted no
@@ -45,90 +132,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ruby auto-`end` could insert a tab into a spaces-indented file when Monaco's
   indentation auto-detection misreported the file; the opener line's own
   indentation style now wins.
-- Tab bar's `+` (new file) button had a full-height, over-wide hover box; now
-  a centred 24px square matching other icon buttons.
-- Title-bar "Search files…" box is now pill-shaped.
-- Source-control panel buttons (`git-header-btn`, `git-action-btn`,
-  `git-section-action-btn` — the latter two previously unstyled) now share the
-  explorer panel's button geometry, radius, and hover treatment.
-- **Workspace-wide JS ambient globals** (`GET /js_globals`) — every top-level
-  `var`/`let`/`const`/`function`/`class` declaration and `window.X =`
-  assignment across the workspace's JS-family files (incl. `.js.jsx`,
-  `.js.erb`) is declared to Monaco's TypeScript worker in one shot, so
-  cross-file component references in Sprockets/react-rails apps no longer show
-  "Cannot find name" — no imports needed. Refreshes automatically on file
-  changes. New `config.js_global_identifiers` declares runtime-only globals
-  (e.g. `%w[Routes I18n]`).
-- **Save-time babel syntax check for JS/JSX** — when the host app has
-  `mini_racer` and a babel-standalone asset (the react-rails no-node setup),
-  saving a `.js`/`.jsx` file runs the same babel transform the asset pipeline
-  will, surfacing pipeline-breaking parse errors as editor markers. Auto-
-  detected; `config.js_syntax_check = false` disables,
-  `config.babel_standalone_path` overrides asset lookup.
-- **`git grep` search tier** — project search now picks rg > `git grep`
-  (multithreaded, respects `.gitignore`) > plain grep, so hosts without
-  ripgrep get fast search instead of the slow grep fallback.
-- **Live search results** — saving a file through mbeditor re-scans just that
-  file and updates its rows in the open search panel in place.
-
-### Changed
-- **Search executes one subprocess per query** (previously two — the second, a
-  full-workspace count scan, could not terminate early). The capped full
-  result set is cached ~30s, so pagination and total counts are served from
-  memory; a new query kills the previous still-running search. New
-  `config.search_timeout` (default 15s) bounds every search subprocess.
-  Case-insensitive grep now runs under `LC_ALL=C` (10-50× faster on BSD grep;
-  non-ASCII case folding is not attempted on the grep tier).
-- **`config.git_timeout` now defaults to 10 seconds** (was unbounded). All
-  git subprocesses in the info fan-out are individually bounded; a timed-out
-  call blanks its own field instead of failing the payload. Set
-  `config.git_timeout = nil` to restore unbounded behavior.
-- **Git polling is two-tier** — the 5s background poll now hits the cheap
-  `/git_status` (2 subprocesses) and only runs the full `/git_info` fan-out
-  (~10 subprocesses) when the branch or working tree actually changed.
-  `GitInfoService` gained single-flight computation and stale-while-error.
-- **`formatOnType` is now off by default** — on-type formatting added
-  per-keystroke latency on slower machines; enable it in editor settings.
-  Format-on-paste and the explicit Format action are unchanged.
-- Default `excluded_paths` now also covers `public/assets` and `storage`.
-- Unavailable lint tools are re-probed every 60s, so installing rubocop or
-  ripgrep while the server is running is picked up without a restart.
-
-### Fixed
 - Search crashed with `ArgumentError: invalid byte sequence in UTF-8` when a
   match line contained invalid UTF-8 (subprocess output is now scrubbed).
 - Search pagination's virtual-scroll loader called an undefined `basePath()`
   (latent `ReferenceError`).
-- `EditorChannel` spawned a `git rev-parse` subprocess on every WebSocket
-  action (including every auto-save); the workspace root is now resolved once
-  per process and shared with the controllers.
-- The first go-to-definition after boot no longer blocks the request on a
-  full workspace Ripper scan — the definition cache warms in a background
-  thread on the first `/workspace` call.
-- JS definition lookups' grep fallback scanned `node_modules` and vendor
-  trees with no exclusions and no timeout.
-- **Inline color swatches + picker (all file types)** — color literals
-  (`#rgb`/`#rrggbb`/`#rrggbbaa`, `rgb()`/`rgba()`, `hsl()`/`hsla()`) now show a
-  clickable color square before them in any language, opening Monaco's native
-  color picker; choosing a color rewrites the literal in its original notation.
-  The CSS family (css/scss/less) keeps Monaco's own built-in provider.
-- **Title-bar search box** — a "Search files…" box in the title bar opens
-  quick-open (same as `Ctrl/Cmd+P`); its empty state now lists recently opened
-  files before Favourites and Recent Searches.
-- **Tab context menu** — right-clicking an editor tab now offers Close, Close
-  Others, Close Saved, and Close All (alongside File History / Find in Explorer).
-- **New-file button in the tab bar** — a `+` button after the last tab creates a
-  new file in the active file's directory via the file-tree inline-create flow.
-- **Rails log viewer** — a drag-resizable bottom-drawer panel (toggle via the
-  status bar or `Ctrl+Shift+L`) that streams the active environment's
-  `log/<env>.log` in real time over ActionCable, with an HTTP polling fallback.
-  Includes a substring filter; height persists across sessions. Read-only.
-
-### Fixed
+- `EditorChannel` spawned a `git rev-parse` subprocess on every WebSocket action
+  (including every auto-save); the workspace root is now resolved once per
+  process and shared with the controllers.
+- The first go-to-definition after boot no longer blocks the request on a full
+  workspace Ripper scan — the definition cache warms in a background thread on
+  the first `/workspace` call.
+- JS definition lookups' grep fallback scanned `node_modules` and vendor trees
+  with no exclusions and no timeout.
 - **Optional React props flagged as required** — Monaco's JS type-checking
   (`checkJs`) inferred every referenced prop of a plain-JS component as required
   and flagged call sites that omitted it (TS 2741/2739). Those false positives
   are now suppressed while genuinely useful checks remain.
+- Tab bar's `+` (new file) button had a full-height, over-wide hover box; now a
+  centred 24 px square matching other icon buttons.
+- Title-bar "Search files…" box is now pill-shaped.
+- Source-control panel buttons (`git-header-btn`, `git-action-btn`,
+  `git-section-action-btn` — the latter two previously unstyled) now share the
+  explorer panel's button geometry, radius, and hover treatment.
 
 ### Security
 - The log viewer displays log contents **verbatim**, which may include request
@@ -211,7 +236,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dirty marker in Rails panel** now uses the same orange (`#e5c07b`) as the tab bar dirty dot.
 - **Rails panel branch-switch UX** — tabs stay visible (read-only) during a branch switch instead of disappearing immediately; a `branch_state_restore` setting (default `true`) controls whether tab state is saved/restored across branch switches.
 
-## [Unreleased] — internal refactor (2026-05-23)
+## Internal refactor (2026-05-23)
 
 ### Changed (no user-visible behavior change)
 - **`AvailabilityProbe` extracted** — tool-availability checks (`rg`, `rubocop`, `haml_lint`, `git`, etc.) pulled out of `EditorsController` into `AvailabilityProbe`. Closes #22, #23, #24.
@@ -226,7 +251,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] — internal refactor (2026-05-17)
+## Internal refactor (2026-05-17)
 
 ### Changed (no user-visible behavior change)
 - **`GitInfoService` extracted** — the 139-line concurrent wave-orchestration block in `EditorsController#git_info` is now `GitInfoService.call(repo_path)` with a 5 s TTL cache and `invalidate` hook. Controller action is a single `render json:` call. `parse_porcelain_status` and `parse_name_status` promoted to `GitService` module functions. Closes #4, #5, #6.
