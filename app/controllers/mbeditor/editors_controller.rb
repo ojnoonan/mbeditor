@@ -21,6 +21,8 @@ module Mbeditor
     RUBY_DEFS_WARM_MUTEX = Mutex.new
     TOTAL_LINES_CACHE_MAX = 50
     TOTAL_LINES_MUTEX = Mutex.new
+    IMPORT_MAX_FILES = 200
+    IMPORT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
 
     class << self
       # Small (path, mtime) => total-line-count cache so windowed reads of big
@@ -350,6 +352,42 @@ module Mbeditor
       render json: result
     rescue FileOperationService::FileExistsError
       render json: { error: "Path already exists" }, status: :unprocessable_content
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
+    # POST /mbeditor/import — write files dragged in from outside the browser.
+    #
+    # Multipart: files[] carries the bodies, paths[] the parallel list of
+    # workspace-relative targets, on_conflict one of ask/overwrite/rename.
+    # A structurally invalid batch is a 422; per-entry problems come back in
+    # the :errors array so one bad path never sinks the whole drop.
+    def import
+      files = Array(params[:files])
+      paths = Array(params[:paths]).map(&:to_s)
+      mode  = params[:on_conflict].presence || "ask"
+
+      error = import_batch_error(files, paths, mode)
+      return render json: { error: error }, status: :unprocessable_content if error
+
+      entries = []
+      errors  = []
+      files.each_with_index do |file, i|
+        full = resolve_path(paths[i])
+        if full.nil? || path_blocked_for_operations?(full)
+          errors << { path: paths[i], error: "Cannot write to this path" }
+        else
+          entries << { target_path: full, io: file }
+        end
+      end
+
+      result = FileImportService.new(workspace_root).import(entries, on_conflict: mode.to_sym)
+      result[:errors] = errors + result[:errors]
+
+      written = result[:imported].map { |e| File.join(workspace_root.to_s, e[:path]) }
+      broadcast_files_changed(written) if written.any?
+
+      render json: result
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -1099,6 +1137,29 @@ module Mbeditor
       return true if rel.blank?
 
       ExclusionMatcher.new(Mbeditor.configuration.excluded_paths).excluded?(rel)
+    end
+
+    # Returns a message when the import batch is structurally unusable, nil
+    # when it is worth handing to FileImportService.
+    def import_batch_error(files, paths, mode)
+      return "Nothing to import" if files.empty?
+      return "files and paths must be the same length" unless files.length == paths.length
+      unless FileImportService::CONFLICT_MODES.include?(mode.to_s.to_sym)
+        return "Unknown on_conflict: #{mode}"
+      end
+      # A String responds to #size but not #read, so this also rejects a batch
+      # that smuggles plain params in through files[].
+      unless files.all? { |f| f.respond_to?(:read) && f.respond_to?(:size) }
+        return "files must be uploaded files"
+      end
+      return "Too many files — #{IMPORT_MAX_FILES} maximum per drop." if files.length > IMPORT_MAX_FILES
+
+      total = files.sum { |f| f.size.to_i }
+      if total > IMPORT_MAX_TOTAL_BYTES
+        return "Drop is too large (#{human_size(total)}). Limit is #{human_size(IMPORT_MAX_TOTAL_BYTES)}."
+      end
+
+      nil
     end
 
     def ruby_def_include_dirs

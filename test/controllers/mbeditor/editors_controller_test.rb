@@ -31,6 +31,7 @@ module Mbeditor
     end
 
     def teardown
+      FileUtils.rm_rf(@upload_dir) if @upload_dir
       FileUtils.rm_rf(@workspace)
       Mbeditor.configure do |c|
         c.authenticate_with = nil
@@ -1954,6 +1955,109 @@ module Mbeditor
            as: :json
       assert_response :ok
       assert_equal true, json["ok"]
+    end
+
+    # ---------------------------------------------------------------------------
+    # import
+    # ---------------------------------------------------------------------------
+
+    # Rack::Test::UploadedFile needs a file on disk; @upload_dir holds the
+    # sources so they are never confused with workspace contents.
+    def uploaded(name, content)
+      @upload_dir ||= Dir.mktmpdir("mbeditor_uploads_")
+      source = File.join(@upload_dir, name)
+      FileUtils.mkdir_p(File.dirname(source))
+      File.binwrite(source, content)
+      ::Rack::Test::UploadedFile.new(source, "application/octet-stream", true)
+    end
+
+    test "import writes a dropped file into the workspace" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("notes.txt", "hello")],
+        paths: ["notes.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_equal ["notes.txt"], json["imported"].map { |e| e["path"] }
+      assert_empty json["conflicts"]
+      assert_empty json["errors"]
+      assert_equal "hello", File.read(File.join(@workspace, "notes.txt"))
+    end
+
+    test "import preserves binary content byte for byte" do
+      bytes = "\x89PNG\r\n\x1a\n\x00\x01\x02\xff".dup.force_encoding(Encoding::BINARY)
+
+      post "/mbeditor/import", params: {
+        files: [uploaded("logo.png", bytes)],
+        paths: ["app/assets/logo.png"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_equal bytes, File.binread(File.join(@workspace, "app/assets/logo.png"))
+    end
+
+    test "import reports an existing target as a conflict without writing it" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("README.md", "replacement")],
+        paths: ["README.md"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_equal ["README.md"], json["conflicts"].map { |e| e["path"] }
+      assert_equal "# Hello\n", File.read(File.join(@workspace, "README.md"))
+    end
+
+    test "import overwrites when asked to" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("README.md", "replacement")],
+        paths: ["README.md"],
+        on_conflict: "overwrite"
+      }
+
+      assert_response :ok
+      assert_equal ["README.md"], json["imported"].map { |e| e["path"] }
+      assert_equal "replacement", File.read(File.join(@workspace, "README.md"))
+    end
+
+    test "import rejects a path outside the workspace as an entry error" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("evil.txt", "x")],
+        paths: ["../evil.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_empty json["imported"]
+      assert_equal ["../evil.txt"], json["errors"].map { |e| e["path"] }
+    end
+
+    test "import rejects an excluded path as an entry error" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("cache.txt", "x")],
+        paths: ["tmp/cache.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_empty json["imported"]
+      assert_equal ["tmp/cache.txt"], json["errors"].map { |e| e["path"] }
+      refute File.exist?(File.join(@workspace, "tmp", "cache.txt"))
+    end
+
+    test "import without the client header is forbidden" do
+      # Bypass the header-injecting override defined at the top of this class.
+      # Going straight to the session skips the copy-back that populates
+      # @response for assert_response, so assert on the session's own response.
+      integration_session.post "/mbeditor/import", params: {
+        files: [uploaded("notes.txt", "hello")],
+        paths: ["notes.txt"]
+      }
+
+      assert_equal 403, integration_session.response.status
+      refute File.exist?(File.join(@workspace, "notes.txt"))
     end
 
     private
