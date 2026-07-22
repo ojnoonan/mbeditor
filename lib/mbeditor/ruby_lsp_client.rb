@@ -4,6 +4,7 @@ require "open3"
 require "json"
 require "digest"
 require "shellwords"
+require "timeout"
 
 module Mbeditor
   # Manages a persistent ruby-lsp process per workspace and speaks the
@@ -110,13 +111,27 @@ module Mbeditor
 
       write_message({ jsonrpc: "2.0", id: id, method: method, params: params })
 
-      msg = queue.pop(timeout: timeout)
+      msg = pop_with_timeout(queue, timeout)
       raise TimeoutError, "#{method} timed out after #{timeout}s" if msg.nil?
       raise Error, msg["error"]["message"].to_s if msg["error"]
 
       msg["result"]
     ensure
       @pending_mutex.synchronize { @pending.delete(id) } if id
+    end
+
+    # Queue#pop only accepts a timeout: keyword from Ruby 3.2 onwards, and the
+    # gem supports 3.0. Returns nil on timeout either way.
+    QUEUE_POP_SUPPORTS_TIMEOUT = RUBY_VERSION >= "3.2"
+
+    def pop_with_timeout(queue, timeout)
+      return queue.pop(timeout: timeout) if QUEUE_POP_SUPPORTS_TIMEOUT
+
+      begin
+        Timeout.timeout(timeout) { queue.pop }
+      rescue Timeout::Error
+        nil
+      end
     end
 
     def stop

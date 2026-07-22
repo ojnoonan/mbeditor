@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-07-22
+
+### Fixed
+- **ruby-lsp features never started on Ruby 3.0 and 3.1.** The client waited
+  for responses with `Queue#pop(timeout:)`, which only accepts that keyword
+  from Ruby 3.2 — so the initialize handshake raised on older rubies and every
+  ruby-lsp request fell back to the built-in services. The gemspec supports
+  Ruby >= 3.0; the wait now uses a portable path there. Both branches are
+  covered by tests regardless of which Ruby runs the suite.
+- The gem's own `mini_racer`/`ruby-lsp` development dependencies are gated on
+  Ruby >= 3.2 — mini_racer's native extension fails to build on 3.0/3.1, which
+  broke `bundle install` for contributors on those versions. Neither gem is
+  needed by the suite.
+
+---
+
 ## [0.8.0] - 2026-07-22
 
 ### Added

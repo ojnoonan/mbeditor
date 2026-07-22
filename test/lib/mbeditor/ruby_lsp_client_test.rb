@@ -97,6 +97,46 @@ module Mbeditor
       assert_equal :ready, client.state
     end
 
+    # Queue#pop only takes a timeout: keyword on Ruby >= 3.2, but the gem
+    # supports 3.0. Force the fallback branch so both paths are covered
+    # whichever Ruby runs the suite — without this, a 3.2-only API silently
+    # breaks every ruby-lsp feature on older rubies.
+    def with_legacy_queue_pop
+      original = RubyLspClient::QUEUE_POP_SUPPORTS_TIMEOUT
+      $VERBOSE = nil
+      RubyLspClient.send(:remove_const, :QUEUE_POP_SUPPORTS_TIMEOUT)
+      RubyLspClient.const_set(:QUEUE_POP_SUPPORTS_TIMEOUT, false)
+      $VERBOSE = true
+      yield
+    ensure
+      $VERBOSE = nil
+      RubyLspClient.send(:remove_const, :QUEUE_POP_SUPPORTS_TIMEOUT)
+      RubyLspClient.const_set(:QUEUE_POP_SUPPORTS_TIMEOUT, original)
+      $VERBOSE = true
+    end
+
+    test "requests round-trip on the pre-3.2 queue-pop path" do
+      with_legacy_queue_pop do
+        RubyLspClient.reset!
+        result = definition_request
+        assert_kind_of Array, result
+        assert_equal :ready, client.state
+      end
+    end
+
+    test "the pre-3.2 queue-pop path still times out" do
+      use_fake_server("FAKE_LSP_DELAY_MS" => "700")
+      Mbeditor.configuration.ruby_lsp_timeout = 0.3
+
+      with_legacy_queue_pop do
+        RubyLspClient.reset!
+        assert_raises(RubyLspClient::TimeoutError) do
+          client.request_with_document("textDocument/definition", File.join(@root, "app.rb"), "x\n",
+                                       { position: { line: 0, character: 0 } })
+        end
+      end
+    end
+
     test "a crashed server is detected and restarts after backoff" do
       # initialize counts as request 1; the first definition (2) exceeds the cap.
       use_fake_server("FAKE_LSP_CRASH_AFTER" => "1")
