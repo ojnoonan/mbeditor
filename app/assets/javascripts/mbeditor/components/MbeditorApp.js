@@ -1451,18 +1451,26 @@ var MbeditorApp = function MbeditorApp() {
   // interval and refresh immediately when the tab regains focus so branch
   // changes are picked up promptly instead of requiring a manual git-panel reload.
   useEffect(function () {
+    // Steady-state ticks use the cheap lite poll; it escalates to the full
+    // /git_info fan-out on its own when the branch or working tree changed.
     var refresh = function () {
+      if (document.hidden) return;
+      GitService.fetchStatusLite()["catch"](function () {});
+    };
+    // Regaining focus is a strong signal something may have happened in a
+    // terminal meanwhile — do a full refresh (server-side cache bounds cost).
+    var fullRefresh = function () {
       if (document.hidden) return;
       GitService.fetchStatus()["catch"](function () {});
     };
     var intervalId = setInterval(refresh, 5000);
-    var onVisible = function () { if (!document.hidden) refresh(); };
+    var onVisible = function () { if (!document.hidden) fullRefresh(); };
     document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('focus', refresh);
+    window.addEventListener('focus', fullRefresh);
     return function () {
       clearInterval(intervalId);
       document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('focus', refresh);
+      window.removeEventListener('focus', fullRefresh);
     };
   }, []);
 

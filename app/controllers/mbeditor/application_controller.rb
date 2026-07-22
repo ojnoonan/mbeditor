@@ -8,9 +8,6 @@ module Mbeditor
     protect_from_forgery with: :exception
     before_action :run_authentication
 
-    WORKSPACE_ROOT_MUTEX = Mutex.new
-    private_constant :WORKSPACE_ROOT_MUTEX
-
     private
 
     def run_authentication
@@ -31,27 +28,7 @@ module Mbeditor
     end
 
     def workspace_root
-      configured_root = Mbeditor.configuration.workspace_root
-      if configured_root.present?
-        Pathname.new(configured_root.to_s)
-      else
-        # Fast path: already cached on this controller class.
-        cached = self.class.instance_variable_get(:@workspace_root_cache)
-        return cached if cached
-
-        # Slow path: compute once under a mutex to prevent multiple threads from
-        # each spawning a `git rev-parse` subprocess on the very first request.
-        WORKSPACE_ROOT_MUTEX.synchronize do
-          self.class.instance_variable_get(:@workspace_root_cache) ||
-            self.class.instance_variable_set(:@workspace_root_cache, begin
-              rails_root = Rails.root.to_s
-              out, _err, status = Open3.capture3("git", "-C", rails_root, "rev-parse", "--show-toplevel")
-              Pathname.new(status.success? && out.strip.present? ? out.strip : rails_root)
-            rescue StandardError
-              Rails.root
-            end)
-        end
-      end
+      WorkspaceRootResolver.call
     end
 
     # Expand path and confirm it's inside workspace_root.

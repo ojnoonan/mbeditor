@@ -513,7 +513,7 @@ module Mbeditor
 
     # GET /mbeditor/git_status
     def git_status
-      output, _err, status = Open3.capture3("git", "-C", workspace_root.to_s, "status", "--porcelain")
+      output, status = GitService.run_git(workspace_root.to_s, "status", "--porcelain")
       branch = GitService.current_branch(workspace_root.to_s) || ""
       files = GitService.parse_porcelain_status(output)
       render json: { ok: status.success?, files: files, branch: branch }

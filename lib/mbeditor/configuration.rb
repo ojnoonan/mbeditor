@@ -24,7 +24,7 @@ module Mbeditor
       @test_timeout     = 60  # seconds
       @lint_timeout     = 15  # seconds for RuboCop/haml-lint subprocesses
       @base_branch_candidates = %w[origin/develop origin/main origin/master develop main master]
-      @git_timeout            = nil # seconds; nil disables (no timeout on git subprocesses)
+      @git_timeout            = 10 # seconds; nil disables (no timeout on git subprocesses)
       @ruby_def_include_dirs  = %w[app/models app/controllers app/helpers app/concerns]
       @related_files_custom_paths = []
       @authentication_cache_ttl = 0

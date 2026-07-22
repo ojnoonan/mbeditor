@@ -63,14 +63,7 @@ module Mbeditor
     end
 
     def workspace_root
-      configured = Mbeditor.configuration.workspace_root
-      return Pathname.new(configured.to_s) if configured.present?
-
-      rails_root = Rails.root.to_s
-      out, _err, status = Open3.capture3("git", "-C", rails_root, "rev-parse", "--show-toplevel")
-      Pathname.new(status.success? && out.strip.present? ? out.strip : rails_root)
-    rescue StandardError
-      Rails.root
+      WorkspaceRootResolver.call
     end
   end
 end
