@@ -186,6 +186,41 @@
   // is `Parent.word` or `const { ..., word, ... } = Parent`. Returns null for
   // plain references. The parent lets the backend resolve nested member
   // definitions instead of falling back to the (ranked) global search.
+  // True when the position sits inside an ERB tag (<% ... %>, <%= ... %>).
+  // Finds the nearest preceding delimiter: an opener means we're inside Ruby
+  // code, a closer (or nothing) means we're in the HTML body. Correct across
+  // multi-line blocks because it searches backwards through the whole buffer
+  // rather than the current line.
+  function isInsideErbTag(model, position) {
+    if (!model || !position) return false;
+    try {
+      var match = model.findPreviousMatch('<%|%>', position, true, false, null, false);
+      if (!match || !match.range) return false;
+      // A match starting at/after the cursor wrapped around to the end of the
+      // buffer — treat that as "no preceding delimiter".
+      if (match.range.startLineNumber > position.lineNumber) return false;
+      if (match.range.startLineNumber === position.lineNumber &&
+          match.range.startColumn > position.column) return false;
+      return model.getValueInRange(match.range).indexOf('<%') === 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Rails view helpers are defined inside the framework, not the workspace, so
+  // looking them up from ERB only ever produces empty round-trips.
+  var RAILS_VIEW_HELPERS = {
+    link_to: 1, button_to: 1, form_with: 1, form_for: 1, form_tag: 1, fields_for: 1,
+    render: 1, yield: 1, content_for: 1, content_tag: 1, tag: 1, url_for: 1,
+    image_tag: 1, javascript_include_tag: 1, stylesheet_link_tag: 1, favicon_link_tag: 1,
+    csrf_meta_tags: 1, csp_meta_tag: 1, asset_path: 1, image_path: 1,
+    number_to_currency: 1, number_with_delimiter: 1, truncate: 1, pluralize: 1,
+    time_ago_in_words: 1, distance_of_time_in_words: 1, simple_format: 1,
+    sanitize: 1, raw: 1, escape_javascript: 1, j: 1, t: 1, l: 1,
+    label_tag: 1, text_field_tag: 1, submit_tag: 1, hidden_field_tag: 1,
+    check_box_tag: 1, select_tag: 1, options_for_select: 1
+  };
+
   function extractJsParentContext(model, lineNumber, wordInfo) {
     if (!model || !wordInfo) return null;
     var line = model.getLineContent(lineNumber);
@@ -495,9 +530,17 @@
       });
     }
 
-    if (language === 'ruby') {
+    // ERB gets the same Ruby navigation and auto-end, but only inside <% %>,
+    // and always through the workspace services (ruby-lsp cannot parse ERB).
+    if (language === 'ruby' || language === 'erb') {
+      var isErbDoc = language === 'erb';
+      var rubyContextAt = function (position) {
+        return !isErbDoc || isInsideErbTag(model, position);
+      };
+
       keydownDisposable = editor.onKeyDown(function (event) {
         if (event.keyCode !== window.monaco.KeyCode.Enter) return;
+        if (!rubyContextAt(editor.getPosition())) return;
         if (!handleRubyEnter(editor, model)) return;
 
         event.preventDefault();
@@ -530,6 +573,8 @@
       }
 
       function navigateToWord(word, position) {
+        if (isErbDoc) return legacyNavigateToWord(word);
+
         tryRubyLsp('definition', model, position).then(function (lsp) {
           if (lsp && lsp.results && lsp.results.length) {
             var r = lsp.results[0];
@@ -556,6 +601,7 @@
         if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
         if (RUBY_KEYWORDS[wordInfo.word]) return;
         if (RUBY_CORE_METHODS[wordInfo.word]) return;
+        if (isErbDoc && (!rubyContextAt(position) || RAILS_VIEW_HELPERS[wordInfo.word])) return;
 
         event.event.preventDefault();
         navigateToWord(wordInfo.word, position);
@@ -575,6 +621,7 @@
           if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
           if (RUBY_KEYWORDS[wordInfo.word]) return;
           if (RUBY_CORE_METHODS[wordInfo.word]) return;
+          if (isErbDoc && (!rubyContextAt(pos) || RAILS_VIEW_HELPERS[wordInfo.word])) return;
           navigateToWord(wordInfo.word, pos);
         }
       });
@@ -1324,8 +1371,15 @@
     var hoverCache = {};
     var HOVER_CACHE_TTL_MS = 60000;
 
-    monaco.languages.registerHoverProvider('ruby', {
+    // Registered for 'erb' as well as 'ruby'. In ERB the provider only fires
+    // inside <% %> and always uses the workspace (grep/Ripper) services:
+    // ruby-lsp is told every document is Ruby, and Prism cannot parse ERB.
+    ['ruby', 'erb'].forEach(function (lang) {
+    monaco.languages.registerHoverProvider(lang, {
       provideHover: function provideHover(model, position, token) {
+        var isErb = lang === 'erb';
+        if (isErb && !isInsideErbTag(model, position)) return null;
+
         var wordInfo = model.getWordAtPosition(position);
         if (!wordInfo) return null;
 
@@ -1333,12 +1387,13 @@
         if (!word || word.length < 2) return null;
         if (RUBY_KEYWORDS[word]) return null;
         if (RUBY_CORE_METHODS[word]) return null;
+        if (isErb && RAILS_VIEW_HELPERS[word]) return null;
         if (typeof FileService === 'undefined' || !FileService.getDefinition) return null;
 
         // ruby-lsp first: accurate, position-aware documentation. The LSP
         // hover cache is keyed by location, not just word — the same method
         // name can mean different things at different positions.
-        if (window.MBEDITOR_RUBY_LSP_AVAILABLE) {
+        if (!isErb && window.MBEDITOR_RUBY_LSP_AVAILABLE) {
           var lspKey = '__lsp__' + (model._mbeditorPath || '') + ':' + position.lineNumber + ':' + word;
           var lspCached = hoverCache[lspKey];
           if (lspCached && (Date.now() - lspCached.ts) < HOVER_CACHE_TTL_MS) {
@@ -1363,6 +1418,7 @@
 
         return legacyRubyHover(model, position, token, wordInfo);
       }
+    });
     });
 
     function legacyRubyHover(model, position, token, wordInfo) {
@@ -1500,9 +1556,18 @@
       };
     }
 
-    monaco.languages.registerCompletionItemProvider('ruby', {
+    ['ruby', 'erb'].forEach(function (lang) {
+    monaco.languages.registerCompletionItemProvider(lang, {
       triggerCharacters: ['.'],
       provideCompletionItems: function(model, position) {
+        var isErb = lang === 'erb';
+        // In ERB only complete inside <% %>, and only from the workspace
+        // services — ruby-lsp can't parse an ERB document.
+        if (isErb) {
+          if (!isInsideErbTag(model, position)) return { suggestions: [] };
+          return legacyRubyCompletions(model, position);
+        }
+
         // ruby-lsp first — real scope-aware completions; the include-based
         // provider below stays as the fallback.
         if (window.MBEDITOR_RUBY_LSP_AVAILABLE) {
@@ -1515,6 +1580,7 @@
         }
         return legacyRubyCompletions(model, position);
       }
+    });
     });
 
     function legacyRubyCompletions(model, position) {
@@ -1702,6 +1768,8 @@
   window.MbeditorEditorPlugins = {
     registerGlobalExtensions: registerGlobalExtensions,
     attachEditorFeatures: attachEditorFeatures,
+    // Exposed so the ERB gating can be asserted directly in system tests.
+    isInsideErbTag: isInsideErbTag,
     runRubyEnter: function runRubyEnter(editor) {
       if (!editor || !editor.getModel) return false;
       return handleRubyEnter(editor, editor.getModel());
