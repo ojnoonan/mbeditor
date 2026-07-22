@@ -1198,7 +1198,10 @@ var EditorPanel = function EditorPanel(_ref) {
             : window.monaco.MarkerSeverity.Warning;
           return {
             severity: sev,
-            source: 'rubocop',
+            // RuboCop-sourced markers keep the 'rubocop' source so the quick-fix
+        // code action provider offers a lightbulb; other sources (e.g. Prism
+        // syntax errors from ruby-lsp) correctly get none.
+        source: m.source || 'rubocop',
             code: m.copName || '',
             message: m.message,
             startLineNumber: m.startLine,

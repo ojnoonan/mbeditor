@@ -457,10 +457,18 @@ module Mbeditor
     end
 
     RUBY_LSP_METHODS = {
-      "definition" => "textDocument/definition",
-      "hover"      => "textDocument/hover",
-      "completion" => "textDocument/completion"
+      "definition"  => "textDocument/definition",
+      "hover"       => "textDocument/hover",
+      "completion"  => "textDocument/completion",
+      "diagnostics" => "textDocument/diagnostic"
     }.freeze
+
+    # Diagnostics are whole-document, not positional.
+    RUBY_LSP_POSITIONLESS = %w[textDocument/diagnostic].freeze
+
+    # RuboCop's first run inside a freshly booted ruby-lsp is far slower than a
+    # hover/definition lookup, so diagnostics get their own budget.
+    RUBY_LSP_DIAGNOSTICS_TIMEOUT = 10
 
     # POST /mbeditor/ruby_lsp — bridge to the host's ruby-lsp process.
     # Body: { path:, content:, line: (1-based), character: (1-based), lsp_method: }
@@ -482,12 +490,17 @@ module Mbeditor
         return render json: { error: "ruby-lsp unavailable", rubyLspAvailable: false }, status: :unprocessable_content
       end
 
-      position = {
-        line: [params[:line].to_i - 1, 0].max,
-        character: [params[:character].to_i - 1, 0].max
-      }
+      extra = if RUBY_LSP_POSITIONLESS.include?(lsp_method)
+        {}
+      else
+        # Monaco positions are 1-based; LSP positions are 0-based.
+        { position: { line: [params[:line].to_i - 1, 0].max,
+                      character: [params[:character].to_i - 1, 0].max } }
+      end
+      timeout = RUBY_LSP_POSITIONLESS.include?(lsp_method) ? RUBY_LSP_DIAGNOSTICS_TIMEOUT : nil
+
       client = RubyLspClient.for(workspace_root.to_s)
-      result = client.request_with_document(lsp_method, path, content, position: position)
+      result = client.request_with_document(lsp_method, path, content, extra, timeout: timeout)
       render json: translate_ruby_lsp_result(params[:lsp_method].to_s, result)
     rescue RubyLspClient::TimeoutError, RubyLspClient::NotReadyError
       render json: { fallback: true }
@@ -1064,9 +1077,10 @@ module Mbeditor
 
     def translate_ruby_lsp_result(kind, result)
       case kind
-      when "definition" then { results: translate_lsp_locations(result) }
-      when "hover"      then { markdown: translate_lsp_hover(result) }
-      when "completion" then { suggestions: translate_lsp_completions(result) }
+      when "definition"  then { results: translate_lsp_locations(result) }
+      when "hover"       then { markdown: translate_lsp_hover(result) }
+      when "completion"  then { suggestions: translate_lsp_completions(result) }
+      when "diagnostics" then LspDiagnosticsTranslator.call(result)
       end
     end
 

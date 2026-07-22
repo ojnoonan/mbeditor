@@ -94,6 +94,40 @@ module Mbeditor
       end
     end
 
+    test "ruby_lsp diagnostics translate into the marker shape the lint pipeline uses" do
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "diagnostics", path: "app/models/user.rb",
+                                             content: "class User\n  x=1\nend\n" }
+        assert_response :ok
+
+        markers = json["markers"]
+        assert_equal 2, markers.length
+        assert_equal 2, json.dig("summary", "offense_count")
+
+        rubocop = markers.first
+        assert_equal "info", rubocop["severity"], "LSP severity 3 (INFORMATION) maps to info"
+        assert_equal "Layout/SpaceAroundOperators", rubocop["copName"]
+        assert_equal "rubocop", rubocop["source"], "must stay 'rubocop' so the quick-fix lightbulb appears"
+        assert_equal true, rubocop["correctable"]
+        assert_equal 3, rubocop["startLine"], "0-based LSP line 2 becomes 1-based 3"
+        assert_equal 5, rubocop["startCol"]
+        assert_includes rubocop["message"], "[Layout/SpaceAroundOperators]"
+
+        prism = markers.last
+        assert_equal "error", prism["severity"]
+        assert_equal "prism", prism["source"], "non-RuboCop sources must not claim a lightbulb"
+        assert_equal "", prism["copName"]
+        assert_equal false, prism["correctable"]
+      end
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
+    end
+
     test "ruby_lsp rejects an unknown lsp_method" do
       post "/mbeditor/ruby_lsp", params: { lsp_method: "rename", path: "a.rb", content: "", line: 1, character: 1 }
       assert_response :bad_request

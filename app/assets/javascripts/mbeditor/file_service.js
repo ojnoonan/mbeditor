@@ -231,6 +231,13 @@ var FileService = (function () {
     }, config).then(function(res) { return res.data; });
   }
 
+  // Whole-document Ruby diagnostics from ruby-lsp (RuboCop offenses + Prism
+  // syntax errors), translated server-side into the same marker shape /lint
+  // returns.
+  function lspDiagnostics(path, content) {
+    return rubyLspRequest('diagnostics', path, content, 1, 1, { timeout: 15000 });
+  }
+
   function getJsGlobals() {
     return axios.get(window.mbeditorBasePath() + '/js_globals', { timeout: 20000 })
       .then(function(res) { return res.data; });
@@ -282,6 +289,7 @@ var FileService = (function () {
     getClientConfig: getClientConfig,
     getJsGlobals: getJsGlobals,
     rubyLspRequest: rubyLspRequest,
+    lspDiagnostics: lspDiagnostics,
     getRelatedFiles: getRelatedFiles,
     getModelSchema: getModelSchema,
     getChangelog: getChangelog

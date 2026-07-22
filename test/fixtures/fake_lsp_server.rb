@@ -67,6 +67,9 @@ loop do
                   "uri" => msg.dig("params", "textDocument", "uri"),
                   "version" => msg.dig("params", "textDocument", "version") }
     next
+  when "textDocument/didClose"
+    sync_log << { "type" => "close", "uri" => msg.dig("params", "textDocument", "uri") }
+    next
   when "initialized"
     next
   when "exit"
@@ -102,6 +105,23 @@ loop do
     when "textDocument/completion"
       { "items" => [{ "label" => "fake_method", "kind" => 2,
                       "insertText" => "fake_method", "detail" => "FakeClass#fake_method" }] }
+    when "textDocument/diagnostic"
+      # One RuboCop-shaped (correctable, carries a cop name) and one
+      # Prism-shaped (syntax error, no cop name) diagnostic.
+      { "kind" => "full", "items" => [
+        { "source" => "RuboCop",
+          "code" => "Layout/SpaceAroundOperators",
+          "severity" => 3,
+          "message" => "Surrounding space missing for operator `=`.",
+          "range" => { "start" => { "line" => 2, "character" => 4 },
+                       "end" => { "line" => 2, "character" => 5 } },
+          "data" => { "correctable" => true } },
+        { "source" => "Prism",
+          "severity" => 1,
+          "message" => "unexpected end-of-input",
+          "range" => { "start" => { "line" => 9, "character" => 0 },
+                       "end" => { "line" => 9, "character" => 3 } } }
+      ] }
     when "fake/syncLog"
       sync_log
     end

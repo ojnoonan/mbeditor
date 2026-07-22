@@ -34,7 +34,7 @@ module Mbeditor
 
     def definition_request(content: "def x\nend\n", path: "app.rb")
       client.request_with_document("textDocument/definition", File.join(@root, path), content,
-                                   position: { line: 0, character: 4 })
+                                   { position: { line: 0, character: 4 } })
     end
 
     test "handshake completes and a definition request round-trips" do
@@ -46,25 +46,39 @@ module Mbeditor
       assert_equal 4, result.first.dig("range", "start", "line")
     end
 
+    test "a positionless diagnostics request round-trips a full document report" do
+      result = client.request_with_document("textDocument/diagnostic", File.join(@root, "app.rb"), "x=1\n", {})
+
+      assert_equal "full", result["kind"]
+      assert_equal 2, result["items"].length
+      assert_equal "RuboCop", result["items"].first["source"]
+      assert_equal true, result["items"].first.dig("data", "correctable")
+    end
+
     test "multi-byte UTF-8 responses are framed by byte length" do
       result = client.request_with_document("textDocument/hover", File.join(@root, "app.rb"), "x = 1\n",
-                                            position: { line: 0, character: 0 })
+                                            { position: { line: 0, character: 0 } })
 
       assert_includes result.dig("contents", "value"), "snowman ☃"
     end
 
-    test "documents are opened once and re-sent as full-text changes with version bumps" do
+    # ruby-lsp only supports INCREMENTAL sync — a rangeless full-text
+    # didChange raises inside its Document#push_edits and leaves the server
+    # holding stale content. Changed buffers must therefore be re-opened.
+    test "an unchanged buffer is not re-synced and a changed one is re-opened" do
       definition_request(content: "v1\n")
-      definition_request(content: "v1\n") # unchanged — no didChange
-      definition_request(content: "v2\n") # changed — didChange v2
+      definition_request(content: "v1\n") # unchanged — no traffic
+      definition_request(content: "v2\n") # changed — close + re-open at v2
 
       log = client.request("fake/syncLog", nil)
       opens   = log.select { |e| e["type"] == "open" }
+      closes  = log.select { |e| e["type"] == "close" }
       changes = log.select { |e| e["type"] == "change" }
-      assert_equal 1, opens.length
-      assert_equal 1, opens.first["version"]
-      assert_equal 1, changes.length
-      assert_equal 2, changes.first["version"]
+
+      assert_equal 2, opens.length, "one initial open plus one re-open after the edit"
+      assert_equal [1, 2], opens.map { |o| o["version"] }
+      assert_equal 1, closes.length, "the stale copy is closed before re-opening"
+      assert_equal [], changes, "didChange is never used — ruby-lsp rejects rangeless edits"
     end
 
     test "a slow response raises TimeoutError and the process survives for later requests" do
@@ -74,7 +88,7 @@ module Mbeditor
 
       assert_raises(RubyLspClient::TimeoutError) do
         client.request_with_document("textDocument/definition", File.join(@root, "app.rb"), "x\n",
-                                     position: { line: 0, character: 0 })
+                                     { position: { line: 0, character: 0 } })
       end
 
       result = client.request("textDocument/hover", { textDocument: { uri: "file://#{@root}/app.rb" },
@@ -121,7 +135,7 @@ module Mbeditor
       results = 4.times.map do |i|
         Thread.new do
           client.request_with_document("textDocument/definition", File.join(@root, "file#{i}.rb"), "x#{i}\n",
-                                       position: { line: 0, character: 0 })
+                                       { position: { line: 0, character: 0 } })
         end
       end.map(&:value)
 

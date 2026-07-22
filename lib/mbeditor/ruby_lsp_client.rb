@@ -87,13 +87,15 @@ module Mbeditor
     # Syncs the document (didOpen / full-text didChange) and issues a request
     # against it under one mutex, so concurrent Puma threads can't interleave
     # a positional request with a stale document.
-    def request_with_document(method, path, content, params)
+    # +params+ is an explicit hash (not keywords) so it can't collide with the
+    # +timeout:+ keyword.
+    def request_with_document(method, path, content, params = {}, timeout: nil)
       raise NotReadyError, "ruby-lsp is not running" unless ready?
 
       uri = "file://#{path}"
       @doc_mutex.synchronize do
         sync_document(uri, content)
-        request(method, params.merge(textDocument: { uri: uri }))
+        request(method, params.merge(textDocument: { uri: uri }), timeout: timeout)
       end
     end
 
@@ -185,7 +187,8 @@ module Mbeditor
         capabilities: {
           textDocument: {
             synchronization: { didSave: false },
-            definition: {}, hover: {}, completion: {}
+            definition: {}, hover: {}, completion: {},
+            diagnostic: { dynamicRegistration: false }
           }
         },
         initializationOptions: {}
@@ -334,23 +337,29 @@ module Mbeditor
 
     # ── document sync ──────────────────────────────────────────────────────
 
+    # Sends the buffer's current contents to the server.
+    #
+    # ruby-lsp advertises TextDocumentSyncKind::INCREMENTAL and its
+    # Document#push_edits dereferences `edit[:range]` unconditionally, so a
+    # rangeless full-text didChange raises inside the server and the document
+    # silently keeps its previous contents. Rather than compute incremental
+    # ranges, re-open the document: didClose + didOpen replaces the server's
+    # copy wholesale and is guaranteed correct for unsaved buffers.
     def sync_document(uri, content)
       digest = Digest::SHA1.hexdigest(content)
       doc = @docs[uri]
-      if doc.nil?
-        write_message({ jsonrpc: "2.0", method: "textDocument/didOpen", params: {
-          textDocument: { uri: uri, languageId: "ruby", version: 1, text: content }
+      return if doc && doc[:digest] == digest
+
+      version = doc ? doc[:version] + 1 : 1
+      if doc
+        write_message({ jsonrpc: "2.0", method: "textDocument/didClose", params: {
+          textDocument: { uri: uri }
         } })
-        @docs[uri] = { version: 1, digest: digest }
-      elsif doc[:digest] != digest
-        version = doc[:version] + 1
-        # One rangeless change event = full-document sync.
-        write_message({ jsonrpc: "2.0", method: "textDocument/didChange", params: {
-          textDocument: { uri: uri, version: version },
-          contentChanges: [{ text: content }]
-        } })
-        @docs[uri] = { version: version, digest: digest }
       end
+      write_message({ jsonrpc: "2.0", method: "textDocument/didOpen", params: {
+        textDocument: { uri: uri, languageId: "ruby", version: version, text: content }
+      } })
+      @docs[uri] = { version: version, digest: digest }
     end
   end
 end

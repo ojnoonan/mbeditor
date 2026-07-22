@@ -728,7 +728,26 @@ var MbeditorApp = function MbeditorApp() {
       EditorStore.setStatus('Linting...', 'info');
     }
 
-    return FileService.lintFile(tab.path, tab.content).then(function (res) {
+    // ruby-lsp answers diagnostics for Ruby files when it's available: same
+    // markers, plus Prism syntax errors, without a per-keystroke rubocop boot.
+    // Anything short of a usable answer falls through to the HTTP lint for
+    // this call, so behaviour without ruby-lsp is unchanged.
+    var lintRequest;
+    if (window.MBEDITOR_RUBY_LSP_AVAILABLE && isRubyPath(tab.path) && FileService.lspDiagnostics) {
+      lintRequest = FileService.lspDiagnostics(tab.path, tab.content).then(function (res) {
+        if (res && res.markers && !res.fallback && !res.error) return res;
+        return FileService.lintFile(tab.path, tab.content);
+      })["catch"](function (err) {
+        if (err && err.response && err.response.status === 422) {
+          window.MBEDITOR_RUBY_LSP_AVAILABLE = false;
+        }
+        return FileService.lintFile(tab.path, tab.content);
+      });
+    } else {
+      lintRequest = FileService.lintFile(tab.path, tab.content);
+    }
+
+    return lintRequest.then(function (res) {
       var nextMarkers = res.markers || [];
       applyMarkersForTab(paneId, tab.id, nextMarkers);
 
