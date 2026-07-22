@@ -47,6 +47,10 @@ module Mbeditor
       File.open(path, File::RDWR | File::CREAT) do |f|
         lock_exclusive!(f)
         existing = f.size > 0 ? JSON.parse(f.read) : {}
+        # Auto-save fires on a timer even with no changes; skip the full-file
+        # rewrite when this branch's entry is already identical.
+        break if existing[branch] == JSON.parse(payload_json)
+
         existing[branch] = state
         f.truncate(0)
         f.rewind

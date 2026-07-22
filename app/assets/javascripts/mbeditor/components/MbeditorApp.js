@@ -326,6 +326,11 @@ var MbeditorApp = function MbeditorApp() {
   var sidebarCollapsed = _useStateSC2[0];
   var setSidebarCollapsed = _useStateSC2[1];
 
+  // Ref mirrors for use inside long-lived event handlers registered with
+  // empty-dependency effects (live search refresh on files_changed).
+  var searchPanelVisibleRef = useRef(false);
+  searchPanelVisibleRef.current = !sidebarCollapsed && activeSidebarTab === 'search';
+
   var _useStateRFMap = useState({});
   var _useStateRFMap2 = _slicedToArray(_useStateRFMap, 2);
   var railsFilesMap = _useStateRFMap2[0];
@@ -1339,10 +1344,33 @@ var MbeditorApp = function MbeditorApp() {
     if (offers.length > 0) setDraftRestoreOffer(offers);
   }, [serverOnline]);
 
+  // Live search-result refresh: when a save/rename/delete broadcast names the
+  // changed files and the search panel is showing results, re-scan just those
+  // files and splice their rows in place. Debounced so keystroke-saves don't
+  // spam single-file scans; paths accumulate across the debounce window.
+  var _pendingSearchRefreshPaths = useRef(new Set());
+  var _flushSearchRefresh = useRef(window._.debounce(function () {
+    var q = searchQueryRef.current;
+    var paths = Array.from(_pendingSearchRefreshPaths.current);
+    _pendingSearchRefreshPaths.current.clear();
+    if (!q || !searchPanelVisibleRef.current || paths.length === 0) return;
+    var opts = { regex: searchUseRegexRef.current, matchCase: searchMatchCaseRef.current, wholeWord: searchWholeWordRef.current };
+    paths.reduce(function (chain, p) {
+      return chain.then(function () {
+        return SearchService.refreshFile(q, p, opts).then(function (delta) {
+          var diff = delta.added - delta.removed;
+          if (diff !== 0) {
+            setSearchTotalCount(function (prev) { return Math.max(0, (prev || 0) + diff); });
+          }
+        });
+      });
+    }, Promise.resolve());
+  }, 2000)).current;
+
   // WebSocket push — when the server broadcasts files_changed, refresh the tree
   // and git status immediately (same work as the 10s poll below does).
   useEffect(function () {
-    function handleFilesChanged() {
+    function handleFilesChanged(payload) {
       if (document.hidden) return;
       GitService.fetchStatus()["catch"](function () {});
       FileService.getTree().then(function (data) {
@@ -1354,6 +1382,10 @@ var MbeditorApp = function MbeditorApp() {
         });
         checkOpenTabsForExternalChanges();
       })["catch"](function () {});
+      if (payload && payload.paths && searchQueryRef.current && searchPanelVisibleRef.current) {
+        payload.paths.forEach(function (p) { _pendingSearchRefreshPaths.current.add(p); });
+        _flushSearchRefresh();
+      }
     }
     WebSocketService.onFilesChanged(handleFilesChanged);
     return function () { WebSocketService.offFilesChanged(handleFilesChanged); };

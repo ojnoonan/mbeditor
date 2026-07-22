@@ -59,6 +59,7 @@ module Mbeditor
       # Exposed for tests.
       def clear_cache!
         @mutex.synchronize { @file_cache.clear; @cache_loaded = false }
+        @last_evict_at = nil
         path = @cache_path.to_s
         File.delete(path) if !path.empty? && File.exist?(path)
       rescue StandardError
@@ -266,11 +267,20 @@ module Mbeditor
     private
 
     # Remove cache entries for files that no longer exist on disk.
+    # Throttled: stat()ing every cached path on every definition lookup grows
+    # with workspace size, so run at most once per EVICT_INTERVAL.
+    EVICT_INTERVAL = 30 # seconds
+
     def evict_deleted_cache_entries
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       stale_keys = @shared_mutex.synchronize do
+        last = self.class.instance_variable_get(:@last_evict_at)
+        next nil if last && (now - last) < EVICT_INTERVAL
+
+        self.class.instance_variable_set(:@last_evict_at, now)
         @shared_cache.keys.select { |p| !File.exist?(p) }
       end
-      return if stale_keys.empty?
+      return if stale_keys.nil? || stale_keys.empty?
 
       @shared_mutex.synchronize { stale_keys.each { |k| @shared_cache.delete(k) } }
       @new_entries = true

@@ -19,17 +19,14 @@ module Mbeditor
     end
 
     def with_rg_available(value)
-      original = SearchReplaceService::RG_AVAILABLE
-      $VERBOSE = nil
-      SearchReplaceService.send(:remove_const, :RG_AVAILABLE)
-      SearchReplaceService.const_set(:RG_AVAILABLE, value)
-      $VERBOSE = true
+      singleton = class << SearchReplaceService; self; end
+      singleton.alias_method :__orig_rg_available?, :rg_available?
+      SearchReplaceService.define_singleton_method(:rg_available?) { value }
       yield
     ensure
-      $VERBOSE = nil
-      SearchReplaceService.send(:remove_const, :RG_AVAILABLE)
-      SearchReplaceService.const_set(:RG_AVAILABLE, original)
-      $VERBOSE = true
+      singleton.remove_method :rg_available?
+      singleton.alias_method :rg_available?, :__orig_rg_available?
+      singleton.remove_method :__orig_rg_available?
     end
 
     def search(query, **opts)
@@ -369,6 +366,168 @@ module Mbeditor
       assert_equal "app/models/user.rb", result[:file]
       assert_equal 1, result[:line]
       assert_includes result[:text], "User"
+    end
+
+    # ---------------------------------------------------------------------------
+    # rg availability re-probe
+    # ---------------------------------------------------------------------------
+
+    test "rg_available? re-probes after the TTL expires" do
+      singleton = class << SearchReplaceService; self; end
+      probes = 0
+      SearchReplaceService.define_singleton_method(:system) { |*| probes += 1; false }
+      SearchReplaceService.instance_variable_set(:@rg_checked_at, nil)
+
+      SearchReplaceService.rg_available?
+      SearchReplaceService.rg_available?
+      assert_equal 1, probes, "second call within TTL must not re-probe"
+
+      expired = Process.clock_gettime(Process::CLOCK_MONOTONIC) - SearchReplaceService::RG_PROBE_TTL - 1
+      SearchReplaceService.instance_variable_set(:@rg_checked_at, expired)
+      SearchReplaceService.rg_available?
+      assert_equal 2, probes, "expired TTL must trigger a re-probe"
+    ensure
+      singleton.remove_method :system
+      SearchReplaceService.instance_variable_set(:@rg_checked_at, nil)
+    end
+
+    # ---------------------------------------------------------------------------
+    # git grep tier
+    # ---------------------------------------------------------------------------
+
+    test "git grep tier is used in a git repo when rg is unavailable and finds untracked files" do
+      system("git", "-C", @workspace, "init", "-q", exception: true)
+      write_file("app/models/user.rb", "class User\nend\n")
+
+      with_rg_available(false) do
+        env, args = SearchReplaceService.send(:build_command, :git, @workspace, "User",
+                                              use_regex: false, match_case: true, whole_word: false,
+                                              excluded_paths: [], paths: nil)
+        assert_equal "git", args.first
+        assert_equal "C", env["LC_ALL"]
+
+        results = search("User")
+        assert_equal 1, results.length
+        assert_equal "app/models/user.rb", results.first[:file]
+        assert_equal 1, results.first[:line]
+      end
+    end
+
+    test "grep tier command uses LC_ALL=C, -I, and drops slashed exclude-dirs" do
+      env, args = SearchReplaceService.send(:build_command, :grep, @workspace, "x",
+                                            use_regex: false, match_case: false, whole_word: false,
+                                            excluded_paths: %w[node_modules vendor/bundle], paths: nil)
+      assert_equal "C", env["LC_ALL"]
+      assert_includes args, "-I"
+      assert_includes args, "-i"
+      assert_includes args, "--exclude-dir=node_modules"
+      assert_not_includes args, "--exclude-dir=vendor/bundle"
+    end
+
+    # ---------------------------------------------------------------------------
+    # search_page — single scan, cached pagination, totals
+    # ---------------------------------------------------------------------------
+
+    test "search_page reports exact total_count and pages from one cached scan" do
+      write_file("many.rb", (1..20).map { |i| "match_token_#{i}" }.join("\n"))
+
+      page1 = SearchReplaceService.search_page(@workspace, "match_token", offset: 0, limit: 5,
+                                               use_regex: false, match_case: true, whole_word: false, excluded_paths: [])
+      assert_equal 5, page1[:results].length
+      assert_equal 20, page1[:total_count]
+      assert page1[:has_more]
+      assert_equal false, page1[:partial]
+
+      # Second page must come from the cache — no new subprocess.
+      singleton = class << SearchReplaceService; self; end
+      singleton.alias_method :__orig_scan, :scan
+      SearchReplaceService.define_singleton_method(:scan) { |*| raise "scan must not run for a cached page" }
+      begin
+        page2 = SearchReplaceService.search_page(@workspace, "match_token", offset: 5, limit: 5,
+                                                 use_regex: false, match_case: true, whole_word: false, excluded_paths: [])
+        assert_equal 5, page2[:results].length
+        assert_equal 20, page2[:total_count]
+      ensure
+        singleton.remove_method :scan
+        singleton.alias_method :scan, :__orig_scan
+        singleton.remove_method :__orig_scan
+      end
+    ensure
+      SearchReplaceService.invalidate_cache(@workspace)
+    end
+
+    test "search_page omits total_count when the result cap truncates the scan" do
+      write_file("many.rb", (1..10).map { |i| "capped_token_#{i}" }.join("\n"))
+
+      original = SearchReplaceService::MAX_RESULTS
+      $VERBOSE = nil
+      SearchReplaceService.send(:remove_const, :MAX_RESULTS)
+      SearchReplaceService.const_set(:MAX_RESULTS, 5)
+      $VERBOSE = true
+
+      page = SearchReplaceService.search_page(@workspace, "capped_token", offset: 0, limit: 3,
+                                              use_regex: false, match_case: true, whole_word: false, excluded_paths: [])
+      assert_equal 3, page[:results].length
+      assert_nil page[:total_count]
+      assert page[:partial]
+    ensure
+      $VERBOSE = nil
+      SearchReplaceService.send(:remove_const, :MAX_RESULTS)
+      SearchReplaceService.const_set(:MAX_RESULTS, original)
+      $VERBOSE = true
+      SearchReplaceService.invalidate_cache(@workspace)
+    end
+
+    test "invalidate_cache forces the next search to re-scan" do
+      write_file("app.rb", "CACHE_NEEDLE\n")
+      first = SearchReplaceService.search_page(@workspace, "CACHE_NEEDLE", offset: 0, limit: 10,
+                                               use_regex: false, match_case: true, whole_word: false, excluded_paths: [])
+      assert_equal 1, first[:total_count]
+
+      write_file("app2.rb", "CACHE_NEEDLE\n")
+      SearchReplaceService.invalidate_cache(@workspace)
+      second = SearchReplaceService.search_page(@workspace, "CACHE_NEEDLE", offset: 0, limit: 10,
+                                                use_regex: false, match_case: true, whole_word: false, excluded_paths: [])
+      assert_equal 2, second[:total_count]
+    ensure
+      SearchReplaceService.invalidate_cache(@workspace)
+    end
+
+    # ---------------------------------------------------------------------------
+    # Supersede — a new search kills the previous subprocess for the workspace
+    # ---------------------------------------------------------------------------
+
+    test "registering a new search terminates the previous one" do
+      old_pid = Process.spawn("sleep", "30")
+      SearchReplaceService.send(:register_search, @workspace, old_pid)
+
+      new_pid = Process.spawn("sleep", "30")
+      SearchReplaceService.send(:register_search, @workspace, new_pid)
+
+      Timeout.timeout(5) { Process.wait(old_pid) }
+      assert_equal 15, Process.last_status.termsig, "old search should die from SIGTERM"
+    ensure
+      begin
+        Process.kill("KILL", new_pid)
+        Process.wait(new_pid)
+      rescue StandardError
+        nil
+      end
+      SearchReplaceService.send(:clear_search, @workspace, new_pid)
+    end
+
+    # ---------------------------------------------------------------------------
+    # Single-file scoped search (live refresh)
+    # ---------------------------------------------------------------------------
+
+    test "search with paths: restricts the scan to those files" do
+      write_file("a.rb", "SCOPED_NEEDLE\n")
+      write_file("b.rb", "SCOPED_NEEDLE\n")
+
+      results = search("SCOPED_NEEDLE", paths: [File.join(@workspace, "a.rb")])
+
+      assert_equal 1, results.length
+      assert_equal "a.rb", results.first[:file]
     end
   end
 end

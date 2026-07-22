@@ -906,11 +906,11 @@ module Mbeditor
       end
     end
 
-    test "search omits total_count on subsequent pages" do
+    test "search includes total_count on subsequent pages (served from result cache)" do
       get "/mbeditor/search", params: { q: "class", offset: 50 }
       assert_response :ok
       assert_kind_of Hash, json
-      assert_not json.key?("total_count"), "offset>0 response must not include total_count"
+      assert json.key?("total_count"), "paged response should include total_count from the cached full result set"
     end
 
     test "search fallback excludes nested path without excluding similarly named directories" do
@@ -920,13 +920,12 @@ module Mbeditor
       File.write(File.join(@workspace, "app", "assets", "site.css"), "/* NEEDLE_TOKEN */\n")
       File.write(File.join(@workspace, "public", "assets", "bundle.css"), "/* NEEDLE_TOKEN */\n")
 
+      original_excluded = Mbeditor.configuration.excluded_paths
       Mbeditor.configure { |c| c.excluded_paths = %w[.git tmp log public/assets] }
 
-      original_rg_available = Mbeditor::SearchReplaceService::RG_AVAILABLE
-      $VERBOSE = nil
-      Mbeditor::SearchReplaceService.send(:remove_const, :RG_AVAILABLE)
-      Mbeditor::SearchReplaceService.const_set(:RG_AVAILABLE, false)
-      $VERBOSE = true
+      singleton = class << Mbeditor::SearchReplaceService; self; end
+      singleton.alias_method :__orig_rg_available?, :rg_available?
+      Mbeditor::SearchReplaceService.define_singleton_method(:rg_available?) { false }
 
       get "/mbeditor/search", params: { q: "NEEDLE_TOKEN" }
       assert_response :ok
@@ -934,13 +933,13 @@ module Mbeditor
       files = json.fetch("results", []).map { |row| row["file"] }
       assert_includes files, "app/assets/site.css"
       assert_not_includes files, "public/assets/bundle.css"
-      assert json.key?("total_count"), "grep fallback must include total_count when thread completes in time"
+      assert json.key?("total_count"), "grep fallback must include total_count"
       assert json["total_count"] >= 1, "grep total_count must reflect at least the one matched file"
     ensure
-      $VERBOSE = nil
-      Mbeditor::SearchReplaceService.send(:remove_const, :RG_AVAILABLE)
-      Mbeditor::SearchReplaceService.const_set(:RG_AVAILABLE, original_rg_available)
-      $VERBOSE = true
+      Mbeditor.configure { |c| c.excluded_paths = original_excluded }
+      singleton.remove_method :rg_available?
+      singleton.alias_method :rg_available?, :__orig_rg_available?
+      singleton.remove_method :__orig_rg_available?
     end
 
     test 'search accepts query of exactly 500 characters' do

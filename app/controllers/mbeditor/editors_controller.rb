@@ -17,6 +17,30 @@ module Mbeditor
     IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
     helper_method :mbeditor_base_path
 
+    RUBY_DEFS_WARM_MUTEX = Mutex.new
+    TOTAL_LINES_CACHE_MAX = 50
+    TOTAL_LINES_MUTEX = Mutex.new
+
+    class << self
+      # Small (path, mtime) => total-line-count cache so windowed reads of big
+      # files don't re-read the whole file just to report total_lines.
+      def cached_total_lines(path, mtime)
+        TOTAL_LINES_MUTEX.synchronize do
+          entry = (@total_lines_cache ||= {})[path]
+          entry && entry[:mtime] == mtime ? entry[:total] : nil
+        end
+      end
+
+      def store_total_lines(path, mtime, total)
+        TOTAL_LINES_MUTEX.synchronize do
+          cache = (@total_lines_cache ||= {})
+          cache.delete(path)
+          cache[path] = { mtime: mtime, total: total }
+          cache.delete(cache.keys.first) while cache.length > TOTAL_LINES_CACHE_MAX
+        end
+      end
+    end
+
     # GET /mbeditor — renders the IDE shell
     def index
       render layout: "mbeditor/application"
@@ -30,6 +54,7 @@ module Mbeditor
 
     # GET /mbeditor/workspace — metadata about current workspace root
     def workspace
+      warm_ruby_definition_cache
       render json: {
         rootName: workspace_root.basename.to_s,
         rootPath: workspace_root.to_s,
@@ -212,13 +237,22 @@ module Mbeditor
       line_count  = [line_count, 5000].min
 
       if start_line
-        total_bytes = File.size(path)
+        stat = File.stat(path)
+        total_bytes = stat.size
+        cached_total = self.class.cached_total_lines(path, stat.mtime.to_f)
         chunk = []
         total_lines = 0
         File.foreach(path, encoding: "UTF-8", invalid: :replace, undef: :replace) do |line|
           chunk << line if total_lines >= start_line && chunk.length < line_count
           total_lines += 1
+          # Once the requested window is filled and the total is already known
+          # from a prior read of this (path, mtime), skip the rest of the file.
+          if cached_total && chunk.length >= line_count
+            total_lines = cached_total
+            break
+          end
         end
+        self.class.store_total_lines(path, stat.mtime.to_f, total_lines) unless cached_total
         return render json: {
           path:        relative_path(path),
           content:     chunk.join,
@@ -272,7 +306,7 @@ module Mbeditor
       return render json: { error: "Cannot write to this path" }, status: :forbidden if path_blocked_for_operations?(path)
 
       result = FileOperationService.new(workspace_root).save(path, params[:code].to_s)
-      broadcast_files_changed
+      broadcast_files_changed([path])
       render json: result
     rescue FileOperationService::FileTooLargeError
       render_file_too_large(params[:code].to_s.bytesize)
@@ -287,7 +321,7 @@ module Mbeditor
       return render json: { error: "Cannot create file in this path" }, status: :forbidden if path_blocked_for_operations?(path)
 
       result = FileOperationService.new(workspace_root).create_file(path, params[:code].to_s)
-      broadcast_files_changed
+      broadcast_files_changed([path])
       render json: result
     rescue FileOperationService::FileExistsError
       render json: { error: "File already exists" }, status: :unprocessable_content
@@ -320,7 +354,7 @@ module Mbeditor
       return render json: { error: "Cannot rename this path" }, status: :forbidden if path_blocked_for_operations?(old_path) || path_blocked_for_operations?(new_path)
 
       result = FileOperationService.new(workspace_root).rename(old_path, new_path)
-      broadcast_files_changed
+      broadcast_files_changed([old_path, new_path])
       render json: result
     rescue FileOperationService::PathNotFoundError
       render json: { error: "Path not found" }, status: :not_found
@@ -337,7 +371,7 @@ module Mbeditor
       return render json: { error: "Cannot delete this path" }, status: :forbidden if File.exist?(path) && path_blocked_for_operations?(path)
 
       result = FileOperationService.new(workspace_root).destroy_path(path)
-      broadcast_files_changed if result.key?(:type)
+      broadcast_files_changed([path]) if result.key?(:type)
       render json: result
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -465,18 +499,24 @@ module Mbeditor
       return render json: [] if query.blank?
       return render json: { error: "Query too long" }, status: :bad_request if query.length > 500
 
-      # On first page, count total matches in parallel with fetching results.
-      count_thread = offset == 0 ? Thread.new { SearchReplaceService.count(workspace_root, query, use_regex: use_regex, match_case: match_case, whole_word: whole_word, excluded_paths: Mbeditor.configuration.excluded_paths) } : nil
+      # Optional single-file scope, used by the live result refresh after a save.
+      if params[:path].present?
+        full = resolve_path(params[:path])
+        return render json: { error: "Invalid path" }, status: :forbidden unless full
 
-      results   = SearchReplaceService.search(workspace_root, query, limit: needed, use_regex: use_regex, match_case: match_case, whole_word: whole_word, excluded_paths: Mbeditor.configuration.excluded_paths)
-      has_more  = results.length > offset + limit
-      response  = { results: results[offset, limit] || [], has_more: has_more }
-      if count_thread
-        # Give the count thread up to 100 ms; omit total_count when it hasn't finished yet
-        # so the first page is never blocked by the counting subprocess.
-        count_thread.join(0.1)
-        response[:total_count] = count_thread.value unless count_thread.alive?
+        results = SearchReplaceService.search(workspace_root, query, limit: needed,
+                                              use_regex: use_regex, match_case: match_case, whole_word: whole_word,
+                                              excluded_paths: Mbeditor.configuration.excluded_paths, paths: [full])
+        return render json: { results: results, has_more: false }
       end
+
+      # One subprocess per query: the full (capped) result set is collected and
+      # briefly cached, so pagination and the total count come from memory.
+      page = SearchReplaceService.search_page(workspace_root, query, offset: offset, limit: limit,
+                                              use_regex: use_regex, match_case: match_case, whole_word: whole_word,
+                                              excluded_paths: Mbeditor.configuration.excluded_paths)
+      response = { results: page[:results], has_more: page[:has_more], partial: page[:partial] }
+      response[:total_count] = page[:total_count] if page[:total_count]
 
       render json: response
     rescue StandardError => e
@@ -807,9 +847,10 @@ module Mbeditor
       base.to_s
     end
 
-    def broadcast_files_changed
+    def broadcast_files_changed(changed_paths = nil)
       root = workspace_root.to_s
       FileTreeService.invalidate(root)
+      SearchReplaceService.invalidate_cache(root)
       Thread.new do
         GitInfoService.invalidate(root)
       rescue => e
@@ -818,7 +859,10 @@ module Mbeditor
 
       return unless defined?(ActionCable.server)
 
-      ActionCable.server.broadcast("mbeditor_editor", { type: "files_changed" })
+      payload = { type: "files_changed" }
+      rel = Array(changed_paths).compact.map { |p| relative_path(p.to_s) }.reject(&:empty?)
+      payload[:paths] = rel if rel.any?
+      ActionCable.server.broadcast("mbeditor_editor", payload)
     rescue StandardError
       # Never let a broadcast failure affect the HTTP response
     end
@@ -847,7 +891,42 @@ module Mbeditor
       str.match?(EditorStateService::SAFE_BRANCH_NAME) ? str : nil
     end
 
+    # Warm the Ruby definition cache once per process, in the background, so
+    # the first go-to-definition request doesn't pay for a full workspace
+    # Ripper scan on the request thread. Triggered from /workspace (only the
+    # editor UI calls it) rather than engine boot so rake tasks and consoles
+    # never scan.
+    def warm_ruby_definition_cache
+      root = workspace_root.to_s
+      RUBY_DEFS_WARM_MUTEX.synchronize do
+        return if self.class.instance_variable_get(:@ruby_defs_warm_started)
+
+        self.class.instance_variable_set(:@ruby_defs_warm_started, true)
+      end
+      Thread.new do
+        RubyDefinitionService.new(root, nil,
+                                  excluded_paths: Mbeditor.configuration.excluded_paths,
+                                  included_dirs: Mbeditor.configuration.ruby_def_include_dirs).scan_workspace
+      rescue StandardError => e
+        Rails.logger.warn("[mbeditor] ruby definition cache warm failed: #{e}")
+      end
+    end
+
     def action_cable_enabled?
+      # Iterating the host's whole route table is linear in app size and this
+      # runs on every /workspace call — memoize with a short TTL (dev route
+      # reloads shortly after boot are the only staleness window, and the
+      # frontend degrades to polling if the answer was stale-positive).
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      cached = self.class.instance_variable_get(:@action_cable_enabled_cache)
+      return cached[:value] if cached && (now - cached[:ts]) < 60
+
+      value = compute_action_cable_enabled
+      self.class.instance_variable_set(:@action_cable_enabled_cache, { value: value, ts: now })
+      value
+    end
+
+    def compute_action_cable_enabled
       return false unless defined?(ActionCable::Channel::Base)
 
       mount_path = begin
