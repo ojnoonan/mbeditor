@@ -30,7 +30,7 @@ module Mbeditor
     # => { imported: [{path:, name:}], conflicts: [{path:}], errors: [{path:, error:}] }
     def import(entries, on_conflict: :ask)
       mode = on_conflict.to_s.to_sym
-      raise ArgumentError, "unknown on_conflict: #{on_conflict}" unless CONFLICT_MODES.include?(mode)
+      raise ArgumentError, "unknown on_conflict: #{on_conflict.inspect}" unless CONFLICT_MODES.include?(mode)
 
       result = { imported: [], conflicts: [], errors: [] }
       Array(entries).each { |entry| import_entry(entry, mode, result) }
@@ -58,7 +58,7 @@ module Mbeditor
 
     def write(target, io)
       FileUtils.mkdir_p(File.dirname(target))
-      io.rewind if io.respond_to?(:rewind)
+      io.rewind
       File.open(target, "wb") { |f| IO.copy_stream(io, f) }
     end
 

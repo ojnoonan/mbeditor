@@ -6,8 +6,8 @@ require "tmpdir"
 
 module Mbeditor
   class FileImportServiceTest < ActiveSupport::TestCase
-    # The service accepts anything that responds to #read and #rewind, which is
-    # what ActionDispatch::Http::UploadedFile gives us in the controller.
+    # The service requires an io responding to #read and #rewind, which is what
+    # ActionDispatch::Http::UploadedFile gives us in the controller.
     #
     # Already consumed, so the service's io.rewind is load-bearing here —
     # a real ActionDispatch::Http::UploadedFile can arrive mid-stream too.
@@ -83,6 +83,10 @@ module Mbeditor
         assert_raises(ArgumentError) do
           FileImportService.new(dir).import([entry(dir, "a.txt", "x")], on_conflict: :clobber)
         end
+
+        assert_raises(ArgumentError) do
+          FileImportService.new(dir).import([entry(dir, "a.txt", "x")], on_conflict: nil)
+        end
       end
     end
 
@@ -138,6 +142,7 @@ module Mbeditor
         )
 
         assert_equal ["Makefile 2"], result[:imported].map { |e| e[:path] }
+        assert_equal "new", File.read(File.join(dir, "Makefile 2"))
       end
     end
 
