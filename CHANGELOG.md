@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Format on save** — new editor setting (off by default): saving runs
+  RuboCop `-A` for Ruby or Prettier for JS/JSX/JSON/CSS/SCSS/HTML/Markdown
+  before writing, and never blocks the save if the formatter fails.
+- **RuboCop server mode** — lint/quick-fix/format now use `rubocop --server`
+  when the workspace's rubocop supports it (>= 1.31), cutting per-lint latency
+  from seconds (cold boot per request) to ~100ms. `config.rubocop_server =
+  false` restores `--no-server`.
+
+### Fixed
+- **Ruby auto-`end` failed in the most common case** — typing a new
+  `def`/`class`/`if` *above* an existing sibling block: the sibling's `end`
+  (same indentation) was mistaken for the new block's, so Enter inserted no
+  `end`. Same-indent code lines now correctly terminate the scan
+  (`else`/`elsif`/`when`/`rescue`/`ensure` still continue it).
+- Ruby auto-`end` could insert a tab into a spaces-indented file when Monaco's
+  indentation auto-detection misreported the file; the opener line's own
+  indentation style now wins.
+- Tab bar's `+` (new file) button had a full-height, over-wide hover box; now
+  a centred 24px square matching other icon buttons.
+- Title-bar "Search files…" box is now pill-shaped.
+- Source-control panel buttons (`git-header-btn`, `git-action-btn`,
+  `git-section-action-btn` — the latter two previously unstyled) now share the
+  explorer panel's button geometry, radius, and hover treatment.
 - **Workspace-wide JS ambient globals** (`GET /js_globals`) — every top-level
   `var`/`let`/`const`/`function`/`class` declaration and `window.X =`
   assignment across the workspace's JS-family files (incl. `.js.jsx`,

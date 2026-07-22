@@ -91,6 +91,41 @@ module Mbeditor
       Mbeditor.configuration.rubocop_command = nil
     end
 
+    def test_rubocop_server_flag_uses_server_for_modern_rubocop
+      Dir.mktmpdir do |dir|
+        script = File.join(dir, "fake-rubocop")
+        File.write(script, "#!/bin/sh\necho '1.66.1'\nexit 0\n")
+        File.chmod(0o755, script)
+        Mbeditor.configuration.rubocop_command = script
+        Mbeditor.configuration.rubocop_server = true
+
+        assert_equal "--server", AvailabilityProbe.rubocop_server_flag(@workspace)
+      end
+    ensure
+      Mbeditor.configuration.rubocop_command = nil
+      Mbeditor.configuration.rubocop_server = false # test_helper default
+      AvailabilityProbe.reset!
+    end
+
+    def test_rubocop_server_flag_falls_back_for_old_rubocop_and_when_disabled
+      Dir.mktmpdir do |dir|
+        script = File.join(dir, "fake-rubocop")
+        File.write(script, "#!/bin/sh\necho '1.20.0'\nexit 0\n")
+        File.chmod(0o755, script)
+        Mbeditor.configuration.rubocop_command = script
+        Mbeditor.configuration.rubocop_server = true
+
+        assert_equal "--no-server", AvailabilityProbe.rubocop_server_flag(@workspace)
+
+        Mbeditor.configuration.rubocop_server = false
+        assert_equal "--no-server", AvailabilityProbe.rubocop_server_flag(@workspace)
+      end
+    ensure
+      Mbeditor.configuration.rubocop_command = nil
+      Mbeditor.configuration.rubocop_server = false # test_helper default
+      AvailabilityProbe.reset!
+    end
+
     def test_negative_result_is_reprobed_after_ttl
       Dir.mktmpdir do |dir|
         counter = File.join(dir, "count")

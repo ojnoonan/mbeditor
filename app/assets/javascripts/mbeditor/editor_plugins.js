@@ -182,9 +182,13 @@
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  function rubyIndentUnit(model) {
+  function rubyIndentUnit(model, openerIndent) {
+    // Trust the file over the model options: indentation auto-detection can
+    // misreport tabs for files with little existing indentation, which would
+    // insert a stray tab into a spaces file (or vice versa).
+    if (openerIndent && openerIndent.indexOf('\t') !== -1) return '\t';
     var options = model.getOptions ? model.getOptions() : null;
-    if (options && options.insertSpaces === false) {
+    if (!openerIndent && options && options.insertSpaces === false) {
       return '\t';
     }
     var tabSize = options && options.tabSize ? options.tabSize : 4;
@@ -193,7 +197,7 @@
 
   function rubyClosingIndent(model, cursorLineNumber, openerLine) {
     var cursorIndent = leadingWhitespace(model.getLineContent(cursorLineNumber));
-    var indentUnit = rubyIndentUnit(model);
+    var indentUnit = rubyIndentUnit(model, cursorIndent);
 
     if (cursorIndent.length >= indentUnit.length) {
       return cursorIndent.slice(0, cursorIndent.length - indentUnit.length);
@@ -208,6 +212,10 @@
     return RUBY_BLOCK_START.test(line) || RUBY_DO_BLOCK_START.test(trimmed);
   }
 
+  // Keywords that legitimately sit at the SAME indent as the opener while
+  // still belonging to its block (if/else, case/when, begin/rescue...).
+  var RUBY_MID_BLOCK_LINE = /^(else|elsif|when|in|rescue|ensure)\b/;
+
   function hasMatchingRubyEnd(model, openerLineNumber, openerIndent) {
     var lineCount = model.getLineCount();
     var openerIndentLength = openerIndent.length;
@@ -220,9 +228,16 @@
       var lineIndent = leadingWhitespace(line);
       var lineIndentLength = lineIndent.length;
 
-      if (RUBY_END_LINE.test(trimmed)) {
-        if (lineIndentLength === openerIndentLength) return true;
-        if (lineIndentLength < openerIndentLength) return false;
+      // Dedented code: the opener's block ended without an `end` of its own.
+      if (lineIndentLength < openerIndentLength) return false;
+
+      if (lineIndentLength === openerIndentLength) {
+        if (RUBY_END_LINE.test(trimmed)) return true;
+        if (RUBY_MID_BLOCK_LINE.test(trimmed)) continue;
+        // Any other code at the opener's indent (e.g. a SIBLING `def` below
+        // the insertion point) means the `end` found later belongs to that
+        // sibling, not to the opener — the opener has no end yet.
+        return false;
       }
     }
 
@@ -254,7 +269,7 @@
     var context = rubyEnterContext(editor, model);
     if (!context) return false;
 
-    var innerIndent = context.openerIndent + rubyIndentUnit(model);
+    var innerIndent = context.openerIndent + rubyIndentUnit(model, context.openerIndent);
     var insertedText = '\n' + innerIndent;
     if (!context.hasExistingEnd) {
       insertedText += '\n' + context.openerIndent + 'end';

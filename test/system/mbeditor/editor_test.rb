@@ -120,6 +120,46 @@ module Mbeditor
       assert_equal({ "lineNumber" => 3, "column" => 9 }, active_editor_position)
     end
 
+    test "ruby auto-end still inserts end when a sibling method follows below" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "nested_example.rb").click
+      assert_selector ".monaco-editor", wait: 10
+
+      # The everyday case: writing a NEW method above an existing one. The
+      # sibling's `end` (same indent) must not be mistaken for the opener's.
+      page.execute_script(<<~'JS')
+        var editor = window.__mbeditorActiveEditor;
+        editor.setValue(["class Demo", "  def fresh", "", "  def existing", "  end", "end"].join("\n"));
+        editor.getModel().updateOptions({ insertSpaces: true, tabSize: 2 });
+        editor.setPosition({ lineNumber: 2, column: editor.getModel().getLineMaxColumn(2) });
+        editor.focus();
+        window.MbeditorEditorPlugins.runRubyEnter(editor);
+      JS
+
+      expected = "class Demo\n  def fresh\n    \n  end\n\n  def existing\n  end\nend"
+      wait_for_editor_value(expected)
+    end
+
+    test "ruby auto-end skips insertion when the opener already has its own end" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "nested_example.rb").click
+      assert_selector ".monaco-editor", wait: 10
+
+      page.execute_script(<<~'JS')
+        var editor = window.__mbeditorActiveEditor;
+        editor.setValue(["class Demo", "  def has_end", "  end", "end"].join("\n"));
+        editor.getModel().updateOptions({ insertSpaces: true, tabSize: 2 });
+        editor.setPosition({ lineNumber: 2, column: editor.getModel().getLineMaxColumn(2) });
+        editor.focus();
+        window.MbeditorEditorPlugins.runRubyEnter(editor);
+      JS
+
+      expected = "class Demo\n  def has_end\n    \n  end\nend"
+      wait_for_editor_value(expected)
+    end
+
     test "jsx auto-close inserts matching closing tag and preserves inner cursor position" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10

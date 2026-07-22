@@ -69,10 +69,10 @@ html, body, #mbeditor-root {
   margin: 0 auto;
   min-width: 220px;
   max-width: 340px;
-  padding: 3px 10px;
+  padding: 3px 12px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 4px;
+  border-radius: 999px; /* pill */
   color: #aaa;
   font-size: 12px;
   cursor: pointer;
@@ -347,11 +347,14 @@ html, body, #mbeditor-root {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 30px;
-  padding: 0 8px;
+  width: 24px;
+  height: 24px;
+  margin: 0 4px;
+  border-radius: 4px;
   color: #888;
   cursor: pointer;
   flex: 0 0 auto;
+  align-self: center;
 }
 .tab-new-file-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
 
@@ -1561,18 +1564,32 @@ html, body, #mbeditor-root {
   gap: 4px;
 }
 
-.git-header-btn {
-  background: none;
-  border: none;
+/* Source-control buttons share the explorer panel's .project-action-btn
+   geometry so the two sidebars read as one system. */
+.git-header-btn,
+.git-section-action-btn,
+.git-action-btn {
+  box-sizing: border-box;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--ide-text-muted);
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  padding: 3px 5px;
-  border-radius: 3px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
-.git-header-btn:hover { background: var(--ide-hover-bg); color: var(--ide-text); }
+.git-action-btn { width: 20px; min-width: 20px; height: 20px; font-size: 11px; } /* fits inside file rows */
+.git-header-btn:hover:not(:disabled),
+.git-section-action-btn:hover:not(:disabled),
+.git-action-btn:hover:not(:disabled) { background: var(--ide-hover-bg); color: var(--ide-text); }
 
 .git-metadata {
   display: grid;
@@ -2578,10 +2595,12 @@ button:not(.pico-btn) { margin-bottom: 0; }
   border-radius: 0;
 }
 /* Re-apply border-radius for buttons that intentionally need it */
-.ide-shell .project-action-btn { border-radius: 4px; }
-.ide-shell .ide-icon-btn,
+.ide-shell .ide-titlebar-search { border-radius: 999px; } /* pill */
+.ide-shell .project-action-btn,
 .ide-shell .git-header-btn,
-.ide-shell .git-action-btn,
+.ide-shell .git-section-action-btn,
+.ide-shell .git-action-btn { border-radius: 4px; } /* matched to explorer buttons */
+.ide-shell .ide-icon-btn,
 .ide-shell .tab-close,
 .ide-shell .search-clear-btn,
 .ide-shell .quick-open-clear-btn,

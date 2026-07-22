@@ -52,6 +52,24 @@ module Mbeditor
       end
     end
 
+    # "--server" when rubocop supports server mode (>= 1.31) and it isn't
+    # disabled via config, else "--no-server". Server mode keeps a daemon with
+    # the app's cop config loaded, cutting per-lint latency from seconds to
+    # ~100ms; rubocop starts/reuses the daemon automatically.
+    def self.rubocop_server_flag(workspace_root)
+      return "--no-server" unless Mbeditor.configuration.rubocop_server
+
+      key = "rubocop_server:#{Mbeditor.configuration.rubocop_command}"
+      supported = probe_cached(key) do
+        cmd = rubocop_command(workspace_root)
+        # Bounded: a misbehaving rubocop_command must not hang the probe.
+        result = ProcessRunner.call(cmd + ["--version"], timeout: 5)
+        version = result[:stdout].to_s.strip[/\d+(?:\.\d+)+/]
+        result[:exit_status]&.success? && version && Gem::Version.new(version) >= Gem::Version.new("1.31")
+      end
+      supported ? "--server" : "--no-server"
+    end
+
     def self.git(workspace_root)
       key = "git:#{workspace_root}"
       probe_cached(key) do

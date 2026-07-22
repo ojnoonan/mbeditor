@@ -45,6 +45,7 @@ var DEFAULT_EDITOR_PREFS = {
   autoIndent: 'full',
   formatOnPaste: true,
   formatOnType: false,
+  formatOnSave: false,
   quickSuggestions: true,
   wordBasedSuggestions: 'matchingDocuments',
   acceptSuggestionOnEnter: 'on',
@@ -2028,7 +2029,66 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
+  // Format-on-save helper: returns a Promise resolving to the formatted
+  // content, or null when no formatter applies / formatting fails (the save
+  // then proceeds with the original content — saving must never be blocked
+  // by a formatter problem).
+  var _formatContentForSave = function _formatContentForSave(tab) {
+    var isRubyLang = /\.(rb|rake|gemspec)$/.test(tab.path) || /(?:^|\/)(Rakefile|Gemfile)$/.test(tab.path);
+    if (isRubyLang) {
+      if (!rubocopAvailable) return Promise.resolve(null);
+      return FileService.formatFile(tab.path, tab.content)
+        .then(function (res) { return (res && res.content) || null; })
+        ["catch"](function () { return null; });
+    }
+    var ext = tab.path.split('.').pop().toLowerCase();
+    var parserMap = { 'js': 'babel', 'jsx': 'babel', 'json': 'json', 'css': 'css', 'scss': 'scss', 'html': 'html', 'md': 'markdown' };
+    var parserName = parserMap[ext];
+    if (!parserName) return Promise.resolve(null);
+    var run = function () {
+      return window.prettier.format(tab.content, {
+        parser: parserName,
+        plugins: Object.values(window.prettierPlugins),
+        printWidth: editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80,
+        tabWidth: editorPrefs.prettierTabWidth != null ? editorPrefs.prettierTabWidth : 2,
+        useTabs: !!editorPrefs.prettierUseTabs,
+        semi: editorPrefs.prettierSemi !== false,
+        singleQuote: !!editorPrefs.prettierSingleQuote,
+        trailingComma: editorPrefs.prettierTrailingComma || 'all',
+        bracketSpacing: editorPrefs.prettierBracketSpacing !== false
+      })["catch"](function () { return null; });
+    };
+    if (window.prettier && window.prettierPlugins) return run();
+    if (window.loadPrettierPlugins) return window.loadPrettierPlugins().then(run)["catch"](function () { return null; });
+    return Promise.resolve(null);
+  };
+
   var handleSave = function handleSave(paneId, tab) {
+    if (editorPrefs.formatOnSave === true) {
+      EditorStore.setStatus("Formatting " + tab.name + "...", "info");
+      _formatContentForSave(tab).then(function (formatted) {
+        if (formatted != null && formatted !== tab.content) {
+          // Push the formatted text into the tab (externalContentVersion makes
+          // the Monaco model pick it up), then save that content.
+          EditorStore.setState({
+            panes: EditorStore.getState().panes.map(function (p) {
+              if (p.id !== paneId) return p;
+              return _extends({}, p, { tabs: p.tabs.map(function (t) {
+                return t.id === tab.id ? _extends({}, t, { content: formatted, externalContentVersion: (t.externalContentVersion || 0) + 1 }) : t;
+              }) });
+            })
+          });
+          _doSave(paneId, _extends({}, tab, { content: formatted }));
+        } else {
+          _doSave(paneId, tab);
+        }
+      });
+      return;
+    }
+    _doSave(paneId, tab);
+  };
+
+  var _doSave = function _doSave(paneId, tab) {
     setLoading(function (prev) {
       return _extends({}, prev, { save: true });
     });
@@ -4441,6 +4501,16 @@ var MbeditorApp = function MbeditorApp() {
                         className: 'ide-settings-checkbox',
                         checked: editorPrefs.formatOnType === true,
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { formatOnType: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Format the file before every save — RuboCop -A for Ruby, Prettier for JS/JSX/CSS/HTML/Markdown' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Format on save'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: editorPrefs.formatOnSave === true,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { formatOnSave: v }); }); }
                       })
                     ),
                     React.createElement(

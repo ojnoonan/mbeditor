@@ -2,7 +2,7 @@
 
 module Mbeditor
   class Configuration
-    attr_accessor :allowed_environments, :workspace_root, :excluded_paths, :rubocop_command,
+    attr_accessor :allowed_environments, :workspace_root, :excluded_paths, :rubocop_command, :rubocop_server,
                   :redmine_enabled, :redmine_url, :redmine_api_key, :redmine_ticket_source,
                   :test_framework, :test_command, :test_timeout,
                   :authenticate_with, :authentication_cache_ttl,
@@ -16,6 +16,7 @@ module Mbeditor
       @workspace_root = nil
       @excluded_paths = %w[.git tmp log node_modules .bundle coverage vendor/bundle public/assets storage]
       @rubocop_command = "rubocop"
+      @rubocop_server  = true # use rubocop's --server daemon (rubocop >= 1.31) for ~10x faster lint; false forces --no-server
       @redmine_enabled       = false
       @redmine_url           = nil
       @redmine_api_key       = nil

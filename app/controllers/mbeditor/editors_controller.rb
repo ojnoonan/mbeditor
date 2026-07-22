@@ -662,7 +662,7 @@ module Mbeditor
         return render json: { markers: markers }
       end
 
-      cmd = AvailabilityProbe.rubocop_command(workspace_root) + ["--no-server", "--stdin", filename, "--format", "json", "--no-color"]
+      cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "--stdin", filename, "--format", "json", "--no-color"]
       env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
       output = run_with_timeout(env, cmd, stdin_data: code)
 
@@ -723,7 +723,7 @@ module Mbeditor
         f.flush
         tmpfile = f.path
 
-        cmd = AvailabilityProbe.rubocop_command(workspace_root) + ["--no-server", "-A", "--no-color", tmpfile]
+        cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
         _out, _err, status = Open3.capture3(env, *cmd)
 
@@ -826,7 +826,7 @@ module Mbeditor
         f.flush
         tmpfile = f.path
 
-        cmd = AvailabilityProbe.rubocop_command(workspace_root) + ["--no-server", "-A", "--no-color", tmpfile]
+        cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
         _out, _err, status = Open3.capture3(env, *cmd)
         unless status.success? || status.exitstatus == 1
