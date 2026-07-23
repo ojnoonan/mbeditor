@@ -5,23 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.2] - 2026-07-23
-
-### Fixed
-- The Outline system test now asserts the rendered uppercase visibility heading,
-  matching the editor's existing CSS presentation.
-
----
-
-## [0.9.1] - 2026-07-23
-
-### Fixed
-- The release system test now expands the nested `test/models` and `spec/models`
-  folders before selecting its Outline fixtures, matching the file tree's
-  collapsed-by-default behavior in CI.
-
----
-
 ## [0.9.0] - 2026-07-23
 
 ### Added

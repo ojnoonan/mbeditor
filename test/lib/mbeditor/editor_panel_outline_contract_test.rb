@@ -1,11 +1,19 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "mini_racer"
+
+MINI_RACER_AVAILABLE = begin
+  require "mini_racer"
+  true
+rescue LoadError
+  false
+end
 
 module Mbeditor
   class EditorPanelOutlineContractTest < ActiveSupport::TestCase
     def setup
+      skip "MiniRacer is not installed in this compatibility bundle" unless MINI_RACER_AVAILABLE
+
       @context = MiniRacer::Context.new
       @context.eval(<<~JAVASCRIPT)
         var window = this;
