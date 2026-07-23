@@ -153,7 +153,7 @@ module Mbeditor
       assert_selector ".monaco-editor", wait: 10
       assert_selector "button[title='Jump to Outline']", text: "Outline"
       find("button[title='Jump to Outline']").click
-      assert_selector ".ide-methods-dropdown-visibility", text: "private"
+      assert_selector ".ide-methods-dropdown-visibility", text: "PRIVATE"
       assert_selector ".ide-methods-dropdown-item[data-outline-kind='method']", text: "helper"
       assert_selector ".ide-methods-dropdown-item[data-outline-kind='test'][data-outline-depth='0']", text: "is valid"
 
