@@ -1,11 +1,18 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "mini_racer"
+
+begin
+  require "mini_racer"
+rescue LoadError
+  # This parser suite skips in minimal compatibility bundles.
+end
 
 module Mbeditor
   class RubyOutlineTest < ActiveSupport::TestCase
     def setup
+      skip "MiniRacer is not installed in this compatibility bundle" unless defined?(::MiniRacer)
+
       @context = MiniRacer::Context.new
       @context.eval("var window = this;")
       @context.eval(File.read(Mbeditor::Engine.root.join("app/assets/javascripts/mbeditor/ruby_outline.js")))

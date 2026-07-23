@@ -2,17 +2,16 @@
 
 require "test_helper"
 
-MINI_RACER_AVAILABLE = begin
+begin
   require "mini_racer"
-  true
 rescue LoadError
-  false
+  # This optional contract suite skips in minimal compatibility bundles.
 end
 
 module Mbeditor
   class EditorPanelOutlineContractTest < ActiveSupport::TestCase
     def setup
-      skip "MiniRacer is not installed in this compatibility bundle" unless MINI_RACER_AVAILABLE
+      skip "MiniRacer is not installed in this compatibility bundle" unless defined?(::MiniRacer)
 
       @context = MiniRacer::Context.new
       @context.eval(<<~JAVASCRIPT)
