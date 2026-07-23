@@ -161,11 +161,11 @@ module Mbeditor
       # Native buttons synthesize click for Enter and Space; the component
       # intentionally has no custom keyboard activation path.
       find("button.ide-methods-dropdown-item[data-outline-kind='method']", text: "helper").send_keys(:enter)
-      assert_equal({ "lineNumber" => 3, "column" => 1 }, active_editor_position)
+      wait_for_editor_position({ "lineNumber" => 3, "column" => 1 })
 
       find("button[title='Jump to Outline']").click
       find("button.ide-methods-dropdown-item[data-outline-kind='test']", text: "is valid").send_keys(:space)
-      assert_equal({ "lineNumber" => 6, "column" => 1 }, active_editor_position)
+      wait_for_editor_position({ "lineNumber" => 6, "column" => 1 })
 
       page.execute_script(<<~'JS')
         window.__mbeditorActiveEditor.setValue([
@@ -797,6 +797,17 @@ module Mbeditor
         value = active_editor_value
         return if value == expected
         raise "Timed out waiting for editor value to become #{expected.inspect}; got #{value.inspect}" if Time.now >= deadline
+
+        sleep 0.05
+      end
+    end
+
+    def wait_for_editor_position(expected, timeout: Capybara.default_max_wait_time)
+      deadline = Time.now + timeout
+      loop do
+        position = active_editor_position
+        return if position == expected
+        raise "Timed out waiting for editor position to become #{expected.inspect}; got #{position.inspect}" if Time.now >= deadline
 
         sleep 0.05
       end
