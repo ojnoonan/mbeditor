@@ -2076,6 +2076,66 @@ module Mbeditor
       refute File.exist?(File.join(@workspace, "notes.txt"))
     end
 
+    test "import rejects a batch whose files and paths lengths differ" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("a.txt", "a")],
+        paths: ["a.txt", "b.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :unprocessable_content
+      assert_match(/same length/, json["error"])
+    end
+
+    test "import rejects an unknown conflict mode" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("a.txt", "a")],
+        paths: ["a.txt"],
+        on_conflict: "clobber"
+      }
+
+      assert_response :unprocessable_content
+      assert_match(/on_conflict/, json["error"])
+      refute File.exist?(File.join(@workspace, "a.txt"))
+    end
+
+    # 101 file parts stays under Rack's multipart_part_limit of 128, so the
+    # request reaches the action and the guard answers with a real 422. Raising
+    # IMPORT_MAX_FILES to 128 or beyond would make this a 500 instead.
+    test "import rejects a batch over the file count limit" do
+      count = EditorsController::IMPORT_MAX_FILES + 1
+      files = Array.new(count) { |i| uploaded("f#{i}.txt", "x") }
+      paths = Array.new(count) { |i| "f#{i}.txt" }
+
+      post "/mbeditor/import", params: { files: files, paths: paths, on_conflict: "ask" }
+
+      assert_response :unprocessable_content
+      assert_match(/Too many files/, json["error"])
+      refute File.exist?(File.join(@workspace, "f0.txt"))
+    end
+
+    test "import rejects a batch over the total size limit" do
+      # Two files of 30 MB each clear the per-file 5 MB check only because the
+      # batch guard runs first — this asserts the batch guard, not the entry one.
+      chunk = "x" * (30 * 1024 * 1024)
+
+      post "/mbeditor/import", params: {
+        files: [uploaded("big1.bin", chunk), uploaded("big2.bin", chunk)],
+        paths: ["big1.bin", "big2.bin"],
+        on_conflict: "ask"
+      }
+
+      assert_response :unprocessable_content
+      assert_match(/too large/i, json["error"])
+    end
+
+    test "import rejects an empty batch" do
+      post "/mbeditor/import", params: { on_conflict: "ask" }
+
+      assert_response :unprocessable_content
+      assert_match(/Nothing to import/, json["error"])
+    end
+
     private
 
     def json
