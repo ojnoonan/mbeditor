@@ -51,7 +51,11 @@ module Mbeditor
       return nil unless real.start_with?("#{real_root}/") || real == real_root
 
       full
-    rescue Errno::EACCES
+    rescue Errno::EACCES, ArgumentError
+      # ArgumentError: File.expand_path rejects a null byte in the path. Every
+      # caller already treats nil as "refuse this path", so a rejected path
+      # becomes a clean 4xx instead of escaping as a 500 — and in a batch
+      # operation like #import it stays scoped to the one bad entry.
       nil
     end
 

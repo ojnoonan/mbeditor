@@ -21,7 +21,12 @@ module Mbeditor
     RUBY_DEFS_WARM_MUTEX = Mutex.new
     TOTAL_LINES_CACHE_MAX = 50
     TOTAL_LINES_MUTEX = Mutex.new
-    IMPORT_MAX_FILES = 200
+    # Kept below Rack's multipart_part_limit (128 file parts in Rack 3.2), which
+    # is enforced during param parsing — outside the action, where this
+    # controller's rescue cannot turn it into a clean 422. A batch larger than
+    # the Rack limit raises MultipartPartLimitError and surfaces as a 500, so
+    # this guard is only reachable if it trips first.
+    IMPORT_MAX_FILES = 100
     IMPORT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
 
     class << self

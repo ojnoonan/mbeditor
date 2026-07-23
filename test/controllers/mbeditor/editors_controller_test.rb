@@ -2047,6 +2047,22 @@ module Mbeditor
       refute File.exist?(File.join(@workspace, "tmp", "cache.txt"))
     end
 
+    # File.expand_path raises ArgumentError on a null byte. Before resolve_path
+    # rescued it, that escaped the per-entry loop and the blanket rescue turned
+    # the whole drop into a 422 — one malformed name losing every good file.
+    test "import isolates a null-byte path to its own entry error" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("good.txt", "kept"), uploaded("weird.txt", "x")],
+        paths: ["good.txt", "we\0ird.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_equal ["good.txt"], json["imported"].map { |e| e["path"] }
+      assert_equal ["we\0ird.txt"], json["errors"].map { |e| e["path"] }
+      assert_equal "kept", File.read(File.join(@workspace, "good.txt"))
+    end
+
     test "import without the client header is forbidden" do
       # Bypass the header-injecting override defined at the top of this class.
       # Going straight to the session skips the copy-back that populates

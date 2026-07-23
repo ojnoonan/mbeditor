@@ -123,9 +123,12 @@ Multipart request. Parameters:
 The action:
 
 1. Rejects the request if `files` and `paths` differ in length.
-2. Enforces batch limits: **200 files** and **50 MB total**. Exceeding either
+2. Enforces batch limits: **100 files** and **50 MB total**. Exceeding either
    returns `422` with a message naming the limit. This keeps an accidental
-   `node_modules` drop from stalling the server.
+   `node_modules` drop from stalling the server. The file count sits below
+   Rack's `multipart_part_limit` (128 file parts), which is enforced during
+   param parsing — a larger batch would raise `MultipartPartLimitError` outside
+   the action and surface as a `500` rather than this `422`.
 3. Runs each `paths[i]` through `resolve_path` and
    `path_blocked_for_operations?`. A path that fails either check becomes an
    `errors` element for that entry; the rest of the batch proceeds.

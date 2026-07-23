@@ -619,7 +619,12 @@ In `lib/mbeditor/route_map.rb`, add after the `post 'create_dir'` line:
 In `app/controllers/mbeditor/editors_controller.rb`, add these constants next to the existing `TOTAL_LINES_CACHE_MAX` constant near the top of the class:
 
 ```ruby
-    IMPORT_MAX_FILES = 200
+    # Kept below Rack's multipart_part_limit (128 file parts in Rack 3.2), which
+    # is enforced during param parsing — outside the action, where this
+    # controller's rescue cannot turn it into a clean 422. A batch larger than
+    # the Rack limit raises MultipartPartLimitError and surfaces as a 500, so
+    # this guard is only reachable if it trips first.
+    IMPORT_MAX_FILES = 100
     IMPORT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
 ```
 
@@ -741,6 +746,9 @@ Append inside the class:
       refute File.exist?(File.join(@workspace, "a.txt"))
     end
 
+    # 101 file parts stays under Rack's multipart_part_limit of 128, so the
+    # request reaches the action and the guard answers with a real 422. Raising
+    # IMPORT_MAX_FILES to 128 or beyond would make this a 500 instead.
     test "import rejects a batch over the file count limit" do
       count = EditorsController::IMPORT_MAX_FILES + 1
       files = Array.new(count) { |i| uploaded("f#{i}.txt", "x") }
@@ -861,8 +869,10 @@ Create `app/assets/javascripts/mbeditor/file_import.js`:
 // back to dataTransfer.files, which is flat: files import, folders vanish.
 var FileImport = (function () {
   // Mirrors EditorsController::IMPORT_MAX_FILES. Trimming client-side means a
-  // stray node_modules drop reports a clear message instead of a 422.
-  var MAX_ENTRIES = 200;
+  // stray node_modules drop reports a clear message instead of a 422 — and
+  // keeps the batch under Rack's 128-file-part multipart limit, which would
+  // otherwise reject the request as a 500 before the server guard can run.
+  var MAX_ENTRIES = 100;
 
   function hasExternalFiles(dataTransfer) {
     if (!dataTransfer || !dataTransfer.types) return false;
