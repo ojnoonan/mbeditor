@@ -100,7 +100,7 @@ module Mbeditor
         end
 
         pattern = build_pattern(query, use_regex: use_regex, match_case: match_case, whole_word: whole_word)
-        matcher = ExclusionMatcher.new(excluded_paths)
+        matcher = ExclusionMatcher.new(excluded_paths, root: workspace_root)
         replaced_count = 0
         files_affected = []
         errors = []
@@ -182,7 +182,7 @@ module Mbeditor
         tier = pick_tier(root)
         env, args = build_command(tier, root, query, use_regex: use_regex, match_case: match_case,
                                   whole_word: whole_word, excluded_paths: excluded_paths, paths: paths)
-        matcher = ExclusionMatcher.new(excluded_paths)
+        matcher = ExclusionMatcher.new(excluded_paths, root: root)
         results = []
         timed_out = false
         timeout_secs = Mbeditor.configuration.search_timeout

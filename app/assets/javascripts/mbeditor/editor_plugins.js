@@ -1028,6 +1028,12 @@
           [/(\bmodule\b)(\s+)([A-Z][\w:]*)/, ['keyword.control.module', '', 'entity.name.class']],
           [/\bmodule\b/, 'keyword.control.module'],
 
+          // Test DSL suites, runnable examples, hooks, and helpers
+          [/\b(describe|context|feature)(?![a-zA-Z0-9_!?=])/, 'keyword.control.test'],
+          [/\b(test|it|specify|example|scenario)(?![a-zA-Z0-9_!?=])/, 'entity.name.function.test'],
+          [/\b(setup|teardown|before|after|around|subject)(?![a-zA-Z0-9_!?=])/, 'support.function.test'],
+          [/\blet!?(?=\s|\()/, 'support.function.test'],
+
           // Language literals
           [/\b(nil|true|false)\b/, 'constant.language'],
           [/\b(self|super)\b/, 'variable.language'],

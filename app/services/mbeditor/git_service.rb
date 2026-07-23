@@ -139,8 +139,8 @@ module Mbeditor
     # Resolve a file path safely within repo_path.  Returns full path string or
     # nil if the path escapes the root.
     #
-    # Resolves symlinks on the nearest existing ancestor of the target so that a
-    # symlink inside the repo cannot escape it, mirroring
+    # Follows symlinks (via SafePath, including dangling ones) so that a symlink
+    # inside the repo cannot escape it, mirroring
     # ApplicationController#resolve_path.  When repo_path is not a real directory
     # (e.g. unit tests with synthetic roots) the symlink check is skipped, since
     # there is nothing on disk to resolve and repo_path is server-controlled.
@@ -151,14 +151,7 @@ module Mbeditor
       full = File.expand_path(relative.to_s, root)
       return nil unless full.start_with?("#{root}/") || full == root
       return full unless File.directory?(root)
-
-      # Walk up to the nearest existing ancestor, then realpath both it and the
-      # root and confirm the resolved target is still inside the resolved root.
-      check = full
-      check = File.dirname(check) until File.exist?(check)
-      real_root = File.realpath(root)
-      real = File.realpath(check)
-      return nil unless real.start_with?("#{real_root}/") || real == real_root
+      return nil unless SafePath.within?(root, full)
 
       full
     rescue Errno::EACCES

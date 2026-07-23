@@ -88,33 +88,44 @@ var EditorPanel = function EditorPanel(_ref) {
   var methodsList = _useState14[0];
   var setMethodsList = _useState14[1];
 
-  var _useState15 = useState(null);
+  var _useState15 = useState(false);
   var _useState16 = _slicedToArray(_useState15, 2);
-  var methodsDropdownPos = _useState16[0];
-  var setMethodsDropdownPos = _useState16[1];
+  var methodsTruncated = _useState16[0];
+  var setMethodsTruncated = _useState16[1];
+
+  var _useState17 = useState(false);
+  var _useState18 = _slicedToArray(_useState17, 2);
+  var methodsUnavailable = _useState18[0];
+  var setMethodsUnavailable = _useState18[1];
+
+  var _useState19 = useState(null);
+  var _useState20 = _slicedToArray(_useState19, 2);
+  var methodsDropdownPos = _useState20[0];
+  var setMethodsDropdownPos = _useState20[1];
 
   var methodsBtnRef = useRef(null);
+  var methodsDropdownRef = useRef(null);
 
   // Local pagination state — initialized from tab props; updated on page navigation
-  var _useState17 = useState(tab.startLine || 0);
-  var _useState18 = _slicedToArray(_useState17, 2);
-  var pageStartLine = _useState18[0];
-  var setPageStartLine = _useState18[1];
-
-  var _useState19 = useState(tab.lineCount || 0);
-  var _useState20 = _slicedToArray(_useState19, 2);
-  var pageLineCount = _useState20[0];
-  var setPageLineCount = _useState20[1];
-
-  var _useState21 = useState(tab.totalLines || 0);
+  var _useState21 = useState(tab.startLine || 0);
   var _useState22 = _slicedToArray(_useState21, 2);
-  var pageTotalLines = _useState22[0];
-  var setPageTotalLines = _useState22[1];
+  var pageStartLine = _useState22[0];
+  var setPageStartLine = _useState22[1];
 
-  var _useState23 = useState(tab.totalBytes || 0);
+  var _useState23 = useState(tab.lineCount || 0);
   var _useState24 = _slicedToArray(_useState23, 2);
-  var pageTotalBytes = _useState24[0];
-  var setPageTotalBytes = _useState24[1];
+  var pageLineCount = _useState24[0];
+  var setPageLineCount = _useState24[1];
+
+  var _useState25 = useState(tab.totalLines || 0);
+  var _useState26 = _slicedToArray(_useState25, 2);
+  var pageTotalLines = _useState26[0];
+  var setPageTotalLines = _useState26[1];
+
+  var _useState27 = useState(tab.totalBytes || 0);
+  var _useState28 = _slicedToArray(_useState27, 2);
+  var pageTotalBytes = _useState28[0];
+  var setPageTotalBytes = _useState28[1];
 
   var onFormatRef = useRef(onFormat);
   onFormatRef.current = onFormat;
@@ -1601,6 +1612,13 @@ var EditorPanel = function EditorPanel(_ref) {
   var fileBaseName = (tab.path || '').split('/').pop().toLowerCase();
   var isRubyFile = ext === 'rb' || ext === 'ruby' || ext === 'gemspec' || ext === 'rake' ||
     fileBaseName === 'gemfile' || fileBaseName === 'gemfile.lock' || fileBaseName === 'rakefile';
+  var isTestOutline = false;
+  try {
+    isTestOutline = isRubyFile && window.RubyOutline &&
+      typeof window.RubyOutline.isTestPath === 'function' && window.RubyOutline.isTestPath(tab.path);
+  } catch (err) {
+    isTestOutline = false;
+  }
 
   useEffect(function () {
     if (isMarkdown && window.marked) {
@@ -1638,8 +1656,8 @@ var EditorPanel = function EditorPanel(_ref) {
     if (!methodsOpen) return;
     function handleClickOutside(e) {
       var btn = methodsBtnRef.current;
-      // Close if click is not on the button (the dropdown uses onMouseDown with preventDefault)
-      if (btn && !btn.contains(e.target)) {
+      var dropdown = methodsDropdownRef.current;
+      if (btn && !btn.contains(e.target) && (!dropdown || !dropdown.contains(e.target))) {
         setMethodsOpen(false);
       }
     }
@@ -1667,20 +1685,14 @@ var EditorPanel = function EditorPanel(_ref) {
     });
   }
 
-  // Parse all method definitions from the current Monaco model
-  function parseRubyMethods(model) {
-    var methods = [];
+  // Parse the current Monaco buffer so unsaved Ruby test declarations appear too.
+  function parseRubyOutline(model, path) {
     var lineCount = model.getLineCount();
-    var DEF_RE = /^\s*def\s+(self\.)?([a-zA-Z_][a-zA-Z0-9_?!=]*)/;
+    var lines = [];
     for (var i = 1; i <= lineCount; i++) {
-      var line = model.getLineContent(i);
-      var m = DEF_RE.exec(line);
-      if (m) {
-        var selfPrefix = m[1] ? 'self.' : '';
-        methods.push({ line: i, name: selfPrefix + m[2] });
-      }
+      lines.push(model.getLineContent(i));
     }
-    return methods;
+    return window.RubyOutline.parse(lines, { path: path });
   }
 
   if (tab.fileNotFound) {
@@ -1831,7 +1843,16 @@ var EditorPanel = function EditorPanel(_ref) {
             var nextOpen = !methodsOpen;
             if (nextOpen) {
               var model = monacoRef.current && monacoRef.current.getModel();
-              setMethodsList(model ? parseRubyMethods(model) : []);
+              try {
+                var result = model ? parseRubyOutline(model, tab.path) : { entries: [], truncated: false };
+                setMethodsList(result.entries || []);
+                setMethodsTruncated(!!result.truncated);
+                setMethodsUnavailable(false);
+              } catch (err) {
+                setMethodsList([]);
+                setMethodsTruncated(false);
+                setMethodsUnavailable(true);
+              }
               if (methodsBtnRef.current) {
                 var rect = methodsBtnRef.current.getBoundingClientRect();
                 setMethodsDropdownPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
@@ -1839,10 +1860,10 @@ var EditorPanel = function EditorPanel(_ref) {
             }
             setMethodsOpen(nextOpen);
           },
-          title: 'Jump to Method'
+          title: isTestOutline ? 'Jump to Outline' : 'Jump to Method'
         },
         React.createElement('i', { className: 'fas fa-list-ul', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
-        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, 'Methods')
+        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, isTestOutline ? 'Outline' : 'Methods')
       ),
       gitAvailable && React.createElement(
         'button',
@@ -2029,31 +2050,99 @@ var EditorPanel = function EditorPanel(_ref) {
     methodsOpen && methodsDropdownPos && React.createElement(
       'div',
       {
+        ref: methodsDropdownRef,
         className: 'ide-methods-dropdown',
         style: { position: 'fixed', top: methodsDropdownPos.top + 'px', right: methodsDropdownPos.right + 'px', left: 'auto', zIndex: 9900 }
       },
-      methodsList.length === 0
-        ? React.createElement('div', { className: 'ide-methods-dropdown-empty' }, 'No methods found')
-        : methodsList.map(function(m) {
-            return React.createElement(
-              'div',
-              {
-                key: m.line,
-                className: 'ide-methods-dropdown-item',
-                onMouseDown: function(e) {
-                  e.preventDefault();
-                  setMethodsOpen(false);
-                  if (monacoRef.current) {
-                    monacoRef.current.revealLineInCenter(m.line);
-                    monacoRef.current.setPosition({ lineNumber: m.line, column: 1 });
-                    monacoRef.current.focus();
-                  }
+      methodsUnavailable
+        ? React.createElement('div', { className: 'ide-methods-dropdown-message' }, 'Outline unavailable')
+        : methodsList.length === 0
+          ? React.createElement('div', { className: 'ide-methods-dropdown-empty' }, isTestOutline ? 'No outline entries found' : 'No methods found')
+          : (function() {
+              var rows = [];
+              var visibility = null;
+              var visibilityStartLine = null;
+              var visibilityRows = [];
+              var icons = { method: 'fa-code', suite: 'fa-layer-group', test: 'fa-flask' };
+
+              function activateEntry(entry) {
+                setMethodsOpen(false);
+                if (monacoRef.current) {
+                  monacoRef.current.revealLineInCenter(entry.line);
+                  monacoRef.current.setPosition({ lineNumber: entry.line, column: 1 });
+                  monacoRef.current.focus();
                 }
-              },
-              React.createElement('span', { className: 'ide-methods-dropdown-line' }, m.line),
-              m.name
-            );
-          })
+              }
+
+              function flushVisibilityRows() {
+                if (visibilityRows.length === 0) return;
+                rows.push(React.createElement(
+                  'div',
+                  {
+                    key: 'visibility-group-' + visibilityStartLine,
+                    className: 'ide-methods-dropdown-visibility-group'
+                  },
+                  React.createElement(
+                    'div',
+                    { className: 'ide-methods-dropdown-visibility' },
+                    visibility
+                  ),
+                  visibilityRows
+                ));
+                visibility = null;
+                visibilityStartLine = null;
+                visibilityRows = [];
+              }
+
+              methodsList.forEach(function(entry, entryIndex) {
+                var depth = typeof entry.depth === 'number' ? entry.depth : 0;
+                var row = React.createElement(
+                  'button',
+                  {
+                    key: entry.kind + '-' + entry.line,
+                    type: 'button',
+                    className: 'ide-methods-dropdown-item ide-outline-entry ide-outline-entry-' + entry.kind,
+                    'data-outline-kind': entry.kind,
+                    'data-outline-depth': depth,
+                    'aria-label': entry.name + ', line ' + entry.line,
+                    tabIndex: 0,
+                    autoFocus: entryIndex === 0,
+                    style: { paddingLeft: (12 + depth * 14) + 'px' },
+                    onClick: function() {
+                      activateEntry(entry);
+                    }
+                  },
+                  React.createElement('span', { className: 'ide-methods-dropdown-line' }, entry.line),
+                  React.createElement('i', {
+                    className: 'fas ' + (icons[entry.kind] || icons.method) + ' ide-outline-entry-icon',
+                    'aria-hidden': 'true'
+                  }),
+                  React.createElement('span', { className: 'ide-outline-entry-name' }, entry.name)
+                );
+
+                if (entry.kind === 'method' && entry.visibility) {
+                  if (visibility !== entry.visibility) {
+                    flushVisibilityRows();
+                    visibility = entry.visibility;
+                    visibilityStartLine = entry.line;
+                  }
+                  visibilityRows.push(row);
+                } else {
+                  flushVisibilityRows();
+                  rows.push(row);
+                }
+              });
+              flushVisibilityRows();
+
+              if (methodsTruncated) {
+                rows.push(React.createElement(
+                  'div',
+                  { key: 'truncated', className: 'ide-methods-dropdown-message' },
+                  'Results truncated at 5,000 entries'
+                ));
+              }
+              return rows;
+            })()
     ),
     React.createElement('div', { ref: vimStatusRef, className: 'vim-statusbar', style: { display: editorPrefs.vimMode ? 'flex' : 'none', height: '22px', alignItems: 'center', padding: '0 10px', fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace", fontSize: '12px', background: 'var(--ide-statusbar-bg, #1e1e2e)', color: 'var(--ide-statusbar-fg, #9cdcfe)', borderTop: '1px solid var(--ide-border, #3e3e3e)', flexShrink: 0, userSelect: 'none', letterSpacing: '0.02em' } })
   );

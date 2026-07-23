@@ -1990,6 +1990,10 @@ html, body, #mbeditor-root {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   padding: 5px 12px;
   cursor: pointer;
   color: #ccc;
@@ -1998,11 +2002,18 @@ html, body, #mbeditor-root {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: left;
 }
 
-.ide-methods-dropdown-item:hover {
+.ide-methods-dropdown-item:hover,
+.ide-methods-dropdown-item:focus {
   background: #094771;
   color: #fff;
+}
+
+.ide-methods-dropdown-item:focus {
+  outline: 1px solid #75beff;
+  outline-offset: -1px;
 }
 
 .ide-methods-dropdown-line {
@@ -2015,6 +2026,42 @@ html, body, #mbeditor-root {
 }
 
 .ide-methods-dropdown-empty {
+  padding: 8px 12px;
+  color: #858585;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.ide-methods-dropdown-visibility {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 12px;
+  background: #252526;
+  border-bottom: 1px solid #3a3a3a;
+  color: #9cdcfe;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ide-methods-dropdown-visibility-group {
+  position: relative;
+}
+
+.ide-outline-entry-icon {
+  width: 13px;
+  flex-shrink: 0;
+  text-align: center;
+  color: #858585;
+}
+
+.ide-outline-entry-suite .ide-outline-entry-icon { color: #dcb67a; }
+.ide-outline-entry-test .ide-outline-entry-icon { color: #8ab4f8; }
+.ide-outline-entry-name { overflow: hidden; text-overflow: ellipsis; }
+
+.ide-methods-dropdown-message {
   padding: 8px 12px;
   color: #858585;
   font-size: 12px;

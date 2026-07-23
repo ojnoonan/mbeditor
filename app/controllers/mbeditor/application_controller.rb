@@ -32,23 +32,17 @@ module Mbeditor
     end
 
     # Expand path and confirm it's inside workspace_root.
-    # Resolves symlinks on the nearest existing ancestor of the target so that
-    # a symlink inside the workspace cannot escape the sandbox regardless of
-    # whether the target itself exists yet (create / rename paths).
+    # SafePath follows every symlink on the way — including dangling ones, which
+    # an existence walk would skip past — so a symlink inside the workspace
+    # cannot escape the sandbox regardless of whether the target exists yet
+    # (create / rename paths).
     def resolve_path(raw)
       return nil if raw.blank?
 
       root = workspace_root.to_s
       full = File.expand_path(raw.to_s, root)
       return nil unless full.start_with?("#{root}/") || full == root
-
-      # Walk up to the nearest existing ancestor (could be the path itself,
-      # its parent directory, or ultimately the workspace root).
-      check = full
-      check = File.dirname(check) until File.exist?(check)
-      real_root = File.realpath(root)
-      real = File.realpath(check)
-      return nil unless real.start_with?("#{real_root}/") || real == real_root
+      return nil unless SafePath.within?(root, full)
 
       full
     rescue Errno::EACCES

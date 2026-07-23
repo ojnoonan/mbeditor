@@ -11,6 +11,7 @@
 //= require mbeditor/tab_manager
 //= require mbeditor/color_provider
 //= require mbeditor/editor_plugins
+//= require mbeditor/ruby_outline
 //= require mbeditor/components/CollapsibleSection
 //= require mbeditor/components/ShortcutHelp
 //= require mbeditor/components/DiffViewer
