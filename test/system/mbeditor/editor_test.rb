@@ -52,6 +52,10 @@ module Mbeditor
       Mbeditor.configure { |c| c.authenticate_with = nil }
     end
 
+    def expand_tree_folder(path)
+      find(".tree-item[data-path='#{path}']").click
+    end
+
     test "page loads and React mounts" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
@@ -143,6 +147,8 @@ module Mbeditor
       assert_selector ".monaco-editor", wait: 10
       assert_selector "button[title='Jump to Method']", text: "Methods"
 
+      expand_tree_folder("test")
+      expand_tree_folder("test/models")
       find(".tree-item-name", text: "user_test.rb").click
       assert_selector ".monaco-editor", wait: 10
       assert_selector "button[title='Jump to Outline']", text: "Outline"
@@ -179,6 +185,8 @@ module Mbeditor
       find("button[title='Jump to Outline']").click
       assert_selector ".ide-methods-dropdown-item[data-outline-kind='test']", text: "new case"
 
+      expand_tree_folder("spec")
+      expand_tree_folder("spec/models")
       find(".tree-item-name", text: "user_spec.rb").click
       assert_selector ".monaco-editor", wait: 10
       find("button[title='Jump to Outline']").click
