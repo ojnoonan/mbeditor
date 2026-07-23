@@ -139,7 +139,7 @@ module Mbeditor
       assert_equal "identifier.ruby", local_identifier["type"]
     end
 
-    test "test-aware Outline panel supports native keyboard activation" do
+    test "test-aware Outline panel navigates to selected entries" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
 
@@ -157,14 +157,14 @@ module Mbeditor
       assert_selector ".ide-methods-dropdown-item[data-outline-kind='method']", text: "helper"
       assert_selector ".ide-methods-dropdown-item[data-outline-kind='test'][data-outline-depth='0']", text: "is valid"
 
-      assert_selector "button.ide-methods-dropdown-item[data-outline-kind='method']:focus", text: "helper"
-      # Native buttons synthesize click for Enter and Space; the component
-      # intentionally has no custom keyboard activation path.
-      find("button.ide-methods-dropdown-item[data-outline-kind='method']", text: "helper").send_keys(:enter)
+      # The component contract verifies these are native buttons. Cuprite's
+      # send_keys does not synthesize their browser-default click, so exercise
+      # the navigation handler directly here.
+      find("button.ide-methods-dropdown-item[data-outline-kind='method']", text: "helper").click
       wait_for_editor_position({ "lineNumber" => 3, "column" => 1 })
 
       find("button[title='Jump to Outline']").click
-      find("button.ide-methods-dropdown-item[data-outline-kind='test']", text: "is valid").send_keys(:space)
+      find("button.ide-methods-dropdown-item[data-outline-kind='test']", text: "is valid").click
       wait_for_editor_position({ "lineNumber" => 6, "column" => 1 })
 
       page.execute_script(<<~'JS')
