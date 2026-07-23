@@ -2,6 +2,7 @@
 //= require mbeditor/editor_store
 //= require mbeditor/file_icon
 //= require mbeditor/file_service
+//= require mbeditor/file_import
 //= require mbeditor/history_service
 //= require mbeditor/websocket_service
 //= require mbeditor/git_service
