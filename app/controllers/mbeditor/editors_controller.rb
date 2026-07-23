@@ -1098,7 +1098,7 @@ module Mbeditor
       rel = relative_path(full_path)
       return true if rel.blank?
 
-      ExclusionMatcher.new(Mbeditor.configuration.excluded_paths).excluded?(rel)
+      ExclusionMatcher.new(Mbeditor.configuration.excluded_paths, root: workspace_root).excluded?(rel)
     end
 
     def ruby_def_include_dirs

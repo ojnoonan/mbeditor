@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-07-23
+
+### Added
+- **Test-aware Ruby Outline** — the editor now recognises Minitest and RSpec
+  suites, tests, and helper methods in `_test.rb` and `_spec.rb` files. It
+  reads the unsaved Monaco buffer, preserves nested suite depth and method
+  visibility, supports keyboard navigation, and safely reports truncation or
+  parser failures without disrupting the editor.
+- **Ruby test-DSL highlighting** — Minitest/RSpec declarations, hooks, and
+  helpers now receive structural Monaco tokens while Ruby files retain the
+  existing `ruby` language identity and integrations.
+
+### Security
+- **Dangling symlink containment** — every editor and Git path check now
+  rejects dangling symlinks that resolve outside the workspace or repository,
+  closing a write-through escape for create, save, rename, and directory
+  operations.
+- **Filesystem-aware exclusions** — exclusion matching now normalizes Unicode
+  spellings and folds case only on case-insensitive filesystems, preventing
+  case or normalization variants from reaching excluded directories such as
+  `.git`.
+
+### Changed
+- Generated `graphify-out/` artifacts are ignored by Git.
+
+---
+
 ## [0.8.1] - 2026-07-22
 
 ### Fixed

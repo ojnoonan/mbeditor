@@ -30,6 +30,12 @@ module Mbeditor
       end
     end
 
+    # The workspace is a fresh tmpdir, so probe that volume rather than the repo
+    # checkout — the two can differ.
+    def case_insensitive_workspace?
+      ExclusionMatcher.case_insensitive_filesystem?(@workspace)
+    end
+
     def teardown
       FileUtils.rm_rf(@workspace)
       Mbeditor.configure do |c|
@@ -886,6 +892,40 @@ module Mbeditor
       assert_response :forbidden
     end
 
+    # A case-insensitive filesystem resolves "TMP/" and ".GIT/" to the real
+    # excluded directories, so the exclusion check has to fold case there too —
+    # ".GIT/hooks/post-checkout" is arbitrary code execution on the next git
+    # operation. Gated on a runtime probe of the workspace volume: on a
+    # case-sensitive filesystem (Linux CI) these are genuinely distinct paths
+    # and creating them is correct.
+    test "create_file returns 403 for a case variant of an excluded path" do
+      skip "workspace filesystem is case-sensitive" unless case_insensitive_workspace?
+
+      post "/mbeditor/create_file", params: { path: "TMP/new.txt", code: "" }, as: :json
+      assert_response :forbidden
+      refute File.exist?(File.join(@workspace, "tmp", "new.txt"))
+    end
+
+    test "create_file returns 403 for a case variant of the .git directory" do
+      skip "workspace filesystem is case-sensitive" unless case_insensitive_workspace?
+
+      post "/mbeditor/create_file", params: { path: ".GIT/hooks/post-checkout", code: "#!/bin/sh\n" }, as: :json
+      assert_response :forbidden
+      refute File.exist?(File.join(@workspace, ".git", "hooks", "post-checkout"))
+    end
+
+    test "create_file returns 403 for an NFD spelling of an excluded path" do
+      nfc = "caf\u00E9"  # precomposed
+      nfd = "cafe\u0301" # e + combining acute
+      original = Mbeditor.configuration.excluded_paths
+      Mbeditor.configure { |c| c.excluded_paths = original + [nfc] }
+
+      post "/mbeditor/create_file", params: { path: "#{nfd}/secret.txt", code: "" }, as: :json
+      assert_response :forbidden
+    ensure
+      Mbeditor.configure { |c| c.excluded_paths = original }
+    end
+
     test "create_file rejects content exceeding MAX_FILE_SIZE_BYTES" do
       oversized = "x" * (Mbeditor::FileOperationService::MAX_FILE_SIZE_BYTES + 1)
       post "/mbeditor/create_file", params: { path: "big_new.txt", code: oversized }, as: :json
@@ -913,6 +953,96 @@ module Mbeditor
     ensure
       File.unlink(link) if link && File.symlink?(link)
       FileUtils.rm_rf(outside_dir) if outside_dir && File.directory?(outside_dir)
+    end
+
+    # ---------------------------------------------------------------------------
+    # dangling symlink escapes
+    #
+    # File.exist? follows symlinks, so a symlink whose target does not exist
+    # looks like "nothing here" to an existence walk. Writing through it still
+    # creates the target, outside the sandbox.
+    # ---------------------------------------------------------------------------
+
+    test 'save returns 403 when path is a dangling symlink pointing outside workspace' do
+      outside = File.join(Dir.tmpdir, "mbeditor_pwned_#{Process.pid}.txt")
+      FileUtils.rm_f(outside)
+      link = File.join(@workspace, 'dangling_link.txt')
+      File.symlink(outside, link)
+
+      post '/mbeditor/file', params: { path: 'dangling_link.txt', code: 'pwned' }, as: :json
+      assert_response :forbidden
+      refute File.exist?(outside), 'write escaped the workspace through a dangling symlink'
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_f(outside) if outside
+    end
+
+    test 'create_file returns 403 when path is a dangling symlink pointing outside workspace' do
+      outside = File.join(Dir.tmpdir, "mbeditor_pwned_create_#{Process.pid}.txt")
+      FileUtils.rm_f(outside)
+      link = File.join(@workspace, 'dangling_link.rb')
+      File.symlink(outside, link)
+
+      post '/mbeditor/create_file', params: { path: 'dangling_link.rb', code: 'pwned' }, as: :json
+      assert_response :forbidden
+      refute File.exist?(outside), 'write escaped the workspace through a dangling symlink'
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_f(outside) if outside
+    end
+
+    test 'create_file returns 403 when an ancestor is a dangling symlink pointing outside workspace' do
+      outside_dir = File.join(Dir.tmpdir, "mbeditor_pwned_dir_#{Process.pid}")
+      FileUtils.rm_rf(outside_dir)
+      link = File.join(@workspace, 'dangling_dir')
+      File.symlink(outside_dir, link)
+
+      post '/mbeditor/create_file', params: { path: 'dangling_dir/secret.rb', code: 'pwned' }, as: :json
+      assert_response :forbidden
+      refute File.exist?(outside_dir), 'mkdir_p escaped the workspace through a dangling symlink'
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_rf(outside_dir) if outside_dir
+    end
+
+    test 'create_dir returns 403 when path is a dangling symlink pointing outside workspace' do
+      outside_dir = File.join(Dir.tmpdir, "mbeditor_pwned_mkdir_#{Process.pid}")
+      FileUtils.rm_rf(outside_dir)
+      link = File.join(@workspace, 'dangling_folder')
+      File.symlink(outside_dir, link)
+
+      post '/mbeditor/create_dir', params: { path: 'dangling_folder' }, as: :json
+      assert_response :forbidden
+      refute File.exist?(outside_dir), 'mkdir escaped the workspace through a dangling symlink'
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_rf(outside_dir) if outside_dir
+    end
+
+    test 'rename returns 403 when the destination is a dangling symlink pointing outside workspace' do
+      outside = File.join(Dir.tmpdir, "mbeditor_pwned_rename_#{Process.pid}.md")
+      FileUtils.rm_f(outside)
+      link = File.join(@workspace, 'dangling_dest.md')
+      File.symlink(outside, link)
+
+      patch '/mbeditor/rename', params: { path: 'README.md', new_path: 'dangling_dest.md' }, as: :json
+      assert_response :forbidden
+      refute File.exist?(outside), 'rename escaped the workspace through a dangling symlink'
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_f(outside) if outside
+    end
+
+    # The legitimate cases resolve_path exists for must keep working: a target
+    # that simply does not exist yet, and a dangling symlink that resolves back
+    # inside the workspace.
+    test 'save writes through a dangling symlink whose target is inside the workspace' do
+      link = File.join(@workspace, 'inside_link.txt')
+      File.symlink(File.join(@workspace, 'not_yet.txt'), link)
+
+      post '/mbeditor/file', params: { path: 'inside_link.txt', code: 'fine' }, as: :json
+      assert_response :ok
+      assert_equal 'fine', File.read(File.join(@workspace, 'not_yet.txt'))
     end
 
     # ---------------------------------------------------------------------------

@@ -14,6 +14,29 @@ module Mbeditor
       File.write(File.join(@workspace, "Gemfile.lock"), "GEM\n  specs:\n")
       File.write(File.join(@workspace, "app", "models", "user.rb"), "class User; end\n")
       File.write(File.join(@workspace, "nested_example.rb"), "class Demo\n    def call\nend")
+      # Task 2 tokenizer fixture. Keep it outside Task 3's test/ and spec/
+      # outline fixtures so each task owns its own setup data.
+      File.write(File.join(@workspace, "tokenization_test.rb"), "class TokenizationTest; end\n")
+      FileUtils.mkdir_p(File.join(@workspace, "test", "models"))
+      FileUtils.mkdir_p(File.join(@workspace, "spec", "models"))
+      File.write(File.join(@workspace, "test", "models", "user_test.rb"), <<~RUBY)
+        class UserTest
+          private
+          def helper
+          end
+
+          test "is valid" do
+          end
+        end
+      RUBY
+      File.write(File.join(@workspace, "spec", "models", "user_spec.rb"), <<~RUBY)
+        RSpec.describe User do
+          context "when active" do
+            it "is valid" do
+            end
+          end
+        end
+      RUBY
       File.write(File.join(@workspace, "component.jsx"), "<div")
       Mbeditor.configure do |c|
         c.allowed_environments = %i[test development]
@@ -57,6 +80,111 @@ module Mbeditor
       all(".tree-item-name", text: "Gemfile.lock").first.click
       assert_selector ".monaco-editor", wait: 10
       assert_equal "ruby", active_editor_language
+    end
+
+    test "ruby test DSL receives structural Monaco tokens" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      all(".tree-item-name", text: "tokenization_test.rb").first.click
+      assert_selector ".monaco-editor", wait: 10
+
+      result = page.evaluate_script(<<~'JS')
+        (function () {
+          var source = 'test "works" do\nRSpec.describe User do\nit "passes" do\nbefore do\nlet(:user) { User.new }\ntest? "ordinary predicate"\ndescribe= ordinary_value';
+          var tokenLines = window.monaco.editor.tokenize(source, 'ruby');
+          var tokens = [];
+
+          for (var lineIndex = 0; lineIndex < tokenLines.length; lineIndex++) {
+            var line = source.split("\n")[lineIndex];
+            var lineTokens = tokenLines[lineIndex];
+            for (var tokenIndex = 0; tokenIndex < lineTokens.length; tokenIndex++) {
+              var token = lineTokens[tokenIndex];
+              var nextToken = lineTokens[tokenIndex + 1];
+              tokens.push({
+                text: line.slice(token.offset, nextToken ? nextToken.offset : line.length),
+                type: token.type
+              });
+            }
+          }
+
+          return {
+            language: window.__mbeditorActiveEditor.getModel().getLanguageId(),
+            tokens: tokens
+          };
+        })()
+      JS
+
+      assert_equal "ruby", result["language"]
+      %w[test describe it before let].each do |word|
+        token = result["tokens"].find { |candidate| candidate["text"] == word }
+        assert token, "Expected a Monaco token for #{word.inspect}"
+        refute_includes ["", "identifier.ruby"], token["type"],
+                        "Expected #{word.inspect} to receive a structural Ruby token"
+      end
+
+      predicate = result["tokens"].find { |candidate| candidate["text"] == "test?" }
+      assert predicate, "Expected a Monaco token for the ordinary predicate"
+      assert_equal "identifier.ruby", predicate["type"]
+
+      writer = result["tokens"].reverse.find { |candidate| candidate["text"] == "describe" }
+      assert writer, "Expected a Monaco token for the ordinary writer"
+      assert_equal "identifier.ruby", writer["type"]
+
+      local_identifier = result["tokens"].find { |candidate| candidate["text"] == "ordinary_value" }
+      assert local_identifier, "Expected a Monaco token for the ordinary identifier"
+      assert_equal "identifier.ruby", local_identifier["type"]
+    end
+
+    test "test-aware Outline panel supports native keyboard activation" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      find(".tree-item-name", text: "nested_example.rb").click
+      assert_selector ".monaco-editor", wait: 10
+      assert_selector "button[title='Jump to Method']", text: "Methods"
+
+      find(".tree-item-name", text: "user_test.rb").click
+      assert_selector ".monaco-editor", wait: 10
+      assert_selector "button[title='Jump to Outline']", text: "Outline"
+      find("button[title='Jump to Outline']").click
+      assert_selector ".ide-methods-dropdown-visibility", text: "private"
+      assert_selector ".ide-methods-dropdown-item[data-outline-kind='method']", text: "helper"
+      assert_selector ".ide-methods-dropdown-item[data-outline-kind='test'][data-outline-depth='0']", text: "is valid"
+
+      assert_selector "button.ide-methods-dropdown-item[data-outline-kind='method']:focus", text: "helper"
+      # Native buttons synthesize click for Enter and Space; the component
+      # intentionally has no custom keyboard activation path.
+      find("button.ide-methods-dropdown-item[data-outline-kind='method']", text: "helper").send_keys(:enter)
+      assert_equal({ "lineNumber" => 3, "column" => 1 }, active_editor_position)
+
+      find("button[title='Jump to Outline']").click
+      find("button.ide-methods-dropdown-item[data-outline-kind='test']", text: "is valid").send_keys(:space)
+      assert_equal({ "lineNumber" => 6, "column" => 1 }, active_editor_position)
+
+      page.execute_script(<<~'JS')
+        window.__mbeditorActiveEditor.setValue([
+          'class UserTest',
+          '  private',
+          '  def helper',
+          '  end',
+          '',
+          '  test "is valid" do',
+          '  end',
+          '',
+          '  test "new case" do',
+          '  end',
+          'end'
+        ].join("\n"));
+      JS
+      find("button[title='Jump to Outline']").click
+      assert_selector ".ide-methods-dropdown-item[data-outline-kind='test']", text: "new case"
+
+      find(".tree-item-name", text: "user_spec.rb").click
+      assert_selector ".monaco-editor", wait: 10
+      find("button[title='Jump to Outline']").click
+      assert_selector ".ide-methods-dropdown-item[data-outline-kind='suite'][data-outline-depth='0']", text: "User"
+      assert_selector ".ide-methods-dropdown-item[data-outline-kind='suite'][data-outline-depth='1']", text: "when active"
+      assert_selector ".ide-methods-dropdown-item[data-outline-kind='test'][data-outline-depth='2']", text: "is valid"
     end
 
     test "Ctrl+P opens the quick-open dialog" do

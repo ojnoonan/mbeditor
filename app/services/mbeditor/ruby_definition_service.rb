@@ -181,7 +181,7 @@ module Mbeditor
       @symbol            = symbol
       @excluded_paths    = Array(excluded_paths)
       @included_dirs     = Array(included_dirs)
-      @exclusion_matcher = ExclusionMatcher.new(@excluded_paths)
+      @exclusion_matcher = ExclusionMatcher.new(@excluded_paths, root: @workspace_root)
       @shared_cache      = self.class.send(:file_cache)
       @shared_mutex      = self.class.send(:mutex)
     end
