@@ -15,7 +15,7 @@ module Mbeditor
         end
       end
 
-      matcher = ExclusionMatcher.new(Mbeditor.configuration.excluded_paths)
+      matcher = ExclusionMatcher.new(Mbeditor.configuration.excluded_paths, root: root)
       data = traverse(root, root, matcher)
 
       MUTEX.synchronize do

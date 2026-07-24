@@ -44,6 +44,17 @@ two lifecycle phases across them. `appliesTo` is many-to-many: a `.jsx` editor i
 both JsPlugin and HtmlPlugin (JSX tag auto-close). No build step — each plugin is a plain
 object on `window`, wired in a fixed order via Sprockets `//= require`.
 
+### Log viewer
+The read-only, real-time view of the active environment's Rails log. It tails
+`Rails.root/log/<env>.log` through `LogTailService` — an offset-based incremental
+reader that returns only complete lines and detects rotation/truncation (an offset
+past EOF resets to the file start). The same service feeds two transports: `LogsController#tail`
+(HTTP, used for the initial load and as the polling fallback) and `EditorChannel`
+(`start_log_tail`/`stop_log_tail` actions plus a `periodically` push over ActionCable).
+The drawer renders raw log lines with **no redaction** by design — logs are shown
+verbatim and may contain secrets, so the viewer relies on the host app's auth gate
+like every other editor route.
+
 ### Resilient routing
 The capability that keeps mbeditor reachable when the host app's `config/routes.rb` is
 **broken** — distinct from a **failed boot**, which it cannot recover from (the engine's

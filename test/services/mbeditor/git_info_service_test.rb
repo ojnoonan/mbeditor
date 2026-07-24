@@ -183,6 +183,94 @@ module Mbeditor
     end
 
     # -------------------------------------------------------------------------
+    # Cache hit runs zero git subprocesses
+    # -------------------------------------------------------------------------
+
+    def test_cached_call_spawns_no_git_subprocesses
+      GitInfoService.call(REPO_PATH)
+
+      singleton = class << GitService; self; end
+      singleton.alias_method :__orig_run_git, :run_git
+      GitService.define_singleton_method(:run_git) do |*|
+        raise "run_git must not be called on a cache hit"
+      end
+
+      result = GitInfoService.call(REPO_PATH)
+      assert result[:ok]
+    ensure
+      singleton.remove_method :run_git
+      singleton.alias_method :run_git, :__orig_run_git
+      singleton.remove_method :__orig_run_git
+    end
+
+    # -------------------------------------------------------------------------
+    # Single-flight — concurrent cache misses run one compute
+    # -------------------------------------------------------------------------
+
+    def test_concurrent_cache_misses_run_compute_once
+      GitInfoService.invalidate(REPO_PATH)
+
+      singleton = class << GitInfoService; self; end
+      singleton.alias_method :__orig_compute, :compute
+      compute_count = 0
+      count_mutex = Mutex.new
+      GitInfoService.define_singleton_method(:compute) do |repo_path|
+        count_mutex.synchronize { compute_count += 1 }
+        sleep 0.2
+        payload = { ok: true, branch: "stub" }
+        store_git_info(repo_path, payload)
+        payload
+      end
+
+      results = 2.times.map { Thread.new { GitInfoService.call(REPO_PATH) } }.map(&:value)
+
+      assert_equal 1, compute_count
+      results.each { |r| assert r[:ok] }
+    ensure
+      singleton.remove_method :compute
+      singleton.alias_method :compute, :__orig_compute
+      singleton.remove_method :__orig_compute
+      GitInfoService.invalidate(REPO_PATH)
+    end
+
+    # -------------------------------------------------------------------------
+    # Stale-while-error — compute failure serves the last good payload
+    # -------------------------------------------------------------------------
+
+    def test_compute_failure_returns_stale_payload_when_available
+      bogus = "/nonexistent/path/#{SecureRandom.hex}"
+      good = { ok: true, branch: "main", workingTree: [] }
+      GitInfoService.store_git_info(bogus, good)
+
+      result = GitInfoService.compute(bogus)
+
+      assert result[:ok]
+      assert result[:stale]
+      assert_equal "main", result[:branch]
+    ensure
+      GitInfoService.invalidate(bogus)
+    end
+
+    # -------------------------------------------------------------------------
+    # safe_git — timeout/failure degrades to ["", false]
+    # -------------------------------------------------------------------------
+
+    def test_safe_git_degrades_on_timeout
+      singleton = class << GitService; self; end
+      singleton.alias_method :__orig_run_git, :run_git
+      GitService.define_singleton_method(:run_git) do |*|
+        raise Timeout::Error, "git timed out"
+      end
+
+      out, ok = GitInfoService.safe_git(REPO_PATH, "status")
+      assert_equal "", out
+      assert_equal false, ok
+    ensure
+      singleton.remove_method :run_git
+      singleton.alias_method :run_git, :__orig_run_git
+      singleton.remove_method :__orig_run_git
+    end
+
     # Timeout governance — git subprocesses route through ProcessRunner so
     # config.git_timeout is honored (issue #70).
     # -------------------------------------------------------------------------

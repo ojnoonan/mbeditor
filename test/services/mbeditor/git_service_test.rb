@@ -218,6 +218,18 @@ module Mbeditor
       end
     end
 
+    def test_resolve_path_returns_nil_for_dangling_symlink_escape
+      Dir.mktmpdir do |repo|
+        # A symlink inside the repo pointing outside it at a target that does
+        # not exist. File.exist? follows the link and reports false, so an
+        # existence walk would step past it and wrongly allow the path.
+        File.symlink(File.join(Dir.tmpdir, 'mbeditor_missing_target'), File.join(repo, 'escape'))
+
+        assert_nil GitService.resolve_path(repo, 'escape'),
+                   'dangling symlink resolving outside the repo must be rejected'
+      end
+    end
+
     # -------------------------------------------------------------------------
     # parse_porcelain_status
     # -------------------------------------------------------------------------

@@ -30,13 +30,260 @@ module Mbeditor
       end
     end
 
+    # The workspace is a fresh tmpdir, so probe that volume rather than the repo
+    # checkout — the two can differ.
+    def case_insensitive_workspace?
+      ExclusionMatcher.case_insensitive_filesystem?(@workspace)
+    end
+
     def teardown
       FileUtils.rm_rf(@workspace)
       Mbeditor.configure do |c|
         c.authenticate_with = nil
         c.rubocop_command   = "rubocop"
+        # setup narrows excluded_paths per-test; restore the gem default so
+        # suites running after this one see the real configuration.
+        c.excluded_paths    = Configuration.new.excluded_paths
       end
       AvailabilityProbe.reset!
+    end
+
+    # ---------------------------------------------------------------------------
+    # js_globals
+    # ---------------------------------------------------------------------------
+
+    test "js_globals returns top-level declarations and refreshes after a save" do
+      FileUtils.mkdir_p(File.join(@workspace, "app", "assets", "javascripts"))
+      File.write(File.join(@workspace, "app", "assets", "javascripts", "widget.js.jsx"),
+                 "function GlobalWidget() {}\n")
+      JsGlobalsService.invalidate(@workspace)
+
+      get "/mbeditor/js_globals"
+      assert_response :ok
+      assert json["ok"]
+      names = json["symbols"].map { |s| s["name"] }
+      assert_includes names, "GlobalWidget"
+
+      # A save through mbeditor invalidates the cache, so a fresh symbol
+      # appears without waiting out the TTL.
+      post "/mbeditor/create_file", params: { path: "app/assets/javascripts/fresh.js", code: "var FreshGlobal = 1;\n" }
+      assert_response :ok
+
+      get "/mbeditor/js_globals"
+      names = json["symbols"].map { |s| s["name"] }
+      assert_includes names, "FreshGlobal"
+    ensure
+      JsGlobalsService.invalidate(@workspace)
+    end
+
+    # ---------------------------------------------------------------------------
+    # ruby_lsp bridge
+    # ---------------------------------------------------------------------------
+
+    FAKE_LSP_SERVER = File.expand_path("../../fixtures/fake_lsp_server.rb", __dir__)
+
+    def with_ruby_lsp_available(value)
+      singleton = class << AvailabilityProbe; self; end
+      singleton.alias_method :__orig_ruby_lsp, :ruby_lsp
+      AvailabilityProbe.define_singleton_method(:ruby_lsp) { |*| value }
+      yield
+    ensure
+      singleton.remove_method :ruby_lsp
+      singleton.alias_method :ruby_lsp, :__orig_ruby_lsp
+      singleton.remove_method :__orig_ruby_lsp
+    end
+
+    test "ruby_lsp requires the client header" do
+      ActionDispatch::Integration::Session.new(Rails.application).tap do |sess|
+        sess.post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "a.rb" }, as: :json
+        assert_equal 403, sess.response.status
+      end
+    end
+
+    test "ruby_lsp diagnostics translate into the marker shape the lint pipeline uses" do
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "diagnostics", path: "app/models/user.rb",
+                                             content: "class User\n  x=1\nend\n" }
+        assert_response :ok
+
+        markers = json["markers"]
+        assert_equal 2, markers.length
+        assert_equal 2, json.dig("summary", "offense_count")
+
+        rubocop = markers.first
+        assert_equal "info", rubocop["severity"], "LSP severity 3 (INFORMATION) maps to info"
+        assert_equal "Layout/SpaceAroundOperators", rubocop["copName"]
+        assert_equal "rubocop", rubocop["source"], "must stay 'rubocop' so the quick-fix lightbulb appears"
+        assert_equal true, rubocop["correctable"]
+        assert_equal 3, rubocop["startLine"], "0-based LSP line 2 becomes 1-based 3"
+        assert_equal 5, rubocop["startCol"]
+        assert_includes rubocop["message"], "[Layout/SpaceAroundOperators]"
+
+        prism = markers.last
+        assert_equal "error", prism["severity"]
+        assert_equal "prism", prism["source"], "non-RuboCop sources must not claim a lightbulb"
+        assert_equal "", prism["copName"]
+        assert_equal false, prism["correctable"]
+      end
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
+    end
+
+    test "ruby_lsp rejects an unknown lsp_method" do
+      post "/mbeditor/ruby_lsp", params: { lsp_method: "rename", path: "a.rb", content: "", line: 1, character: 1 }
+      assert_response :bad_request
+    end
+
+    test "ruby_lsp rejects a traversal path" do
+      post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "../../etc/passwd", content: "", line: 1, character: 1 }
+      assert_response :bad_request
+    end
+
+    test "ruby_lsp rejects oversized content" do
+      # as: :json — the real client posts JSON; Rack's urlencoded parser has
+      # its own 4MB body limit that would 400 before reaching the action.
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "app/models/user.rb",
+                                             content: "x" * (5 * 1024 * 1024 + 1), line: 1, character: 1 },
+             as: :json
+        assert_response :content_too_large
+      end
+    end
+
+    test "ruby_lsp returns 422 with the availability flag when the probe fails" do
+      with_ruby_lsp_available(false) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 1 }
+        assert_response :unprocessable_content
+        assert_equal false, json["rubyLspAvailable"]
+      end
+    end
+
+    test "ruby_lsp translates definition, hover, and completion responses" do
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        first = json["results"].first
+        assert_equal "app/models/user.rb", first["file"]
+        assert_equal 5, first["line"], "0-based LSP line 4 becomes 1-based 5"
+
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "hover", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        assert_includes json["markdown"], "fake hover"
+
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "completion", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        suggestion = json["suggestions"].first
+        assert_equal "fake_method", suggestion["label"]
+        assert_equal "Method", suggestion["kind"]
+      end
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
+    end
+
+    test "workspace reports rubyLspAvailable" do
+      with_ruby_lsp_available(false) do
+        get "/mbeditor/workspace"
+        assert_response :ok
+        assert_equal false, json["rubyLspAvailable"]
+      end
+    end
+
+    # ---------------------------------------------------------------------------
+    # js_definition parent context
+    # ---------------------------------------------------------------------------
+
+    test "js_definition rejects an invalid parent identifier" do
+      get "/mbeditor/js_definition", params: { symbol: "myFunc", parent: "bad-name!" }
+      assert_response :bad_request
+      assert_equal "Invalid parent", json["error"]
+    end
+
+    test "js_definition with parent resolves the member assignment" do
+      FileUtils.mkdir_p(File.join(@workspace, "app", "assets", "javascripts"))
+      File.write(File.join(@workspace, "app", "assets", "javascripts", "parent.js"),
+                 "var SomeParent = {};\nSomeParent.myFunc = function() {};\n")
+      File.write(File.join(@workspace, "app", "assets", "javascripts", "global.js"),
+                 "function myFunc() {}\n")
+
+      get "/mbeditor/js_definition", params: { symbol: "myFunc", parent: "SomeParent" }
+      assert_response :ok
+      first = json["results"].first
+      assert_equal "app/assets/javascripts/parent.js", first["file"]
+      assert_equal 2, first["line"]
+      assert first["member"]
+    end
+
+    # ---------------------------------------------------------------------------
+    # lint language=javascript (babel syntax check)
+    # ---------------------------------------------------------------------------
+
+    test "lint with language javascript returns 422 when the checker is unavailable" do
+      File.write(File.join(@workspace, "app.js"), "var x = 1;\n")
+      original = Mbeditor.configuration.js_syntax_check
+      Mbeditor.configuration.js_syntax_check = false
+
+      post "/mbeditor/lint", params: { path: "app.js", code: "var x = 1;", language: "javascript" }
+      assert_response :unprocessable_content
+      assert_equal [], json["markers"]
+    ensure
+      Mbeditor.configuration.js_syntax_check = original
+    end
+
+    test "lint with language javascript maps a babel parse error to a marker" do
+      skip "mini_racer not available" unless defined?(::MiniRacer) || begin
+        require "mini_racer"
+        true
+      rescue LoadError
+        false
+      end
+
+      File.write(File.join(@workspace, "babel-stub.js"), <<~JS)
+        var Babel = { transform: function (src) {
+          if (src.indexOf("BROKEN") !== -1) {
+            var e = new Error("Unexpected token (1:3)");
+            e.loc = { line: 1, column: 3 };
+            throw e;
+          }
+          return { code: null };
+        } };
+      JS
+      File.write(File.join(@workspace, "app.js"), "ok\n")
+      original_check = Mbeditor.configuration.js_syntax_check
+      original_path  = Mbeditor.configuration.babel_standalone_path
+      Mbeditor.configuration.js_syntax_check = :auto
+      Mbeditor.configuration.babel_standalone_path = File.join(@workspace, "babel-stub.js")
+      JsSyntaxCheckService.reset!
+
+      post "/mbeditor/lint", params: { path: "app.js", code: "var BROKEN = ;", language: "javascript" }
+      assert_response :ok
+      marker = json["markers"].first
+      assert marker, "expected a babel marker"
+      assert_equal "error", marker["severity"]
+      assert_includes marker["message"], "Unexpected token"
+      assert_equal 1, marker["startLine"]
+      assert_equal 4, marker["startCol"]
+
+      post "/mbeditor/lint", params: { path: "app.js", code: "var fine = 1;", language: "javascript" }
+      assert_response :ok
+      assert_equal [], json["markers"]
+    ensure
+      Mbeditor.configuration.js_syntax_check = original_check
+      Mbeditor.configuration.babel_standalone_path = original_path
+      JsSyntaxCheckService.reset!
     end
 
     # ---------------------------------------------------------------------------
@@ -645,6 +892,40 @@ module Mbeditor
       assert_response :forbidden
     end
 
+    # A case-insensitive filesystem resolves "TMP/" and ".GIT/" to the real
+    # excluded directories, so the exclusion check has to fold case there too —
+    # ".GIT/hooks/post-checkout" is arbitrary code execution on the next git
+    # operation. Gated on a runtime probe of the workspace volume: on a
+    # case-sensitive filesystem (Linux CI) these are genuinely distinct paths
+    # and creating them is correct.
+    test "create_file returns 403 for a case variant of an excluded path" do
+      skip "workspace filesystem is case-sensitive" unless case_insensitive_workspace?
+
+      post "/mbeditor/create_file", params: { path: "TMP/new.txt", code: "" }, as: :json
+      assert_response :forbidden
+      refute File.exist?(File.join(@workspace, "tmp", "new.txt"))
+    end
+
+    test "create_file returns 403 for a case variant of the .git directory" do
+      skip "workspace filesystem is case-sensitive" unless case_insensitive_workspace?
+
+      post "/mbeditor/create_file", params: { path: ".GIT/hooks/post-checkout", code: "#!/bin/sh\n" }, as: :json
+      assert_response :forbidden
+      refute File.exist?(File.join(@workspace, ".git", "hooks", "post-checkout"))
+    end
+
+    test "create_file returns 403 for an NFD spelling of an excluded path" do
+      nfc = "caf\u00E9"  # precomposed
+      nfd = "cafe\u0301" # e + combining acute
+      original = Mbeditor.configuration.excluded_paths
+      Mbeditor.configure { |c| c.excluded_paths = original + [nfc] }
+
+      post "/mbeditor/create_file", params: { path: "#{nfd}/secret.txt", code: "" }, as: :json
+      assert_response :forbidden
+    ensure
+      Mbeditor.configure { |c| c.excluded_paths = original }
+    end
+
     test "create_file rejects content exceeding MAX_FILE_SIZE_BYTES" do
       oversized = "x" * (Mbeditor::FileOperationService::MAX_FILE_SIZE_BYTES + 1)
       post "/mbeditor/create_file", params: { path: "big_new.txt", code: oversized }, as: :json
@@ -672,6 +953,96 @@ module Mbeditor
     ensure
       File.unlink(link) if link && File.symlink?(link)
       FileUtils.rm_rf(outside_dir) if outside_dir && File.directory?(outside_dir)
+    end
+
+    # ---------------------------------------------------------------------------
+    # dangling symlink escapes
+    #
+    # File.exist? follows symlinks, so a symlink whose target does not exist
+    # looks like "nothing here" to an existence walk. Writing through it still
+    # creates the target, outside the sandbox.
+    # ---------------------------------------------------------------------------
+
+    test 'save returns 403 when path is a dangling symlink pointing outside workspace' do
+      outside = File.join(Dir.tmpdir, "mbeditor_pwned_#{Process.pid}.txt")
+      FileUtils.rm_f(outside)
+      link = File.join(@workspace, 'dangling_link.txt')
+      File.symlink(outside, link)
+
+      post '/mbeditor/file', params: { path: 'dangling_link.txt', code: 'pwned' }, as: :json
+      assert_response :forbidden
+      refute File.exist?(outside), 'write escaped the workspace through a dangling symlink'
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_f(outside) if outside
+    end
+
+    test 'create_file returns 403 when path is a dangling symlink pointing outside workspace' do
+      outside = File.join(Dir.tmpdir, "mbeditor_pwned_create_#{Process.pid}.txt")
+      FileUtils.rm_f(outside)
+      link = File.join(@workspace, 'dangling_link.rb')
+      File.symlink(outside, link)
+
+      post '/mbeditor/create_file', params: { path: 'dangling_link.rb', code: 'pwned' }, as: :json
+      assert_response :forbidden
+      refute File.exist?(outside), 'write escaped the workspace through a dangling symlink'
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_f(outside) if outside
+    end
+
+    test 'create_file returns 403 when an ancestor is a dangling symlink pointing outside workspace' do
+      outside_dir = File.join(Dir.tmpdir, "mbeditor_pwned_dir_#{Process.pid}")
+      FileUtils.rm_rf(outside_dir)
+      link = File.join(@workspace, 'dangling_dir')
+      File.symlink(outside_dir, link)
+
+      post '/mbeditor/create_file', params: { path: 'dangling_dir/secret.rb', code: 'pwned' }, as: :json
+      assert_response :forbidden
+      refute File.exist?(outside_dir), 'mkdir_p escaped the workspace through a dangling symlink'
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_rf(outside_dir) if outside_dir
+    end
+
+    test 'create_dir returns 403 when path is a dangling symlink pointing outside workspace' do
+      outside_dir = File.join(Dir.tmpdir, "mbeditor_pwned_mkdir_#{Process.pid}")
+      FileUtils.rm_rf(outside_dir)
+      link = File.join(@workspace, 'dangling_folder')
+      File.symlink(outside_dir, link)
+
+      post '/mbeditor/create_dir', params: { path: 'dangling_folder' }, as: :json
+      assert_response :forbidden
+      refute File.exist?(outside_dir), 'mkdir escaped the workspace through a dangling symlink'
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_rf(outside_dir) if outside_dir
+    end
+
+    test 'rename returns 403 when the destination is a dangling symlink pointing outside workspace' do
+      outside = File.join(Dir.tmpdir, "mbeditor_pwned_rename_#{Process.pid}.md")
+      FileUtils.rm_f(outside)
+      link = File.join(@workspace, 'dangling_dest.md')
+      File.symlink(outside, link)
+
+      patch '/mbeditor/rename', params: { path: 'README.md', new_path: 'dangling_dest.md' }, as: :json
+      assert_response :forbidden
+      refute File.exist?(outside), 'rename escaped the workspace through a dangling symlink'
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_f(outside) if outside
+    end
+
+    # The legitimate cases resolve_path exists for must keep working: a target
+    # that simply does not exist yet, and a dangling symlink that resolves back
+    # inside the workspace.
+    test 'save writes through a dangling symlink whose target is inside the workspace' do
+      link = File.join(@workspace, 'inside_link.txt')
+      File.symlink(File.join(@workspace, 'not_yet.txt'), link)
+
+      post '/mbeditor/file', params: { path: 'inside_link.txt', code: 'fine' }, as: :json
+      assert_response :ok
+      assert_equal 'fine', File.read(File.join(@workspace, 'not_yet.txt'))
     end
 
     # ---------------------------------------------------------------------------
@@ -951,11 +1322,11 @@ module Mbeditor
       end
     end
 
-    test "search omits total_count on subsequent pages" do
+    test "search includes total_count on subsequent pages (served from result cache)" do
       get "/mbeditor/search", params: { q: "class", offset: 50 }
       assert_response :ok
       assert_kind_of Hash, json
-      assert_not json.key?("total_count"), "offset>0 response must not include total_count"
+      assert json.key?("total_count"), "paged response should include total_count from the cached full result set"
     end
 
     test "search fallback excludes nested path without excluding similarly named directories" do
@@ -965,8 +1336,12 @@ module Mbeditor
       File.write(File.join(@workspace, "app", "assets", "site.css"), "/* NEEDLE_TOKEN */\n")
       File.write(File.join(@workspace, "public", "assets", "bundle.css"), "/* NEEDLE_TOKEN */\n")
 
+      original_excluded = Mbeditor.configuration.excluded_paths
       Mbeditor.configure { |c| c.excluded_paths = %w[.git tmp log public/assets] }
 
+      singleton = class << Mbeditor::SearchReplaceService; self; end
+      singleton.alias_method :__orig_rg_available?, :rg_available?
+      Mbeditor::SearchReplaceService.define_singleton_method(:rg_available?) { false }
       original_rg = Mbeditor::AvailabilityProbe.method(:rg)
       Mbeditor::AvailabilityProbe.define_singleton_method(:rg) { false }
 
@@ -976,9 +1351,13 @@ module Mbeditor
       files = json.fetch("results", []).map { |row| row["file"] }
       assert_includes files, "app/assets/site.css"
       assert_not_includes files, "public/assets/bundle.css"
-      assert json.key?("total_count"), "grep fallback must include total_count when thread completes in time"
+      assert json.key?("total_count"), "grep fallback must include total_count"
       assert json["total_count"] >= 1, "grep total_count must reflect at least the one matched file"
     ensure
+      Mbeditor.configure { |c| c.excluded_paths = original_excluded }
+      singleton.remove_method :rg_available?
+      singleton.alias_method :rg_available?, :__orig_rg_available?
+      singleton.remove_method :__orig_rg_available?
       Mbeditor::AvailabilityProbe.singleton_class.send(:remove_method, :rg)
       Mbeditor::AvailabilityProbe.define_singleton_method(:rg, original_rg)
     end
@@ -1419,6 +1798,54 @@ module Mbeditor
     test "run_test returns 403 for path traversal" do
       post "/mbeditor/test", params: { path: "../../etc/passwd" }, as: :json
       assert_response :forbidden
+    end
+
+    test "run_test rejects a non-numeric line" do
+      FileUtils.mkdir_p(File.join(@workspace, "test"))
+      File.write(File.join(@workspace, "test", "direct_test.rb"), "require \"minitest/autorun\"\n")
+
+      post "/mbeditor/test", params: { path: "test/direct_test.rb", line: "3; rm -rf /" }, as: :json
+      assert_response :bad_request
+      assert_equal "Invalid line", json["error"]
+    end
+
+    test "run_test reports the filtered line when running a test file at a cursor" do
+      FileUtils.mkdir_p(File.join(@workspace, "test"))
+      File.write(File.join(@workspace, "test", "direct_test.rb"), <<~RUBY)
+        require "minitest/autorun"
+
+        class DirectTest < Minitest::Test
+          def test_one
+            assert true
+          end
+
+          def test_two
+            assert true
+          end
+        end
+      RUBY
+
+      post "/mbeditor/test", params: { path: "test/direct_test.rb", line: 5 }, as: :json
+      assert_response :ok
+      assert_equal 5, json["filteredLine"]
+      assert_equal 1, json.dig("summary", "total"), "only the test at the cursor should run"
+    end
+
+    test "run_test ignores a line when resolving from a source file" do
+      FileUtils.mkdir_p(File.join(@workspace, "test", "models"))
+      File.write(File.join(@workspace, "test", "models", "user_test.rb"), <<~RUBY)
+        require "minitest/autorun"
+
+        class UserTest < Minitest::Test
+          def test_one
+            assert true
+          end
+        end
+      RUBY
+
+      post "/mbeditor/test", params: { path: "app/models/user.rb", line: 4 }, as: :json
+      assert_response :ok
+      assert_nil json["filteredLine"], "a line in the source file cannot filter the test file"
     end
 
     test "run_test returns 404 when no matching test file exists" do

@@ -107,6 +107,94 @@ module Mbeditor
       Mbeditor.configuration.rubocop_command = nil
     end
 
+    def test_ruby_lsp_probe_short_circuits_when_disabled
+      original = Mbeditor.configuration.ruby_lsp
+      Mbeditor.configuration.ruby_lsp = false
+
+      refute AvailabilityProbe.ruby_lsp(@workspace)
+    ensure
+      Mbeditor.configuration.ruby_lsp = original
+    end
+
+    def test_ruby_lsp_command_prefers_config_then_bin_stub
+      original = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = "custom-lsp --stdio"
+      assert_equal ["custom-lsp", "--stdio"], AvailabilityProbe.ruby_lsp_command(@workspace)
+
+      Mbeditor.configuration.ruby_lsp_command = nil
+      Dir.mktmpdir do |dir|
+        FileUtils.mkdir_p(File.join(dir, "bin"))
+        stub = File.join(dir, "bin", "ruby-lsp")
+        File.write(stub, "#!/bin/sh\nexit 0\n")
+        File.chmod(0o755, stub)
+        assert_equal [stub], AvailabilityProbe.ruby_lsp_command(dir)
+      end
+    ensure
+      Mbeditor.configuration.ruby_lsp_command = original
+    end
+
+    def test_rubocop_server_flag_uses_server_for_modern_rubocop
+      Dir.mktmpdir do |dir|
+        script = File.join(dir, "fake-rubocop")
+        File.write(script, "#!/bin/sh\necho '1.66.1'\nexit 0\n")
+        File.chmod(0o755, script)
+        Mbeditor.configuration.rubocop_command = script
+        Mbeditor.configuration.rubocop_server = true
+
+        assert_equal "--server", AvailabilityProbe.rubocop_server_flag(@workspace)
+      end
+    ensure
+      Mbeditor.configuration.rubocop_command = nil
+      Mbeditor.configuration.rubocop_server = false # test_helper default
+      AvailabilityProbe.reset!
+    end
+
+    def test_rubocop_server_flag_falls_back_for_old_rubocop_and_when_disabled
+      Dir.mktmpdir do |dir|
+        script = File.join(dir, "fake-rubocop")
+        File.write(script, "#!/bin/sh\necho '1.20.0'\nexit 0\n")
+        File.chmod(0o755, script)
+        Mbeditor.configuration.rubocop_command = script
+        Mbeditor.configuration.rubocop_server = true
+
+        assert_equal "--no-server", AvailabilityProbe.rubocop_server_flag(@workspace)
+
+        Mbeditor.configuration.rubocop_server = false
+        assert_equal "--no-server", AvailabilityProbe.rubocop_server_flag(@workspace)
+      end
+    ensure
+      Mbeditor.configuration.rubocop_command = nil
+      Mbeditor.configuration.rubocop_server = false # test_helper default
+      AvailabilityProbe.reset!
+    end
+
+    def test_negative_result_is_reprobed_after_ttl
+      Dir.mktmpdir do |dir|
+        counter = File.join(dir, "count")
+        File.write(counter, "0")
+        script = File.join(dir, "fake-rubocop")
+        # Always fails — probe result stays false
+        File.write(script, "#!/bin/sh\nc=$(cat #{counter}); echo $((c+1)) > #{counter}; exit 1\n")
+        File.chmod(0o755, script)
+        Mbeditor.configuration.rubocop_command = script
+
+        refute AvailabilityProbe.rubocop(@workspace)
+        refute AvailabilityProbe.rubocop(@workspace)
+        assert_equal "1\n", File.read(counter), "within TTL the false result is cached"
+
+        # Expire the negative entry by backdating its timestamp
+        cache = AvailabilityProbe.instance_variable_get(:@cache)
+        key = cache.keys.find { |k| k.start_with?("rubocop:") }
+        cache[key][:ts] -= AvailabilityProbe::NEGATIVE_PROBE_TTL + 1
+
+        refute AvailabilityProbe.rubocop(@workspace)
+        assert_equal "2\n", File.read(counter), "expired negative result must re-probe"
+      end
+    ensure
+      Mbeditor.configuration.rubocop_command = nil
+      AvailabilityProbe.reset!
+    end
+
     def test_rg_result_is_cached_subprocess_called_once
       with_fake_rg_on_path do |counter|
         AvailabilityProbe.reset!

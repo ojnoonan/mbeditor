@@ -10,6 +10,7 @@ Mbeditor (Mini Browser Editor) is a mountable Rails engine that adds a browser-b
 - File tree and project search
 - Git panel with working tree changes, unpushed file changes, and branch commit titles
 - Optional RuboCop lint and format endpoints (uses host app RuboCop)
+- Optional Ruby language-server integration (definitions, hover, completion, diagnostics)
 - Optional test runner with inline failure markers and a dedicated results panel (Minitest and RSpec)
 
 ## Security Warning
@@ -84,8 +85,17 @@ end
 |--------|---------|-------------|
 | `allowed_environments` | `[:development]` | Rails environments allowed to access the engine. |
 | `workspace_root` | `Rails.root` | Root directory exposed by Mbeditor. |
-| `excluded_paths` | `%w[.git tmp log node_modules .bundle coverage vendor/bundle]` | Files/directories hidden from the tree and path operations. Entries without `/` match a name anywhere in the path; entries with `/` match relative paths and their descendants. |
+| `excluded_paths` | `%w[.git tmp log node_modules .bundle coverage vendor/bundle public/assets storage]` | Files/directories hidden from the tree and path operations. Entries without `/` match a name anywhere in the path; entries with `/` match relative paths and their descendants. |
 | `rubocop_command` | `"rubocop"` | Command used for inline Ruby linting and formatting. |
+| `git_timeout` | `10` | Seconds each git subprocess may run; a timed-out call degrades its own field of the git panel instead of failing the request. `nil` disables the bound. |
+| `search_timeout` | `15` | Wall-clock bound on project-search subprocesses; a tripped deadline returns the partial results collected so far. `nil` disables. |
+| `search_respect_gitignore` | `false` | When `true`, project search and definition lookups skip files ignored by `.gitignore`. The default searches them, matching the editor's "show me everything on disk" behaviour. |
+| `js_global_identifiers` | `[]` | Extra JS names declared as ambient globals in the editor — for runtime-only globals the static workspace scan can't see (e.g. `%w[Routes I18n]`). |
+| `js_syntax_check` | `:auto` | Save-time babel parse check for JS/JSX using the host's `mini_racer` + babel-standalone (auto-detected; no-op when either is absent). `false` disables. |
+| `babel_standalone_path` | `nil` | Explicit path to the babel-standalone bundle for the syntax check; `nil` looks up `babel.min.js`/`babel.js` in the host's asset pipeline. |
+| `ruby_lsp` | `:auto` | Use the host's [ruby-lsp](https://github.com/Shopify/ruby-lsp) for Ruby go-to-definition, hover, completion, and diagnostics when it's installed (a persistent process is managed per workspace). `false` disables. Without ruby-lsp everything degrades to the built-in grep/Ripper services — no behavior change. |
+| `ruby_lsp_command` | `nil` | Override the ruby-lsp launch command (String or Array). `nil` auto-resolves `bin/ruby-lsp` → installed gem → `bundle exec ruby-lsp`. |
+| `ruby_lsp_timeout` | `3` | Seconds per LSP request; on timeout (e.g. during initial indexing) the editor falls back to the built-in services for that request. |
 
 ### Authentication
 
@@ -136,6 +146,13 @@ The Test button appears in the editor toolbar for any `.rb` file when a `test/` 
 3. Shows a **Test Results** panel with pass/fail counts, per-test status icons, and error messages.
 4. Optionally overlays inline failure markers in the Monaco editor (separate from RuboCop markers — the two never interfere). Use the marker icon in the panel header to toggle them.
 
+**Running a single test.** With a test file open, `Ctrl+Shift+T` (or *Run Test
+at Cursor* in the editor context menu) runs only the test enclosing the cursor.
+The filter syntax follows the detected framework — `path:line` for RSpec and
+`bin/rails test`, a `-n` name filter for the plain Minitest runner — so it works
+with a custom `test_command` too. If the cursor isn't inside a test, or the open
+file is a source file rather than its test, the whole file runs as usual.
+
 **Framework auto-detection order:**
 1. File suffix: `_spec.rb` → RSpec, `_test.rb` → Minitest
 2. `.rspec` file present → RSpec
@@ -171,6 +188,7 @@ A *broken route* is recoverable in the browser; a *failed boot* is not. If the a
 | `Ctrl+Shift+S` | Save all dirty files |
 | `Alt+Shift+F` | Format the active file |
 | `Ctrl+Shift+G` | Toggle the git panel |
+| `Ctrl+Shift+T` | Run only the test under the cursor |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / Redo (Monaco built-in) |
 
 ## Host Requirements (Optional)
@@ -180,8 +198,38 @@ The gem keeps host/tooling responsibilities in the host app:
 - `git` installed in environment (for Git panel data)
 - `minitest` or `rspec` in the host app's bundle (required for the test runner)
 - `actioncable` framework/gem (optional, required only for realtime file-change push + websocket state saves)
+- `ruby-lsp` gem (optional — see below)
 
 All lint and test tools are auto-detected at runtime. The engine gracefully disables features if the tools are not available. Neither `rubocop`, `haml_lint`, nor any test framework are runtime dependencies of the gem itself — they are discovered from the host app's environment.
+
+### Ruby language server (Optional)
+
+Add [ruby-lsp](https://github.com/Shopify/ruby-lsp) to the host app's
+development group and mbeditor uses it automatically for Ruby
+go-to-definition, hover, completion, and diagnostics:
+
+```ruby
+gem "ruby-lsp", require: false, group: :development
+gem "ruby-lsp-rails", require: false, group: :development  # Rails-aware results
+```
+
+`ruby-lsp-rails` needs no mbeditor configuration — ruby-lsp loads it as an
+addon, so associations, model attributes, and route helpers start resolving on
+their own.
+
+What changes when it's present:
+
+- **Diagnostics.** Ruby files are checked by ruby-lsp instead of booting
+  RuboCop over HTTP on every debounce, so you also get Prism syntax errors and
+  warnings alongside RuboCop offenses. Quick-fix lightbulbs still work for
+  correctable cops. Very large files fall back to syntax-only diagnostics.
+- **Definitions, hover, completion.** Answered from the language server's index
+  rather than a workspace grep, including your unsaved buffer contents.
+
+Everything degrades on its own: if ruby-lsp is missing, times out (its first
+index of a large app takes a while), or crashes, that request falls back to the
+built-in grep/Ripper services. ERB templates always use the built-in services —
+ruby-lsp cannot parse ERB.
 
 ### Realtime via Action Cable (Optional)
 
@@ -207,13 +255,26 @@ The gem includes syntax highlighting for common Rails and React development file
 **Web & Template Languages:**
 - **Ruby** (.rb, Gemfile, gemspec, Rakefile)
 - **HTML** 
-- **ERB** (.html.erb, .erb) — Handlebars-based template syntax
+- **ERB** (.html.erb, .erb) — dedicated ERB grammar, plus Ruby intellisense
+  inside `<% %>` tags: hover, completion, go-to-definition (Ctrl/Cmd+click or
+  F12) and auto-`end`, all inert in the surrounding HTML. ERB uses the built-in
+  workspace services rather than ruby-lsp, which cannot parse ERB.
 - **HAML** (.haml) — plaintext syntax highlighting (no dedicated HAML grammar in Monaco; haml-lint provides inline error markers when available)
 - **CSS** and **SCSS** stylesheets
 
 **JavaScript & React:**
-- **JavaScript** (.js, .jsx)
-- **TypeScript** for JSX with full language server support
+- **JavaScript / JSX** (.js, .jsx, .js.jsx) — Monaco's TypeScript worker runs in
+  checked-JS mode with JSX enabled. Built for the Sprockets world where every
+  top-level `var`/`function`/`class` (and `window.X =` assignment) is a global:
+  the editor scans the workspace once at boot (`GET /js_globals`) and declares
+  all of them as ambient globals, so cross-file component references need no
+  `import` and produce no "Cannot find name" diagnostics. The list refreshes
+  automatically when files change. Runtime-only globals the static scan can't
+  see (e.g. `Routes`, `I18n`) can be declared via
+  `config.js_global_identifiers = %w[Routes I18n]`.
+  Known limits: everything is typed `any` (no cross-file type inference), and
+  genuinely undefined names are shown as warnings, not errors.
+- **TypeScript** (.ts, .tsx)
 
 **Configuration & Documentation:**
 - **YAML** (.yml, .yaml)

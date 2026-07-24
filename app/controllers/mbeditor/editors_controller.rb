@@ -18,6 +18,30 @@ module Mbeditor
     IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
     helper_method :mbeditor_base_path
 
+    RUBY_DEFS_WARM_MUTEX = Mutex.new
+    TOTAL_LINES_CACHE_MAX = 50
+    TOTAL_LINES_MUTEX = Mutex.new
+
+    class << self
+      # Small (path, mtime) => total-line-count cache so windowed reads of big
+      # files don't re-read the whole file just to report total_lines.
+      def cached_total_lines(path, mtime)
+        TOTAL_LINES_MUTEX.synchronize do
+          entry = (@total_lines_cache ||= {})[path]
+          entry && entry[:mtime] == mtime ? entry[:total] : nil
+        end
+      end
+
+      def store_total_lines(path, mtime, total)
+        TOTAL_LINES_MUTEX.synchronize do
+          cache = (@total_lines_cache ||= {})
+          cache.delete(path)
+          cache[path] = { mtime: mtime, total: total }
+          cache.delete(cache.keys.first) while cache.length > TOTAL_LINES_CACHE_MAX
+        end
+      end
+    end
+
     # GET /mbeditor — renders the IDE shell
     def index
       render layout: "mbeditor/application"
@@ -31,6 +55,7 @@ module Mbeditor
 
     # GET /mbeditor/workspace — metadata about current workspace root
     def workspace
+      warm_ruby_definition_cache
       render json: {
         rootName: workspace_root.basename.to_s,
         rootPath: workspace_root.to_s,
@@ -41,7 +66,9 @@ module Mbeditor
         blameAvailable: AvailabilityProbe.git(workspace_root),
         redmineEnabled: Mbeditor.configuration.redmine_enabled == true,
         testAvailable: test_available?,
-        actionCableEnabled: action_cable_enabled?
+        actionCableEnabled: action_cable_enabled?,
+        jsSyntaxCheckAvailable: JsSyntaxCheckService.available?,
+        rubyLspAvailable: AvailabilityProbe.ruby_lsp(workspace_root)
       }
     end
 
@@ -174,7 +201,7 @@ module Mbeditor
       FileUtils.mkdir_p(File.dirname(hist))
 
       File.open(hist, File::RDWR | File::CREAT) do |f|
-        f.flock(File::LOCK_EX)
+        flock_exclusive_with_timeout!(f)
         existing = f.size > 0 ? (JSON.parse(f.read) rescue {}) : {}
 
         if existing.empty?
@@ -218,13 +245,22 @@ module Mbeditor
       line_count  = [line_count, 5000].min
 
       if start_line
-        total_bytes = File.size(path)
+        stat = File.stat(path)
+        total_bytes = stat.size
+        cached_total = self.class.cached_total_lines(path, stat.mtime.to_f)
         chunk = []
         total_lines = 0
         File.foreach(path, encoding: "UTF-8", invalid: :replace, undef: :replace) do |line|
           chunk << line if total_lines >= start_line && chunk.length < line_count
           total_lines += 1
+          # Once the requested window is filled and the total is already known
+          # from a prior read of this (path, mtime), skip the rest of the file.
+          if cached_total && chunk.length >= line_count
+            total_lines = cached_total
+            break
+          end
         end
+        self.class.store_total_lines(path, stat.mtime.to_f, total_lines) unless cached_total
         return render json: {
           path:        relative_path(path),
           content:     chunk.join,
@@ -278,7 +314,7 @@ module Mbeditor
       return render json: { error: "Cannot write to this path" }, status: :forbidden if path_blocked_for_operations?(path)
 
       result = FileOperationService.new(workspace_root).save(path, params[:code].to_s)
-      broadcast_files_changed
+      broadcast_files_changed([path])
       render json: result
     rescue FileOperationService::FileTooLargeError
       render_file_too_large(params[:code].to_s.bytesize)
@@ -293,7 +329,7 @@ module Mbeditor
       return render json: { error: "Cannot create file in this path" }, status: :forbidden if path_blocked_for_operations?(path)
 
       result = FileOperationService.new(workspace_root).create_file(path, params[:code].to_s)
-      broadcast_files_changed
+      broadcast_files_changed([path])
       render json: result
     rescue FileOperationService::FileExistsError
       render json: { error: "File already exists" }, status: :unprocessable_content
@@ -326,7 +362,7 @@ module Mbeditor
       return render json: { error: "Cannot rename this path" }, status: :forbidden if path_blocked_for_operations?(old_path) || path_blocked_for_operations?(new_path)
 
       result = FileOperationService.new(workspace_root).rename(old_path, new_path)
-      broadcast_files_changed
+      broadcast_files_changed([old_path, new_path])
       render json: result
     rescue FileOperationService::PathNotFoundError
       render json: { error: "Path not found" }, status: :not_found
@@ -343,7 +379,7 @@ module Mbeditor
       return render json: { error: "Cannot delete this path" }, status: :forbidden if File.exist?(path) && path_blocked_for_operations?(path)
 
       result = FileOperationService.new(workspace_root).destroy_path(path)
-      broadcast_files_changed if result.key?(:type)
+      broadcast_files_changed([path]) if result.key?(:type)
       render json: result
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -387,7 +423,15 @@ module Mbeditor
       return render json: { error: "Invalid symbol" }, status: :bad_request \
         unless symbol.match?(/\A[a-zA-Z_$][a-zA-Z0-9_$]{0,59}\z/)
 
-      results = JsDefinitionService.new(symbol, workspace_root).call
+      parent = params[:parent].to_s.strip
+      if parent.present?
+        return render json: { error: "Invalid parent" }, status: :bad_request \
+          unless parent.match?(/\A[a-zA-Z_$][a-zA-Z0-9_$]{0,59}\z/)
+      else
+        parent = nil
+      end
+
+      results = JsDefinitionService.new(symbol, workspace_root, parent: parent).call
       render json: { results: results }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
@@ -405,6 +449,69 @@ module Mbeditor
       render json: { symbol: symbol, members: members }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
+    end
+
+    # GET /mbeditor/js_globals
+    # All top-level JS declarations across the workspace (the Sprockets global
+    # scope), plus config.js_global_identifiers. The editor declares these as
+    # ambient globals so cross-file component references don't produce
+    # "Cannot find name" diagnostics.
+    def js_globals
+      render json: JsGlobalsService.call(workspace_root)
+    rescue StandardError => e
+      render json: { ok: false, error: e.message }, status: :unprocessable_content
+    end
+
+    RUBY_LSP_METHODS = {
+      "definition"  => "textDocument/definition",
+      "hover"       => "textDocument/hover",
+      "completion"  => "textDocument/completion",
+      "diagnostics" => "textDocument/diagnostic"
+    }.freeze
+
+    # Diagnostics are whole-document, not positional.
+    RUBY_LSP_POSITIONLESS = %w[textDocument/diagnostic].freeze
+
+    # RuboCop's first run inside a freshly booted ruby-lsp is far slower than a
+    # hover/definition lookup, so diagnostics get their own budget.
+    RUBY_LSP_DIAGNOSTICS_TIMEOUT = 10
+
+    # POST /mbeditor/ruby_lsp — bridge to the host's ruby-lsp process.
+    # Body: { path:, content:, line: (1-based), character: (1-based), lsp_method: }
+    # Translates LSP responses into the shapes the frontend providers already
+    # consume; { fallback: true } tells the frontend to use the legacy path.
+    def ruby_lsp
+      lsp_method = RUBY_LSP_METHODS[params[:lsp_method].to_s]
+      return render json: { error: "Invalid lsp_method" }, status: :bad_request unless lsp_method
+
+      path = resolve_path(params[:path])
+      return render json: { error: "Invalid path" }, status: :bad_request unless path
+
+      content = params[:content].to_s
+      if content.bytesize > FileOperationService::MAX_FILE_SIZE_BYTES
+        return render json: { error: "Content too large" }, status: :content_too_large
+      end
+
+      unless AvailabilityProbe.ruby_lsp(workspace_root)
+        return render json: { error: "ruby-lsp unavailable", rubyLspAvailable: false }, status: :unprocessable_content
+      end
+
+      extra = if RUBY_LSP_POSITIONLESS.include?(lsp_method)
+        {}
+      else
+        # Monaco positions are 1-based; LSP positions are 0-based.
+        { position: { line: [params[:line].to_i - 1, 0].max,
+                      character: [params[:character].to_i - 1, 0].max } }
+      end
+      timeout = RUBY_LSP_POSITIONLESS.include?(lsp_method) ? RUBY_LSP_DIAGNOSTICS_TIMEOUT : nil
+
+      client = RubyLspClient.for(workspace_root.to_s)
+      result = client.request_with_document(lsp_method, path, content, extra, timeout: timeout)
+      render json: translate_ruby_lsp_result(params[:lsp_method].to_s, result)
+    rescue RubyLspClient::TimeoutError, RubyLspClient::NotReadyError
+      render json: { fallback: true }
+    rescue StandardError => e
+      render json: { error: e.message, fallback: true }
     end
 
     # GET /mbeditor/module_members?name=ArticlesHelper
@@ -471,18 +578,24 @@ module Mbeditor
       return render json: [] if query.blank?
       return render json: { error: "Query too long" }, status: :bad_request if query.length > 500
 
-      # On first page, count total matches in parallel with fetching results.
-      count_thread = offset == 0 ? Thread.new { SearchReplaceService.count(workspace_root, query, use_regex: use_regex, match_case: match_case, whole_word: whole_word, excluded_paths: Mbeditor.configuration.excluded_paths) } : nil
+      # Optional single-file scope, used by the live result refresh after a save.
+      if params[:path].present?
+        full = resolve_path(params[:path])
+        return render json: { error: "Invalid path" }, status: :forbidden unless full
 
-      results   = SearchReplaceService.search(workspace_root, query, limit: needed, use_regex: use_regex, match_case: match_case, whole_word: whole_word, excluded_paths: Mbeditor.configuration.excluded_paths)
-      has_more  = results.length > offset + limit
-      response  = { results: results[offset, limit] || [], has_more: has_more }
-      if count_thread
-        # Give the count thread up to 100 ms; omit total_count when it hasn't finished yet
-        # so the first page is never blocked by the counting subprocess.
-        count_thread.join(0.1)
-        response[:total_count] = count_thread.value unless count_thread.alive?
+        results = SearchReplaceService.search(workspace_root, query, limit: needed,
+                                              use_regex: use_regex, match_case: match_case, whole_word: whole_word,
+                                              excluded_paths: Mbeditor.configuration.excluded_paths, paths: [full])
+        return render json: { results: results, has_more: false }
       end
+
+      # One subprocess per query: the full (capped) result set is collected and
+      # briefly cached, so pagination and the total count come from memory.
+      page = SearchReplaceService.search_page(workspace_root, query, offset: offset, limit: limit,
+                                              use_regex: use_regex, match_case: match_case, whole_word: whole_word,
+                                              excluded_paths: Mbeditor.configuration.excluded_paths)
+      response = { results: page[:results], has_more: page[:has_more], partial: page[:partial] }
+      response[:total_count] = page[:total_count] if page[:total_count]
 
       render json: response
     rescue StandardError => e
@@ -585,6 +698,28 @@ module Mbeditor
       filename = path.to_s
       code = params[:code] || File.read(path)
 
+      if params[:language] == "javascript"
+        unless JsSyntaxCheckService.available?
+          return render json: { error: "JS syntax check not available", markers: [] }, status: :unprocessable_content
+        end
+
+        err = JsSyntaxCheckService.check(code)
+        markers = if err
+          line = err["line"] || 1
+          col  = (err["column"] || 0) + 1
+          [{
+            severity: "error",
+            copName: "Babel",
+            correctable: false,
+            message: "[babel] #{err['message']}",
+            startLine: line, startCol: col, endLine: line, endCol: col + 1
+          }]
+        else
+          []
+        end
+        return render json: { markers: markers }
+      end
+
       if File.basename(filename).end_with?('.haml')
         unless AvailabilityProbe.haml_lint(workspace_root)
           return render json: { error: "haml-lint not available", markers: [] }, status: :unprocessable_content
@@ -594,7 +729,7 @@ module Mbeditor
         return render json: { markers: markers }
       end
 
-      cmd = AvailabilityProbe.rubocop_command(workspace_root) + ["--no-server", "--stdin", filename, "--format", "json", "--no-color"]
+      cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "--stdin", filename, "--format", "json", "--no-color"]
       env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
       output = run_with_timeout(env, cmd, stdin_data: code)
 
@@ -655,7 +790,7 @@ module Mbeditor
         f.flush
         tmpfile = f.path
 
-        cmd = AvailabilityProbe.rubocop_command(workspace_root) + ["--no-server", "-A", "--no-color", tmpfile]
+        cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
         _out, _err, status = Open3.capture3(env, *cmd)
 
@@ -684,16 +819,27 @@ module Mbeditor
       full_test = File.join(workspace_root.to_s, test_file)
       return render json: { error: "Test file does not exist: #{test_file}" }, status: :not_found unless File.file?(full_test)
 
+      raw_line = params[:line].to_s
+      unless raw_line.empty? || raw_line.match?(/\A\d+\z/)
+        return render json: { error: "Invalid line" }, status: :bad_request
+      end
+
+      # A line filter only makes sense when the user is in the test file
+      # itself — running from a source file resolves to a whole test file.
+      line = raw_line.empty? ? nil : raw_line.to_i
+      line = nil unless line&.positive? && test_file == relative
+
       config = Mbeditor.configuration
       result = TestRunnerService.run(
         workspace_root.to_s,
         test_file,
         framework: config.test_framework&.to_sym,
         command: config.test_command,
-        timeout: config.test_timeout || 60
+        timeout: config.test_timeout || 60,
+        line: line
       )
 
-      render json: result.merge(testFile: test_file)
+      render json: result.merge(testFile: test_file, filteredLine: line)
     rescue StandardError => e
       render json: { error: e.message, ok: false }, status: :unprocessable_content
     end
@@ -758,7 +904,7 @@ module Mbeditor
         f.flush
         tmpfile = f.path
 
-        cmd = AvailabilityProbe.rubocop_command(workspace_root) + ["--no-server", "-A", "--no-color", tmpfile]
+        cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
         _out, _err, status = Open3.capture3(env, *cmd)
         unless status.success? || status.exitstatus == 1
@@ -813,9 +959,11 @@ module Mbeditor
       base.to_s
     end
 
-    def broadcast_files_changed
+    def broadcast_files_changed(changed_paths = nil)
       root = workspace_root.to_s
       FileTreeService.invalidate(root)
+      SearchReplaceService.invalidate_cache(root)
+      JsGlobalsService.invalidate(root)
       Thread.new do
         GitInfoService.invalidate(root)
       rescue => e
@@ -824,13 +972,29 @@ module Mbeditor
 
       return unless defined?(ActionCable.server)
 
-      ActionCable.server.broadcast("mbeditor_editor", { type: "files_changed" })
+      payload = { type: "files_changed" }
+      rel = Array(changed_paths).compact.map { |p| relative_path(p.to_s) }.reject(&:empty?)
+      payload[:paths] = rel if rel.any?
+      ActionCable.server.broadcast("mbeditor_editor", payload)
     rescue StandardError
       # Never let a broadcast failure affect the HTTP response
     end
 
     def editor_state_service
       @editor_state_service ||= EditorStateService.new(workspace_root)
+    end
+
+    # Acquire an exclusive lock without blocking forever, so a stuck holder (e.g.
+    # a request paused at a breakpoint mid-write) cannot wedge history saves and
+    # pin a worker indefinitely. Raises on timeout; the caller's rescue turns it
+    # into a fast error response instead of a hang.
+    HISTORY_LOCK_TIMEOUT = 5.0
+    def flock_exclusive_with_timeout!(file, timeout: HISTORY_LOCK_TIMEOUT)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+      until file.flock(File::LOCK_EX | File::LOCK_NB)
+        raise "could not acquire history lock within #{timeout}s" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+        sleep 0.01
+      end
     end
 
     def sanitize_branch_name(branch)
@@ -840,7 +1004,42 @@ module Mbeditor
       str.match?(EditorStateService::SAFE_BRANCH_NAME) ? str : nil
     end
 
+    # Warm the Ruby definition cache once per process, in the background, so
+    # the first go-to-definition request doesn't pay for a full workspace
+    # Ripper scan on the request thread. Triggered from /workspace (only the
+    # editor UI calls it) rather than engine boot so rake tasks and consoles
+    # never scan.
+    def warm_ruby_definition_cache
+      root = workspace_root.to_s
+      RUBY_DEFS_WARM_MUTEX.synchronize do
+        return if self.class.instance_variable_get(:@ruby_defs_warm_started)
+
+        self.class.instance_variable_set(:@ruby_defs_warm_started, true)
+      end
+      Thread.new do
+        RubyDefinitionService.new(root, nil,
+                                  excluded_paths: Mbeditor.configuration.excluded_paths,
+                                  included_dirs: Mbeditor.configuration.ruby_def_include_dirs).scan_workspace
+      rescue StandardError => e
+        Rails.logger.warn("[mbeditor] ruby definition cache warm failed: #{e}")
+      end
+    end
+
     def action_cable_enabled?
+      # Iterating the host's whole route table is linear in app size and this
+      # runs on every /workspace call — memoize with a short TTL (dev route
+      # reloads shortly after boot are the only staleness window, and the
+      # frontend degrades to polling if the answer was stale-positive).
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      cached = self.class.instance_variable_get(:@action_cable_enabled_cache)
+      return cached[:value] if cached && (now - cached[:ts]) < 60
+
+      value = compute_action_cable_enabled
+      self.class.instance_variable_set(:@action_cable_enabled_cache, { value: value, ts: now })
+      value
+    end
+
+    def compute_action_cable_enabled
       return false unless defined?(ActionCable::Channel::Base)
 
       mount_path = begin
@@ -899,7 +1098,7 @@ module Mbeditor
       rel = relative_path(full_path)
       return true if rel.blank?
 
-      ExclusionMatcher.new(Mbeditor.configuration.excluded_paths).excluded?(rel)
+      ExclusionMatcher.new(Mbeditor.configuration.excluded_paths, root: workspace_root).excluded?(rel)
     end
 
     def ruby_def_include_dirs
@@ -911,6 +1110,70 @@ module Mbeditor
       timeout = timeout_seconds && timeout_seconds > 0 ? timeout_seconds : nil
       result = ProcessRunner.call(cmd, timeout: timeout, env: env, stdin_data: stdin_data)
       result[:stdout]
+    end
+
+    def translate_ruby_lsp_result(kind, result)
+      case kind
+      when "definition"  then { results: translate_lsp_locations(result) }
+      when "hover"       then { markdown: translate_lsp_hover(result) }
+      when "completion"  then { suggestions: translate_lsp_completions(result) }
+      when "diagnostics" then LspDiagnosticsTranslator.call(result)
+      end
+    end
+
+    def translate_lsp_locations(result)
+      items = result.is_a?(Array) ? result : [result].compact
+      root = workspace_root.to_s
+      items.filter_map do |loc|
+        next unless loc.is_a?(Hash)
+
+        uri   = loc["uri"] || loc["targetUri"]
+        range = loc["range"] || loc["targetSelectionRange"] || loc["targetRange"]
+        next unless uri.to_s.start_with?("file://")
+
+        fpath = uri.delete_prefix("file://")
+        # Drop gem/stdlib locations the editor can't open; an empty list makes
+        # the frontend fall back to the legacy services (ri covers stdlib).
+        next unless fpath.start_with?("#{root}/")
+
+        { file: fpath.delete_prefix("#{root}/"), line: (range&.dig("start", "line") || 0) + 1 }
+      end
+    end
+
+    def translate_lsp_hover(result)
+      contents = result.is_a?(Hash) ? result["contents"] : nil
+      return nil if contents.nil?
+
+      case contents
+      when Hash  then contents["value"].to_s
+      when Array then contents.map { |c| c.is_a?(Hash) ? c["value"].to_s : c.to_s }.join("\n\n")
+      else contents.to_s
+      end
+    end
+
+    def translate_lsp_completions(result)
+      items = result.is_a?(Hash) ? Array(result["items"]) : Array(result)
+      items.first(100).filter_map do |item|
+        next unless item.is_a?(Hash)
+
+        {
+          label: item["label"].to_s,
+          kind: lsp_completion_kind(item["kind"]),
+          insertText: (item.dig("textEdit", "newText") || item["insertText"] || item["label"]).to_s,
+          detail: item["detail"].to_s,
+          isSnippet: item["insertTextFormat"] == 2
+        }
+      end
+    end
+
+    LSP_COMPLETION_KINDS = {
+      2 => "Method", 3 => "Function", 4 => "Constructor", 5 => "Field",
+      6 => "Variable", 7 => "Class", 8 => "Interface", 9 => "Module",
+      10 => "Property", 14 => "Keyword", 15 => "Snippet", 21 => "Constant"
+    }.freeze
+
+    def lsp_completion_kind(kind)
+      LSP_COMPLETION_KINDS[kind] || "Text"
     end
 
     def cop_severity(severity)

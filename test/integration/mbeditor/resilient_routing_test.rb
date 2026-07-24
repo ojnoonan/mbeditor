@@ -63,6 +63,23 @@ module Mbeditor
       end
     end
 
+    test "a healthy request reaches the host mount so host main_app URLs stay unprefixed" do
+      # Regression: when resilient routing intercepted *every* /mbeditor request
+      # (not only broken-routes ones), the host's authenticate_with redirect ran
+      # inside the private route set with SCRIPT_NAME="/mbeditor", so main_app
+      # url helpers wrongly prepended the mount prefix — turning a host login
+      # redirect of "/" into "/mbeditor/". Healthy requests must pass through to
+      # the normal engine mount where main_app generates host-rooted paths.
+      Mbeditor.configure { |c| c.authenticate_with = proc { redirect_to main_app.root_path } }
+
+      get "/mbeditor/"
+
+      assert_redirected_to "/",
+        "the host auth redirect must target the host path, not the /mbeditor-prefixed engine path"
+    ensure
+      Mbeditor.configure { |c| c.authenticate_with = nil }
+    end
+
     test "session-based authenticate_with still authorizes resilient-routed requests" do
       Mbeditor.configure do |c|
         c.authenticate_with = proc do
@@ -181,16 +198,34 @@ module Mbeditor
     # Make an mbeditor request deliberately fail from *inside* its own request
     # handling by stubbing a service one of its actions calls. editors#files
     # renders FileTreeService.build directly and does not rescue, so the raised
-    # error bubbles out of the controller and up the middleware stack. Restores
-    # the real method afterward so later tests are unaffected.
+    # error bubbles out of the controller and up the middleware stack.
+    #
+    # Restores via alias on the captured singleton class rather than rebinding a
+    # captured Method object. A healthy mbeditor request now flows through the
+    # host stack's Reloader (no longer bypassed by the resilient router), so the
+    # inner `get` can reload FileTreeService when an earlier broken-routes test
+    # left the code reloader dirty. The request itself still hits the stub and
+    # returns 500; only a Method#rebind in `ensure` would fail with "can't bind
+    # singleton method to a different class". alias_method stays within the
+    # original singleton class, so the restore is reload-safe.
     def with_raising_mbeditor_action
-      original = Mbeditor::FileTreeService.method(:build)
-      Mbeditor::FileTreeService.define_singleton_method(:build) do |*|
-        raise SELF_ERROR_MESSAGE
-      end
+      # Flush any pending code reload first, but only when the host routes are
+      # healthy. An earlier broken-routes test can leave the reloader dirty, and
+      # a healthy mbeditor request now traverses the Reloader — an unflushed
+      # reload would fire mid-request, swap out the stubbed FileTreeService, and
+      # let the real #build run (200 instead of the expected 500). Reloading up
+      # front resolves the constant to its final class so the stub sticks for the
+      # request. Skip it under broken routes: that path is served by the private
+      # set (the Reloader is bypassed, so the stub already sticks) and reload!
+      # would itself raise on the syntactically broken routes.rb.
+      Rails.application.reloader.reload! if Mbeditor::Engine.routes.routes.any?
+      meta = Mbeditor::FileTreeService.singleton_class
+      meta.send(:alias_method, :__mbeditor_orig_build, :build)
+      meta.send(:define_method, :build) { |*| raise SELF_ERROR_MESSAGE }
       yield
     ensure
-      Mbeditor::FileTreeService.define_singleton_method(:build, original)
+      meta.send(:alias_method, :build, :__mbeditor_orig_build)
+      meta.send(:remove_method, :__mbeditor_orig_build)
     end
 
     test "an exception inside mbeditor request handling surfaces as Rails' standard error response" do

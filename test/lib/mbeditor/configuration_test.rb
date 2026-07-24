@@ -8,8 +8,12 @@ module Mbeditor
       assert_equal true, Mbeditor::Configuration.new.resilient_routing
     end
 
-    test "search_timeout defaults to 10 seconds" do
-      assert_equal 10, Mbeditor::Configuration.new.search_timeout
+    test "search_timeout defaults to 15 seconds" do
+      assert_equal 15, Mbeditor::Configuration.new.search_timeout
+    end
+
+    test "search_respect_gitignore defaults to false" do
+      assert_equal false, Mbeditor::Configuration.new.search_respect_gitignore
     end
 
     test "resilient_routing can be disabled" do

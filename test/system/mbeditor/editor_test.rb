@@ -14,6 +14,29 @@ module Mbeditor
       File.write(File.join(@workspace, "Gemfile.lock"), "GEM\n  specs:\n")
       File.write(File.join(@workspace, "app", "models", "user.rb"), "class User; end\n")
       File.write(File.join(@workspace, "nested_example.rb"), "class Demo\n    def call\nend")
+      # Task 2 tokenizer fixture. Keep it outside Task 3's test/ and spec/
+      # outline fixtures so each task owns its own setup data.
+      File.write(File.join(@workspace, "tokenization_test.rb"), "class TokenizationTest; end\n")
+      FileUtils.mkdir_p(File.join(@workspace, "test", "models"))
+      FileUtils.mkdir_p(File.join(@workspace, "spec", "models"))
+      File.write(File.join(@workspace, "test", "models", "user_test.rb"), <<~RUBY)
+        class UserTest
+          private
+          def helper
+          end
+
+          test "is valid" do
+          end
+        end
+      RUBY
+      File.write(File.join(@workspace, "spec", "models", "user_spec.rb"), <<~RUBY)
+        RSpec.describe User do
+          context "when active" do
+            it "is valid" do
+            end
+          end
+        end
+      RUBY
       File.write(File.join(@workspace, "component.jsx"), "<div")
       Mbeditor.configure do |c|
         c.allowed_environments = %i[test development]
@@ -27,6 +50,10 @@ module Mbeditor
       Capybara.reset_sessions!
       FileUtils.rm_rf(@workspace)
       Mbeditor.configure { |c| c.authenticate_with = nil }
+    end
+
+    def expand_tree_folder(path)
+      find(".tree-item[data-path='#{path}']").click
     end
 
     test "page loads and React mounts" do
@@ -57,6 +84,115 @@ module Mbeditor
       all(".tree-item-name", text: "Gemfile.lock").first.click
       assert_selector ".monaco-editor", wait: 10
       assert_equal "ruby", active_editor_language
+    end
+
+    test "ruby test DSL receives structural Monaco tokens" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      all(".tree-item-name", text: "tokenization_test.rb").first.click
+      assert_selector ".monaco-editor", wait: 10
+
+      result = page.evaluate_script(<<~'JS')
+        (function () {
+          var source = 'test "works" do\nRSpec.describe User do\nit "passes" do\nbefore do\nlet(:user) { User.new }\ntest? "ordinary predicate"\ndescribe= ordinary_value';
+          var tokenLines = window.monaco.editor.tokenize(source, 'ruby');
+          var tokens = [];
+
+          for (var lineIndex = 0; lineIndex < tokenLines.length; lineIndex++) {
+            var line = source.split("\n")[lineIndex];
+            var lineTokens = tokenLines[lineIndex];
+            for (var tokenIndex = 0; tokenIndex < lineTokens.length; tokenIndex++) {
+              var token = lineTokens[tokenIndex];
+              var nextToken = lineTokens[tokenIndex + 1];
+              tokens.push({
+                text: line.slice(token.offset, nextToken ? nextToken.offset : line.length),
+                type: token.type
+              });
+            }
+          }
+
+          return {
+            language: window.__mbeditorActiveEditor.getModel().getLanguageId(),
+            tokens: tokens
+          };
+        })()
+      JS
+
+      assert_equal "ruby", result["language"]
+      %w[test describe it before let].each do |word|
+        token = result["tokens"].find { |candidate| candidate["text"] == word }
+        assert token, "Expected a Monaco token for #{word.inspect}"
+        refute_includes ["", "identifier.ruby"], token["type"],
+                        "Expected #{word.inspect} to receive a structural Ruby token"
+      end
+
+      predicate = result["tokens"].find { |candidate| candidate["text"] == "test?" }
+      assert predicate, "Expected a Monaco token for the ordinary predicate"
+      assert_equal "identifier.ruby", predicate["type"]
+
+      writer = result["tokens"].reverse.find { |candidate| candidate["text"] == "describe" }
+      assert writer, "Expected a Monaco token for the ordinary writer"
+      assert_equal "identifier.ruby", writer["type"]
+
+      local_identifier = result["tokens"].find { |candidate| candidate["text"] == "ordinary_value" }
+      assert local_identifier, "Expected a Monaco token for the ordinary identifier"
+      assert_equal "identifier.ruby", local_identifier["type"]
+    end
+
+    test "test-aware Outline panel navigates to selected entries" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      find(".tree-item-name", text: "nested_example.rb").click
+      assert_selector ".monaco-editor", wait: 10
+      assert_selector "button[title='Jump to Method']", text: "Methods"
+
+      expand_tree_folder("test")
+      expand_tree_folder("test/models")
+      find(".tree-item-name", text: "user_test.rb").click
+      assert_selector ".monaco-editor", wait: 10
+      assert_selector "button[title='Jump to Outline']", text: "Outline"
+      find("button[title='Jump to Outline']").click
+      assert_selector ".ide-methods-dropdown-visibility", text: "PRIVATE"
+      assert_selector ".ide-methods-dropdown-item[data-outline-kind='method']", text: "helper"
+      assert_selector ".ide-methods-dropdown-item[data-outline-kind='test'][data-outline-depth='0']", text: "is valid"
+
+      # The component contract verifies these are native buttons. Cuprite's
+      # send_keys does not synthesize their browser-default click, so exercise
+      # the navigation handler directly here.
+      find("button.ide-methods-dropdown-item[data-outline-kind='method']", text: "helper").click
+      wait_for_editor_position({ "lineNumber" => 3, "column" => 1 })
+
+      find("button[title='Jump to Outline']").click
+      find("button.ide-methods-dropdown-item[data-outline-kind='test']", text: "is valid").click
+      wait_for_editor_position({ "lineNumber" => 6, "column" => 1 })
+
+      page.execute_script(<<~'JS')
+        window.__mbeditorActiveEditor.setValue([
+          'class UserTest',
+          '  private',
+          '  def helper',
+          '  end',
+          '',
+          '  test "is valid" do',
+          '  end',
+          '',
+          '  test "new case" do',
+          '  end',
+          'end'
+        ].join("\n"));
+      JS
+      find("button[title='Jump to Outline']").click
+      assert_selector ".ide-methods-dropdown-item[data-outline-kind='test']", text: "new case"
+
+      expand_tree_folder("spec")
+      expand_tree_folder("spec/models")
+      find(".tree-item-name", text: "user_spec.rb").click
+      assert_selector ".monaco-editor", wait: 10
+      find("button[title='Jump to Outline']").click
+      assert_selector ".ide-methods-dropdown-item[data-outline-kind='suite'][data-outline-depth='0']", text: "User"
+      assert_selector ".ide-methods-dropdown-item[data-outline-kind='suite'][data-outline-depth='1']", text: "when active"
+      assert_selector ".ide-methods-dropdown-item[data-outline-kind='test'][data-outline-depth='2']", text: "is valid"
     end
 
     test "Ctrl+P opens the quick-open dialog" do
@@ -118,6 +254,46 @@ module Mbeditor
       expected = "class Demo\n    def call\n        \n    end\nend"
       wait_for_editor_value(expected)
       assert_equal({ "lineNumber" => 3, "column" => 9 }, active_editor_position)
+    end
+
+    test "ruby auto-end still inserts end when a sibling method follows below" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "nested_example.rb").click
+      assert_selector ".monaco-editor", wait: 10
+
+      # The everyday case: writing a NEW method above an existing one. The
+      # sibling's `end` (same indent) must not be mistaken for the opener's.
+      page.execute_script(<<~'JS')
+        var editor = window.__mbeditorActiveEditor;
+        editor.setValue(["class Demo", "  def fresh", "", "  def existing", "  end", "end"].join("\n"));
+        editor.getModel().updateOptions({ insertSpaces: true, tabSize: 2 });
+        editor.setPosition({ lineNumber: 2, column: editor.getModel().getLineMaxColumn(2) });
+        editor.focus();
+        window.MbeditorEditorPlugins.runRubyEnter(editor);
+      JS
+
+      expected = "class Demo\n  def fresh\n    \n  end\n\n  def existing\n  end\nend"
+      wait_for_editor_value(expected)
+    end
+
+    test "ruby auto-end skips insertion when the opener already has its own end" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "nested_example.rb").click
+      assert_selector ".monaco-editor", wait: 10
+
+      page.execute_script(<<~'JS')
+        var editor = window.__mbeditorActiveEditor;
+        editor.setValue(["class Demo", "  def has_end", "  end", "end"].join("\n"));
+        editor.getModel().updateOptions({ insertSpaces: true, tabSize: 2 });
+        editor.setPosition({ lineNumber: 2, column: editor.getModel().getLineMaxColumn(2) });
+        editor.focus();
+        window.MbeditorEditorPlugins.runRubyEnter(editor);
+      JS
+
+      expected = "class Demo\n  def has_end\n    \n  end\nend"
+      wait_for_editor_value(expected)
     end
 
     test "jsx auto-close inserts matching closing tag and preserves inner cursor position" do
@@ -292,6 +468,25 @@ module Mbeditor
       page.execute_script("window.__mbeditorActiveEditor.trigger('keyboard', 'undo', {})")
 
       assert_no_selector ".tab-item.active .tab-dirty-dot", wait: 5
+    end
+
+    test "file stays dirty-trackable after undo-history replay swaps the model" do
+      seed_git_workspace_with_history("README.md", "# Hello\n")
+
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      all(".tree-item-name", text: "README.md").first.click
+      assert_selector ".monaco-editor", wait: 10
+
+      # Wait for the background replay to swap in the history-bearing model.
+      assert_replayed_model("README.md")
+
+      page.execute_script(<<~'JS')
+        window.__mbeditorActiveEditor.focus();
+        window.__mbeditorActiveEditor.trigger('keyboard', 'type', { text: 'x' });
+      JS
+
+      assert_selector ".tab-item.active .tab-dirty-dot", wait: 5
     end
 
     test "LRU eviction keeps Monaco model count at or below 15" do
@@ -504,6 +699,48 @@ module Mbeditor
 
     private
 
+    # Turn the tmp workspace into a git repo and pre-seed a stored undo history for
+    # `rel_path`, so opening the file triggers the background history replay that
+    # swaps the Monaco model out from under the editor.
+    def seed_git_workspace_with_history(rel_path, content)
+      Dir.chdir(@workspace) do
+        system("git", "init", "--quiet", out: File::NULL, err: File::NULL)
+        system("git", "config", "user.email", "test@example.com")
+        system("git", "config", "user.name", "Test")
+        system("git", "add", ".", out: File::NULL, err: File::NULL)
+        system("git", "commit", "--quiet", "-m", "init", out: File::NULL, err: File::NULL)
+      end
+      branch = `git -C #{@workspace} rev-parse --abbrev-ref HEAD`.strip
+
+      # base + ops must reproduce the file's on-disk content, or the replay bails out.
+      branch_hash = Digest::SHA256.hexdigest(branch)[0, 16]
+      file_hash   = Digest::SHA256.hexdigest(rel_path)[0, 16]
+      hist_path   = File.join(@workspace, "tmp", "mbeditor_history", "#{branch_hash}_#{file_hash}.json")
+      FileUtils.mkdir_p(File.dirname(hist_path))
+      File.write(hist_path, JSON.dump(
+        "base" => "",
+        "ops"  => [[1, 1, 1, 1, content]],
+        "t"    => Time.now.utc.iso8601
+      ))
+    end
+
+    # Blocks until the replayed model (AVI > 1 because ops were pushed onto it) is
+    # installed for `rel_path`, or fails if the replay never happens.
+    def assert_replayed_model(rel_path)
+      deadline = Time.now + 10
+      loop do
+        avi = page.evaluate_script(<<~JS)
+          (function () {
+            var e = window.__mbeditorModels && window.__mbeditorModels[#{rel_path.to_json}];
+            return e && e.model && !e.model.isDisposed() ? e.model.getAlternativeVersionId() : 0;
+          })()
+        JS
+        break if avi.to_i > 1
+        flunk "undo-history replay never swapped in a model for #{rel_path}" if Time.now > deadline
+        sleep 0.1
+      end
+    end
+
     def active_editor_value
       page.evaluate_script("window.__mbeditorActiveEditor && window.__mbeditorActiveEditor.getValue()")
     end
@@ -560,6 +797,17 @@ module Mbeditor
         value = active_editor_value
         return if value == expected
         raise "Timed out waiting for editor value to become #{expected.inspect}; got #{value.inspect}" if Time.now >= deadline
+
+        sleep 0.05
+      end
+    end
+
+    def wait_for_editor_position(expected, timeout: Capybara.default_max_wait_time)
+      deadline = Time.now + timeout
+      loop do
+        position = active_editor_position
+        return if position == expected
+        raise "Timed out waiting for editor position to become #{expected.inspect}; got #{position.inspect}" if Time.now >= deadline
 
         sleep 0.05
       end

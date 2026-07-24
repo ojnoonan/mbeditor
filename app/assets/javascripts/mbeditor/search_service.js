@@ -175,6 +175,46 @@ var SearchService = (function () {
     });
   }
 
+  // Re-scan a single changed file for the active query and splice its rows
+  // into the current EditorStore results in place (used by the live refresh
+  // after an mbeditor-initiated save). Returns {removed, added} row counts so
+  // the caller can adjust its total count display.
+  function refreshFile(query, path, options) {
+    if (!query || !path) return Promise.resolve({ removed: 0, added: 0 });
+    return axios.get(window.mbeditorBasePath() + '/search', {
+      params: {
+        q: query,
+        path: path,
+        limit: 200,
+        regex: (options && options.regex) ? 'true' : 'false',
+        match_case: (options && options.matchCase) ? 'true' : 'false',
+        whole_word: (options && options.wholeWord) ? 'true' : 'false'
+      }
+    }).then(function(res) {
+      var rows = (res.data && res.data.results) || [];
+      var prev = EditorStore.getState().searchResults || [];
+      var firstIdx = -1;
+      var kept = [];
+      for (var i = 0; i < prev.length; i++) {
+        if (prev[i].file === path) {
+          if (firstIdx === -1) firstIdx = i;
+        } else {
+          kept.push(prev[i]);
+        }
+      }
+      var removed = prev.length - kept.length;
+      // Rows of one file are contiguous in scan output, so every row before
+      // firstIdx belongs to other files and survives into `kept` unchanged.
+      var insertAt = firstIdx === -1 ? kept.length : firstIdx;
+      var merged = kept.slice(0, insertAt).concat(rows, kept.slice(insertAt));
+      _searchCache.clear(); // cached pages no longer match the spliced list
+      EditorStore.setState({ searchResults: merged });
+      return { removed: removed, added: rows.length };
+    }).catch(function() {
+      return { removed: 0, added: 0 };
+    });
+  }
+
   // POST /replace_in_files — replace query with replacement across all matching files.
   // options: { regex, matchCase, wholeWord }
   // Returns a promise resolving to { replaced_count, files_affected, errors }.
@@ -201,6 +241,7 @@ var SearchService = (function () {
     searchFiles: searchFiles,
     projectSearch: projectSearch,
     fetchPage: fetchPage,
+    refreshFile: refreshFile,
     invalidate: invalidate,
     replaceInFiles: replaceInFiles,
     PAGE_SIZE: SEARCH_PAGE_SIZE
