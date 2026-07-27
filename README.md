@@ -9,9 +9,14 @@ Mbeditor (Mini Browser Editor) is a mountable Rails engine that adds a browser-b
 - Two-pane tabbed editor with drag-to-move tabs
 - File tree and project search
 - Git panel with working tree changes, unpushed file changes, and branch commit titles
+- Line numbers tinted by git status — green for added lines, orange for modified, red where lines were removed
+- Problems panel with error/warning counts in the status bar, listing every diagnostic across the open files
+- Outline dropdown for Ruby (methods, and test/spec structure in test files) and for JS/JSX/TS
+- Colour-coded Rails log drawer
 - Optional RuboCop lint and format endpoints (uses host app RuboCop)
 - Optional Ruby language-server integration (definitions, hover, completion, diagnostics)
 - Optional test runner with inline failure markers and a dedicated results panel (Minitest and RSpec)
+- Optional workspace file watching, so changes made outside the editor refresh the tree and git decorations
 
 ## Security Warning
 Mbeditor exposes read and write access to your Rails application directory over HTTP. It is intended only for local development.
@@ -96,6 +101,7 @@ end
 | `ruby_lsp` | `:auto` | Use the host's [ruby-lsp](https://github.com/Shopify/ruby-lsp) for Ruby go-to-definition, hover, completion, and diagnostics when it's installed (a persistent process is managed per workspace). `false` disables. Without ruby-lsp everything degrades to the built-in grep/Ripper services — no behavior change. |
 | `ruby_lsp_command` | `nil` | Override the ruby-lsp launch command (String or Array). `nil` auto-resolves `bin/ruby-lsp` → installed gem → `bundle exec ruby-lsp`. |
 | `ruby_lsp_timeout` | `3` | Seconds per LSP request; on timeout (e.g. during initial indexing) the editor falls back to the built-in services for that request. |
+| `watch_files` | `:auto` | Watch the workspace for changes made outside the editor (a terminal `git checkout`, a generator, another editor) and push a refresh to open clients. Requires the host's [`listen`](https://github.com/guard/listen) gem; without it the editor behaves as before and only announces its own writes. `false` disables. |
 
 ### Authentication
 
@@ -199,8 +205,33 @@ The gem keeps host/tooling responsibilities in the host app:
 - `minitest` or `rspec` in the host app's bundle (required for the test runner)
 - `actioncable` framework/gem (optional, required only for realtime file-change push + websocket state saves)
 - `ruby-lsp` gem (optional — see below)
+- `listen` gem (optional — see below)
 
 All lint and test tools are auto-detected at runtime. The engine gracefully disables features if the tools are not available. Neither `rubocop`, `haml_lint`, nor any test framework are runtime dependencies of the gem itself — they are discovered from the host app's environment.
+
+### Workspace file watching (Optional)
+
+Add [`listen`](https://github.com/guard/listen) to the host app's development
+group and mbeditor watches the workspace for changes it did not make itself:
+
+```ruby
+group :development do
+  gem 'listen'
+end
+```
+
+Without it, only writes made *through* the editor announce themselves, so a
+`git checkout` or a generator run in a terminal leaves the file tree and the
+git line-number colours stale until you reopen the file. With it, those refresh
+on their own.
+
+The watcher runs only in `allowed_environments` and only in processes that
+serve requests, so rake tasks and consoles never start one. It respects
+`excluded_paths`, coalesces bursts (a branch switch is one refresh, not
+hundreds), and requires Action Cable to actually deliver the push. If it cannot
+start — inotify limits, permissions — it logs a warning and the editor carries
+on exactly as it would without the gem. Set `config.watch_files = false` to
+disable it even when `listen` is present.
 
 ### Ruby language server (Optional)
 

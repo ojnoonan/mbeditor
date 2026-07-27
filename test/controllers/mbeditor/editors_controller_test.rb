@@ -181,6 +181,13 @@ module Mbeditor
                                              content: "class User; end", line: 1, character: 7 }
         assert_response :ok
         assert_includes json["markdown"], "fake hover"
+        # ruby-lsp emits file:// links, which are inert in a browser. In-workspace
+        # links become Monaco command links; anything outside loses its link.
+        refute_includes json["markdown"], "file://"
+        assert_includes json["markdown"],
+                        "[user.rb](command:mbeditor.openDefinition?" \
+                        "#{ERB::Util.url_encode(%(["app/models/user.rb",3]))})"
+        assert_includes json["markdown"], "`set.rb`"
 
         post "/mbeditor/ruby_lsp", params: { lsp_method: "completion", path: "app/models/user.rb",
                                              content: "class User; end", line: 1, character: 7 }

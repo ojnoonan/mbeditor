@@ -100,8 +100,19 @@ loop do
          "range" => { "start" => { "line" => 4, "character" => 2 },
                       "end" => { "line" => 4, "character" => 10 } } }]
     when "textDocument/hover"
+      # Shaped like ruby-lsp's real hover: a title, a "Definitions" line of
+      # file:// links (one in-workspace, one from a gem), then the docs.
       # Non-ASCII on purpose: exercises byte-length Content-Length framing.
-      { "contents" => { "kind" => "markdown", "value" => "**fake hover** — snowman ☃" } }
+      uri = msg.dig("params", "textDocument", "uri")
+      { "contents" => { "kind" => "markdown", "value" => <<~MD } }
+        ```ruby
+        User
+        ```
+
+        **Definitions**: [user.rb](#{uri}#L3,1-9,4) | [set.rb](file:///gems/set/lib/set.rb#L2,1-2,3)
+
+        **fake hover** — snowman ☃
+      MD
     when "textDocument/completion"
       { "items" => [{ "label" => "fake_method", "kind" => 2,
                       "insertText" => "fake_method", "detail" => "FakeClass#fake_method" }] }

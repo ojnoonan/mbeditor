@@ -94,6 +94,20 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     return 50;
   }
 
+  // Recently opened files, most recent first, as a path -> rank lookup. Built
+  // once per query rather than per comparison, since the sort calls this for
+  // every pair.
+  function recentRanks() {
+    var ranks = {};
+    var recent = (typeof TabManager !== 'undefined' && TabManager.getRecentFiles)
+      ? TabManager.getRecentFiles() : [];
+    recent.forEach(function (entry, index) {
+      var path = typeof entry === 'string' ? entry : (entry && entry.path);
+      if (path && !(path in ranks)) ranks[path] = index;
+    });
+    return ranks;
+  }
+
   // Match relevance within a priority tier: exact basename > prefix > substring > other.
   function getMatchRelevance(result, q) {
     if (!q) return 3;
@@ -128,13 +142,30 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     var res = SearchService.searchFiles(query);
     // Filter by type: always include files; include dirs only when showFolders is on
     var filtered = showFolders ? res : res.filter(function(r) { return r.type !== 'dir'; });
-    // Sort: files always beat dirs; within the same tier exact basename > prefix > substring > other.
-    // JS sort is stable in modern engines so MiniSearch relevance score order is the tiebreaker
-    // when match relevance is equal.
+    // Sort, in order of precedence:
+    //   1. match quality — exact basename > prefix > substring > other, so a
+    //      worse match can never jump the queue however recently it was opened
+    //   2. how recently the file was opened, most recent first
+    //   3. the static file-type tier (controller > model > … > noise)
+    //
+    // Recency sits above the type tier deliberately: when two files match a
+    // query equally well, the one you were just working in is almost always
+    // the one you meant, and that beats a guess made from the directory name.
+    // Files never opened all tie here and fall through to the type tier, which
+    // is what orders the bulk of a cold result list.
+    //
+    // Directories keep their +100 penalty inside the type tier so files still
+    // come first. JS sort is stable in modern engines, so MiniSearch's own
+    // relevance order remains the final tiebreaker.
+    var ranks = recentRanks();
+    var NEVER_OPENED = Infinity;
     filtered.sort(function(a, b) {
       var aRelevance = getMatchRelevance(a, query);
       var bRelevance = getMatchRelevance(b, query);
       if (aRelevance !== bRelevance) return aRelevance - bRelevance;
+      var aRecent = a.path in ranks ? ranks[a.path] : NEVER_OPENED;
+      var bRecent = b.path in ranks ? ranks[b.path] : NEVER_OPENED;
+      if (aRecent !== bRecent) return aRecent - bRecent;
       var aPriority = getFilePriority(a.path) + (a.type === 'dir' ? 100 : 0);
       var bPriority = getFilePriority(b.path) + (b.type === 'dir' ? 100 : 0);
       return aPriority - bPriority;

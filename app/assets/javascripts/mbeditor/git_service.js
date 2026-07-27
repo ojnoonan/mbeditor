@@ -114,6 +114,13 @@ var GitService = (function () {
     });
   }
 
+  // Per-line add/modify/delete ranges for one file, used to tint line numbers.
+  function fetchLineDiff(path) {
+    return axios.get(window.mbeditorBasePath() + '/git/line_diff?file=' + encodeURIComponent(path)).then(function(res) {
+      return res.data;
+    });
+  }
+
   function fetchFileHistory(path) {
     return axios.get(window.mbeditorBasePath() + '/git/file_history?file=' + encodeURIComponent(path)).then(function(res) {
       return res.data;
@@ -138,6 +145,7 @@ var GitService = (function () {
     fetchInfo: fetchInfo,
     fetchDiff: fetchDiff,
     fetchBlame: fetchBlame,
+    fetchLineDiff: fetchLineDiff,
     fetchFileHistory: fetchFileHistory,
     fetchCommitGraph: fetchCommitGraph,
     fetchCommitDetail: fetchCommitDetail

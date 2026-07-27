@@ -4,6 +4,7 @@ require "mbeditor/rack/silence_ping_request"
 require "mbeditor/rack/handle_pending_migrations"
 require "mbeditor/rack/resilient_router"
 require "mbeditor/cable_log_filter"
+require "mbeditor/file_watcher"
 
 module Mbeditor
   class Engine < ::Rails::Engine
@@ -80,6 +81,8 @@ module Mbeditor
       if cfg.workspace_root.present? && !File.directory?(cfg.workspace_root.to_s)
         raise ArgumentError, "[mbeditor] config.workspace_root is set to '#{cfg.workspace_root}' but that path is not a directory"
       end
+
+      Mbeditor::FileWatcher.start_if_enabled
 
       if cfg.redmine_enabled
         require "uri"

@@ -355,6 +355,41 @@
  * or exceed that specificity to win the cascade. :root[data-theme] equals
  * (0,2,0) and loads AFTER pico.classless.css, so it wins on cascade order.
  * ─────────────────────────────────────────────────────────────────────────── */
+/* Rails log drawer palette.
+ *
+ * Deliberately its own set rather than the --ide-* semantic vars: those only
+ * carry four hues, and several themes alias them (Dracula's --ide-accent-fg
+ * and --ide-success are the same green), which would render "Started GET" and
+ * "Completed 200" identically. A log needs its categories to separate from
+ * each other more than it needs to match the editor chrome — the same reason
+ * terminals keep a fixed palette. Light themes get darkened variants so the
+ * text stays legible on white. */
+:root[data-theme],
+:root,
+[data-theme] {
+  --ide-log-request:    #d7dae0;
+  --ide-log-controller: #c792ea;
+  --ide-log-sql:        #56b6c2;
+  --ide-log-render:     #82aaff;
+  --ide-log-success:    #7ec699;
+  --ide-log-warn:       #e5c07b;
+  --ide-log-error:      #ef6b73;
+  --ide-log-muted:      #7f8596;
+}
+
+:root[data-theme="vs"],
+:root[data-theme="hc-light"],
+:root[data-theme="github-light"] {
+  --ide-log-request:    #1f2328;
+  --ide-log-controller: #6f42c1;
+  --ide-log-sql:        #0b7285;
+  --ide-log-render:     #0550ae;
+  --ide-log-success:    #116329;
+  --ide-log-warn:       #8a6100;
+  --ide-log-error:      #b42318;
+  --ide-log-muted:      #656d76;
+}
+
 :root[data-theme],
 :root,
 [data-theme] {

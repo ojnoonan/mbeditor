@@ -54,6 +54,7 @@ module Mbeditor
     # ── Git & Code Review ──────────────────────────────────────────────────────
     get 'git/diff',           to: 'git#diff'
     get 'git/blame',          to: 'git#blame'
+    get 'git/line_diff',      to: 'git#line_diff'
     get 'git/file_history',   to: 'git#file_history'
     get 'git/commit_graph',   to: 'git#commit_graph'
     get 'git/commit_detail',  to: 'git#commit_detail'

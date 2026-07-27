@@ -12,6 +12,7 @@
 //= require mbeditor/color_provider
 //= require mbeditor/editor_plugins
 //= require mbeditor/ruby_outline
+//= require mbeditor/js_outline
 //= require mbeditor/components/CollapsibleSection
 //= require mbeditor/components/ShortcutHelp
 //= require mbeditor/components/DiffViewer
@@ -21,6 +22,7 @@
 //= require mbeditor/components/FileHistoryPanel
 //= require mbeditor/components/TestResultsPanel
 //= require mbeditor/components/LogPanel
+//= require mbeditor/components/ProblemsPanel
 //= require mbeditor/components/CodeReviewPanel
 //= require mbeditor/components/EditorPanel
 //= require mbeditor/components/FileTree

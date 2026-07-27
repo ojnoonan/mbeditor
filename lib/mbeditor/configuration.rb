@@ -11,7 +11,7 @@ module Mbeditor
                   :mount_path, :resilient_routing, :js_global_identifiers,
                   :js_syntax_check, :babel_standalone_path,
                   :ruby_lsp, :ruby_lsp_command, :ruby_lsp_timeout,
-                  :search_respect_gitignore
+                  :search_respect_gitignore, :watch_files
 
     def initialize
       @allowed_environments = [:development]
@@ -42,6 +42,7 @@ module Mbeditor
       @ruby_lsp_timeout = 3     # seconds per LSP request before falling back to the built-in services
       @mount_path = nil # explicit URL prefix override; nil falls through to detection/"/mbeditor"
       @resilient_routing = true # serve /mbeditor from middleware so the editor survives a broken host routes.rb; false is the escape hatch
+      @watch_files = :auto # watch the workspace for changes made outside the editor when the host has the `listen` gem; false disables
     end
   end
 end

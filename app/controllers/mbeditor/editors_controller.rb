@@ -1144,10 +1144,39 @@ module Mbeditor
       contents = result.is_a?(Hash) ? result["contents"] : nil
       return nil if contents.nil?
 
-      case contents
-      when Hash  then contents["value"].to_s
-      when Array then contents.map { |c| c.is_a?(Hash) ? c["value"].to_s : c.to_s }.join("\n\n")
-      else contents.to_s
+      markdown =
+        case contents
+        when Hash  then contents["value"].to_s
+        when Array then contents.map { |c| c.is_a?(Hash) ? c["value"].to_s : c.to_s }.join("\n\n")
+        else contents.to_s
+        end
+
+      rewrite_lsp_hover_links(markdown)
+    end
+
+    # ruby-lsp renders its "Definitions" line as VS Code file links, e.g.
+    # `[user.rb](file:///abs/path/user.rb#L3,1-9,4)`. Monaco renders those as
+    # links but clicking one does nothing, since nothing can open a file:// URI
+    # here. Point in-workspace links at the `mbeditor.openDefinition` Monaco
+    # command (registered in editor_plugins.js) and demote gem/stdlib links —
+    # which the editor cannot open at all — to plain code spans.
+    LSP_HOVER_FILE_LINK = %r{\[([^\]\n]+)\]\(file://([^)\s#]+)(?:\#L(\d+),\d+(?:-\d+,\d+)?)?\)}
+
+    def rewrite_lsp_hover_links(markdown)
+      prefix = "#{workspace_root}/"
+      markdown.gsub(LSP_HOVER_FILE_LINK) do
+        label, raw_path, line = Regexp.last_match(1), Regexp.last_match(2), Regexp.last_match(3).to_i
+        # Percent-decode by hand: URI's unescape helpers are deprecated on new
+        # Rubies and their replacements are missing on the old ones we support.
+        # (Must come after reading the other captures — gsub resets last_match.)
+        path = raw_path.gsub(/%\h\h/) { |esc| esc[1..].hex.chr }.force_encoding(Encoding::UTF_8)
+
+        if path.start_with?(prefix)
+          args = [path.delete_prefix(prefix), line.positive? ? line : 1]
+          "[#{label}](command:mbeditor.openDefinition?#{ERB::Util.url_encode(args.to_json)})"
+        else
+          "`#{label}`"
+        end
       end
     end
 

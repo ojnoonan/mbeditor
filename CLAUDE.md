@@ -47,7 +47,7 @@ The inline editor-boot JS (worker wiring, lazy Prettier/monaco-vim loaders, app 
 - `publish.yml` — builds gem + pushes to RubyGems on tag/manual dispatch
 
 ## Dependencies
-Ruby >= 3.0, Rails 7.1–8.x, `sprockets-rails >= 3.4`. Dev: `minitest-reporters`, `webmock`. Host optional: `rubocop`, `rubocop-rails`, `haml_lint`.
+Ruby >= 3.0, Rails 7.1–8.x, `sprockets-rails >= 3.4`. Dev: `minitest-reporters`, `webmock`. Host optional: `rubocop`, `rubocop-rails`, `haml_lint`, `listen` (workspace file watching — `Mbeditor::FileWatcher` broadcasts `files_changed` for edits made outside the editor; absent gem = no watcher, everything else unchanged).
 
 ## Release workflow
 

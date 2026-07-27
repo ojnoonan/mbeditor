@@ -69,6 +69,7 @@ var EditorPanel = function EditorPanel(_ref) {
   var setIsBlameLoading = _useState8[1];
 
   var blameDecorationsRef = useRef([]);
+  var gitLineDecorationsRef = useRef([]);
   var blameZoneIdsRef = useRef([]);
   var testDecorationIdsRef = useRef([]);
   var testZoneIdsRef = useRef([]);
@@ -105,6 +106,8 @@ var EditorPanel = function EditorPanel(_ref) {
 
   var methodsBtnRef = useRef(null);
   var methodsDropdownRef = useRef(null);
+  // Discards a JS outline that resolves after the dropdown was closed or reopened.
+  var methodsRequestRef = useRef(0);
 
   // Local pagination state — initialized from tab props; updated on page navigation
   var _useState21 = useState(tab.startLine || 0);
@@ -1281,6 +1284,80 @@ var EditorPanel = function EditorPanel(_ref) {
     }
   }, [tab.path]);
 
+  // Tint line numbers by git status: green added, orange modified, red where
+  // lines were removed.
+  //
+  // The ranges come from `git diff -U0` against HEAD, so they describe the file
+  // as last written to disk. Monaco anchors decorations to the model and shifts
+  // them as you type, which keeps them roughly right mid-edit; the authoritative
+  // refresh happens when the file lands on disk and the server broadcasts it.
+  useEffect(function () {
+    if (!gitAvailable || !tab.path || tab.isDiff || tab.isCombinedDiff) return;
+
+    var cancelled = false;
+
+    function clear() {
+      if (!monacoRef.current || !monacoRef.current.getModel()) return;
+      gitLineDecorationsRef.current =
+        monacoRef.current.deltaDecorations(gitLineDecorationsRef.current, []);
+    }
+
+    function apply(data) {
+      var editor = monacoRef.current;
+      var model = editor && editor.getModel();
+      if (!model || !window.monaco) return;
+
+      var lineCount = model.getLineCount();
+      var decorations = [];
+
+      function push(ranges, className) {
+        (ranges || []).forEach(function (range) {
+          // A deletion above the first line is reported as line 0; mark line 1
+          // so the file's opening line carries the flag.
+          var start = Math.max(1, Math.min(range.start, lineCount));
+          var end = Math.max(start, Math.min(range.end, lineCount));
+          for (var line = start; line <= end; line++) {
+            decorations.push({
+              range: new window.monaco.Range(line, 1, line, 1),
+              options: { isWholeLine: true, lineNumberClassName: className }
+            });
+          }
+        });
+      }
+
+      push(data.added, 'mbeditor-gitline-added');
+      push(data.modified, 'mbeditor-gitline-modified');
+      push(data.deleted, 'mbeditor-gitline-deleted');
+
+      gitLineDecorationsRef.current =
+        editor.deltaDecorations(gitLineDecorationsRef.current, decorations);
+    }
+
+    function refresh() {
+      var path = tab.path;
+      GitService.fetchLineDiff(path).then(function (data) {
+        // The tab can be switched or closed while the request is in flight.
+        if (cancelled || !data || tab.path !== path) return;
+        apply(data);
+      }).catch(function () {
+        // Not a repo, file not readable, git missing — leave the numbers plain.
+        if (!cancelled) clear();
+      });
+    }
+
+    refresh();
+
+    var hasSocket = typeof WebSocketService !== 'undefined' && WebSocketService.onFilesChanged;
+    var onChanged = hasSocket ? function () { refresh(); } : null;
+    if (onChanged) WebSocketService.onFilesChanged(onChanged);
+
+    return function () {
+      cancelled = true;
+      if (onChanged && WebSocketService.offFilesChanged) WebSocketService.offFilesChanged(onChanged);
+      clear();
+    };
+  }, [tab.path, tab.externalContentVersion, tab.isDiff, tab.isCombinedDiff, gitAvailable]);
+
   // Handle Blame data fetching
   useEffect(function () {
     if (!isBlameVisible) {
@@ -1612,6 +1689,8 @@ var EditorPanel = function EditorPanel(_ref) {
   var fileBaseName = (tab.path || '').split('/').pop().toLowerCase();
   var isRubyFile = ext === 'rb' || ext === 'ruby' || ext === 'gemspec' || ext === 'rake' ||
     fileBaseName === 'gemfile' || fileBaseName === 'gemfile.lock' || fileBaseName === 'rakefile';
+  var isJsFile = ['js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx'].indexOf(ext) !== -1;
+  var hasOutline = isRubyFile || isJsFile;
   var isTestOutline = false;
   try {
     isTestOutline = isRubyFile && window.RubyOutline &&
@@ -1693,6 +1772,33 @@ var EditorPanel = function EditorPanel(_ref) {
       lines.push(model.getLineContent(i));
     }
     return window.RubyOutline.parse(lines, { path: path });
+  }
+
+  // The JS/TS outline comes from the TypeScript worker rather than a lexer of
+  // our own, which makes it async — the worker is where the parse already
+  // lives, and it tracks the live buffer, so unsaved edits are included.
+  function loadJsOutline(model) {
+    var ts = window.monaco && window.monaco.languages && window.monaco.languages.typescript;
+    if (!ts || !window.JsOutline) return Promise.reject(new Error('outline unavailable'));
+
+    var workerFor = model.getLanguageId() === 'typescript' ? ts.getTypeScriptWorker : ts.getJavaScriptWorker;
+    return workerFor().then(function (getWorker) {
+      return getWorker(model.uri);
+    }).then(function (client) {
+      return client.getNavigationTree(model.uri.toString());
+    }).then(function (tree) {
+      return window.JsOutline.fromNavigationTree(tree, {
+        lineAt: function (offset) { return model.getPositionAt(offset).lineNumber; },
+        textAt: function (offset, length) {
+          var start = model.getPositionAt(offset);
+          var end = model.getPositionAt(offset + length);
+          return model.getValueInRange({
+            startLineNumber: start.lineNumber, startColumn: start.column,
+            endLineNumber: end.lineNumber, endColumn: end.column
+          });
+        }
+      });
+    });
   }
 
   if (tab.fileNotFound) {
@@ -1834,31 +1940,55 @@ var EditorPanel = function EditorPanel(_ref) {
         React.createElement('i', { className: 'fas fa-history', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
         !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, 'History')
       ),
-      isRubyFile && React.createElement(
+      hasOutline && React.createElement(
         'button',
         {
           ref: methodsBtnRef,
           className: 'ide-icon-btn' + (methodsOpen ? ' active' : ''),
           onClick: function() {
-            var nextOpen = !methodsOpen;
-            if (nextOpen) {
-              var model = monacoRef.current && monacoRef.current.getModel();
-              try {
-                var result = model ? parseRubyOutline(model, tab.path) : { entries: [], truncated: false };
-                setMethodsList(result.entries || []);
-                setMethodsTruncated(!!result.truncated);
-                setMethodsUnavailable(false);
-              } catch (err) {
-                setMethodsList([]);
-                setMethodsTruncated(false);
-                setMethodsUnavailable(true);
-              }
+            // Bump first: a click that closes the dropdown must also cancel an
+            // outline request still in flight from the click that opened it.
+            var requestId = ++methodsRequestRef.current;
+            if (methodsOpen) {
+              setMethodsOpen(false);
+              return;
+            }
+
+            var model = monacoRef.current && monacoRef.current.getModel();
+
+            function openWith(entries, truncated, unavailable) {
+              setMethodsList(entries);
+              setMethodsTruncated(truncated);
+              setMethodsUnavailable(unavailable);
               if (methodsBtnRef.current) {
                 var rect = methodsBtnRef.current.getBoundingClientRect();
                 setMethodsDropdownPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
               }
+              setMethodsOpen(true);
             }
-            setMethodsOpen(nextOpen);
+
+            if (isJsFile) {
+              // The worker has already parsed the open buffer for diagnostics,
+              // so this resolves in a few ms — opening only once it answers
+              // avoids flashing "No methods found" on the way.
+              (model ? loadJsOutline(model) : Promise.resolve({ entries: [], truncated: false }))
+                .then(function (result) {
+                  if (methodsRequestRef.current !== requestId) return;
+                  openWith(result.entries || [], !!result.truncated, false);
+                })
+                .catch(function () {
+                  if (methodsRequestRef.current !== requestId) return;
+                  openWith([], false, true);
+                });
+              return;
+            }
+
+            try {
+              var result = model ? parseRubyOutline(model, tab.path) : { entries: [], truncated: false };
+              openWith(result.entries || [], !!result.truncated, false);
+            } catch (err) {
+              openWith([], false, true);
+            }
           },
           title: isTestOutline ? 'Jump to Outline' : 'Jump to Method'
         },
@@ -2099,7 +2229,9 @@ var EditorPanel = function EditorPanel(_ref) {
                 var row = React.createElement(
                   'button',
                   {
-                    key: entry.kind + '-' + entry.line,
+                    // Index-qualified: a JS class and its first member can share
+                    // a line, and kind+line alone would collide.
+                    key: entry.kind + '-' + entry.line + '-' + entryIndex,
                     type: 'button',
                     className: 'ide-methods-dropdown-item ide-outline-entry ide-outline-entry-' + entry.kind,
                     'data-outline-kind': entry.kind,

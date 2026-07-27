@@ -714,21 +714,11 @@
       monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
         noSemanticValidation: false,
         noSyntaxValidation: false,
-        noSuggestionDiagnostics: false,
-        // JSX/JS here is untyped and frequently reads data whose shape is only
-        // known at runtime (server props, state seeded with `{}`). TypeScript
-        // infers those as type `{}` and flags every property/element access as
-        // an error (2339 "Property X does not exist on type '{}'", 2551 its
-        // "did you mean" variant, 7053 dynamic index access). Suppress that
-        // false-positive family while keeping genuinely useful checks such as
-        // 2304 "Cannot find name" (undefined variables/typos).
-        //
-        // A plain-JS component that reads `props.foo` gives TS no way to know
-        // `foo` is optional, so it infers every referenced prop as REQUIRED and
-        // flags call sites that omit it (2741 "Property X is missing … but
-        // required", 2739 its multi-property form). Since optional props can't
-        // be expressed without JSDoc/TS, suppress that family too.
-        diagnosticCodesToIgnore: [2339, 2551, 7053, 2739, 2741]
+        noSuggestionDiagnostics: false
+        // No diagnosticCodesToIgnore here on purpose: JS/JSX markers are
+        // filtered by category in the marker patcher below (see JS_KEEP_CODES),
+        // which is a closed rule rather than a list that grows by one code
+        // every time a new false positive turns up.
       });
       monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
         target: monaco.languages.typescript.ScriptTarget.ES2020,
@@ -875,28 +865,49 @@
         loadWorkspaceGlobals(monaco);
       });
 
-      // Downgrade certain TypeScript diagnostic codes from Error to Warning.
-      // TypeScript has no built-in way to emit these as warnings, so we intercept
-      // the marker set after the worker fires and re-apply with lower severity.
+      // Patch the TypeScript worker's markers after it fires.
       //
-      // Patch markers after the TypeScript worker fires:
-      // - JS files: downgrade TS2304 ("Cannot find name") to Warning — host-app
-      //   globals injected at runtime are invisible to the language service, so
-      //   hard errors are almost always false positives. Downgrading keeps the
-      //   signal without blocking genuine undefined-variable detection.
-      // - Both: downgrade TS6133 ("declared but never read") from Error to Warning.
-      // - JS/JSX: suppress TS2300 ("Duplicate identifier") — in Sprockets apps all
-      //   open files share a global script context in Monaco's TS worker, so a
-      //   component defined in file_a.jsx looks like a redeclaration when file_b.jsx
-      //   is also open. This is a structural false positive, not a real error.
-      // TS2403 ("Subsequent variable declarations must have the same type")
-      // joins the suppress list because the ambient `declare var Foo: any`
-      // from workspace-globals.d.ts coexists with the real `function Foo()`
-      // when its defining file is open — inherently a false positive in the
-      // shared-global-scope model.
-      var JS_SUPPRESS_CODES = { '2300': true, '2451': true, '2403': true };
-      var JS_WARN_CODES    = { '2304': true, '6133': true };
-      var TS_WARN_CODES    = { '6133': true };
+      // ── JS/JSX: keep only the diagnostics that are sound without types ──────
+      // Plain JS/JSX is untyped, so every *type* diagnostic TypeScript emits is
+      // an inference guess, and which way it guesses is arbitrary: state seeded
+      // with `useState({})` infers `{}` and errors on every key, while the same
+      // object from `JSON.parse` infers `any` and stays silent. Identical code,
+      // opposite verdicts. Denylisting each false-positive code as it turned up
+      // never converged — it reached eight codes and still leaked (2322 on a
+      // spread with an extra prop), because the tail is every code TypeScript
+      // has. So invert it: keep the categories below and drop the rest.
+      //
+      //   • syntax errors — always real. Their codes are 1xxx (and 17xxx for
+      //     the JSX-specific ones, e.g. 17008 "no corresponding closing tag"),
+      //     which is why the ranges rather than a code list are matched.
+      //   • 2304 "Cannot find name" — scope resolution, not type checking.
+      //     Downgraded to Warning below and auto-resolved against the workspace,
+      //     since host-app globals are invisible to the language service.
+      //   • 6133 "declared but never read" — a lint. Downgraded to Warning.
+      //   • anything below Error severity — hints and suggestions render faint
+      //     and cost nothing, so they pass through untouched.
+      //
+      // Deliberately dropped along with the type errors: 2300 "Duplicate
+      // identifier" and 2403 "Subsequent variable declarations…", which are
+      // structural false positives in the Sprockets model — every open file
+      // shares one global script context, so a component in file_a.jsx looks
+      // like a redeclaration once file_b.jsx is open, and the ambient
+      // `declare var Foo: any` from workspace-globals.d.ts collides with the
+      // real `function Foo()` when its defining file is open.
+      //
+      // .ts/.tsx keeps full checking: there the types are hand-written, so a
+      // type error is a statement about code the author actually wrote.
+      var JS_KEEP_CODES  = { '2304': true, '6133': true };
+      var JS_SYNTAX_CODE = /^(?:1\d{3}|17\d{3})$/;
+      var JS_WARN_CODES  = { '2304': true, '6133': true };
+      var TS_WARN_CODES  = { '6133': true };
+
+      function keepJsMarker(marker) {
+        if (marker.severity !== monaco.MarkerSeverity.Error) return true;
+        var code = String(marker.code == null ? '' : marker.code);
+        return JS_KEEP_CODES[code] === true || JS_SYNTAX_CODE.test(code);
+      }
+
       var _severityPatchActive = false;
       monaco.editor.onDidChangeMarkers(function(uris) {
         if (_severityPatchActive) return;
@@ -906,22 +917,23 @@
             var model = monaco.editor.getModel(uri);
             if (!model) return;
             [
-              { owner: 'javascript', suppress: JS_SUPPRESS_CODES, warn: JS_WARN_CODES },
-              { owner: 'typescript', suppress: {},                 warn: TS_WARN_CODES }
+              { owner: 'javascript', keep: keepJsMarker, warn: JS_WARN_CODES },
+              { owner: 'typescript', keep: null,         warn: TS_WARN_CODES }
             ].forEach(function(entry) {
               var markers = monaco.editor.getModelMarkers({ resource: uri, owner: entry.owner });
-              var needsPatch = markers.some(function(m) {
-                var code = String(m.code);
-                return (m.severity === monaco.MarkerSeverity.Error && (entry.suppress[code] || entry.warn[code]));
-              });
-              if (!needsPatch) return;
-              monaco.editor.setModelMarkers(model, entry.owner, markers.filter(function(m) {
-                return !entry.suppress[String(m.code)];
+              var patched = markers.filter(function(m) {
+                return entry.keep ? entry.keep(m) : true;
               }).map(function(m) {
                 return (m.severity === monaco.MarkerSeverity.Error && entry.warn[String(m.code)])
                   ? Object.assign({}, m, { severity: monaco.MarkerSeverity.Warning })
                   : m;
-              }));
+              });
+              // Re-applying an unchanged set would re-enter this handler
+              // forever, so only write when the patch actually changed something.
+              var changed = patched.length !== markers.length || patched.some(function(m, i) {
+                return m.severity !== markers[i].severity;
+              });
+              if (changed) monaco.editor.setModelMarkers(model, entry.owner, patched);
             });
           });
         } finally {
@@ -1370,12 +1382,51 @@
       }).catch(function() {});
     });
 
+    // Target of the command links the backend rewrites ruby-lsp's file://
+    // "Definitions" links into (see EditorsController#rewrite_lsp_hover_links).
+    monaco.editor.registerCommand('mbeditor.openDefinition', function(_accessor, path, line) {
+      if (!path) return;
+      if (typeof TabManager === 'undefined' || !TabManager.openTab) return;
+      TabManager.openTab(path, String(path).split('/').pop(), line || 1);
+    });
+
     // Ruby method definition hover provider.
     // Calls the backend /definition endpoint (Ripper-based) and renders
     // the method signature and any preceding # comments as hover markdown.
     // Results are cached client-side for 60 s to make re-hovers instantaneous.
     var hoverCache = {};
     var HOVER_CACHE_TTL_MS = 60000;
+    var HOVER_MEMBER_LIMIT = 20;
+
+    // ruby-lsp's hover for a constant is a title, a Definitions link and any
+    // doc comments — it never lists what the class/module defines. Keep the
+    // /module_members breakdown that the legacy hover showed, appended below.
+    // Resolves to '' (never rejects) for anything that isn't a constant.
+    function moduleMembersMarkdown(word) {
+      if (!/^[A-Z]/.test(word)) return Promise.resolve('');
+      if (typeof FileService === 'undefined' || !FileService.getModuleMembers) return Promise.resolve('');
+
+      var key = '__members__' + word;
+      var cached = hoverCache[key];
+      if (cached && (Date.now() - cached.ts) < HOVER_CACHE_TTL_MS) return Promise.resolve(cached.markdown);
+
+      return FileService.getModuleMembers(word, {}).then(function(data) {
+        var methods = (data && data.methods) || [];
+        var markdown = '';
+        if (methods.length > 0) {
+          var lines = ['', '---', '**Methods**', ''];
+          methods.slice(0, HOVER_MEMBER_LIMIT).forEach(function(m) {
+            lines.push('- `' + (m.signature || m.name) + '`');
+          });
+          if (methods.length > HOVER_MEMBER_LIMIT) {
+            lines.push('- _' + (methods.length - HOVER_MEMBER_LIMIT) + ' more_');
+          }
+          markdown = '\n\n' + lines.join('\n');
+        }
+        hoverCache[key] = { ts: Date.now(), markdown: markdown };
+        return markdown;
+      }).catch(function() { return ''; });
+    }
 
     // Registered for 'erb' as well as 'ruby'. In ERB the provider only fires
     // inside <% %> and always uses the workspace (grep/Ripper) services:
@@ -1409,12 +1460,15 @@
             return tryRubyLsp('hover', model, position).then(function (lsp) {
               if (token && token.isCancellationRequested) return null;
               if (lsp && lsp.markdown) {
-                var lspResult = {
-                  range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
-                  contents: [{ value: lsp.markdown, isTrusted: true }]
-                };
-                hoverCache[lspKey] = { ts: Date.now(), result: lspResult };
-                return lspResult;
+                return moduleMembersMarkdown(word).then(function (members) {
+                  if (token && token.isCancellationRequested) return null;
+                  var lspResult = {
+                    range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
+                    contents: [{ value: lsp.markdown + members, isTrusted: true }]
+                  };
+                  hoverCache[lspKey] = { ts: Date.now(), result: lspResult };
+                  return lspResult;
+                });
               }
               hoverCache[lspKey] = { ts: Date.now(), result: null };
               return legacyRubyHover(model, position, token, wordInfo);

@@ -704,6 +704,72 @@ Rails.application.config.after_initialize do
     var d = <ItemList items={[]} loading={true} />;
   JSX
 
+  # spread_props_test.jsx — a state object whose keys only exist once a backend
+  # call resolves, destructured and then spread into a component. TypeScript
+  # sees the initial `{}` literal, so it reports every key as nonexistent
+  # (2339 / 7053) and every spread call site as missing props (2739 / 2741).
+  # Those codes are filtered in editor_plugins.js; nothing here should squiggle.
+  File.write(sample_workspace.join("app", "assets", "javascripts", "spread_props_test.jsx"), <<~JSX)
+    // Syntax-highlighting smoke test: runtime-shaped props objects.
+    //
+    // `access` and `record` are populated by the backend, so the frontend never
+    // declares their shape. Everything below is valid JSX and must be
+    // error-free — destructuring keys that arrive with the fetch, attaching
+    // keys after an object is created, and spreading the result into a
+    // component that reads props no static type ever mentions.
+
+    /** Renders one control per permission it is handed. */
+    function PermissionToolbar(props) {
+      return (
+        <div className="toolbar" aria-label={props.label}>
+          {props.canCreate  && <button>New</button>}
+          {props.canUpdate  && <button>Edit</button>}
+          {props.canDestroy && <button>Delete</button>}
+          {props.publish    && <button>Publish</button>}
+        </div>
+      );
+    }
+
+    function RecordScreen() {
+      // Seeded from the server — TypeScript only ever sees the empty literal.
+      const [access, setAccess] = React.useState({});
+      const [record, setRecord] = React.useState({});
+
+      React.useEffect(function () {
+        fetch("/api/records/1")
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            setRecord(data.record);
+            setAccess(data.access);
+          });
+      }, []);
+
+      // 1. Destructuring keys that only exist after the fetch resolves.
+      const { create, read, update, destroy } = access;
+
+      // 2. Keys attached to a plain object after it is created.
+      const toolbarProps = { label: record.title };
+      toolbarProps.canCreate  = create;
+      toolbarProps.canUpdate  = update;
+      toolbarProps.canDestroy = destroy;
+
+      // 3. Derived by spreading and overriding, plus a key looked up by name.
+      const readOnly = { ...toolbarProps, canCreate: false, canUpdate: false };
+      const scoped   = access["records.publish"];
+
+      if (!read) return null;
+
+      return (
+        <div className="record-screen">
+          <h1>{record.title}</h1>
+          <PermissionToolbar {...toolbarProps} />
+          <PermissionToolbar {...readOnly} />
+          <PermissionToolbar {...access} label={record.title} publish={scoped} />
+        </div>
+      );
+    }
+  JSX
+
   File.write(sample_workspace.join("app", "assets", "javascripts", "missing_closing_tag.jsx"), <<~JSX)
     // Error: JSX element is never closed
     function Greeting({ name }) {

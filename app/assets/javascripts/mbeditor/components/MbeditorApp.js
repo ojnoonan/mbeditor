@@ -440,6 +440,17 @@ var MbeditorApp = function MbeditorApp() {
   var showLogPanel = _useStateLog2[0];
   var setShowLogPanel = _useStateLog2[1];
 
+  var _useStateProblems = useState(false);
+  var _useStateProblems2 = _slicedToArray(_useStateProblems, 2);
+  var showProblemsPanel = _useStateProblems2[0];
+  var setShowProblemsPanel = _useStateProblems2[1];
+
+  // Error/warning tallies across the open tabs, mirrored into the status bar.
+  var _useStateProblemCounts = useState({ errors: 0, warnings: 0 });
+  var _useStateProblemCounts2 = _slicedToArray(_useStateProblemCounts, 2);
+  var problemCounts = _useStateProblemCounts2[0];
+  var setProblemCounts = _useStateProblemCounts2[1];
+
   var _useState18g = useState(320);
   var _useState18g2 = _slicedToArray(_useState18g, 2);
   var gitPanelWidth = _useState18g2[0];
@@ -1535,6 +1546,31 @@ var MbeditorApp = function MbeditorApp() {
       window.removeEventListener('focus', fullRefresh);
     };
   }, []);
+
+  // Keep the status-bar error/warning tallies in step with Monaco's markers.
+  // Every diagnostic source in the editor — rubocop, ruby-lsp, the TypeScript
+  // worker — lands here, so one subscription covers all of them. Markers change
+  // on every keystroke for JS, so the recount is debounced.
+  useEffect(function () {
+    if (!monacoReady || !window.monaco || !window.monaco.editor || !window.ProblemsPanel) return;
+
+    var timer = null;
+    var recount = function () {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function () {
+        timer = null;
+        setProblemCounts(window.ProblemsPanel.counts());
+      }, 250);
+    };
+
+    var sub = window.monaco.editor.onDidChangeMarkers(recount);
+    recount();
+
+    return function () {
+      if (timer) clearTimeout(timer);
+      sub.dispose();
+    };
+  }, [monacoReady]);
 
   var handleSelectFile = function handleSelectFile(path, name, line, col) {
     TabManager.openTab(path, name, line, null, false, col);
@@ -2747,6 +2783,10 @@ var MbeditorApp = function MbeditorApp() {
     setShowLogPanel(function (prev) { return !prev; });
   };
 
+  var toggleProblemsPanel = function toggleProblemsPanel() {
+    setShowProblemsPanel(function (prev) { return !prev; });
+  };
+
   var toggleZenMode = function toggleZenMode() {
     setZenMode(function (prev) {
       var next = !prev;
@@ -3382,16 +3422,24 @@ var MbeditorApp = function MbeditorApp() {
         "Mini Browser Editor — ",
         window.location.host
       ),
+      // The slot claims all the room between the title and the buttons; the
+      // search pill then takes 75% of it, centred. Sizing the pill against a
+      // slot rather than against the title bar keeps it proportional to the
+      // actual gap as the toolbar's button labels grow and shrink.
       React.createElement(
-        'button',
-        {
-          type: 'button',
-          className: 'ide-titlebar-search',
-          title: 'Search files (Ctrl/Cmd+P)',
-          onClick: function () { setQuickOpen(true); }
-        },
-        React.createElement('i', { className: 'fas fa-search', style: { marginRight: '6px', opacity: 0.7 } }),
-        React.createElement('span', { className: 'ide-titlebar-search-text' }, 'Search files…')
+        'div',
+        { className: 'ide-titlebar-search-slot' },
+        React.createElement(
+          'button',
+          {
+            type: 'button',
+            className: 'ide-titlebar-search',
+            title: 'Search files (Ctrl/Cmd+P)',
+            onClick: function () { setQuickOpen(true); }
+          },
+          React.createElement('i', { className: 'fas fa-search', style: { marginRight: '6px', opacity: 0.7 } }),
+          React.createElement('span', { className: 'ide-titlebar-search-text' }, 'Search files…')
+        )
       ),
       React.createElement(
         "div",
@@ -3453,13 +3501,6 @@ var MbeditorApp = function MbeditorApp() {
             React.createElement("i", { className: "fas fa-code-branch" }),
             !editorPrefs.toolbarIconOnly && " Git"
           )
-        ),
-        React.createElement("div", { className: "statusbar-sep" }),
-        React.createElement(
-          "button",
-          { type: "button", className: "statusbar-btn", onClick: toggleLogPanel, title: "Toggle Rails log (Ctrl+Shift+L)" },
-          React.createElement("i", { className: "fas fa-stream" }),
-          !editorPrefs.toolbarIconOnly && " Logs"
         ),
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
@@ -4974,6 +5015,12 @@ var MbeditorApp = function MbeditorApp() {
       ),
       showLogPanel && !zenMode && React.createElement(window.LogPanel || LogPanel, {
         onClose: function () { setShowLogPanel(false); }
+      }),
+      showProblemsPanel && !zenMode && React.createElement(window.ProblemsPanel || ProblemsPanel, {
+        onClose: function () { setShowProblemsPanel(false); },
+        onOpenFile: function (path, line, col) {
+          handleSelectFile(path, path.split('/').pop(), line, col);
+        }
       })
     ),
     React.createElement(
@@ -4997,6 +5044,23 @@ var MbeditorApp = function MbeditorApp() {
           " \u2193",
           state.gitInfo.behind
         )
+      ),
+      React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "statusbar-btn statusbar-problems" + (showProblemsPanel ? " active" : ""),
+          onClick: toggleProblemsPanel,
+          title: problemCounts.errors + " error(s), " + problemCounts.warnings +
+            " warning(s) in open files — click to open Problems"
+        },
+        React.createElement("i", { className: "fas fa-bug statusbar-problems-error-icon" }),
+        React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.errors),
+        React.createElement("i", {
+          className: "fas fa-exclamation-triangle statusbar-problems-warning-icon",
+          style: { marginLeft: "8px" }
+        }),
+        React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.warnings)
       ),
       !serverOnline && (function () {
         var dirtyCount = state.panes.reduce(function (acc, p) {
@@ -5026,6 +5090,17 @@ var MbeditorApp = function MbeditorApp() {
         "div",
         { className: "statusbar-msg " + state.statusMessage.kind },
         state.statusMessage.text
+      ),
+      React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "statusbar-btn statusbar-logs-btn" + (showLogPanel ? " active" : ""),
+          onClick: toggleLogPanel,
+          title: "Toggle Rails log (Ctrl+Shift+L)"
+        },
+        React.createElement("i", { className: "fas fa-stream" }),
+        " Logs"
       ),
       activeEOL && React.createElement(
         "button",
