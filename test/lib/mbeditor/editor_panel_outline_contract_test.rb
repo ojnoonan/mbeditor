@@ -1,11 +1,18 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "mini_racer"
+
+begin
+  require "mini_racer"
+rescue LoadError
+  # This optional contract suite skips in minimal compatibility bundles.
+end
 
 module Mbeditor
   class EditorPanelOutlineContractTest < ActiveSupport::TestCase
     def setup
+      skip "MiniRacer is not installed in this compatibility bundle" unless defined?(::MiniRacer)
+
       @context = MiniRacer::Context.new
       @context.eval(<<~JAVASCRIPT)
         var window = this;

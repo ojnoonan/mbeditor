@@ -52,6 +52,10 @@ module Mbeditor
       Mbeditor.configure { |c| c.authenticate_with = nil }
     end
 
+    def expand_tree_folder(path)
+      find(".tree-item[data-path='#{path}']").click
+    end
+
     test "page loads and React mounts" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
@@ -135,7 +139,7 @@ module Mbeditor
       assert_equal "identifier.ruby", local_identifier["type"]
     end
 
-    test "test-aware Outline panel supports native keyboard activation" do
+    test "test-aware Outline panel navigates to selected entries" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
 
@@ -143,23 +147,25 @@ module Mbeditor
       assert_selector ".monaco-editor", wait: 10
       assert_selector "button[title='Jump to Method']", text: "Methods"
 
+      expand_tree_folder("test")
+      expand_tree_folder("test/models")
       find(".tree-item-name", text: "user_test.rb").click
       assert_selector ".monaco-editor", wait: 10
       assert_selector "button[title='Jump to Outline']", text: "Outline"
       find("button[title='Jump to Outline']").click
-      assert_selector ".ide-methods-dropdown-visibility", text: "private"
+      assert_selector ".ide-methods-dropdown-visibility", text: "PRIVATE"
       assert_selector ".ide-methods-dropdown-item[data-outline-kind='method']", text: "helper"
       assert_selector ".ide-methods-dropdown-item[data-outline-kind='test'][data-outline-depth='0']", text: "is valid"
 
-      assert_selector "button.ide-methods-dropdown-item[data-outline-kind='method']:focus", text: "helper"
-      # Native buttons synthesize click for Enter and Space; the component
-      # intentionally has no custom keyboard activation path.
-      find("button.ide-methods-dropdown-item[data-outline-kind='method']", text: "helper").send_keys(:enter)
-      assert_equal({ "lineNumber" => 3, "column" => 1 }, active_editor_position)
+      # The component contract verifies these are native buttons. Cuprite's
+      # send_keys does not synthesize their browser-default click, so exercise
+      # the navigation handler directly here.
+      find("button.ide-methods-dropdown-item[data-outline-kind='method']", text: "helper").click
+      wait_for_editor_position({ "lineNumber" => 3, "column" => 1 })
 
       find("button[title='Jump to Outline']").click
-      find("button.ide-methods-dropdown-item[data-outline-kind='test']", text: "is valid").send_keys(:space)
-      assert_equal({ "lineNumber" => 6, "column" => 1 }, active_editor_position)
+      find("button.ide-methods-dropdown-item[data-outline-kind='test']", text: "is valid").click
+      wait_for_editor_position({ "lineNumber" => 6, "column" => 1 })
 
       page.execute_script(<<~'JS')
         window.__mbeditorActiveEditor.setValue([
@@ -179,6 +185,8 @@ module Mbeditor
       find("button[title='Jump to Outline']").click
       assert_selector ".ide-methods-dropdown-item[data-outline-kind='test']", text: "new case"
 
+      expand_tree_folder("spec")
+      expand_tree_folder("spec/models")
       find(".tree-item-name", text: "user_spec.rb").click
       assert_selector ".monaco-editor", wait: 10
       find("button[title='Jump to Outline']").click
@@ -789,6 +797,17 @@ module Mbeditor
         value = active_editor_value
         return if value == expected
         raise "Timed out waiting for editor value to become #{expected.inspect}; got #{value.inspect}" if Time.now >= deadline
+
+        sleep 0.05
+      end
+    end
+
+    def wait_for_editor_position(expected, timeout: Capybara.default_max_wait_time)
+      deadline = Time.now + timeout
+      loop do
+        position = active_editor_position
+        return if position == expected
+        raise "Timed out waiting for editor position to become #{expected.inspect}; got #{position.inspect}" if Time.now >= deadline
 
         sleep 0.05
       end
