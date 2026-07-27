@@ -16,7 +16,6 @@ Mbeditor (Mini Browser Editor) is a mountable Rails engine that adds a browser-b
 - Optional RuboCop lint and format endpoints (uses host app RuboCop)
 - Optional Ruby language-server integration (definitions, hover, completion, diagnostics)
 - Optional test runner with inline failure markers and a dedicated results panel (Minitest and RSpec)
-- Optional workspace file watching, so changes made outside the editor refresh the tree and git decorations
 
 ## Security Warning
 Mbeditor exposes read and write access to your Rails application directory over HTTP. It is intended only for local development.
@@ -101,7 +100,6 @@ end
 | `ruby_lsp` | `:auto` | Use the host's [ruby-lsp](https://github.com/Shopify/ruby-lsp) for Ruby go-to-definition, hover, completion, and diagnostics when it's installed (a persistent process is managed per workspace). `false` disables. Without ruby-lsp everything degrades to the built-in grep/Ripper services — no behavior change. |
 | `ruby_lsp_command` | `nil` | Override the ruby-lsp launch command (String or Array). `nil` auto-resolves `bin/ruby-lsp` → installed gem → `bundle exec ruby-lsp`. |
 | `ruby_lsp_timeout` | `3` | Seconds per LSP request; on timeout (e.g. during initial indexing) the editor falls back to the built-in services for that request. |
-| `watch_files` | `:auto` | Watch the workspace for changes made outside the editor (a terminal `git checkout`, a generator, another editor) and push a refresh to open clients. Requires the host's [`listen`](https://github.com/guard/listen) gem; without it the editor behaves as before and only announces its own writes. `false` disables. |
 
 ### Authentication
 
@@ -205,113 +203,9 @@ The gem keeps host/tooling responsibilities in the host app:
 - `minitest` or `rspec` in the host app's bundle (required for the test runner)
 - `actioncable` framework/gem (optional, required only for realtime file-change push + websocket state saves)
 - `ruby-lsp` gem (optional — see below)
-- `listen` gem (optional — see below)
 
 All lint and test tools are auto-detected at runtime. The engine gracefully disables features if the tools are not available. Neither `rubocop`, `haml_lint`, nor any test framework are runtime dependencies of the gem itself — they are discovered from the host app's environment.
 
-### Workspace file watching (Optional)
-
-Add [`listen`](https://github.com/guard/listen) to the host app's development
-group and mbeditor watches the workspace for changes it did not make itself:
-
-```ruby
-group :development do
-  gem 'listen'
-end
-```
-
-Without it, only writes made *through* the editor announce themselves, so a
-`git checkout` or a generator run in a terminal leaves the file tree and the
-git line-number colours stale until you reopen the file. With it, those refresh
-on their own.
-
-The watcher runs only in `allowed_environments` and only in processes that
-serve requests, so rake tasks and consoles never start one. It respects
-`excluded_paths`, coalesces bursts (a branch switch is one refresh, not
-hundreds), and requires Action Cable to actually deliver the push. If it cannot
-start — inotify limits, permissions — it logs a warning and the editor carries
-on exactly as it would without the gem. Set `config.watch_files = false` to
-disable it even when `listen` is present.
-
-### Ruby language server (Optional)
-
-Add [ruby-lsp](https://github.com/Shopify/ruby-lsp) to the host app's
-development group and mbeditor uses it automatically for Ruby
-go-to-definition, hover, completion, and diagnostics:
-
-```ruby
-gem "ruby-lsp", require: false, group: :development
-gem "ruby-lsp-rails", require: false, group: :development  # Rails-aware results
-```
-
-`ruby-lsp-rails` needs no mbeditor configuration — ruby-lsp loads it as an
-addon, so associations, model attributes, and route helpers start resolving on
-their own.
-
-What changes when it's present:
-
-- **Diagnostics.** Ruby files are checked by ruby-lsp instead of booting
-  RuboCop over HTTP on every debounce, so you also get Prism syntax errors and
-  warnings alongside RuboCop offenses. Quick-fix lightbulbs still work for
-  correctable cops. Very large files fall back to syntax-only diagnostics.
-- **Definitions, hover, completion.** Answered from the language server's index
-  rather than a workspace grep, including your unsaved buffer contents.
-
-Everything degrades on its own: if ruby-lsp is missing, times out (its first
-index of a large app takes a while), or crashes, that request falls back to the
-built-in grep/Ripper services. ERB templates always use the built-in services —
-ruby-lsp cannot parse ERB.
-
-### Realtime via Action Cable (Optional)
-
-Mbeditor works without Action Cable. If Action Cable is unavailable, unreachable, or returns transient errors, the editor automatically falls back to polling.
-
-To enable realtime features in a host app:
-
-1. Ensure Action Cable is enabled in the host app (for apps that do not load it by default, add the framework/gem explicitly).
-2. Mount cable in host routes:
-
-```ruby
-mount ActionCable.server => '/cable'
-```
-
-3. Make Action Cable JavaScript available to the page (for asset-pipeline apps, `actioncable.js` is typically sufficient).
-
-If any of these are missing, mbeditor still runs in polling mode.
-
-### Syntax Highlighting Support
-Monaco runtime assets are served from the engine route namespace (`/mbeditor/monaco-editor/*` and `/mbeditor/monaco_worker.js`).
-The gem includes syntax highlighting for common Rails and React development file types:
-
-**Web & Template Languages:**
-- **Ruby** (.rb, Gemfile, gemspec, Rakefile)
-- **HTML** 
-- **ERB** (.html.erb, .erb) — dedicated ERB grammar, plus Ruby intellisense
-  inside `<% %>` tags: hover, completion, go-to-definition (Ctrl/Cmd+click or
-  F12) and auto-`end`, all inert in the surrounding HTML. ERB uses the built-in
-  workspace services rather than ruby-lsp, which cannot parse ERB.
-- **HAML** (.haml) — plaintext syntax highlighting (no dedicated HAML grammar in Monaco; haml-lint provides inline error markers when available)
-- **CSS** and **SCSS** stylesheets
-
-**JavaScript & React:**
-- **JavaScript / JSX** (.js, .jsx, .js.jsx) — Monaco's TypeScript worker runs in
-  checked-JS mode with JSX enabled. Built for the Sprockets world where every
-  top-level `var`/`function`/`class` (and `window.X =` assignment) is a global:
-  the editor scans the workspace once at boot (`GET /js_globals`) and declares
-  all of them as ambient globals, so cross-file component references need no
-  `import` and produce no "Cannot find name" diagnostics. The list refreshes
-  automatically when files change. Runtime-only globals the static scan can't
-  see (e.g. `Routes`, `I18n`) can be declared via
-  `config.js_global_identifiers = %w[Routes I18n]`.
-  Known limits: everything is typed `any` (no cross-file type inference), and
-  genuinely undefined names are shown as warnings, not errors.
-- **TypeScript** (.ts, .tsx)
-
-**Configuration & Documentation:**
-- **YAML** (.yml, .yaml)
-- **Markdown** (.md)
-
-These language modules are packaged locally with the gem for true offline operation. No network fallback is needed—all highlighting works without internet connectivity.
 
 ## Asset Pipeline
 

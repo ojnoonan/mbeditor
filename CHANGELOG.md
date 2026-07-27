@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-07-27
+
+### Removed
+- **The `listen`-based file watcher, and with it `config.watch_files`.**
+  0.10.0 enabled a workspace watcher by default. On Linux each watched
+  directory costs an inotify watch from `fs.inotify.max_user_watches`, a
+  *per-user* budget shared with everything else watching files — including the
+  host app's own code reloader and any other gem using `listen`. Exhausting it
+  raises `iNotify max watches exceeded`, and because `listen` reports some of
+  those failures from its own background thread, mbeditor could not even
+  rescue them. Claiming a share of a scarce OS resource by default was the
+  wrong trade for a development tool, and raising the limit needs root, which
+  a developer may not have.
+
+  Nothing is lost: external changes are picked up by polling, which is how the
+  editor already tracked git state. If you set `config.watch_files`, remove it
+  — it is now ignored.
+
+### Fixed
+- **The file tree never refreshed for changes made outside the editor.** Its
+  10-second poll returned early whenever the Action Cable socket was connected,
+  on the reasoning that the push covered it — but the server only broadcasts
+  from mbeditor's own mutation endpoints. With a socket connected, which is the
+  normal case, an external `git checkout` or generator run was never picked up.
+  The poll now always runs; the push remains the instant path for our own
+  writes. This is the bug the 0.10.0 watcher was compensating for.
+- **Git line-number tinting went stale for external changes**, for the same
+  reason, and its refresh timer was being cleared and recreated on every
+  re-render so it never survived long enough to fire. It now polls on its own
+  timer and on window focus, matching the file tree.
+- **Watched paths were dropped when the workspace was reached through a
+  symlink** (macOS `/var` → `/private/var`, or a symlinked checkout), because
+  reported paths resolve to the real path and no longer matched the configured
+  root.
+
+---
+
 ## [0.10.0] - 2026-07-27
 
 ### Added

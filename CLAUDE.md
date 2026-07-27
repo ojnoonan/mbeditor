@@ -47,7 +47,9 @@ The inline editor-boot JS (worker wiring, lazy Prettier/monaco-vim loaders, app 
 - `publish.yml` — builds gem + pushes to RubyGems on tag/manual dispatch
 
 ## Dependencies
-Ruby >= 3.0, Rails 7.1–8.x, `sprockets-rails >= 3.4`. Dev: `minitest-reporters`, `webmock`. Host optional: `rubocop`, `rubocop-rails`, `haml_lint`, `listen` (workspace file watching — `Mbeditor::FileWatcher` broadcasts `files_changed` for edits made outside the editor; absent gem = no watcher, everything else unchanged).
+Ruby >= 3.0, Rails 7.1–8.x, `sprockets-rails >= 3.4`. Dev: `minitest-reporters`, `webmock`. Host optional: `rubocop`, `rubocop-rails`, `haml_lint`.
+
+**No filesystem watcher, deliberately.** External changes are picked up by polling: the file tree every 10 s (`MbeditorApp.js`), git status every 5 s, and the git line-number tint every 10 s (`EditorPanel.js`). An earlier `listen`-based watcher was removed in 0.10.1 — inotify watches are a per-user kernel budget shared with the host app's own reloader, so the watcher could exhaust it and break the host. The WebSocket `files_changed` push remains the instant path for mbeditor's own writes; polling covers everything else. Don't reintroduce a watcher without re-reading that trade-off.
 
 ## Release workflow
 

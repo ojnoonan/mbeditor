@@ -1498,14 +1498,18 @@ var MbeditorApp = function MbeditorApp() {
     });
   }
 
-  // Auto-refresh the file tree every 10s to pick up external changes (new files, deletions, etc.)
-  // When an ActionCable WebSocket is connected this acts only as a safety-net fallback —
-  // the WebSocket push above handles immediate invalidation after mbeditor mutations.
+  // Auto-refresh the file tree every 10s to pick up external changes (new files,
+  // deletions, a branch switch in a terminal).
+  //
+  // This runs whether or not the WebSocket is connected. It used to skip when
+  // connected, on the reasoning that the push covered it — but the server only
+  // broadcasts from mbeditor's own mutation endpoints, so a connected socket
+  // meant external changes were never picked up at all. The push remains the
+  // instant path for our own writes; this is what catches everything else.
   // Uses functional setTreeData to skip the re-render when nothing has changed.
   useEffect(function () {
     var intervalId = setInterval(function () {
       if (document.hidden) return;
-      if (WebSocketService.isConnected()) return; // WebSocket is handling refreshes
       FileService.getTree().then(function (data) {
         var newData = data || [];
         setTreeData(function (prevData) {

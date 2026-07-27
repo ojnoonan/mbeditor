@@ -9,7 +9,6 @@ gem 'mcp',                '>= 0.9.2',   require: false  # CVE: CVE-2026-33946
 gem 'capybara',           require: false
 gem 'cuprite',            require: false
 gem 'haml_lint',          require: false
-gem 'listen',             require: false # optional host dep: watches the workspace for external changes
 gem 'minitest-reporters', require: false
 gem 'puma'
 gem 'rubocop',            require: false

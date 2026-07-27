@@ -70,6 +70,9 @@ var EditorPanel = function EditorPanel(_ref) {
 
   var blameDecorationsRef = useRef([]);
   var gitLineDecorationsRef = useRef([]);
+  // Latest git line-diff refresh, read by the poll effect so its interval does
+  // not have to be torn down whenever the active tab changes.
+  var gitLineRefreshRef = useRef(null);
   var blameZoneIdsRef = useRef([]);
   var testDecorationIdsRef = useRef([]);
   var testZoneIdsRef = useRef([]);
@@ -1290,7 +1293,14 @@ var EditorPanel = function EditorPanel(_ref) {
   // The ranges come from `git diff -U0` against HEAD, so they describe the file
   // as last written to disk. Monaco anchors decorations to the model and shifts
   // them as you type, which keeps them roughly right mid-edit; the authoritative
-  // refresh happens when the file lands on disk and the server broadcasts it.
+  // refresh happens on the signals wired up at the end of this effect.
+
+  // Poll cadence for the tint, matching the file tree's. Slower to react than a
+  // filesystem watcher would be, at the cost of one `git diff -U0` on one file
+  // per visible pane — against a resource nothing else is competing for, rather
+  // than a share of the kernel's inotify budget.
+  var GIT_LINE_POLL_MS = 10000;
+
   useEffect(function () {
     if (!gitAvailable || !tab.path || tab.isDiff || tab.isCombinedDiff) return;
 
@@ -1347,16 +1357,44 @@ var EditorPanel = function EditorPanel(_ref) {
 
     refresh();
 
+    // Publish the current refresh for the poll below, which lives in its own
+    // effect so a re-render of this one cannot restart its clock.
+    gitLineRefreshRef.current = refresh;
+
+    // Immediate path for writes mbeditor made itself.
     var hasSocket = typeof WebSocketService !== 'undefined' && WebSocketService.onFilesChanged;
     var onChanged = hasSocket ? function () { refresh(); } : null;
     if (onChanged) WebSocketService.onFilesChanged(onChanged);
 
     return function () {
       cancelled = true;
+      gitLineRefreshRef.current = null;
       if (onChanged && WebSocketService.offFilesChanged) WebSocketService.offFilesChanged(onChanged);
       clear();
     };
   }, [tab.path, tab.externalContentVersion, tab.isDiff, tab.isCombinedDiff, gitAvailable]);
+
+  // The poll for changes made outside the editor — a terminal commit or branch
+  // switch alters the diff without touching this buffer.
+  //
+  // Deliberately its own effect with no dependencies. Held inside the effect
+  // above, the interval was cleared and recreated on every re-render of that
+  // one and never survived long enough to fire, so the tint only ever updated
+  // via the WebSocket — i.e. never for external changes, which is the whole
+  // point of it. Reading the refresh through a ref keeps this clock running
+  // across tab switches.
+  useEffect(function () {
+    var tick = function () {
+      if (document.hidden) return;
+      if (gitLineRefreshRef.current) gitLineRefreshRef.current();
+    };
+    var intervalId = setInterval(tick, GIT_LINE_POLL_MS);
+    window.addEventListener('focus', tick);
+    return function () {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', tick);
+    };
+  }, []);
 
   // Handle Blame data fetching
   useEffect(function () {
