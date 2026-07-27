@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-07-27
+
+### Added
+- **Git-status line numbers** — line numbers are tinted by what git thinks of
+  the line: green for added, orange for modified, red on the line a deleted
+  block sat after. Backed by a new `GET /mbeditor/git/line_diff` endpoint over
+  `git diff -U0`, and never a reason to fail a file load: a missing HEAD or a
+  non-repo simply leaves the numbers plain.
+- **Problems panel** — error and warning counts in the status bar open a
+  drawer listing every diagnostic across the open files, grouped by file with
+  the offending source line and click-to-navigate. Counts cover the open tabs,
+  which is where Monaco's markers live; RuboCop, ruby-lsp and the TypeScript
+  worker all feed it through one subscription.
+- **Outline for JS, JSX and TypeScript** — the Methods/Outline button now
+  works in those files, translating the TypeScript worker's own navigation
+  tree rather than adding a second lexer. Arrow functions and function
+  expressions assigned to variables are listed; data constants, object-literal
+  keys and anonymous callbacks are not.
+- **Colour-coded Rails log** — the log drawer distinguishes request
+  boundaries, controller dispatch, SQL, renders, redirects and failures, with
+  `Completed` lines coloured by status code.
+- **Optional workspace file watching** — with the host's
+  [`listen`](https://github.com/guard/listen) gem, changes made outside the
+  editor (a terminal `git checkout`, a generator, another editor) refresh the
+  file tree and git decorations instead of going stale. Absent the gem,
+  behaviour is unchanged. Configurable via `config.watch_files`.
+
+### Fixed
+- **ruby-lsp hover showed a dead link.** ruby-lsp renders its "Definitions"
+  line as VS Code `file://` links, which Monaco draws as links but nothing in
+  the browser can open, so clicking did nothing. In-workspace links are now
+  rewritten to a Monaco command that opens the file at the line; gem and
+  stdlib links, which the editor cannot open at all, degrade to plain code
+  spans. The `/module_members` breakdown is also restored beneath a constant
+  hover — ruby-lsp's constant hover never lists what the class or module
+  defines, so taking its output wholesale had dropped it.
+- **False-positive type errors in plain JS/JSX.** The editor kept a denylist
+  of TypeScript diagnostic codes to suppress; it had grown to eight and still
+  leaked (TS2322 on a spread carrying an extra prop). Untyped JS gives
+  TypeScript nothing to check against, and which way it guesses is arbitrary —
+  state seeded with `useState({})` errors on every key while the same object
+  from `JSON.parse` stays silent. JS/JSX now keeps only the checks that are
+  sound without annotations: syntax errors, `Cannot find name`, and unused
+  locals. `.ts`/`.tsx` keeps full checking, where the types are hand-written.
+
+### Changed
+- The **Logs** button moved from the top toolbar to the status bar.
+- **Quick-open ranks recently opened files** above the static file-type tier,
+  so a file you were just in outranks a never-opened controller. Match quality
+  still comes first, so a worse match cannot jump the queue.
+- The title-bar search field now fills 75% of the space between the title and
+  the toolbar buttons instead of a fixed 340px.
+- Test-suite compatibility fixes carried over from the unreleased 0.9.1/0.9.2
+  work: MiniRacer-dependent parser suites skip in minimal bundles, and the
+  Outline system tests exercise navigation through click semantics.
+
+---
+
 ## [0.9.0] - 2026-07-23
 
 ### Added
