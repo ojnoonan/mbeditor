@@ -22,6 +22,24 @@ module Mbeditor
 
     IDENTIFIER = /[A-Za-z_$][A-Za-z0-9_$]*/
 
+    # Minified bundles are the reason for both guards below.
+    #
+    # A minified file is one enormous line, and it usually opens with a
+    # multi-declarator `var a,b,c,d,…` running to thousands of names. Split on
+    # commas, that ONE line yields thousands of one-letter symbols — enough to
+    # exhaust MAX_SYMBOLS on its own, so the workspace's actual components are
+    # never reached and every reference to them shows "Cannot find name".
+    # Worse, declaring `a`/`n`/`t` as ambient `any` silences genuine
+    # diagnostics for those names everywhere.
+    #
+    # The name check catches the conventional cases; the line-length check
+    # catches bundles that don't say "min" in the filename. Neither is a
+    # judgement about vendored code in general — a normally-formatted
+    # vendor/assets library still contributes its globals, which is correct
+    # under Sprockets.
+    MINIFIED_NAME = /[.\-]min\.(js|jsx|ts|tsx)\z/i
+    MAX_LINE_LENGTH = 2_000
+
     MUTEX = Mutex.new
     private_constant :MUTEX
 
@@ -47,19 +65,27 @@ module Mbeditor
 
       def compute(root)
         symbols = {}
+        truncated = false
 
         CodeSearchService.call(PATTERN, root).each do |raw|
-          break if symbols.length >= MAX_SYMBOLS
+          if symbols.length >= MAX_SYMBOLS
+            truncated = true
+            break
+          end
 
           m = raw.chomp.match(/\A(.+?):(\d+):(.*)\z/m)
           next unless m
 
           abs_path = m[1]
           next unless abs_path.start_with?(root)
+          next if abs_path.match?(MINIFIED_NAME)
+
+          snippet = m[3].strip
+          next if snippet.length > MAX_LINE_LENGTH
 
           rel = abs_path.delete_prefix(root).delete_prefix("/")
           line = m[2].to_i
-          extract_identifiers(m[3].strip).each do |name, kind|
+          extract_identifiers(snippet).each do |name, kind|
             symbols[name] ||= { name: name, file: rel, line: line, kind: kind }
           end
         end
@@ -71,6 +97,9 @@ module Mbeditor
         {
           ok: true,
           generatedAt: Time.now.to_i,
+          # Surfaced so a workspace that outgrows the cap is diagnosable from
+          # the endpoint instead of silently missing globals.
+          truncated: truncated,
           symbols: symbols.values.first(MAX_SYMBOLS).sort_by { |s| s[:name] }
         }
       end

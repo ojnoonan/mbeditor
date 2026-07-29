@@ -107,26 +107,122 @@
 
   // Declare a discovered global in Monaco's extra libs so the TS2304 warning disappears.
   // Calling addExtraLib with the same URI replaces the previous content in-place.
-  function addDiscoveredGlobal(name) {
-    if (discoveredJsGlobals[name]) return;
-    if (REACT_MINI_UMD_GLOBALS[name]) return; // already in the mini-UMD
-    discoveredJsGlobals[name] = true;
+  //
+  // Coalesced: addExtraLib invalidates the TypeScript worker and re-validates
+  // EVERY open model. A JSX file that references 500 host-app globals resolves
+  // 500 symbols, and calling addExtraLib once per symbol meant 500 full
+  // re-validations — the editor spends minutes pegged at 100% CPU redoing work
+  // it is about to redo again. Batch them into one flush instead.
+  var _discoveredFlushTimer = null;
+  function flushDiscoveredGlobals() {
+    _discoveredFlushTimer = null;
     var mts = window.monaco && window.monaco.languages && window.monaco.languages.typescript;
-    if (!mts) return;
+    if (!mts || !mts.javascriptDefaults) return;
     var decls = Object.keys(discoveredJsGlobals)
       .map(function(k) { return 'declare var ' + k + ': any;'; }).join('\n');
     mts.javascriptDefaults.addExtraLib(decls, 'inmemory://mbeditor/discovered-globals.d.ts');
   }
 
-  // Bulk ambient globals: fetch every top-level declaration in the workspace
-  // (the Sprockets global scope — /js_globals greps var/function/class at
-  // column 0 plus window.X assignments across *.js/*.jsx/*.js.jsx/...) and
-  // declare them all in ONE extraLib. This proactively prevents TS2304
-  // ("Cannot find name") for cross-file component references instead of the
-  // reactive one-network-lookup-per-symbol path below, which stays as a
-  // fallback for anything the static scan can't see.
-  // Same-URI addExtraLib replaces content in place, which is the refresh
-  // mechanism (called again on files_changed broadcasts).
+  function addDiscoveredGlobal(name) {
+    if (discoveredJsGlobals[name]) return;
+    if (REACT_MINI_UMD_GLOBALS[name]) return; // already in the mini-UMD
+    discoveredJsGlobals[name] = true;
+    if (_discoveredFlushTimer) return;
+    _discoveredFlushTimer = setTimeout(flushDiscoveredGlobals, 300);
+  }
+
+  // Reactive TS2304 resolution runs ONE /js_definition request at a time.
+  // Each request spawns an rg process on the server, so firing one per
+  // unresolved symbol in parallel (a big JSX file can have hundreds) saturated
+  // the dev server: the file tree poll, git status, and file saves all queued
+  // behind hundreds of greps. That is what made the whole editor feel slow and
+  // what let the "file was edited externally" check race its own save.
+  var JS_LOOKUP_QUEUE_MAX = 400;
+  var jsLookupQueue = [];
+  var jsLookupBusy = false;
+
+  function pumpJsLookupQueue() {
+    if (jsLookupBusy) return;
+    var job = jsLookupQueue.shift();
+    if (!job) return;
+    jsLookupBusy = true;
+    var done = function () { jsLookupBusy = false; pumpJsLookupQueue(); };
+    FileService.getJsDefinition(job.sym)
+      .then(function (data) {
+        var results = data && data.results;
+        if (results && results.length && results[0].file !== job.modelPath) {
+          addDiscoveredGlobal(job.sym);
+        } else if (!results || !results.length) {
+          if (isRuntimeWindowGlobal(job.sym)) addDiscoveredGlobal(job.sym);
+        }
+      })
+      .then(done, done);
+  }
+
+  function queueJsGlobalLookup(sym, modelPath) {
+    if (jsLookupQueue.length >= JS_LOOKUP_QUEUE_MAX) return;
+    jsLookupQueue.push({ sym: sym, modelPath: modelPath });
+    pumpJsLookupQueue();
+  }
+
+  // ── The workspace TypeScript program ──────────────────────────────────────
+  //
+  // Two layers, because one does not cover everything:
+  //
+  //   1. /js_program — the workspace's own JS source, added as extraLibs at
+  //      file:/// URIs. A JS file with no import/export is a *script*, so
+  //      TypeScript puts its top-level declarations in the global scope: the
+  //      Sprockets model exactly. This gives REAL types — member completion,
+  //      inferred signatures, argument-count checks — for the host app's own
+  //      components, and still reports TS2304 for genuinely unknown names.
+  //
+  //   2. /js_globals — ambient `declare var X: any` for names the program
+  //      can't supply. UMD-wrapped libraries (React, lodash, axios) assign
+  //      their global inside a closure, `factory(global.React = {})`, which
+  //      TypeScript cannot follow statically, so their source contributes no
+  //      global at all. Those names only exist as ambient declarations.
+  //
+  // A global is skipped from layer 2 only when layer 1 genuinely supplies it,
+  // so a real inferred type is never shadowed by `any` — and, just as
+  // importantly, a name the program can't see never loses its declaration.
+  // "In a program file" is NOT sufficient: `window.Foo = ...` is a runtime
+  // global that TypeScript does not treat as a declaration at all, so those
+  // must keep their ambient `declare var` even though their file is in the
+  // program. Only lexical declarations land in TypeScript's global scope.
+  //
+  // Same-URI addExtraLib replaces content in place; that is how both layers
+  // refresh.
+  var PROGRAM_VISIBLE_KINDS = { 'var': 1, 'let': 1, 'const': 1, 'function': 1, 'class': 1 };
+  var programPaths = {}; // workspace-relative path -> true, for the filter above
+
+  function programUri(path) {
+    return 'file:///' + String(path).replace(/^\/+/, '');
+  }
+
+  function loadWorkspaceProgram(monaco) {
+    if (typeof FileService === 'undefined') return;
+    var mts = monaco && monaco.languages && monaco.languages.typescript;
+    if (!mts || !mts.javascriptDefaults) return;
+
+    var programLoaded = FileService.getJsProgram
+      ? FileService.getJsProgram().then(function (data) {
+          if (!data || !data.ok || !data.files) return;
+          data.files.forEach(function (f) {
+            if (!f || typeof f.content !== 'string' || !f.path) return;
+            programPaths[f.path] = true;
+            mts.javascriptDefaults.addExtraLib(f.content, programUri(f.path));
+          });
+          if (data.skipped && data.skipped.length && window.console) {
+            console.info('[mbeditor] ' + data.fileCount + ' source files (' +
+              Math.round(data.totalBytes / 1024) + ' KB) in the TypeScript program; ' +
+              data.skipped.length + ' skipped:', data.skipped);
+          }
+        }).catch(function () { /* fall through to ambient globals alone */ })
+      : Promise.resolve();
+
+    programLoaded.then(function () { loadWorkspaceGlobals(monaco); });
+  }
+
   function loadWorkspaceGlobals(monaco) {
     if (typeof FileService === 'undefined' || !FileService.getJsGlobals) return;
     var mts = monaco && monaco.languages && monaco.languages.typescript;
@@ -139,6 +235,11 @@
         if (!name || !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name)) return;
         if (REACT_MINI_UMD_GLOBALS[name]) return;
         if (discoveredJsGlobals[name]) return; // already in discovered-globals.d.ts
+        // The program already declares this one, with a real type.
+        if (s.file && programPaths[s.file] && PROGRAM_VISIBLE_KINDS[s.kind]) {
+          attemptedJsGlobals[name] = true;
+          return;
+        }
         names.push(name);
         // Pre-seed the reactive resolver so the marker patcher never fires a
         // per-symbol /js_definition request for these.
@@ -147,6 +248,23 @@
       var decls = names.map(function (n) { return 'declare var ' + n + ': any;'; }).join('\n');
       mts.javascriptDefaults.addExtraLib(decls, 'inmemory://mbeditor/workspace-globals.d.ts');
     }).catch(function () { /* endpoint unavailable — reactive path still works */ });
+  }
+
+  // Incremental refresh: re-send only the files that changed, never the whole
+  // tree. A workspace can be tens of MB, so re-fetching it on every save would
+  // cost more than the feature is worth.
+  function refreshProgramPaths(monaco, paths) {
+    var mts = monaco && monaco.languages && monaco.languages.typescript;
+    if (!mts || !mts.javascriptDefaults) return;
+    if (typeof FileService === 'undefined' || !FileService.getJsProgramFile) return;
+    (paths || []).forEach(function (path) {
+      if (!path || !/\.(js|jsx|ts|tsx)$/i.test(path)) return;
+      FileService.getJsProgramFile(path).then(function (data) {
+        if (!data || !data.ok || !data.file) return;
+        programPaths[data.file.path] = true;
+        mts.javascriptDefaults.addExtraLib(data.file.content, programUri(data.file.path));
+      }).catch(function () {});
+    });
   }
 
   // Navigate to the first workspace definition of a JS symbol.
@@ -848,15 +966,22 @@
         );
       }
 
-      // Workspace-wide ambient globals, loaded once now and refreshed when
-      // files change (debounced) or on refocus (throttled, for the no-WS case).
-      loadWorkspaceGlobals(monaco);
+      // The workspace program (source files) plus the ambient globals it can't
+      // supply, loaded once now.
+      loadWorkspaceProgram(monaco);
+
+      // On a change: refresh just the touched files' program entries, and
+      // re-run the (cheap, cached) globals scan. The whole tree is never
+      // re-sent — see refreshProgramPaths.
       var refreshWorkspaceGlobals = function () { loadWorkspaceGlobals(monaco); };
       if (window._ && window._.debounce) {
         refreshWorkspaceGlobals = window._.debounce(refreshWorkspaceGlobals, 2000);
       }
       if (typeof WebSocketService !== 'undefined' && WebSocketService.onFilesChanged) {
-        WebSocketService.onFilesChanged(function () { refreshWorkspaceGlobals(); });
+        WebSocketService.onFilesChanged(function (payload) {
+          if (payload && payload.paths) refreshProgramPaths(monaco, payload.paths);
+          refreshWorkspaceGlobals();
+        });
       }
       var _lastGlobalsFocusRefresh = Date.now();
       window.addEventListener('focus', function () {
@@ -956,17 +1081,7 @@
               var sym = match[1];
               if (attemptedJsGlobals[sym]) return;
               attemptedJsGlobals[sym] = true;
-              var modelPath = model._mbeditorPath;
-              FileService.getJsDefinition(sym)
-                .then(function(data) {
-                  var results = data && data.results;
-                  if (results && results.length && results[0].file !== modelPath) {
-                    addDiscoveredGlobal(sym);
-                  } else if (!results || !results.length) {
-                    if (isRuntimeWindowGlobal(sym)) addDiscoveredGlobal(sym);
-                  }
-                })
-                .catch(function() {});
+              queueJsGlobalLookup(sym, model._mbeditorPath);
             });
           });
         }

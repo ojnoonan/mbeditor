@@ -462,6 +462,21 @@ module Mbeditor
       render json: { ok: false, error: e.message }, status: :unprocessable_content
     end
 
+    # GET /mbeditor/js_program
+    # The workspace's own JS source, for Monaco's TypeScript program. With
+    # ?path= it returns just that one file, which is how the editor refreshes
+    # after a change without re-sending the whole tree.
+    def js_program
+      if params[:path].present?
+        entry = JsProgramService.file(workspace_root, params[:path])
+        return render json: { ok: true, file: entry }
+      end
+
+      render json: JsProgramService.call(workspace_root)
+    rescue StandardError => e
+      render json: { ok: false, error: e.message }, status: :unprocessable_content
+    end
+
     RUBY_LSP_METHODS = {
       "definition"  => "textDocument/definition",
       "hover"       => "textDocument/hover",
@@ -964,6 +979,7 @@ module Mbeditor
       FileTreeService.invalidate(root)
       SearchReplaceService.invalidate_cache(root)
       JsGlobalsService.invalidate(root)
+      JsProgramService.invalidate(root)
       Thread.new do
         GitInfoService.invalidate(root)
       rescue => e

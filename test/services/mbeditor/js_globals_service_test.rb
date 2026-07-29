@@ -48,6 +48,37 @@ module Mbeditor
       assert_equal 1, foo[:line]
     end
 
+    test "minified bundles do not flood the symbol table" do
+      # One minified line declares thousands of one-letter names; unfiltered it
+      # exhausts MAX_SYMBOLS before any real component is reached.
+      minified = "var " + (1..900).map { |i| "m#{i}=#{i}" }.join(",") + ";"
+      write_file("vendor/assets/javascripts/babel.min.js", minified)
+      # Same content, filename says nothing — caught by the line-length guard.
+      write_file("vendor/assets/javascripts/bundle.js", minified)
+      write_file("app/assets/javascripts/components/Real.jsx", "function Real() {}\n")
+
+      names = symbol_names(JsGlobalsService.call(@workspace))
+
+      assert_includes names, "Real"
+      assert_not_includes names, "m1"
+      assert_not_includes names, "m900"
+    end
+
+    test "a normally formatted vendor library still contributes its globals" do
+      write_file("vendor/assets/javascripts/angular.js", "var angular = {};\nfunction bootstrap() {}\n")
+
+      names = symbol_names(JsGlobalsService.call(@workspace))
+
+      assert_includes names, "angular"
+      assert_includes names, "bootstrap"
+    end
+
+    test "truncated is false when the workspace fits under the cap" do
+      write_file("app/assets/javascripts/a.js", "var Only = 1;\n")
+
+      assert_equal false, JsGlobalsService.call(@workspace)[:truncated]
+    end
+
     test "indented declarations are not treated as globals but indented window assignments are" do
       write_file("app/assets/javascripts/scoped.js",
                  "(function() {\n  function Inner() {}\n  var hidden = 1;\n  window.Exposed = Inner;\n})();\n")

@@ -32,6 +32,7 @@ module Mbeditor
     get    'js_definition',   to: 'editors#js_definition'
     get    'js_members',      to: 'editors#js_members'
     get    'js_globals',      to: 'editors#js_globals'
+    get    'js_program',      to: 'editors#js_program'
     post   'ruby_lsp',        to: 'editors#ruby_lsp'
     get    'module_members',  to: 'editors#module_members'
     get    'file_includes',   to: 'editors#file_includes'

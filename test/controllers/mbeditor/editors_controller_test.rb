@@ -77,6 +77,49 @@ module Mbeditor
     end
 
     # ---------------------------------------------------------------------------
+    # js_program
+    # ---------------------------------------------------------------------------
+
+    test "js_program returns workspace source and refreshes a single file after a save" do
+      FileUtils.mkdir_p(File.join(@workspace, "app", "assets", "javascripts"))
+      File.write(File.join(@workspace, "app", "assets", "javascripts", "prog.jsx"),
+                 "var ProgWidget = function () { return null; };\n")
+      JsProgramService.invalidate(@workspace)
+
+      get "/mbeditor/js_program"
+      assert_response :ok
+      assert json["ok"]
+      assert json["enabled"]
+      entry = json["files"].find { |f| f["path"] == "app/assets/javascripts/prog.jsx" }
+      assert entry, "expected the source file in the program"
+      assert_includes entry["content"], "var ProgWidget"
+      assert_operator json["totalBytes"], :>, 0
+
+      # A save invalidates the cache, so new source is picked up without
+      # waiting out the TTL.
+      post "/mbeditor/create_file",
+           params: { path: "app/assets/javascripts/added.js", code: "var AddedGlobal = 1;\n" }
+      assert_response :ok
+
+      get "/mbeditor/js_program"
+      assert_includes json["files"].map { |f| f["path"] }, "app/assets/javascripts/added.js"
+
+      # The single-file form is what the editor uses to refresh incrementally.
+      get "/mbeditor/js_program", params: { path: "app/assets/javascripts/added.js" }
+      assert_response :ok
+      assert_equal "app/assets/javascripts/added.js", json["file"]["path"]
+      assert_includes json["file"]["content"], "AddedGlobal"
+    ensure
+      JsProgramService.invalidate(@workspace)
+    end
+
+    test "js_program refuses a path outside the workspace" do
+      get "/mbeditor/js_program", params: { path: "../../../etc/passwd.js" }
+      assert_response :ok
+      assert_nil json["file"]
+    end
+
+    # ---------------------------------------------------------------------------
     # ruby_lsp bridge
     # ---------------------------------------------------------------------------
 

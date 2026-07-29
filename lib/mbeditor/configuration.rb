@@ -9,6 +9,7 @@ module Mbeditor
                   :lint_timeout, :base_branch_candidates, :git_timeout, :search_timeout,
                   :ruby_def_include_dirs, :related_files_custom_paths,
                   :mount_path, :resilient_routing, :js_global_identifiers,
+                  :js_program, :js_program_exclude,
                   :js_syntax_check, :babel_standalone_path,
                   :ruby_lsp, :ruby_lsp_command, :ruby_lsp_timeout,
                   :search_respect_gitignore
@@ -35,6 +36,15 @@ module Mbeditor
       @related_files_custom_paths = []
       @authentication_cache_ttl = 0
       @js_global_identifiers = [] # extra ambient JS globals for the editor (runtime-only names invisible to static scan, e.g. %w[Routes I18n])
+      # Load the workspace's own JS source into Monaco's TypeScript program, so
+      # cross-file references get real inferred types instead of ambient `any`.
+      @js_program = true
+      # Excluded from that program on top of excluded_paths. Vendored libraries
+      # are UMD-wrapped (the global is assigned inside a closure), so their
+      # source yields no globals to TypeScript and only costs parse time — they
+      # stay on ambient declarations instead. Add any other directory of
+      # third-party or generated JS here, e.g. "app/assets/javascripts/react".
+      @js_program_exclude = %w[vendor]
       @js_syntax_check = :auto # save-time babel parse check via host mini_racer + babel-standalone; false disables
       @babel_standalone_path = nil # explicit path to babel-standalone JS; nil auto-detects via the asset pipeline
       @ruby_lsp         = :auto # use the host's ruby-lsp for Ruby definitions/hover/completion when available; false disables

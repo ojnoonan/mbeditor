@@ -599,6 +599,10 @@ var MbeditorApp = function MbeditorApp() {
   customPathsRef.current = customPaths;
   var recentSavesRef = useRef({});
   var isSavingRef = useRef(false);
+  // path -> the file's content as last seen ON DISK (newline-normalised).
+  // External-change detection compares disk-to-disk; comparing disk to the
+  // buffer flags every dirty tab, which is just the definition of "dirty".
+  var lastDiskContentRef = useRef({});
 
   // ── Draft backup helpers ─────────────────────────────────────────────────
   var draftWriteTimerRef = useRef({});
@@ -1456,7 +1460,21 @@ var MbeditorApp = function MbeditorApp() {
         if (!data || typeof data.content !== 'string') return;
         var serverNorm = data.content.replace(/\r\n/g, '\n');
         var tabNorm = (pt.tab.content || '').replace(/\r\n/g, '\n');
+
+        // Did the file on disk actually change? Compare disk against the last
+        // disk content we saw, never against the buffer — a dirty buffer
+        // differs from disk by definition, so the old comparison reported
+        // every unsaved tab as "updated externally" whenever a files_changed
+        // push arrived (which our own save of some *other* file triggers).
+        // A clean tab's buffer IS the disk content, so it seeds the baseline;
+        // a dirty tab with no baseline yet can't be judged, so record and wait.
+        var prevDisk = lastDiskContentRef.current[pt.tab.path];
+        lastDiskContentRef.current[pt.tab.path] = serverNorm;
         if (serverNorm === tabNorm) return;
+        if (prevDisk === undefined && pt.tab.dirty) return;
+        if (prevDisk === undefined) prevDisk = tabNorm;
+        if (serverNorm === prevDisk) return;
+
         if (!pt.tab.dirty) {
           EditorStore.setState({
             panes: EditorStore.getState().panes.map(function (p) {
@@ -5105,6 +5123,25 @@ var MbeditorApp = function MbeditorApp() {
         },
         React.createElement("i", { className: "fas fa-stream" }),
         " Logs"
+      ),
+      React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "statusbar-btn" + (editorPrefs.renderWhitespace === 'all' ? " active" : ""),
+          title: editorPrefs.renderWhitespace === 'all'
+            ? "Hide whitespace characters"
+            : "Show whitespace characters (tabs, spaces, control characters)",
+          "aria-pressed": editorPrefs.renderWhitespace === 'all',
+          onClick: function () {
+            setEditorPrefs(function (p) {
+              return _extends({}, p, {
+                renderWhitespace: p.renderWhitespace === 'all' ? 'none' : 'all'
+              });
+            });
+          }
+        },
+        React.createElement("i", { className: "fas fa-paragraph" })
       ),
       activeEOL && React.createElement(
         "button",

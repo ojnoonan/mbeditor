@@ -247,6 +247,20 @@ var FileService = (function () {
       .then(function(res) { return res.data; });
   }
 
+  // The workspace's own JS source for Monaco's TypeScript program. This is the
+  // largest response the editor fetches (a big app is tens of MB before gzip),
+  // so it gets a generous timeout and is only ever fetched whole once — later
+  // changes go through getJsProgramFile.
+  function getJsProgram() {
+    return axios.get(window.mbeditorBasePath() + '/js_program', { timeout: 120000 })
+      .then(function(res) { return res.data; });
+  }
+
+  function getJsProgramFile(path) {
+    return axios.get(window.mbeditorBasePath() + '/js_program', { params: { path: path }, timeout: 15000 })
+      .then(function(res) { return res.data; });
+  }
+
   function getRelatedFiles(path) {
     return axios.get(window.mbeditorBasePath() + '/related_files', { params: { path: path } })
       .then(function(res) { return res.data; });
@@ -292,6 +306,8 @@ var FileService = (function () {
     getFileIncludes: getFileIncludes,
     getClientConfig: getClientConfig,
     getJsGlobals: getJsGlobals,
+    getJsProgram: getJsProgram,
+    getJsProgramFile: getJsProgramFile,
     rubyLspRequest: rubyLspRequest,
     lspDiagnostics: lspDiagnostics,
     getRelatedFiles: getRelatedFiles,

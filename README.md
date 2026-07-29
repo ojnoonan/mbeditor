@@ -77,6 +77,10 @@ Mbeditor.configure do |config|
   # config.ruby_def_include_dirs = %w[app/models app/controllers app/helpers app/concerns]
   # config.related_files_custom_paths = %w[app/assets/javascripts/app app/policies]
 
+  # JavaScript intelligence (see the "JavaScript intelligence" section below)
+  # config.js_program = false                                        # disable the source program entirely
+  # config.js_program_exclude = %w[vendor app/assets/javascripts/react]  # third-party/generated JS
+
   # Resilient routing (see the "Resilient Routing" section below)
   # config.mount_path = "/mbeditor"   # explicit prefix override; auto-detected when nil
   # config.resilient_routing = false  # escape hatch; true keeps the editor up when host routes break
@@ -95,6 +99,8 @@ end
 | `search_timeout` | `15` | Wall-clock bound on project-search subprocesses; a tripped deadline returns the partial results collected so far. `nil` disables. |
 | `search_respect_gitignore` | `false` | When `true`, project search and definition lookups skip files ignored by `.gitignore`. The default searches them, matching the editor's "show me everything on disk" behaviour. |
 | `js_global_identifiers` | `[]` | Extra JS names declared as ambient globals in the editor — for runtime-only globals the static workspace scan can't see (e.g. `%w[Routes I18n]`). |
+| `js_program` | `true` | Load the workspace's own JS source into Monaco's TypeScript program, so cross-file references get real inferred types instead of ambient `any`. See [JavaScript intelligence](#javascript-intelligence). `false` falls back to ambient declarations alone. |
+| `js_program_exclude` | `%w[vendor]` | Directories excluded from that program, on top of `excluded_paths`. Point this at any third-party or generated JS — vendored libraries are UMD-wrapped, so their source costs parse time and contributes no globals. |
 | `js_syntax_check` | `:auto` | Save-time babel parse check for JS/JSX using the host's `mini_racer` + babel-standalone (auto-detected; no-op when either is absent). `false` disables. |
 | `babel_standalone_path` | `nil` | Explicit path to the babel-standalone bundle for the syntax check; `nil` looks up `babel.min.js`/`babel.js` in the host's asset pipeline. |
 | `ruby_lsp` | `:auto` | Use the host's [ruby-lsp](https://github.com/Shopify/ruby-lsp) for Ruby go-to-definition, hover, completion, and diagnostics when it's installed (a persistent process is managed per workspace). `false` disables. Without ruby-lsp everything degrades to the built-in grep/Ripper services — no behavior change. |
@@ -140,6 +146,73 @@ See [Resilient Routing](#resilient-routing) for details.
 |--------|---------|-------------|
 | `mount_path` | `nil` | Explicit URL prefix to serve resilient routing from. When `nil`, auto-detected from your `mount Mbeditor::Engine, at: "..."` line on every healthy boot. Set only to override detection. |
 | `resilient_routing` | `true` | Keeps mbeditor reachable when the host's `config/routes.rb` is broken, by serving its traffic from middleware that dispatches to a private route set. Set to `false` as an escape hatch: no middleware is inserted and the private set is never built. |
+
+## JavaScript intelligence
+
+Under Sprockets every JS file shares one global scope, with no imports. The
+editor models that in two layers.
+
+**1. The source program.** Your workspace's own JS is loaded into Monaco's
+TypeScript program. A JS file with no `import`/`export` is a TypeScript
+*script*, so its top-level declarations land in the global scope — which is
+exactly the Sprockets model. You get real inferred types across files:
+
+```jsx
+// app/assets/javascripts/ux/Card.jsx
+var Card = function (props) { return <div>{props.title}</div>; };
+function formatCents(value) { return "$" + (value / 100).toFixed(2); }
+```
+
+```jsx
+// somewhere else — no import needed
+var c = <Card title="x" />;      // Card: (props: any) => JSX.Element
+var s = formatCents(500);        // formatCents(value: any): string
+var t = formatCents(1, 2);       // Expected 0-1 arguments, but got 2
+```
+
+Unknown names still report `Cannot find name` — this adds type information, it
+doesn't silence errors.
+
+**2. Ambient declarations**, for names the program can't supply.
+
+Both layers are needed, because TypeScript only sees *lexical* declarations:
+
+- `window.Foo = ...` is a runtime global TypeScript does not treat as a
+  declaration at all.
+- UMD-wrapped libraries — React, lodash, axios — assign their global inside a
+  closure, `factory(global.React = {})`, which TypeScript cannot follow
+  statically. **Loading their source gets you nothing**, which is why
+  `js_program_exclude` defaults to `vendor` and why React is typed by a
+  bundled stub instead.
+
+So point `js_program_exclude` at directories of third-party or generated JS,
+and leave your own application code in:
+
+```ruby
+config.js_program_exclude = %w[vendor app/assets/javascripts/react]
+```
+
+### Cost
+
+Measured against the Monaco TypeScript worker:
+
+| program size | build | per file opened after |
+|---|---|---|
+| 1 MB | 210 ms | 9 ms |
+| 3 MB | 378 ms | 11 ms |
+| 5.5 MB | 443 ms | 23 ms |
+| 9.4 MB | 872 ms | 32 ms |
+
+Roughly 93 ms/MB, paid once per session. JS gzips about 4.5:1, so a 10 MB tree
+is ~2.2 MB over the wire — worth knowing if your app runs on a remote host.
+After the initial load only changed files are re-sent, never the whole tree.
+
+Nothing is truncated silently: the browser console logs the file count, total
+size, and every skipped file with a reason (minified, oversized, unreadable).
+Minified bundles are skipped by filename and by shape, since they cost parse
+time and declare only one-letter names inside a closure.
+
+Set `config.js_program = false` to disable the layer entirely.
 
 ## Test Runner
 
