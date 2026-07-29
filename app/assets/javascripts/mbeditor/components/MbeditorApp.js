@@ -599,6 +599,13 @@ var MbeditorApp = function MbeditorApp() {
   customPathsRef.current = customPaths;
   var recentSavesRef = useRef({});
   var isSavingRef = useRef(false);
+  // True once the saved session has finished loading into the panes. Anything
+  // that opens a tab on startup must wait for this, or the restore overwrites it.
+  var _useStateSR = useState(false);
+  var _useStateSR2 = _slicedToArray(_useStateSR, 2);
+  var sessionRestored = _useStateSR2[0];
+  var setSessionRestored = _useStateSR2[1];
+  var pendingChangelogRef = useRef(false);
   // path -> the file's content as last seen ON DISK (newline-normalised).
   // External-change detection compares disk-to-disk; comparing disk to the
   // buffer flags every dirty tab, which is just the definition of "dirty".
@@ -1045,7 +1052,8 @@ var MbeditorApp = function MbeditorApp() {
         }
         return loadPaneState(panesToLoad, focusedPaneId);
       });
-    });
+    })["catch"](function () { /* fall through to marking restore done */ })
+      .then(function () { setSessionRestored(true); });
 
     // Watch for git branch changes and swap per-branch tab state
     var unsubBranch = EditorStore.subscribeToSlice(['gitBranch'], function (st) {
@@ -1853,16 +1861,32 @@ var MbeditorApp = function MbeditorApp() {
 
   // Version-update detection: open the changelog tab automatically when the
   // gem version has changed since last time the editor was opened.
+  //
+  // Gated on sessionRestored rather than a timer. Restoring the saved session
+  // replaces every pane wholesale, so a changelog tab opened before that lands
+  // is silently thrown away — which is exactly what happened whenever the
+  // restore took longer than the old 800 ms guess (a big session, a slow or
+  // remote host). Sequencing after the restore removes the race instead of
+  // making the guess bigger.
+  //
+  // The seen-version write is deliberately NOT gated: it records that this
+  // build has been seen, and re-showing the changelog on every reload until
+  // the restore happens to succeed would be worse than missing it once.
   useEffect(function() {
     var SEEN_KEY = 'mbeditor_seen_version';
     var current = document.body.dataset.mbeditorVersion || '';
+    if (!current) return;
     var seen = localStorage.getItem(SEEN_KEY) || '';
-    if (current && seen && seen !== current) {
-      // Delay slightly so the editor finishes restoring saved tabs first
-      setTimeout(function() { openChangelogTab(); }, 800);
-    }
-    if (current) localStorage.setItem(SEEN_KEY, current);
+    localStorage.setItem(SEEN_KEY, current);
+    if (!seen || seen === current) return;
+    pendingChangelogRef.current = true;
   }, []);
+
+  useEffect(function() {
+    if (!sessionRestored || !pendingChangelogRef.current) return;
+    pendingChangelogRef.current = false;
+    openChangelogTab();
+  }, [sessionRestored]);
 
   var resourceLabelFromPath = function(p) {
     if (!p) return null;
