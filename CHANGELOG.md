@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-07-29
+
+### Added
+- **Real types for your own JavaScript, from your own JavaScript.** The
+  workspace's JS source is now loaded into Monaco's TypeScript program instead
+  of being grepped for names and declared as ambient `any`. Under Sprockets a
+  JS file with no `import`/`export` is a TypeScript *script*, so its top-level
+  declarations land in the global scope — which is exactly the Sprockets model.
+  Cross-file references now get inferred signatures, member completion, and
+  argument-count checking, and genuine unknowns still report `Cannot find
+  name`:
+
+  ```jsx
+  var c = <Card title="x" />;   // Card: (props: any) => JSX.Element
+  var s = formatCents(500);     // formatCents(value: any): string
+  var t = formatCents(1, 2);    // Expected 0-1 arguments, but got 2
+  ```
+
+  Two new options: `config.js_program` (default `true`) and
+  `config.js_program_exclude` (default `%w[vendor]`, added on top of
+  `excluded_paths`). Measured at ~93 ms/MB to build and ~30 ms per file
+  afterwards, so a ~10 MB tree costs under a second, once; only changed files
+  are re-sent after that.
+
+  Ambient declarations are still used for what a program cannot express.
+  TypeScript only sees *lexical* declarations: `window.Foo = ...` is not a
+  declaration to it, and UMD-wrapped libraries assign their global inside a
+  closure — `factory(global.React = {})` — which it cannot follow statically.
+  Their source contributes nothing, which is why vendored code is excluded by
+  default and React stays typed by a bundled stub. Point
+  `js_program_exclude` at any other third-party or generated JS.
+- **A whitespace toggle in the status bar** (¶), showing tabs, spaces and
+  hidden characters in the active editor.
+
+### Fixed
+- **The editor became very slow on JSX files with many unresolved names.**
+  Opening such a file fired one `/js_definition` request per unknown symbol,
+  in parallel — each spawning an `rg` process — and called `addExtraLib` once
+  per resolution, re-validating every open model each time. A file with a
+  thousand warnings meant a thousand greps saturating the dev server and a
+  thousand full TypeScript re-validations. That starved the file-tree poll,
+  git status, and saves behind it. Lookups are now serialized and capped, and
+  the declaration updates are coalesced into a single flush.
+- **Minified bundles crowded out the workspace's real globals.** A minified
+  file is one enormous line that usually opens with `var a,b,c,…` running to
+  thousands of declarators; split on commas, that single line exhausted the
+  3000-symbol cap before the scan reached your own components, so every
+  reference to them showed "Cannot find name". Declaring `a`/`n`/`t` as
+  ambient `any` also silenced real diagnostics for those names everywhere.
+  Minified files are now skipped by filename and by shape, and the endpoint
+  reports `truncated` so a workspace that outgrows the cap is diagnosable
+  instead of silently incomplete.
+- **"File was edited externally" appeared for files nothing had touched.** The
+  check compared the file on disk against the editor buffer — which differ for
+  every unsaved tab by definition — so saving one file broadcast a change that
+  flagged every *other* dirty tab. It now compares disk against the last disk
+  content seen, so only a real on-disk change raises the banner.
+
+---
+
 ## [0.10.1] - 2026-07-27
 
 ### Removed
