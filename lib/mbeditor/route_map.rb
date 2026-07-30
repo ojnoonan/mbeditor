@@ -35,6 +35,8 @@ module Mbeditor
     get    'js_program',      to: 'editors#js_program'
     post   'ruby_lsp',        to: 'editors#ruby_lsp'
   post   'ruby_rename',     to: 'editors#ruby_rename'
+  get    'exceptions',      to: 'editors#exceptions'
+  delete 'exceptions',      to: 'editors#clear_exceptions'
     get    'module_members',  to: 'editors#module_members'
     get    'file_includes',   to: 'editors#file_includes'
     get    'client_config',   to: 'editors#client_config'

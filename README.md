@@ -103,9 +103,10 @@ end
 | `js_program_exclude` | `%w[vendor]` | Directories excluded from that program, on top of `excluded_paths`. Point this at any third-party or generated JS — vendored libraries are UMD-wrapped, so their source costs parse time and contributes no globals. |
 | `js_syntax_check` | `:auto` | Save-time babel parse check for JS/JSX using the host's `mini_racer` + babel-standalone (auto-detected; no-op when either is absent). `false` disables. |
 | `babel_standalone_path` | `nil` | Explicit path to the babel-standalone bundle for the syntax check; `nil` looks up `babel.min.js`/`babel.js` in the host's asset pipeline. |
-| `ruby_lsp` | `:auto` | Use the host's [ruby-lsp](https://github.com/Shopify/ruby-lsp) for Ruby go-to-definition, hover, completion, and diagnostics when it's installed (a persistent process is managed per workspace). `false` disables. Without ruby-lsp everything degrades to the built-in grep/Ripper services — no behavior change. |
+| `ruby_lsp` | `:auto` | Use the host's [ruby-lsp](https://github.com/Shopify/ruby-lsp) for Ruby go-to-definition (with peek), find-references, hover, completion, diagnostics, document symbols, folding, formatting, signature help, smart-select, and constant rename when it's installed (a persistent process is managed per workspace). `false` disables. Without ruby-lsp everything degrades to the built-in grep/Ripper services — no behavior change. Adding `ruby-lsp-rails` to your Gemfile needs no configuration here: ruby-lsp loads it as an addon and its Rails-aware results come through automatically. |
 | `ruby_lsp_command` | `nil` | Override the ruby-lsp launch command (String or Array). `nil` auto-resolves `bin/ruby-lsp` → installed gem → `bundle exec ruby-lsp`. |
 | `ruby_lsp_timeout` | `3` | Seconds per LSP request; on timeout (e.g. during initial indexing) the editor falls back to the built-in services for that request. |
+| `exception_capture` | `:auto` | Record exceptions raised by your controllers and list them in the Problems panel, with clickable backtrace frames. Development only; backtraces are trimmed to frames inside the workspace. `false` disables. Note exception messages can include request params — the same exposure the log panel already has. |
 
 ### Authentication
 

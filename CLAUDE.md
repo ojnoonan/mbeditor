@@ -88,6 +88,111 @@ parse time and contributes nothing, since it is UMD-wrapped.
 Nothing truncates silently: `/js_program` reports `skipped` with a reason per
 file, and `/js_globals` reports `truncated`.
 
+## Ruby intelligence: ruby-lsp, and what it does not cover
+
+`lib/mbeditor/ruby_lsp_client.rb` runs one ruby-lsp per workspace and speaks LSP
+over stdio. The handshake sends `initializationOptions: {}` — an absent
+`enabledFeatures` means ruby-lsp enables **every** feature (`server.rb`
+`run_initialize`), so nothing needs turning on server-side; the only limit is
+what `RUBY_LSP_METHODS` asks for.
+
+`RUBY_LSP_METHODS` in `editors_controller.rb` is the trust boundary and the
+single place a new capability is added. Two conventions live side by side:
+
+- **The original four** (`definition`, `hover`, `completion`, `diagnostics`)
+  have bespoke translators producing 1-based, editor-shaped payloads. Their
+  consumers depend on those shapes — don't "unify" them.
+- **`RUBY_LSP_RAW`** passes raw LSP JSON through, ranges staying **0-based on
+  the wire**, converted by `lspRange()` at the Monaco provider. Eight more
+  hand-written translators would be ~200 lines restating shapes Monaco already
+  understands.
+- Symbol-valued entries (`:health`, `:restart`) are answered locally, before
+  `resolve_path` — they carry no document.
+
+`sanitize_lsp_uris` is the one boundary every raw method crosses: in-workspace
+`file://` URIs become relative paths, anything else is **dropped**. It also
+rewrites URIs embedded in markdown strings — ruby-lsp puts absolute `file://`
+links inside hover and signatureHelp documentation, which both leak host paths
+and render as links that go nowhere.
+
+**Provider registration is chosen by trigger frequency.** Gesture-triggered
+providers (definition, references, rename, format, signature help, selection
+range) are free. `documentSymbol` and `foldingRange` fire on content change but
+are one Prism parse. `documentHighlight` fires per cursor move — the one to
+watch. There is deliberately no batch endpoint or client-side cache: this is
+dev-only localhost and `sync_document` is already digest-guarded.
+
+**Things that look redundant and are not:**
+
+- **`ruby_outline.js` stays** even though a `documentSymbol` provider is
+  registered. ruby-lsp's `document_symbol.rb` emits no method visibility and no
+  `describe`/`it`/`test` entries, and the outline panel groups on both. The
+  provider is *additive*, lighting up breadcrumbs, sticky scroll and
+  Ctrl+Shift+O; it is not a replacement. The lexer also covers ERB/HAML and the
+  ruby-lsp-is-down case.
+- **`/quick_fix` and `/format` stay** as fallbacks for when diagnostics came
+  from the plain-rubocop path rather than ruby-lsp.
+- **ERB never goes to ruby-lsp** (Prism cannot parse it) — every provider gates
+  on `isInsideErbTag` and takes the grep/Ripper path.
+
+**Code actions cost nothing.** ruby-lsp's `textDocument/codeAction` handler only
+echoes back `diagnostic.data.code_actions`, so the fixes are lifted straight off
+the diagnostics response and applied as a native Monaco workspace edit — no
+codeAction call, no `rubocop -A` subprocess. That payload is also the only
+source of "Disable <cop> for this line". Because those edits arrive from a
+subprocess and go straight into the buffer, `sanitize_code_actions` keeps an
+action only when every edit in it targets the document we asked about.
+
+**Rename is constants-only** — `Rename#perform` locates
+`ConstantReadNode | ConstantPathNode | ConstantPathTargetNode` and nothing else.
+`resourceOperations` is deliberately **not** declared: without it ruby-lsp
+returns a plain `changes` map and never emits a `RenameFile`, so it cannot move
+a file out from under an open tab. `/ruby_rename` splits the edit by whether a
+file is open — open files get edits back for Monaco to apply (undoable, marks
+dirty), closed files are written server-side. That split is what keeps unsaved
+work safe: anything dirty is by definition open.
+
+**Diagnostics rendering.** Severity is graded Error/Warning/Info/Hint (all
+non-errors were previously one yellow warning). `LspDiagnosticsTranslator.unnecessary?`
+decides what Monaco fades via `MarkerTag.Unnecessary`, and is shared by the
+ruby-lsp and `/lint` paths. It matches Prism's cop-less duplicates too —
+otherwise an un-faded parser squiggle draws over the faded RuboCop one and
+nothing appears greyed out. Hover markdown escapes a leading `#` outside code
+fences: ruby-lsp strips one `# ` per comment line, so a `##`-opened doc block
+would render as an `<h1>`.
+
+**Health.** A failure sets a 60 s backoff (`MBEDITOR_RUBY_LSP_DISABLED_UNTIL`),
+not the old permanent flag flip; `noteLspFailure` in `editor_plugins.js` is the
+only writer. `RubyLspClient#reset!` clears the crash budget — it must clear
+`@crash_times` or `restart_allowed?` re-latches `:failed` immediately.
+
+**ruby-lsp-rails needs no code here.** It is a ruby-lsp *addon*: if the host has
+it, ruby-lsp loads it and its Rails-aware hover/definition/codeLens flow through
+this bridge unchanged. Its model hover overlaps the existing `SchemaService` /
+`model_schema` endpoint.
+
+**Debuggers freeze the editor.** `byebug`/`debug` suspend every thread, and the
+editor is served by the app being debugged. Use `rdbg --open` (socket-based, so
+other threads keep serving), or run mbeditor from a second process.
+
+## Runtime exceptions
+
+`lib/mbeditor/exception_log.rb` — a 50-entry ring of host-app exceptions, in
+`lib/` (not autoloaded) so a Zeitwerk reload can't wipe what you're reading.
+Fed by an `ActiveSupport::Notifications` subscriber on
+`process_action.action_controller` (`Engine.subscribe_to_exceptions`), broadcast
+over the existing cable channel and shown in the Problems panel.
+
+A Rack middleware **cannot** be used: `ActionDispatch::DebugExceptions` rescues
+and renders the error, so nothing outside it sees the raise.
+`Rails.error.subscribe` is a nicer API but only carries unhandled request errors
+reliably on newer Rails, and this gem supports 7.1.
+
+Backtraces are filtered to frames under the workspace root, root stripped,
+capped at 10 — absolute host paths are both a leak and unopenable. Development
+only, and `config.exception_capture = false` disables it. Exceptions are not
+turned into Monaco markers: markers are per-model and the next lint wipes them.
+
 **No filesystem watcher, deliberately.** External changes are picked up by polling: the file tree every 10 s (`MbeditorApp.js`), git status every 5 s, and the git line-number tint every 10 s (`EditorPanel.js`). An earlier `listen`-based watcher was removed in 0.10.1 — inotify watches are a per-user kernel budget shared with the host app's own reloader, so the watcher could exhaust it and break the host. The WebSocket `files_changed` push remains the instant path for mbeditor's own writes; polling covers everything else. Don't reintroduce a watcher without re-reading that trade-off.
 
 ## Release workflow

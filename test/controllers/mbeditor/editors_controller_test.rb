@@ -284,6 +284,48 @@ module Mbeditor
       Mbeditor.configuration.ruby_lsp_command = original_cmd
     end
 
+    # ── exceptions ───────────────────────────────────────────────────────────
+
+    test "exceptions returns recorded host-app failures newest first" do
+      Mbeditor::ExceptionLog.clear!
+      error = RuntimeError.new("kaboom")
+      error.set_backtrace(["#{@workspace}/app/models/user.rb:3:in 'go'",
+                           "/gems/actionpack/lib/metal.rb:1:in 'dispatch'"])
+      Mbeditor::ExceptionLog.record(error, { controller: "UsersController", action: "show" },
+                                    workspace_root: @workspace)
+
+      get "/mbeditor/exceptions"
+      assert_response :ok
+
+      entry = json["exceptions"].first
+      assert_equal "RuntimeError", entry["klass"]
+      assert_equal "UsersController", entry["controller"]
+      assert_equal [{ "file" => "app/models/user.rb", "line" => 3 }], entry["frames"],
+                   "gem frames are dropped and the workspace root stripped"
+      refute_includes response.body, @workspace, "no absolute host path in the payload"
+    ensure
+      Mbeditor::ExceptionLog.clear!
+    end
+
+    test "exceptions can be cleared" do
+      Mbeditor::ExceptionLog.record(RuntimeError.new("x"), {}, workspace_root: @workspace)
+
+      delete "/mbeditor/exceptions"
+      assert_response :ok
+
+      get "/mbeditor/exceptions"
+      assert_empty json["exceptions"]
+    ensure
+      Mbeditor::ExceptionLog.clear!
+    end
+
+    test "clearing exceptions requires the client header" do
+      ActionDispatch::Integration::Session.new(Rails.application).tap do |sess|
+        sess.delete "/mbeditor/exceptions", as: :json
+        assert_equal 403, sess.response.status
+      end
+    end
+
     # ── ruby_rename ──────────────────────────────────────────────────────────
 
     def with_fake_lsp

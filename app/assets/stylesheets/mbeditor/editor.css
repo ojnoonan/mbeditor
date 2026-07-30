@@ -2990,6 +2990,16 @@ button:not(.pico-btn) { margin-bottom: 0; }
   font-size: 11px;
 }
 
+/* Host-app exceptions, above the marker list. Each backtrace frame is a button
+   that opens the file — only in-workspace frames ever reach the client. */
+.ide-problems-exceptions .ide-problems-file-name { color: var(--ide-danger); }
+.ide-problems-clear { margin-left: auto; }
+.ide-problems-exception { margin-bottom: 6px; }
+.ide-problems-exception-head { cursor: default; }
+.ide-problems-exception-head .ide-problems-msg { white-space: normal; }
+.ide-problems-frame { padding-left: 28px; }
+.ide-problems-frame .ide-problems-code { opacity: 1; }
+
 /* Status-bar ruby-lsp indicator. Healthy is a dim icon you can ignore;
    degraded/off is amber with a label, because that one you should read. */
 .statusbar-lsp { display: inline-flex; align-items: center; gap: 4px; }

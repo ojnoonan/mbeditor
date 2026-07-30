@@ -96,6 +96,38 @@ var ProblemsPanel = (function () {
     var _filter = React.useState('');
     var filter = _filter[0], setFilter = _filter[1];
 
+    // Exceptions raised by the host app. Unlike markers these are not per-model
+    // — a runtime failure isn't a property of a file you happen to have open —
+    // so they live in their own section above the marker list.
+    var _exceptions = React.useState([]);
+    var exceptions = _exceptions[0], setExceptions = _exceptions[1];
+
+    React.useEffect(function () {
+      var cancelled = false;
+      if (FileService.getExceptions) {
+        FileService.getExceptions().then(function (data) {
+          if (!cancelled) setExceptions((data && data.exceptions) || []);
+        })["catch"](function () { /* older host, or capture disabled */ });
+      }
+
+      // Live push while the panel is open.
+      var onException = function (e) {
+        setExceptions(function (prev) {
+          return [e.detail].concat(prev).slice(0, 50);
+        });
+      };
+      window.addEventListener('mbeditor:exception', onException);
+      return function () {
+        cancelled = true;
+        window.removeEventListener('mbeditor:exception', onException);
+      };
+    }, []);
+
+    var clearExceptions = function () {
+      setExceptions([]);
+      if (FileService.clearExceptions) FileService.clearExceptions()["catch"](function () {});
+    };
+
     var MIN_HEIGHT = 120;
     var _height = React.useState(function () {
       var saved = parseInt(window.localStorage.getItem('mbeditorProblemsHeight'), 10);
@@ -183,7 +215,57 @@ var ProblemsPanel = (function () {
       React.createElement(
         'div',
         { className: 'ide-problems-body' },
-        total === 0
+        exceptions.length > 0 && React.createElement(
+          'div',
+          { className: 'ide-problems-file ide-problems-exceptions' },
+          React.createElement(
+            'div',
+            { className: 'ide-problems-file-name' },
+            React.createElement('i', { className: 'fas fa-bolt', 'aria-hidden': 'true' }),
+            ' Exceptions',
+            React.createElement('span', { className: 'ide-problems-file-count' }, exceptions.length),
+            React.createElement('button', {
+              type: 'button', className: 'ide-problems-btn ide-problems-clear',
+              title: 'Clear recorded exceptions', onClick: clearExceptions
+            }, React.createElement('i', { className: 'fas fa-times' }))
+          ),
+          exceptions.map(function (ex) {
+            return React.createElement(
+              'div',
+              { className: 'ide-problems-exception', key: ex.id },
+              React.createElement(
+                'div',
+                { className: 'ide-problems-item ide-problems-item-error ide-problems-exception-head' },
+                React.createElement('i', { className: 'fas fa-bolt ide-problems-icon', 'aria-hidden': 'true' }),
+                React.createElement('span', { className: 'ide-problems-msg' }, ex.klass + ': ' + ex.message),
+                (ex.controller || ex.path) && React.createElement(
+                  'span',
+                  { className: 'ide-problems-source' },
+                  ex.controller ? ex.controller + '#' + ex.action : ex.path
+                )
+              ),
+              // Only workspace frames survive the server side, so every one of
+              // these is a file this editor can actually open.
+              (ex.frames || []).map(function (f, i) {
+                return React.createElement(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'ide-problems-item ide-problems-frame',
+                    key: ex.id + ':' + i,
+                    'aria-label': 'Open ' + f.file + ' line ' + f.line,
+                    onClick: function () { if (onOpenFile) onOpenFile(f.file, f.line, 1); }
+                  },
+                  React.createElement('span', { className: 'ide-problems-code' }, f.file),
+                  React.createElement('span', { className: 'ide-problems-loc' }, '[' + f.line + ']')
+                );
+              })
+            );
+          })
+        ),
+        total === 0 && exceptions.length > 0
+          ? null
+          : total === 0
           ? React.createElement('div', { className: 'ide-problems-empty' }, 'No problems in the open files')
           : shown.length === 0
             ? React.createElement('div', { className: 'ide-problems-empty' }, 'No problems match the filter')

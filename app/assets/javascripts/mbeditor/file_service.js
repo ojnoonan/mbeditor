@@ -239,6 +239,18 @@ var FileService = (function () {
       .then(function(res) { return res.data; });
   }
 
+  // Exceptions raised by the host app, newest first. The cable push is the
+  // live path; this seeds the panel and covers hosts without ActionCable.
+  function getExceptions() {
+    return axios.get(window.mbeditorBasePath() + '/exceptions')
+      .then(function (res) { return res.data; });
+  }
+
+  function clearExceptions() {
+    return axios["delete"](window.mbeditorBasePath() + '/exceptions')
+      .then(function (res) { return res.data; });
+  }
+
   // Rename a Ruby constant across the workspace. openPaths lists every file
   // with a live editor model: the server returns their edits for Monaco to
   // apply (undoable, marks the tab dirty) and writes the rest to disk itself.
@@ -325,6 +337,8 @@ var FileService = (function () {
     rubyLspRequest: rubyLspRequest,
     lspDiagnostics: lspDiagnostics,
     rubyRename: rubyRename,
+    getExceptions: getExceptions,
+    clearExceptions: clearExceptions,
     getRelatedFiles: getRelatedFiles,
     getModelSchema: getModelSchema,
     getChangelog: getChangelog

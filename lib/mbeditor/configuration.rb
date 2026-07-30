@@ -12,6 +12,7 @@ module Mbeditor
                   :js_program, :js_program_exclude,
                   :js_syntax_check, :babel_standalone_path,
                   :ruby_lsp, :ruby_lsp_command, :ruby_lsp_timeout,
+                  :exception_capture,
                   :search_respect_gitignore
 
     def initialize
@@ -50,6 +51,12 @@ module Mbeditor
       @ruby_lsp         = :auto # use the host's ruby-lsp for Ruby definitions/hover/completion when available; false disables
       @ruby_lsp_command = nil   # override the ruby-lsp launch command (String or Array); nil auto-resolves bin/ruby-lsp > gem > bundle exec
       @ruby_lsp_timeout = 3     # seconds per LSP request before falling back to the built-in services
+      # Record exceptions raised by the host app's controllers so they show up
+      # in the editor's Problems panel instead of only in the log. Development
+      # only. Exception messages can contain interpolated request params — the
+      # same exposure the log panel already has, since it tails the dev log.
+      # Set to false to record nothing.
+      @exception_capture = :auto
       @mount_path = nil # explicit URL prefix override; nil falls through to detection/"/mbeditor"
       @resilient_routing = true # serve /mbeditor from middleware so the editor survives a broken host routes.rb; false is the escape hatch
     end

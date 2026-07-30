@@ -654,6 +654,21 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
+    # GET /mbeditor/exceptions — recorded host-app exceptions, newest first.
+    #
+    # The cable push is the live path; this seeds the panel on load and covers
+    # hosts where ActionCable isn't available.
+    def exceptions
+      render json: { exceptions: ExceptionLog.entries,
+                     enabled: Mbeditor.configuration.exception_capture != false }
+    end
+
+    # DELETE /mbeditor/exceptions — clear the recorded exceptions.
+    def clear_exceptions
+      ExceptionLog.clear!
+      render json: { ok: true }
+    end
+
     # GET /mbeditor/module_members?name=ArticlesHelper
     # Returns methods defined in the workspace file that defines the named module/class.
     def module_members
