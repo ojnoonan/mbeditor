@@ -100,11 +100,18 @@ module Mbeditor
     # Returns the raw unified diff text for all files in the given scope.
     # scope=local  → git diff HEAD  (working tree vs HEAD)
     # scope=branch → git diff <branch-base>..HEAD (same baseline as git_info)
+    # The body stays raw diff text for the viewer; what it was compared against
+    # (and why it couldn't be) rides along in headers, so an empty diff is no
+    # longer indistinguishable from "we had no base and gave up".
     def combined_diff
       scope = params[:scope] == 'branch' ? :branch : :local
-      out = GitCombinedDiffService.new(repo_path: workspace_root, scope: scope).call
+      service = GitCombinedDiffService.new(repo_path: workspace_root, scope: scope)
+      out = service.call
+      response.set_header("X-Mbeditor-Diff-Base", service.base_ref.to_s) if service.base_ref
+      response.set_header("X-Mbeditor-Diff-Error", service.error.to_s) if service.error
       render plain: out, content_type: "text/plain"
-    rescue StandardError
+    rescue StandardError => e
+      response.set_header("X-Mbeditor-Diff-Error", e.message.to_s)
       render plain: "", content_type: "text/plain"
     end
 

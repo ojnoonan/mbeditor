@@ -143,6 +143,12 @@ module Mbeditor
         unpushedCommits: unpushed_commits,
         branchCommits: branch_commits,
         branchBaseRef: base_ref,
+        # The merge-base sha the unpushedFiles list was actually computed
+        # against. The frontend needs this to diff an individual file against
+        # the same baseline — passing the ref name would compare the file to
+        # the tip of the base branch, and passing the upstream would compare
+        # the branch to itself.
+        branchBaseSha: diff_base,
         redmineTicketId: redmine_ticket_id
       }
       store_git_info(repo_path, payload)

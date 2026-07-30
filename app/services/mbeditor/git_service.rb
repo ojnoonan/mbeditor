@@ -55,13 +55,20 @@ module Mbeditor
       [parts[0].to_i, parts[1].to_i]
     end
 
-    # Returns [merge_base_sha, ref_name] of the first candidate base branch found,
-    # or [nil, nil] if none can be determined.  Candidates are tried in preference
-    # order; skips the current branch and refs whose merge-base equals HEAD.
+    # Returns [merge_base_sha, ref_name] of the first candidate base branch that
+    # exists, or [nil, nil] when none does.
+    #
+    # Candidates are tried in preference order and the FIRST one that resolves
+    # wins, even when the merge-base turns out to be HEAD itself. That case
+    # means the branch is fully contained in its base — an empty "changes in
+    # branch" diff is then the truthful answer, and walking on to a
+    # lower-preference candidate would report a larger, wrong diff instead.
+    #
+    # A candidate naming the current branch is skipped: `develop` is not its own
+    # base. Callers handle that case by comparing against the upstream instead
+    # (see GitCombinedDiffService#branch_diff).
     def find_branch_base(repo_path, current_branch, candidates: nil)
       candidates ||= Mbeditor.configuration.base_branch_candidates
-      head_sha_out, = run_git(repo_path, "rev-parse", "HEAD")
-      head_sha = head_sha_out.strip
 
       candidates.each do |ref|
         short = ref.delete_prefix("origin/")
@@ -75,7 +82,6 @@ module Mbeditor
 
         sha = base_out.strip
         next unless sha.match?(/\A[0-9a-f]{40}\z/)
-        next if sha == head_sha
 
         return [sha, ref]
       end
@@ -83,6 +89,16 @@ module Mbeditor
       [nil, nil]
     rescue StandardError
       [nil, nil]
+    end
+
+    # True when the branch is itself one of the configured base branches, in
+    # which case "changes in branch" means "commits not yet pushed" and
+    # comparing against its own upstream is correct rather than degenerate.
+    def base_branch?(current_branch, candidates: nil)
+      return false if current_branch.to_s.empty? || current_branch == "HEAD"
+
+      candidates ||= Mbeditor.configuration.base_branch_candidates
+      candidates.any? { |ref| ref == current_branch || ref.delete_prefix("origin/") == current_branch }
     end
 
     # Parse `git status --porcelain` output.

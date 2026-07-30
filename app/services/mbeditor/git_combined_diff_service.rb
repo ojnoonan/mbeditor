@@ -22,6 +22,14 @@ module Mbeditor
       branch_diff
     end
 
+    # What the last #call actually compared against, for the UI to display.
+    # Set by #branch_diff; nil for :local scope.
+    attr_reader :base_ref
+
+    # Set when branch scope could not establish a base branch at all, so the
+    # caller can say why instead of rendering an empty diff as "No changes".
+    attr_reader :error
+
     private
 
     def local_diff
@@ -30,19 +38,42 @@ module Mbeditor
     end
 
     def branch_diff
-      branch  = GitService.current_branch(repo_path)
-      base_sha, = GitService.find_branch_base(repo_path, branch)
+      branch = GitService.current_branch(repo_path)
+      base_sha, ref = GitService.find_branch_base(repo_path, branch)
 
       if base_sha.present?
+        @base_ref = ref
         out, status = GitService.run_git(repo_path, "diff", "#{base_sha}..HEAD")
         return status.success? ? cap_diff(out) : ""
       end
 
+      # No base branch resolved. Comparing against the upstream is only
+      # meaningful when this branch IS a base branch (develop vs origin/develop
+      # = "not yet pushed"). For a feature branch the upstream is
+      # origin/<same-branch>, so that diff compares the branch to itself and is
+      # reliably empty — which is how "Changes in Branch" came to show nothing
+      # on a branch that was many commits ahead of develop.
       upstream = GitService.upstream_branch(repo_path)
-      return "" unless upstream.present?
+      if GitService.base_branch?(branch) && upstream.present?
+        @base_ref = upstream
+        out, status = GitService.run_git(repo_path, "diff", "#{upstream}..HEAD")
+        return status.success? ? cap_diff(out) : ""
+      end
 
-      out, status = GitService.run_git(repo_path, "diff", "#{upstream}..HEAD")
-      status.success? ? cap_diff(out) : ""
+      @error = base_unavailable_message(branch)
+      ""
+    end
+
+    def base_unavailable_message(branch)
+      if GitService.base_branch?(branch)
+        return "#{branch.inspect} is itself a base branch and has no upstream to compare against, " \
+               "so there is nothing to show here. Use \"Changes\" for uncommitted work."
+      end
+
+      candidates = Mbeditor.configuration.base_branch_candidates.join(", ")
+      "Could not determine a base branch to compare #{branch.inspect} against. " \
+        "None of these exist locally: #{candidates}. " \
+        "Fetch the base branch (git fetch origin) or set config.mbeditor.base_branch_candidates."
     end
 
     def cap_diff(out)

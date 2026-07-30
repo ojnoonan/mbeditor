@@ -360,8 +360,23 @@ var TabManager = (function () {
     axios.get(window.mbeditorBasePath() + '/git/combined_diff', { params: { scope: scope || 'local' } })
       .then(function(res) {
         var data = res.data;
+        var text = typeof data === 'string' ? data : (data && data.diff) || '';
+        // The server reports what it compared against, and says so when it
+        // could not work out a base at all — otherwise an empty diff looks
+        // identical to "no changes" and hides the real problem.
+        var headers = res.headers || {};
+        var baseRef = headers['x-mbeditor-diff-base'];
+        var diffError = headers['x-mbeditor-diff-error'];
+
+        if (diffError) {
+          text = '# ' + diffError + '\n';
+        } else if (baseRef && text.trim() === '') {
+          text = '# No changes compared to ' + baseRef + '.\n';
+        }
+
         _updateTab(paneId, tabId, {
-          combinedDiffText: typeof data === 'string' ? data : (data && data.diff) || '',
+          combinedDiffText: text,
+          combinedDiffBase: baseRef || null,
           combinedDiffLoaded: true
         });
       })

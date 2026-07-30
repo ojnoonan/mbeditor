@@ -2990,6 +2990,9 @@ button:not(.pico-btn) { margin-bottom: 0; }
   font-size: 11px;
 }
 
+/* A git hint that reports a problem rather than context. */
+.git-hint-warn { color: var(--ide-warning); }
+
 /* Host-app exceptions, above the marker list. Each backtrace frame is a button
    that opens the file — only in-workspace frames ever reach the client. */
 .ide-problems-exceptions .ide-problems-file-name { color: var(--ide-danger); }
