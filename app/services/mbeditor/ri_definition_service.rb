@@ -17,8 +17,18 @@ module Mbeditor
     MAX_DESC_LINES  = 3
 
     # When a method is defined on many classes, prefer these over the
-    # first-alphabetical class (e.g. prefer BasicObject#new over Addrinfo#new).
-    PREFERRED_CLASSES = %w[BasicObject Object Kernel Module Class].freeze
+    # first-alphabetical class, which is almost never the one meant:
+    # `new` would resolve to Addrinfo and `each` to ARGF.
+    #
+    # Ordered most-general first. We don't know the receiver's type, so the
+    # honest answer for a bare `each` is Enumerable's, not the first class
+    # ri happens to list.
+    PREFERRED_CLASSES = %w[
+      BasicObject Object Kernel Module Class
+      Enumerable Comparable
+      Array Hash String Symbol Integer Float Numeric Range Enumerator
+      Struct Set Time File IO Exception Proc Method NilClass
+    ].freeze
 
     @cache = {}
     @mutex = Mutex.new
@@ -55,6 +65,12 @@ module Mbeditor
 
     private
 
+    # "map()" or "each()" — a name and empty parens, telling you nothing about
+    # arguments, block or return value.
+    def bare_signature?(signature)
+      signature.to_s.strip.match?(/\A[\w.:]+\(\)\z/)
+    end
+
     def run_ri
       out = nil
       Open3.popen3("ri", "--no-pager", "--format=rdoc", @symbol) do |stdin, stdout, _stderr, wait_thr|
@@ -83,8 +99,23 @@ module Mbeditor
       blocks = extract_blocks(lines)
       return [] if blocks.empty?
 
-      best = blocks.find { |b| PREFERRED_CLASSES.include?(b[:impl]) } || blocks.first
-      return [] if best[:sigs].empty?
+      # Rank by position in PREFERRED_CLASSES, not by ri's own ordering, so the
+      # most general implementation wins rather than whichever preferred class
+      # ri happened to print first.
+      #
+      # Choose only among recognised classes when there are any — otherwise a
+      # rich signature on some obscure class (Enumerator::Lazy#map) would beat
+      # the terse one on the class actually meant.
+      preferred = blocks.select { |b| PREFERRED_CLASSES.include?(b[:impl]) }
+      candidates = preferred.any? ? preferred : blocks
+
+      # Within that set, skip entries ri prints as a bare "map()" — they
+      # document nothing — before falling back to class order.
+      best = candidates.min_by do |b|
+        [bare_signature?(b[:sigs].first) ? 1 : 0,
+         PREFERRED_CLASSES.index(b[:impl]) || PREFERRED_CLASSES.length]
+      end
+      return [] if best.nil? || best[:sigs].empty?
 
       desc = best[:desc]
                .first(MAX_DESC_LINES)
@@ -127,8 +158,11 @@ module Mbeditor
       sep_indices = lines.each_index.select { |i| lines[i].match?(/\A-{5,}\z/) }
       return nil if sep_indices.length < 2
 
+      # ri pads signatures into columns for its terminal output, e.g.
+      # "each(sep=$/)             {|line| block }  -> ARGF". Those runs of
+      # spaces are meaningless here and render as a gaping hole in the hover.
       sigs = lines[(sep_indices[0] + 1)..(sep_indices[1] - 1)]
-               .map(&:strip)
+               .map { |l| l.strip.squeeze(" ") }
                .reject(&:empty?)
       return nil if sigs.empty?
 

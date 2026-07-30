@@ -687,15 +687,11 @@ var EditorPanel = function EditorPanel(_ref) {
       }
     });
 
-    var formatActionDisposable = editor.addAction({
-      id: 'mbeditor.formatDocument',
-      label: 'Format Document',
-      contextMenuGroupId: '1_modification',
-      contextMenuOrder: 1.5,
-      run: function() {
-        if (onFormatRef.current) onFormatRef.current();
-      }
-    });
+    // No custom "Format Document" action: Ruby now has a real formatting
+    // provider, so Monaco contributes that context-menu entry itself, and a
+    // second one of our own showed up as a duplicate. Languages with no
+    // provider keep reaching formatting through the toolbar button.
+    var formatActionDisposable = null;
 
     // Ctrl/Cmd+P → quick-open. Bound at the Monaco level (not just the window
     // listener) so the editor intercepts the key while it has focus; otherwise
@@ -984,7 +980,7 @@ var EditorPanel = function EditorPanel(_ref) {
         window.__mbeditorActiveEditor = null;
       }
       if (editorPluginDisposable) editorPluginDisposable.dispose();
-      formatActionDisposable.dispose();
+      if (formatActionDisposable) formatActionDisposable.dispose();
       runTestAtCursorDisposable.dispose();
       columnSelectDisposable.dispose();
       contentDisposable.dispose();

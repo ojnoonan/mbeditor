@@ -235,6 +235,55 @@ module Mbeditor
       Mbeditor.configuration.ruby_lsp_command = original_cmd
     end
 
+    test "ruby_lsp forwards formatting options and selection-range positions" do
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "formatting", path: "app/models/user.rb",
+                                             content: "class User; end", tab_size: 4, insert_spaces: false }
+        assert_response :ok
+        assert_includes json["result"].first["newText"], "tabSize=4"
+        assert_includes json["result"].first["newText"], "insertSpaces=false"
+
+        # Defaults when the editor sends nothing.
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "formatting", path: "app/models/user.rb",
+                                             content: "class User; end" }
+        assert_response :ok
+        assert_includes json["result"].first["newText"], "tabSize=2"
+        assert_includes json["result"].first["newText"], "insertSpaces=true"
+
+        # selectionRange takes a list of positions, not the single `position`
+        # every other positional method uses.
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "selection_range", path: "app/models/user.rb",
+                                             content: "class User; end", line: 3, character: 5 }
+        assert_response :ok
+        chain = json["result"].first
+        assert_equal 2, chain.dig("range", "start", "line")
+        assert_equal 0, chain.dig("parent", "range", "start", "character")
+        assert_equal 0, chain.dig("parent", "parent", "range", "start", "line"), "the chain survives intact"
+
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "signature_help", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        assert_equal "full_name(first, last)", json.dig("result", "signatures", 0, "label")
+        assert_equal 1, json.dig("result", "activeParameter")
+
+        # ruby-lsp embeds file:// links in signature documentation. They must
+        # get the same treatment as hover's: no absolute host path reaches the
+        # browser, in-workspace links become openable, gem links go inert.
+        docs = json.dig("result", "signatures", 0, "documentation", "value")
+        refute_includes docs, "file://"
+        refute_includes response.body, Rails.root.to_s
+        assert_includes docs, "command:mbeditor.openDefinition"
+        assert_includes docs, "`set.rb`", "a gem this editor cannot open must not look like a link"
+      end
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
+    end
+
     test "definition results carry a full range so peek has something to show" do
       original_cmd = Mbeditor.configuration.ruby_lsp_command
       Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
@@ -359,6 +408,12 @@ module Mbeditor
                         "[user.rb](command:mbeditor.openDefinition?" \
                         "#{ERB::Util.url_encode(%(["app/models/user.rb",3]))})"
         assert_includes json["markdown"], "`set.rb`"
+        # ruby-lsp strips one "# " per comment line, so a ##-opened doc block
+        # arrives as "# Title" and would render as an <h1> filling the hover.
+        assert_includes json["markdown"], "\\# Doc comment opened with ## in the source"
+        refute_match(/^# /, json["markdown"], "no comment line may render as a heading")
+        # The Ruby code fence is untouched — # in there is source, not a heading.
+        assert_includes json["markdown"], "```ruby\nUser\n```"
 
         post "/mbeditor/ruby_lsp", params: { lsp_method: "completion", path: "app/models/user.rb",
                                              content: "class User; end", line: 1, character: 7 }

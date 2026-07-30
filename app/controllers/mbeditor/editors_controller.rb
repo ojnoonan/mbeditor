@@ -495,6 +495,9 @@ module Mbeditor
       "document_highlight" => "textDocument/documentHighlight",
       "document_symbol"  => "textDocument/documentSymbol",
       "folding_range"    => "textDocument/foldingRange",
+      "formatting"       => "textDocument/formatting",
+      "signature_help"   => "textDocument/signatureHelp",
+      "selection_range"  => "textDocument/selectionRange",
       "health"           => :health,
       "restart"          => :restart
     }.freeze
@@ -503,21 +506,37 @@ module Mbeditor
     # on the wire and are converted by one helper at the Monaco provider.
     RUBY_LSP_RAW = %w[
       references document_highlight document_symbol folding_range
+      formatting signature_help selection_range
     ].freeze
 
     # Whole-document requests, which carry no cursor position.
     RUBY_LSP_POSITIONLESS = %w[
       textDocument/diagnostic textDocument/documentSymbol textDocument/foldingRange
+      textDocument/formatting
     ].freeze
 
     # Extra params per method, merged into the request alongside the position.
+    # Values may be a hash or a callable taking the params hash.
     RUBY_LSP_EXTRA_PARAMS = {
-      "textDocument/references" => { context: { includeDeclaration: true } }
+      "textDocument/references" => { context: { includeDeclaration: true } },
+      # selectionRange takes a list of positions, not the single `position` the
+      # positional branch supplies, so it builds its own from the same params.
+      "textDocument/selectionRange" => lambda { |p|
+        { positions: [{ line: [p[:line].to_i - 1, 0].max,
+                        character: [p[:character].to_i - 1, 0].max }] }
+      },
+      "textDocument/formatting" => lambda { |p|
+        { options: { tabSize: (p[:tab_size].presence || 2).to_i,
+                     insertSpaces: p[:insert_spaces].to_s != "false" } }
+      }
     }.freeze
 
     # RuboCop's first run inside a freshly booted ruby-lsp is far slower than a
-    # hover/definition lookup, so diagnostics get their own budget.
+    # hover/definition lookup, so the requests that go through RuboCop —
+    # diagnostics and formatting — get their own budget.
     RUBY_LSP_DIAGNOSTICS_TIMEOUT = 10
+
+    RUBY_LSP_RUBOCOP_METHODS = %w[textDocument/diagnostic textDocument/formatting].freeze
 
     # POST /mbeditor/ruby_lsp — bridge to the host's ruby-lsp process.
     # Body: { path:, content:, line: (1-based), character: (1-based), lsp_method: }
@@ -552,10 +571,13 @@ module Mbeditor
         { position: { line: [params[:line].to_i - 1, 0].max,
                       character: [params[:character].to_i - 1, 0].max } }
       end
-      extra = extra.merge(RUBY_LSP_EXTRA_PARAMS.fetch(lsp_method, {}))
-      # Only diagnostics pay RuboCop's boot cost; documentSymbol and
-      # foldingRange are a single Prism parse and want the normal budget.
-      timeout = lsp_method == "textDocument/diagnostic" ? RUBY_LSP_DIAGNOSTICS_TIMEOUT : nil
+      per_method = RUBY_LSP_EXTRA_PARAMS[lsp_method]
+      per_method = per_method.call(params) if per_method.respond_to?(:call)
+      extra = extra.merge(per_method || {})
+      # Only the two RuboCop-backed requests pay its boot cost; documentSymbol,
+      # foldingRange and the rest are a single Prism parse and want the normal
+      # budget.
+      timeout = RUBY_LSP_RUBOCOP_METHODS.include?(lsp_method) ? RUBY_LSP_DIAGNOSTICS_TIMEOUT : nil
 
       client = RubyLspClient.for(workspace_root.to_s)
       result = client.request_with_document(lsp_method, path, content, extra, timeout: timeout)
@@ -1251,8 +1273,27 @@ module Mbeditor
           end
         end
         sanitized
+      when String
+        sanitize_lsp_markdown(node)
       else
         node
+      end
+    end
+
+    # URIs also turn up *inside* strings: ruby-lsp's signatureHelp and hover
+    # documentation embed a "Definitions" line of file:// markdown links. Those
+    # would leak absolute host paths and render as links that go nowhere, so
+    # they get the same treatment hover already gives them.
+    def sanitize_lsp_markdown(text)
+      return text unless text.include?("file://")
+
+      rewritten = rewrite_lsp_hover_links(text)
+      return rewritten unless rewritten.include?("file://")
+
+      # Backstop for any file:// URI that wasn't in markdown-link form. An
+      # absolute host path must never reach the browser, linkable or not.
+      rewritten.gsub(%r{file://\S*}) do |raw|
+        workspace_relative_uri(raw.sub(/[)\]\s].*\z/m, "")) || "(external)"
       end
     end
 
@@ -1306,7 +1347,28 @@ module Mbeditor
         else contents.to_s
         end
 
-      rewrite_lsp_hover_links(markdown)
+      neutralize_comment_headings(rewrite_lsp_hover_links(markdown))
+    end
+
+    # ruby-lsp renders a doc comment by stripping exactly one leading "# " from
+    # each line, then hands the result to the editor as markdown. A `##`-opened
+    # doc block — a very common Ruby convention — therefore arrives as
+    # "# Title" and renders as an <h1> filling the hover.
+    #
+    # Ruby comments are not markdown, so escape a `#` that opens a line and let
+    # it render as the text it is. Fenced code blocks are left alone: `#` inside
+    # them is Ruby source, not a heading, and needs no escaping.
+    #
+    # This deliberately diverges from other ruby-lsp clients, which show the
+    # heading.
+    def neutralize_comment_headings(markdown)
+      in_fence = false
+      markdown.lines.map do |line|
+        in_fence = !in_fence if line.start_with?("```")
+        next line if in_fence || line.start_with?("```")
+
+        line.sub(/\A(\s*)(#+)(?=\s|\z)/) { "#{Regexp.last_match(1)}\\#{Regexp.last_match(2)}" }
+      end.join
     end
 
     # ruby-lsp renders its "Definitions" line as VS Code file links, e.g.

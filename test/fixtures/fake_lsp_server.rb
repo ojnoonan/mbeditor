@@ -112,6 +112,9 @@ loop do
         **Definitions**: [user.rb](#{uri}#L3,1-9,4) | [set.rb](file:///gems/set/lib/set.rb#L2,1-2,3)
 
         **fake hover** — snowman ☃
+
+        # Doc comment opened with ## in the source
+        Body of the comment.
       MD
     when "textDocument/references"
       # One in-workspace hit and one in a gem: the gem location must be dropped
@@ -145,6 +148,38 @@ loop do
     when "textDocument/foldingRange"
       [{ "startLine" => 0, "endLine" => 8 },
        { "startLine" => 2, "endLine" => 4, "kind" => "comment" }]
+    when "textDocument/formatting"
+      # Echo the options back in the replacement so tests can assert they were
+      # forwarded, alongside a normal whole-document edit.
+      opts = msg.dig("params", "options") || {}
+      [{ "range" => { "start" => { "line" => 0, "character" => 0 },
+                      "end" => { "line" => 1, "character" => 0 } },
+         "newText" => "# formatted tabSize=#{opts['tabSize']} insertSpaces=#{opts['insertSpaces']}\n" }]
+    when "textDocument/signatureHelp"
+      # Documentation embeds a file:// "Definitions" line, exactly as ruby-lsp's
+      # does — the controller must not let that absolute path reach the browser.
+      uri = msg.dig("params", "textDocument", "uri")
+      { "signatures" => [
+          { "label" => "full_name(first, last)",
+            "documentation" => { "kind" => "markdown",
+                                 "value" => "Joins the two names.\n\n**Definitions**: " \
+                                            "[user.rb](#{uri}#L2,3-4,6) | " \
+                                            "[set.rb](file:///gems/set/lib/set.rb#L2,1-2,3)" },
+            "parameters" => [{ "label" => "first" }, { "label" => "last" }] }
+        ],
+        "activeSignature" => 0, "activeParameter" => 1 }
+    when "textDocument/selectionRange"
+      # A linked list: innermost range first, widening through `parent`.
+      [{ "range" => { "start" => { "line" => 2, "character" => 4 },
+                      "end" => { "line" => 2, "character" => 8 } },
+         "parent" => {
+           "range" => { "start" => { "line" => 2, "character" => 0 },
+                        "end" => { "line" => 2, "character" => 20 } },
+           "parent" => {
+             "range" => { "start" => { "line" => 0, "character" => 0 },
+                          "end" => { "line" => 5, "character" => 3 } }
+           }
+         } }]
     when "textDocument/completion"
       { "items" => [{ "label" => "fake_method", "kind" => 2,
                       "insertText" => "fake_method", "detail" => "FakeClass#fake_method" }] }

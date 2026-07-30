@@ -2500,6 +2500,34 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
+  // The toolbar button and Monaco's own Format Document must not disagree
+  // about what "formatted" means, so both go through ruby-lsp when it can
+  // answer and fall back to /format when it can't — the same order the
+  // formatting provider uses. Returns { content: } either way, since the
+  // button also wants to diff the result and flash the changed lines.
+  var formatRubySource = function formatRubySource(path, code) {
+    var viaLsp = window.MBEDITOR_RUBY_LSP_AVAILABLE &&
+      !(window.MbeditorEditorPlugins && MbeditorEditorPlugins.lspBackedOff()) &&
+      isRubyPath(path);
+    if (!viaLsp) return FileService.formatFile(path, code);
+
+    return FileService.rubyLspRequest('formatting', path, code, 1, 1, { timeout: 15000 })
+      .then(function (data) {
+        var edits = data && data.result;
+        // ruby-lsp answers a whole-document replacement, or null when RuboCop's
+        // autocorrect cannot converge — in which case /format's `rubocop -A`
+        // pass still gets a turn.
+        if (Array.isArray(edits) && edits.length === 1 && typeof edits[0].newText === 'string') {
+          return { content: edits[0].newText };
+        }
+        if (data) noteLspFailure({ lspData: data });
+        return FileService.formatFile(path, code);
+      })["catch"](function (err) {
+        noteLspFailure(err);
+        return FileService.formatFile(path, code);
+      });
+  };
+
   var handleFormat = function handleFormat() {
     if (!activeTab) return;
 
@@ -2521,7 +2549,7 @@ var MbeditorApp = function MbeditorApp() {
         var detectedWidth = detectIndentWidth(originalContent);
         if (detectedWidth > 0) codeToFormat = spacesToTabs(originalContent, detectedWidth);
       }
-      FileService.formatFile(activeTab.path, codeToFormat).then(function (res) {
+      formatRubySource(activeTab.path, codeToFormat).then(function (res) {
         if (res.content) {
           // Update content and mark dirty — user decides when to save.
           // The executeEdits path in EditorPanel preserves the undo stack.

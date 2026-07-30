@@ -348,13 +348,19 @@
     return tryRubyLsp(lspMethod, model, position || { lineNumber: 1, column: 1 });
   }
 
-  function tryRubyLsp(lspMethod, model, position) {
+  // Requests that go through RuboCop rather than just Prism need more than the
+  // 6s default: the server's own budget for them is 10s.
+  var LSP_SLOW_METHODS = { diagnostics: 15000, formatting: 15000 };
+
+  function tryRubyLsp(lspMethod, model, position, extraBody) {
     try {
       if (!window.MBEDITOR_RUBY_LSP_AVAILABLE || lspBackedOff()) return Promise.resolve(null);
       if (typeof FileService === 'undefined' || !FileService.rubyLspRequest) return Promise.resolve(null);
       if (!model || !model._mbeditorPath || !position) return Promise.resolve(null);
       if (model.getValueLength() > 5 * 1024 * 1024) return Promise.resolve(null);
-      return FileService.rubyLspRequest(lspMethod, model._mbeditorPath, model.getValue(), position.lineNumber, position.column)
+      var config = LSP_SLOW_METHODS[lspMethod] ? { timeout: LSP_SLOW_METHODS[lspMethod] } : null;
+      return FileService.rubyLspRequest(lspMethod, model._mbeditorPath, model.getValue(),
+                                        position.lineNumber, position.column, config, extraBody)
         .then(function (data) {
           if (!data || data.fallback || data.error) {
             // A 200 can still carry lspState: 'failed' — the server answered,
@@ -1701,6 +1707,77 @@
         return rawRubyLsp('document_symbol', model).then(function (symbols) {
           if (!Array.isArray(symbols)) return null;
           return toMonacoSymbols(symbols, 0);
+        });
+      }
+    });
+
+    // Formatting. Until now Ruby had no formatting provider at all, so
+    // Shift+Alt+F and format-on-save silently did nothing — formatting was
+    // reachable only through the toolbar button. /format stays as the fallback
+    // for when ruby-lsp is unavailable.
+    monaco.languages.registerDocumentFormattingEditProvider('ruby', {
+      displayName: 'RuboCop',
+      provideDocumentFormattingEdits: function provideDocumentFormattingEdits(model, options) {
+        var opts = { tab_size: (options && options.tabSize) || 2,
+                     insert_spaces: !options || options.insertSpaces !== false };
+
+        return tryRubyLsp('formatting', model, { lineNumber: 1, column: 1 }, opts)
+          .then(function (edits) {
+            if (Array.isArray(edits)) {
+              return edits.map(function (e) {
+                return { range: lspRange(e.range), text: e.newText || '' };
+              });
+            }
+            return legacyRubyFormat(model);
+          });
+      }
+    });
+
+    // Pre-provider path: /format returns the whole corrected file, so it
+    // becomes one replacement spanning the buffer.
+    function legacyRubyFormat(model) {
+      if (typeof FileService === 'undefined' || !FileService.formatFile) return [];
+      if (!model._mbeditorPath) return [];
+
+      return FileService.formatFile(model._mbeditorPath, model.getValue()).then(function (data) {
+        var formatted = data && data.content;
+        if (typeof formatted !== 'string' || formatted === model.getValue()) return [];
+        return [{ range: model.getFullModelRange(), text: formatted }];
+      }).catch(function () { return []; });
+    }
+
+    // Parameter hints while typing a call's arguments.
+    monaco.languages.registerSignatureHelpProvider('ruby', {
+      signatureHelpTriggerCharacters: ['(', ','],
+      provideSignatureHelp: function provideSignatureHelp(model, position) {
+        return rawRubyLsp('signature_help', model, position).then(function (help) {
+          if (!help || !Array.isArray(help.signatures) || !help.signatures.length) return null;
+          // LSP's SignatureHelp is structurally identical to Monaco's, and
+          // MarkupContent {kind, value} is accepted where an IMarkdownString is.
+          return { value: help, dispose: function () {} };
+        });
+      }
+    });
+
+    // Smart expand/shrink selection (Shift+Alt+Right / Left).
+    monaco.languages.registerSelectionRangeProvider('ruby', {
+      provideSelectionRanges: function provideSelectionRanges(model, positions) {
+        // LSP takes a list of positions and answers one linked list per
+        // position; the bridge sends a single position, so ask per position and
+        // flatten each chain into the array Monaco wants.
+        return Promise.all(positions.map(function (position) {
+          return rawRubyLsp('selection_range', model, position).then(function (result) {
+            var node = Array.isArray(result) ? result[0] : null;
+            var ranges = [];
+            // Bounded: the chain comes from a subprocess and a cycle would spin.
+            while (node && node.range && ranges.length < 64) {
+              ranges.push({ range: lspRange(node.range) });
+              node = node.parent;
+            }
+            return ranges;
+          });
+        })).then(function (perPosition) {
+          return perPosition.some(function (r) { return r.length; }) ? perPosition : null;
         });
       }
     });

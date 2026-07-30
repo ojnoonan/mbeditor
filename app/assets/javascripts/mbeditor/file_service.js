@@ -224,15 +224,19 @@ var FileService = (function () {
   // | 'completion'; line/character are Monaco 1-based. The server answers in
   // provider-ready shapes, or { fallback: true } when the LSP can't answer in
   // time (caller then uses the legacy grep/Ripper path).
-  function rubyLspRequest(lspMethod, path, content, line, character, extraOptions) {
+  // extraBody carries per-method request params (e.g. formatting's tab_size);
+  // extraOptions is axios config (e.g. a longer timeout).
+  function rubyLspRequest(lspMethod, path, content, line, character, extraOptions, extraBody) {
     var config = Object.assign({ timeout: 6000 }, extraOptions || {});
-    return axios.post(window.mbeditorBasePath() + '/ruby_lsp', {
+    var body = Object.assign({
       lsp_method: lspMethod,
       path: path,
       content: content,
       line: line,
       character: character
-    }, config).then(function(res) { return res.data; });
+    }, extraBody || {});
+    return axios.post(window.mbeditorBasePath() + '/ruby_lsp', body, config)
+      .then(function(res) { return res.data; });
   }
 
   // Whole-document Ruby diagnostics from ruby-lsp (RuboCop offenses + Prism
