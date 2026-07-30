@@ -17,4 +17,5 @@ gemfiles/*.lock
 /.superpowers/
 /.claude/worktrees/
 /.understand-anything/
+/graphify-out/
 .DS_Store

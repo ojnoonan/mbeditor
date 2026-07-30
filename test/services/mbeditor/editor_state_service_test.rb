@@ -26,6 +26,27 @@ module Mbeditor
       end
     end
 
+    test "write_state fails fast with LockTimeoutError instead of blocking on a held lock" do
+      Dir.mktmpdir do |dir|
+        root = Pathname.new(dir)
+        service = EditorStateService.new(root, lock_timeout: 0.2)
+        path = root.join("tmp", "mbeditor_workspace.json")
+        FileUtils.mkdir_p(path.dirname)
+        holder = File.open(path, File::RDWR | File::CREAT)
+        holder.flock(File::LOCK_EX)
+
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        assert_raises(EditorStateService::LockTimeoutError) do
+          service.write_state({ "a" => 1 })
+        end
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+        assert_operator elapsed, :<, 2.0, "a save must not hang indefinitely behind a stuck lock holder"
+      ensure
+        holder&.flock(File::LOCK_UN)
+        holder&.close
+      end
+    end
+
     test "read_branch_state returns empty hash when branch states file does not exist" do
       Dir.mktmpdir do |dir|
         service = EditorStateService.new(Pathname.new(dir))
@@ -106,6 +127,28 @@ module Mbeditor
         service.write_branch_state("main", { "a" => 1 })
         pruned = service.prune_branch_states(active_branches: ["main"])
         assert_equal [], pruned
+      end
+    end
+
+    test "prune_branch_states logs an error when the branch states file is corrupt" do
+      Dir.mktmpdir do |dir|
+        path = Pathname.new(dir).join("tmp")
+        FileUtils.mkdir_p(path)
+        File.write(path.join("mbeditor_branch_states.json"), "{ not valid json")
+
+        log = StringIO.new
+        original_logger = Rails.logger
+        Rails.logger = Logger.new(log)
+        begin
+          service = EditorStateService.new(Pathname.new(dir))
+          pruned = service.prune_branch_states(active_branches: ["main"])
+          assert_equal [], pruned
+        ensure
+          Rails.logger = original_logger
+        end
+
+        assert_match(/mbeditor/, log.string)
+        assert_match(/branch_states/i, log.string)
       end
     end
 

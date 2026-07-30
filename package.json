@@ -2,13 +2,17 @@
   "name": "mbeditor",
   "version": "0.0.0",
   "private": true,
-  "description": "Dependency manifest for npm audit — all packages are vendored in vendor/assets/javascripts/",
+  "description": "Dependency manifest for npm audit (vendored libs) + isolated Monaco ESM build (ADR 0002).",
+  "scripts": {
+    "build:monaco": "node build/monaco/build.mjs",
+    "build:yjs": "node script/build-yjs-bundle.mjs"
+  },
   "dependencies": {
-    "axios": "^1.16.0",
+    "axios": "^1.17.0",
     "lodash": "4.18.1",
     "marked": "10.0.0",
-    "minisearch": "7.0.2",
-    "prettier": "3.0.3",
+    "minisearch": "7.2.0",
+    "prettier": "3.8.4",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "y-monaco": "0.1.6",
@@ -16,9 +20,8 @@
     "yjs": "13.6.31"
   },
   "devDependencies": {
-    "esbuild": "0.28.0"
-  },
-  "scripts": {
-    "build:yjs": "node script/build-yjs-bundle.mjs"
+    "esbuild": "0.28.0",
+    "monaco-editor": "0.55.1",
+    "monaco-vim": "0.4.4"
   }
 }

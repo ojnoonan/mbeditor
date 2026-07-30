@@ -124,6 +124,20 @@ module Mbeditor
       parts = relative_path.to_s.split("/")
       return nil unless parts.length >= 2
 
+      # Custom paths are checked first so they work regardless of top-level prefix.
+      # Paths under app/assets/, app/javascript/, etc. never reach the standard
+      # "app" branch, so the check must happen before the case statement.
+      Array(custom_paths).each do |base|
+        base = base.to_s.strip
+        next if base.empty?
+        next unless relative_path.start_with?("#{base}/")
+        rest = relative_path.delete_prefix("#{base}/")
+        resource = rest.split('/').first.to_s.sub(/\.[^.]+$/, '') # first segment, no extension
+        resource = resource.sub(/_(controller|model|helper|service)$/, '') # strip Rails suffixes
+        next if resource.empty?
+        return [pluralize(resource), singularize(resource)]
+      end
+
       case parts[0]
       when "app"
         case parts[1]
@@ -230,16 +244,6 @@ module Mbeditor
         end
 
       else
-        # Custom path fallback — must be last
-        Array(custom_paths).each do |base|
-          base = base.to_s.strip
-          next if base.empty?
-          next unless relative_path.start_with?("#{base}/")
-          rest = relative_path.delete_prefix("#{base}/")
-          resource = rest.split('/').first.to_s.sub(/\.[^.]+$/, '')  # first path segment, no extension
-          next if resource.empty?
-          return [pluralize(resource), singularize(resource)]
-        end
         nil
       end
     end

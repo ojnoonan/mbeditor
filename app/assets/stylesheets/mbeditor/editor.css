@@ -63,6 +63,42 @@ html, body, #mbeditor-root {
   font-weight: 500;
 }
 
+/* Fills the gap between the title and the button cluster. min-width: 0 lets it
+   collapse on a narrow window instead of shoving the buttons off the edge. */
+.ide-titlebar-search-slot {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 0;
+  margin: 0 12px;
+}
+
+.ide-titlebar-search {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 75% of the slot, i.e. of the space between the title and the buttons.
+     The floor keeps the placeholder readable once 75% of a shrinking gap
+     stops being enough, and caps at 100% so it can never outgrow its slot
+     and shove the buttons off the edge. */
+  width: 75%;
+  min-width: min(220px, 100%);
+  padding: 3px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px; /* pill */
+  color: #aaa;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ide-titlebar-search:hover { background: rgba(255, 255, 255, 0.10); }
+.ide-titlebar-search-text {
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ide-body {
   display: flex;
   flex: 1;
@@ -325,6 +361,21 @@ html, body, #mbeditor-root {
 
 .tab-bar::-webkit-scrollbar { height: 3px; }
 .tab-bar::-webkit-scrollbar-thumb { background: var(--ide-hover-bg); }
+
+.tab-new-file-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: 0 4px;
+  border-radius: 4px;
+  color: #888;
+  cursor: pointer;
+  flex: 0 0 auto;
+  align-self: center;
+}
+.tab-new-file-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
 
 /* Wrap (multi-row) tab layout */
 .tab-bar.tab-bar-wrap {
@@ -860,22 +911,36 @@ html, body, #mbeditor-root {
 .search-input-shell {
   width: 100%;
   position: relative;
-  display: flex;
-  align-items: center;
   min-width: 0;
 }
 
-/* The input grows to fill; right padding makes room for adornments */
-.search-input-shell .search-input {
-  padding-right: 88px; /* 3 × 22px buttons + 4px clear + gaps */
+/* Multi-line query field: wraps long queries onto new lines instead of letting
+   them run under the option buttons, and is taller/roomier than a single-line
+   input. The two-class selector and explicit padding shorthand guarantee this
+   wins the cascade over the base `.search-input` rule (same specificity but
+   declared later in the file). The right padding reserves a gutter for the
+   option buttons (anchored top-right inside the field, VS Code style) so
+   wrapped text never overlaps them. */
+.search-input-shell .search-query-input {
+  width: 100%;
+  min-height: 46px;
+  max-height: 160px;
+  resize: vertical;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+  font-size: 13px;
+  font-family: inherit;
+  padding: 6px 116px 6px 8px; /* right gutter clears the 5 option buttons */
 }
 
-/* Adornment container — absolutely positioned inside the shell */
+/* Option buttons — anchored to the top-right inside the field (not vertically
+   centred) so they stay put as the query wraps to multiple lines. */
 .search-input-adornments {
   position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
+  right: 5px;
+  top: 5px;
   display: flex;
   align-items: center;
   gap: 1px;
@@ -1518,18 +1583,32 @@ html, body, #mbeditor-root {
   gap: 4px;
 }
 
-.git-header-btn {
-  background: none;
-  border: none;
+/* Source-control buttons share the explorer panel's .project-action-btn
+   geometry so the two sidebars read as one system. */
+.git-header-btn,
+.git-section-action-btn,
+.git-action-btn {
+  box-sizing: border-box;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--ide-text-muted);
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  padding: 3px 5px;
-  border-radius: 3px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
-.git-header-btn:hover { background: var(--ide-hover-bg); color: var(--ide-text); }
+.git-action-btn { width: 20px; min-width: 20px; height: 20px; font-size: 11px; } /* fits inside file rows */
+.git-header-btn:hover:not(:disabled),
+.git-section-action-btn:hover:not(:disabled),
+.git-action-btn:hover:not(:disabled) { background: var(--ide-hover-bg); color: var(--ide-text); }
 
 .git-metadata {
   display: grid;
@@ -1930,6 +2009,10 @@ html, body, #mbeditor-root {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   padding: 5px 12px;
   cursor: pointer;
   color: #ccc;
@@ -1938,11 +2021,18 @@ html, body, #mbeditor-root {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: left;
 }
 
-.ide-methods-dropdown-item:hover {
+.ide-methods-dropdown-item:hover,
+.ide-methods-dropdown-item:focus {
   background: #094771;
   color: #fff;
+}
+
+.ide-methods-dropdown-item:focus {
+  outline: 1px solid #75beff;
+  outline-offset: -1px;
 }
 
 .ide-methods-dropdown-line {
@@ -1955,6 +2045,55 @@ html, body, #mbeditor-root {
 }
 
 .ide-methods-dropdown-empty {
+  padding: 8px 12px;
+  color: #858585;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.ide-methods-dropdown-visibility {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 12px;
+  background: #252526;
+  border-bottom: 1px solid #3a3a3a;
+  color: #9cdcfe;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ide-methods-dropdown-visibility-group {
+  position: relative;
+}
+
+.ide-outline-entry-icon {
+  width: 13px;
+  flex-shrink: 0;
+  text-align: center;
+  color: #858585;
+}
+
+.ide-outline-entry-suite .ide-outline-entry-icon { color: #dcb67a; }
+.ide-outline-entry-test .ide-outline-entry-icon { color: #8ab4f8; }
+.ide-outline-entry-name { overflow: hidden; text-overflow: ellipsis; }
+
+/* Line numbers tinted by git status (see the line_diff effect in EditorPanel).
+   Monaco themes style `.monaco-editor .line-numbers`, so these need the same
+   two-class prefix to win on specificity rather than reaching for !important.
+   The colours are theme variables so they track the active editor theme. */
+.monaco-editor .line-numbers.mbeditor-gitline-added    { color: var(--ide-success); font-weight: 600; }
+.monaco-editor .line-numbers.mbeditor-gitline-modified { color: var(--ide-warning); font-weight: 600; }
+.monaco-editor .line-numbers.mbeditor-gitline-deleted  { color: var(--ide-danger);  font-weight: 600; }
+
+/* A line that is both modified and sits above a deletion should read as
+   deleted — the rarer, more surprising state wins. */
+.monaco-editor .line-numbers.mbeditor-gitline-deleted.mbeditor-gitline-added,
+.monaco-editor .line-numbers.mbeditor-gitline-deleted.mbeditor-gitline-modified { color: var(--ide-danger); }
+
+.ide-methods-dropdown-message {
   padding: 8px 12px;
   color: #858585;
   font-size: 12px;
@@ -2449,7 +2588,6 @@ textarea {
 .git-header-btn,
 .git-action-btn,
 .project-action-btn,
-.tab-close,
 .search-clear-btn,
 .quick-open-clear-btn,
 .shelp-close {
@@ -2536,10 +2674,12 @@ button:not(.pico-btn) { margin-bottom: 0; }
   border-radius: 0;
 }
 /* Re-apply border-radius for buttons that intentionally need it */
-.ide-shell .project-action-btn { border-radius: 4px; }
-.ide-shell .ide-icon-btn,
+.ide-shell .ide-titlebar-search { border-radius: 999px; } /* pill */
+.ide-shell .project-action-btn,
 .ide-shell .git-header-btn,
-.ide-shell .git-action-btn,
+.ide-shell .git-section-action-btn,
+.ide-shell .git-action-btn { border-radius: 4px; } /* matched to explorer buttons */
+.ide-shell .ide-icon-btn,
 .ide-shell .tab-close,
 .ide-shell .search-clear-btn,
 .ide-shell .quick-open-clear-btn,
@@ -2637,3 +2777,206 @@ button:not(.pico-btn) { margin-bottom: 0; }
 .mbeditor-format-changed {
   background-color: rgba(80, 200, 100, 0.15);
 }
+
+/* ── Rails log drawer ─────────────────────────────────────────────────────── */
+.ide-log-drawer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 22px; /* sit above the status bar */
+  height: 240px; /* default; overridden by the drag-resized inline height */
+  display: flex;
+  flex-direction: column;
+  background: var(--ide-panel-bg, #1e1e1e);
+  border-top: 1px solid var(--ide-border, #333);
+  z-index: 40;
+}
+.ide-log-resize {
+  flex: 0 0 auto;
+  height: 6px;
+  cursor: ns-resize;
+  background: transparent;
+}
+.ide-log-resize:hover {
+  background: var(--ide-accent, #569cd6);
+}
+.ide-log-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--ide-border, #333);
+  font-size: 12px;
+  color: var(--ide-fg-muted, #ccc);
+}
+.ide-log-title { font-weight: 600; }
+.ide-log-filter {
+  margin-left: auto;
+  background: var(--ide-input-bg, #2d2d2d);
+  color: var(--ide-fg, #eee);
+  border: 1px solid var(--ide-border, #333);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 12px;
+  width: 180px;
+}
+.ide-log-paused { color: #cca700; font-size: 11px; }
+.ide-log-btn {
+  background: transparent;
+  border: none;
+  color: var(--ide-fg-muted, #ccc);
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.ide-log-btn:hover { color: var(--ide-fg, #fff); }
+.ide-log-body {
+  flex: 1;
+  overflow: auto;
+  padding: 6px 10px;
+  font-family: var(--ide-mono, monospace);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ide-log-line { color: var(--ide-fg, #d4d4d4); }
+
+/* Rails log colouring — see classifyLogLine in LogPanel.js for what matches
+   what, and the --ide-log-* block in themes.css for the palette. Deliberately
+   restrained: the point is to let the eye find request boundaries and failures
+   while scrolling, not to paint every line. */
+.ide-log-line-request    { color: var(--ide-log-request); font-weight: 600; }
+.ide-log-line-controller { color: var(--ide-log-controller); }
+.ide-log-line-success    { color: var(--ide-log-success); }
+.ide-log-line-error      { color: var(--ide-log-error); font-weight: 600; }
+.ide-log-line-warn       { color: var(--ide-log-warn); }
+.ide-log-line-sql        { color: var(--ide-log-sql); }
+.ide-log-line-render     { color: var(--ide-log-render); }
+.ide-log-line-mbeditor   { color: var(--ide-log-controller); font-style: italic; }
+.ide-log-line-muted,
+.ide-log-line-trace      { color: var(--ide-log-muted); }
+
+/* ── Problems drawer ──────────────────────────────────────────────────────
+   Same geometry as the log drawer so the two read as one family; only the
+   body differs, being a list of clickable diagnostics rather than raw text. */
+.ide-problems-drawer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 22px; /* sit above the status bar */
+  height: 240px; /* default; overridden by the drag-resized inline height */
+  display: flex;
+  flex-direction: column;
+  background: var(--ide-panel-bg, #1e1e1e);
+  border-top: 1px solid var(--ide-border, #333);
+  z-index: 41; /* above the log drawer when both are open */
+}
+.ide-problems-resize {
+  flex: 0 0 auto;
+  height: 6px;
+  cursor: ns-resize;
+  background: transparent;
+}
+.ide-problems-resize:hover { background: var(--ide-accent, #569cd6); }
+.ide-problems-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--ide-border, #333);
+  font-size: 12px;
+  color: var(--ide-fg-muted, #ccc);
+}
+.ide-problems-title { font-weight: 600; }
+.ide-problems-summary { color: var(--ide-text-muted, #858585); font-size: 11px; }
+.ide-problems-filter {
+  margin-left: auto;
+  background: var(--ide-input-bg, #2d2d2d);
+  color: var(--ide-fg, #eee);
+  border: 1px solid var(--ide-border, #333);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 12px;
+  width: 180px;
+}
+.ide-problems-btn {
+  background: transparent;
+  border: none;
+  color: var(--ide-fg-muted, #ccc);
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.ide-problems-btn:hover { color: var(--ide-fg, #fff); }
+.ide-problems-body { flex: 1; overflow: auto; padding: 4px 0; font-size: 12px; }
+.ide-problems-empty {
+  padding: 10px 14px;
+  color: var(--ide-text-muted, #858585);
+  font-style: italic;
+}
+.ide-problems-file-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px 3px;
+  color: var(--ide-fg-muted, #ccc);
+  font-weight: 600;
+}
+.ide-problems-file-count {
+  background: var(--ide-hover-bg, #2a2a2a);
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ide-text-muted, #858585);
+}
+.ide-problems-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 12px 3px 28px;
+  background: transparent;
+  border: none;
+  color: var(--ide-fg, #d4d4d4);
+  font-size: 12px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ide-problems-item:hover,
+.ide-problems-item:focus-visible { background: var(--ide-hover-bg, #2a2a2a); }
+.ide-problems-icon { flex-shrink: 0; }
+.ide-problems-item-error .ide-problems-icon { color: var(--ide-danger); }
+.ide-problems-item-warning .ide-problems-icon { color: var(--ide-warning); }
+.ide-problems-msg { flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The offending source line, dimmed so it reads as context rather than as part
+   of the message. It is the one part of the row allowed to shrink, so a long
+   line gives way to the message and location instead of pushing them out. */
+.ide-problems-code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ide-text-muted, #858585);
+  opacity: 0.8;
+  font-family: var(--ide-mono, monospace);
+  font-size: 11px;
+}
+.ide-problems-source {
+  flex-shrink: 0;
+  color: var(--ide-text-muted, #858585);
+  font-size: 10px;
+  text-transform: lowercase;
+}
+.ide-problems-loc {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--ide-text-muted, #858585);
+  font-size: 11px;
+}
+
+/* Status-bar problems indicator: bug count then warning count, VS Code style. */
+.statusbar-problems { display: inline-flex; align-items: center; gap: 4px; }
+.statusbar-problems-error-icon { color: var(--ide-danger); }
+.statusbar-problems-warning-icon { color: var(--ide-warning); }
+.statusbar-problems-count { font-variant-numeric: tabular-nums; }

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "mbeditor/editor_bootstrap"
+
 module Mbeditor
   module Rack
     # Catches ActiveRecord::PendingMigrationError for mbeditor routes so the
@@ -36,14 +38,22 @@ module Mbeditor
       private
 
       def editor_shell_html(base)
-        prettier_scripts = %w[
+        prettier_script_urls = %w[
           prettier-standalone.js
           prettier-plugin-babel.js
           prettier-plugin-estree.js
           prettier-plugin-html.js
           prettier-plugin-postcss.js
           prettier-plugin-markdown.js
-        ].map { |f| "#{base}/assets/#{f}" }.to_json
+        ].map { |f| "#{base}/assets/#{f}" }
+
+        # Bootstrap JS shared with the standard layout — see Mbeditor::EditorBootstrap
+        setup_js = Mbeditor::EditorBootstrap.setup_js(base)
+        boot_js  = Mbeditor::EditorBootstrap.boot_js(
+          base: base,
+          prettier_script_urls: prettier_script_urls,
+          application_js_url: "#{base}/assets/mbeditor/application.js"
+        )
 
         <<~HTML
           <!DOCTYPE html>
@@ -62,89 +72,17 @@ module Mbeditor
             <script defer src="#{base}/assets/marked.min.js"></script>
             <script defer src="#{base}/assets/emmet.js"></script>
             <script defer src="#{base}/assets/monaco-themes-bundle.js"></script>
-            <script>var require = { paths: { vs: '#{base}/monaco-editor/vs', 'monaco-editor/esm/vs': '#{base}/monaco-editor/vs', 'monaco-vim': '#{base}/assets/monaco-vim' } };</script>
-            <script src="#{base}/monaco-editor/vs/loader.js"></script>
+            <link rel="stylesheet" href="#{base}/monaco-editor/monaco.css" />
           </head>
           <body>
-            <script>
-              window.MBEDITOR_BASE_PATH = #{base.to_json};
-              window._mbeditorHostReact    = window.React;
-              window._mbeditorHostReactDOM = window.ReactDOM;
-              window._mbeditorDOMReady = false;
-              document.addEventListener('DOMContentLoaded', function() { window._mbeditorDOMReady = true; }, { once: true });
-            </script>
+            <script>#{setup_js}</script>
             <div id="mbeditor-root">
               <div id="mbeditor-loading">
                 <div class="mbeditor-spinner"></div>
                 <div class="mbeditor-loading-text">Loading editor&hellip;</div>
               </div>
             </div>
-            <script>
-              window.MonacoEnvironment = {
-                getWorkerUrl: function(workerId, label) {
-                  var b = window.MBEDITOR_BASE_PATH || '';
-                  if (label === 'typescript' || label === 'javascript') return b + '/ts_worker.js';
-                  return b + '/monaco_worker.js';
-                }
-              };
-              (function() {
-                var _define = window.define;
-                window.define = undefined;
-
-                var prettierScripts = #{prettier_scripts};
-                window.loadPrettierPlugins = function() {
-                  if (window._prettierLoadPromise) return window._prettierLoadPromise;
-                  window._prettierLoadPromise = new Promise(function(resolve, reject) {
-                    var savedDefine = window.define;
-                    window.define = undefined;
-                    var pending = prettierScripts.length;
-                    prettierScripts.forEach(function(src) {
-                      var s = document.createElement('script');
-                      s.src = src;
-                      s.onload = function() { if (--pending === 0) { window.define = savedDefine; resolve(); } };
-                      s.onerror = function() { window.define = savedDefine; reject(new Error('Failed to load Prettier: ' + src)); };
-                      document.head.appendChild(s);
-                    });
-                  });
-                  return window._prettierLoadPromise;
-                };
-
-                function proceed() {
-                  window.MbeditorRuntime = { React: window.React, ReactDOM: window.ReactDOM };
-                  window.React    = window._mbeditorHostReact;
-                  window.ReactDOM = window._mbeditorHostReactDOM;
-                  window.define = _define;
-
-                  var _monacoResolve;
-                  window.__monacoReady = new Promise(function(resolve) { _monacoResolve = resolve; });
-
-                  var appScript = document.createElement('script');
-                  appScript.src = '#{base}/assets/mbeditor/application.js';
-                  appScript.onload = function() {
-                    var root = document.getElementById('mbeditor-root');
-                    var _R = window.MbeditorRuntime.React, _RD = window.MbeditorRuntime.ReactDOM;
-                    if (window.MbeditorApp && _R && _RD) _RD.render(_R.createElement(window.MbeditorApp), root);
-                  };
-                  appScript.onerror = function() {
-                    document.getElementById('mbeditor-root').innerHTML =
-                      '<div style="padding:2rem;font-family:sans-serif;color:#c00">Editor failed to load. Please refresh the page.</div>';
-                  };
-                  document.body.appendChild(appScript);
-
-                  require(['vs/editor/editor.main'], function() {
-                    if (window.MBEDITOR_CUSTOM_THEMES && window.monaco) {
-                      Object.keys(window.MBEDITOR_CUSTOM_THEMES).forEach(function(id) {
-                        window.monaco.editor.defineTheme(id, window.MBEDITOR_CUSTOM_THEMES[id]);
-                      });
-                    }
-                    _monacoResolve();
-                  });
-                }
-
-                if (window._mbeditorDOMReady) proceed();
-                else document.addEventListener('DOMContentLoaded', proceed, { once: true });
-              })();
-            </script>
+            <script>#{boot_js}</script>
           </body>
           </html>
         HTML

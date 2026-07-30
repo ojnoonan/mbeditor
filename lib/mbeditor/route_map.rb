@@ -31,6 +31,9 @@ module Mbeditor
     get    'definition',      to: 'editors#definition'
     get    'js_definition',   to: 'editors#js_definition'
     get    'js_members',      to: 'editors#js_members'
+    get    'js_globals',      to: 'editors#js_globals'
+    get    'js_program',      to: 'editors#js_program'
+    post   'ruby_lsp',        to: 'editors#ruby_lsp'
     get    'module_members',  to: 'editors#module_members'
     get    'file_includes',   to: 'editors#file_includes'
     get    'client_config',   to: 'editors#client_config'
@@ -42,18 +45,17 @@ module Mbeditor
     get    'manifest.webmanifest',            to: 'editors#pwa_manifest',   format: false
     get    'sw.js',                           to: 'editors#pwa_sw',         format: false
     get    'mbeditor-icon.svg',               to: 'editors#pwa_icon',       format: false
-    get    'monaco_worker.js',                to: 'editors#monaco_worker',  format: false
-    get    'ts_worker.js',                    to: 'editors#ts_worker',      format: false
     get    'monaco-editor/*asset_path',       to: 'editors#monaco_asset', format: false
-    get    'min-maps/*asset_path',            to: 'editors#monaco_asset', format: false
     post   'lint',            to: 'editors#lint'
     post   'quick_fix',       to: 'editors#quick_fix'
     post   'format',          to: 'editors#format_file'
     post   'test',            to: 'editors#run_test'
+    get    'logs/tail',       to: 'logs#tail'
 
     # ── Git & Code Review ──────────────────────────────────────────────────────
     get 'git/diff',           to: 'git#diff'
     get 'git/blame',          to: 'git#blame'
+    get 'git/line_diff',      to: 'git#line_diff'
     get 'git/file_history',   to: 'git#file_history'
     get 'git/commit_graph',   to: 'git#commit_graph'
     get 'git/commit_detail',  to: 'git#commit_detail'

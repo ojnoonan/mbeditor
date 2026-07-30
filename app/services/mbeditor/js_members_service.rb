@@ -11,7 +11,7 @@ module Mbeditor
   # Delegates subprocess execution to CodeSearchService (rg/grep).
   #
   # Returns an array of hashes:
-  #   { name: String, snippet: String }
+  #   { name: String, snippet: String, file: String, line: Integer }
   class JsMembersService
     MAX_RESULTS = 50
 
@@ -32,7 +32,9 @@ module Mbeditor
 
     def build_pattern
       s = Regexp.escape(@symbol)
-      "#{s}\\.(?:prototype\\.)?([a-zA-Z_$][a-zA-Z0-9_$]*)\\s*="
+      # Pure POSIX ERE — see JsDefinitionService: git grep rejects (?: and
+      # treats \s as a literal.
+      "#{s}\\.(prototype\\.)?[a-zA-Z_$][a-zA-Z0-9_$]*[ \\t]*="
     end
 
     def parse_results(lines)
@@ -40,10 +42,13 @@ module Mbeditor
       seen    = {}
       lines.each do |raw|
         raw = raw.chomp
-        m = raw.match(/\A.+?:\d+:(.+)\z/)
+        m = raw.match(/\A(.+?):(\d+):(.+)\z/)
         next unless m
 
-        snippet = m[1].strip
+        abs_path = m[1]
+        line_num = m[2].to_i
+        snippet  = m[3].strip
+        next unless abs_path.start_with?(@workspace_root)
 
         s = Regexp.escape(@symbol)
         member_match = snippet.match(/#{s}\.(?:prototype\.)?([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/)
@@ -53,7 +58,12 @@ module Mbeditor
         next if seen[name]
 
         seen[name] = true
-        results << { name: name, snippet: snippet }
+        results << {
+          name: name,
+          snippet: snippet,
+          file: abs_path.delete_prefix(@workspace_root).delete_prefix("/"),
+          line: line_num
+        }
         break if results.length >= MAX_RESULTS
       end
       results

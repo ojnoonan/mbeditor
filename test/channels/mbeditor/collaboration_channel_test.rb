@@ -24,9 +24,9 @@ module Mbeditor
 
     test "a fresh subscribe transmits the cached snapshot and buffered deltas" do
       path = "app/models/user.rb"
-      CollaborationDocStore.replace_snapshot(path, "SNAP")
-      CollaborationDocStore.record_update(path, "D1")
-      CollaborationDocStore.record_update(path, "D2")
+      CollaborationDocStore.replace_snapshot(room_key_for(path), "SNAP")
+      CollaborationDocStore.record_update(room_key_for(path), "D1")
+      CollaborationDocStore.record_update(room_key_for(path), "D2")
 
       subscribe path: path
 
@@ -44,7 +44,7 @@ module Mbeditor
         perform :doc_update, "update" => "DELTA"
       end
 
-      state = CollaborationDocStore.state_for(path)
+      state = CollaborationDocStore.state_for(room_key_for(path))
       assert_equal ["DELTA"], state[:deltas]
     end
 
@@ -56,21 +56,21 @@ module Mbeditor
         perform :awareness, "awareness" => "CURSOR"
       end
 
-      state = CollaborationDocStore.state_for(path)
+      state = CollaborationDocStore.state_for(room_key_for(path))
       assert_nil state[:snapshot]
       assert_empty state[:deltas]
     end
 
     test "snapshot replaces the cached snapshot, clears deltas, and relays" do
       path = "lib/foo.rb"
-      CollaborationDocStore.record_update(path, "OLD_DELTA")
+      CollaborationDocStore.record_update(room_key_for(path), "OLD_DELTA")
       subscribe path: path
 
       assert_broadcast_on(stream_name_for(path), "type" => "snapshot", "snapshot" => "NEWSNAP") do
         perform :snapshot, "snapshot" => "NEWSNAP"
       end
 
-      state = CollaborationDocStore.state_for(path)
+      state = CollaborationDocStore.state_for(room_key_for(path))
       assert_equal "NEWSNAP", state[:snapshot]
       assert_empty state[:deltas]
     end
@@ -78,14 +78,14 @@ module Mbeditor
     test "live channel traffic opportunistically reclaims a room idle past the grace window" do
       # An ancient idle room (last activity at monotonic 0; real monotonic now is
       # far larger than GRACE_TTL), and real channel traffic on another file.
-      CollaborationDocStore.record_update("abandoned/old.rb", "OLD", now: 0.0)
+      CollaborationDocStore.record_update(room_key_for("abandoned/old.rb"), "OLD", now: 0.0)
 
       subscribe path: "live/new.rb"
       perform :doc_update, "update" => "NEW"
 
       # The idle room was swept end-to-end, without any explicit sweep! call.
-      assert_empty CollaborationDocStore.state_for("abandoned/old.rb")[:deltas]
-      assert_equal ["NEW"], CollaborationDocStore.state_for("live/new.rb")[:deltas]
+      assert_empty CollaborationDocStore.state_for(room_key_for("abandoned/old.rb"))[:deltas]
+      assert_equal ["NEW"], CollaborationDocStore.state_for(room_key_for("live/new.rb"))[:deltas]
     end
 
     test "subscribing without a path is rejected and opens no stream" do
@@ -139,7 +139,7 @@ module Mbeditor
         end
       end
 
-      assert_equal ["DELTA"], CollaborationDocStore.state_for(path)[:deltas]
+      assert_equal ["DELTA"], CollaborationDocStore.state_for(room_key_for(path))[:deltas]
     end
 
     private
@@ -163,8 +163,14 @@ module Mbeditor
       server.define_singleton_method(:broadcast, original)
     end
 
+    # Mirrors CollaborationChannel#room_key: rooms are scoped by workspace so two
+    # workspaces holding the same relative path never share a buffer.
+    def room_key_for(path)
+      "#{Mbeditor::WorkspaceRootResolver.call}\0#{path}"
+    end
+
     def stream_name_for(path)
-      "mbeditor_collab:#{Digest::SHA256.hexdigest(path)}"
+      "mbeditor_collab:#{Digest::SHA256.hexdigest(room_key_for(path))}"
     end
   end
 end

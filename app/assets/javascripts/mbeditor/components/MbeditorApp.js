@@ -44,7 +44,8 @@ var DEFAULT_EDITOR_PREFS = {
   autoClosingQuotes: 'always',
   autoIndent: 'full',
   formatOnPaste: true,
-  formatOnType: true,
+  formatOnType: false,
+  formatOnSave: false,
   quickSuggestions: true,
   wordBasedSuggestions: 'matchingDocuments',
   acceptSuggestionOnEnter: 'on',
@@ -326,6 +327,15 @@ var MbeditorApp = function MbeditorApp() {
   var sidebarCollapsed = _useStateSC2[0];
   var setSidebarCollapsed = _useStateSC2[1];
 
+  // Ref mirrors for use inside long-lived event handlers registered with
+  // empty-dependency effects (live search refresh on files_changed).
+  var searchPanelVisibleRef = useRef(false);
+  searchPanelVisibleRef.current = !sidebarCollapsed && activeSidebarTab === 'search';
+
+  // Whether the server can run the save-time babel syntax check
+  // (host-provided mini_racer + babel-standalone; see /workspace payload).
+  var jsSyntaxCheckAvailableRef = useRef(false);
+
   var _useStateRFMap = useState({});
   var _useStateRFMap2 = _slicedToArray(_useStateRFMap, 2);
   var railsFilesMap = _useStateRFMap2[0];
@@ -424,6 +434,22 @@ var MbeditorApp = function MbeditorApp() {
   var setShowGitPanel = _useState182[1];
   var showGitPanelRef = useRef(showGitPanel);
   showGitPanelRef.current = showGitPanel;
+
+  var _useStateLog = useState(false);
+  var _useStateLog2 = _slicedToArray(_useStateLog, 2);
+  var showLogPanel = _useStateLog2[0];
+  var setShowLogPanel = _useStateLog2[1];
+
+  var _useStateProblems = useState(false);
+  var _useStateProblems2 = _slicedToArray(_useStateProblems, 2);
+  var showProblemsPanel = _useStateProblems2[0];
+  var setShowProblemsPanel = _useStateProblems2[1];
+
+  // Error/warning tallies across the open tabs, mirrored into the status bar.
+  var _useStateProblemCounts = useState({ errors: 0, warnings: 0 });
+  var _useStateProblemCounts2 = _slicedToArray(_useStateProblemCounts, 2);
+  var problemCounts = _useStateProblemCounts2[0];
+  var setProblemCounts = _useStateProblemCounts2[1];
 
   var _useState18g = useState(320);
   var _useState18g2 = _slicedToArray(_useState18g, 2);
@@ -601,6 +627,10 @@ var MbeditorApp = function MbeditorApp() {
   var setFollowedClientId = _useStateFollow2[1];
   var recentSavesRef = useRef({});
   var isSavingRef = useRef(false);
+  // path -> the file's content as last seen ON DISK (newline-normalised).
+  // External-change detection compares disk-to-disk; comparing disk to the
+  // buffer flags every dirty tab, which is just the definition of "dirty".
+  var lastDiskContentRef = useRef({});
 
   // ── Draft backup helpers ─────────────────────────────────────────────────
   var draftWriteTimerRef = useRef({});
@@ -741,7 +771,26 @@ var MbeditorApp = function MbeditorApp() {
       EditorStore.setStatus('Linting...', 'info');
     }
 
-    return FileService.lintFile(tab.path, tab.content).then(function (res) {
+    // ruby-lsp answers diagnostics for Ruby files when it's available: same
+    // markers, plus Prism syntax errors, without a per-keystroke rubocop boot.
+    // Anything short of a usable answer falls through to the HTTP lint for
+    // this call, so behaviour without ruby-lsp is unchanged.
+    var lintRequest;
+    if (window.MBEDITOR_RUBY_LSP_AVAILABLE && isRubyPath(tab.path) && FileService.lspDiagnostics) {
+      lintRequest = FileService.lspDiagnostics(tab.path, tab.content).then(function (res) {
+        if (res && res.markers && !res.fallback && !res.error) return res;
+        return FileService.lintFile(tab.path, tab.content);
+      })["catch"](function (err) {
+        if (err && err.response && err.response.status === 422) {
+          window.MBEDITOR_RUBY_LSP_AVAILABLE = false;
+        }
+        return FileService.lintFile(tab.path, tab.content);
+      });
+    } else {
+      lintRequest = FileService.lintFile(tab.path, tab.content);
+    }
+
+    return lintRequest.then(function (res) {
       var nextMarkers = res.markers || [];
       applyMarkersForTab(paneId, tab.id, nextMarkers);
 
@@ -879,6 +928,12 @@ var MbeditorApp = function MbeditorApp() {
       if (workspace && typeof workspace.hamlLintAvailable === 'boolean') {
         setHamlLintAvailable(workspace.hamlLintAvailable);
       }
+      if (workspace && typeof workspace.jsSyntaxCheckAvailable === 'boolean') {
+        jsSyntaxCheckAvailableRef.current = workspace.jsSyntaxCheckAvailable;
+      }
+      if (workspace && typeof workspace.rubyLspAvailable === 'boolean') {
+        window.MBEDITOR_RUBY_LSP_AVAILABLE = workspace.rubyLspAvailable;
+      }
       if (workspace && typeof workspace.gitAvailable === 'boolean') {
         setGitAvailable(workspace.gitAvailable);
       }
@@ -927,16 +982,36 @@ var MbeditorApp = function MbeditorApp() {
       })).then(function (results) {
         var resIdx = 0;
         var restoredPanes = panesToLoad.map(function (p) {
+          // Drop duplicate file tabs within a pane — a single file must never
+          // appear twice in the same pane. A race between persisted state and an
+          // in-flight reopen can otherwise rebuild the pane with the same path
+          // twice (the "duplicated file twice over" symptom). Only plain file
+          // tabs are de-duplicated by path; diff/preview/settings/changelog tabs
+          // encode their identity elsewhere and are left untouched. resIdx is
+          // advanced for every original tab so it stays aligned with `results`.
+          var seenPaths = {};
+          var tabs = [];
+          p.tabs.forEach(function (t) {
+            var res = results[resIdx++];
+            var isPlainFile = t.path && !t.isDiff && !t.isCombinedDiff && !t.isSettings &&
+              !t.isChangelog && !t.isPreview &&
+              !/^(diff|combined-diff):\/\//.test(t.path) && !/::preview$/.test(t.path);
+            if (isPlainFile) {
+              if (seenPaths[t.path]) return;
+              seenPaths[t.path] = true;
+            }
+            tabs.push(_extends({}, t, {
+              content: res.content,
+              externalContentVersion: (t.externalContentVersion || 0) + 1
+            }, res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {},
+            typeof res.fileNotFound === 'boolean' ? { fileNotFound: res.fileNotFound, dirty: res.fileNotFound ? false : t.dirty } : {},
+            res.image === true ? { isImage: true } : {}));
+          });
+          // If activeTabId pointed at a dropped duplicate, fall back to the first tab.
+          var activeStillPresent = tabs.some(function (t) { return t.id === p.activeTabId; });
           return _extends({}, p, {
-            tabs: p.tabs.map(function (t) {
-              var res = results[resIdx++];
-              return _extends({}, t, {
-                content: res.content,
-                externalContentVersion: (t.externalContentVersion || 0) + 1
-              }, res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {},
-              typeof res.fileNotFound === 'boolean' ? { fileNotFound: res.fileNotFound, dirty: res.fileNotFound ? false : t.dirty } : {},
-              res.image === true ? { isImage: true } : {});
-            })
+            tabs: tabs,
+            activeTabId: activeStillPresent ? p.activeTabId : ((tabs[0] && tabs[0].id) || null)
           });
         });
         EditorStore.setState({ panes: restoredPanes, focusedPaneId: focusedPaneId || 1 });
@@ -1013,6 +1088,18 @@ var MbeditorApp = function MbeditorApp() {
       if (!oldBranch || isSwitchingBranchRef.current) return;
       // Ignore spurious branch changes triggered by saves (race condition)
       if (isSavingRef.current) return;
+
+      // Never auto-swap per-branch tab state while there are unsaved edits. The
+      // swap clears every pane and reloads each tab's content from disk, which
+      // would silently discard in-progress work — the "reverts changes
+      // completely" symptom, now triggered more often by the periodic git
+      // status poll picking up external branch changes. Keep the current tabs
+      // and edits in place; the new branch's saved layout loads on the next
+      // switch once the work is saved.
+      var hasUnsavedEdits = (EditorStore.getState().panes || []).some(function (p) {
+        return (p.tabs || []).some(function (t) { return t.dirty; });
+      });
+      if (hasUnsavedEdits) return;
 
       isSwitchingBranchRef.current = true;
       setIsSwitchingBranch(true);
@@ -1103,6 +1190,10 @@ var MbeditorApp = function MbeditorApp() {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'G') {
         e.preventDefault();
         toggleGitPanel();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'L' || e.key === 'l')) {
+        e.preventDefault();
+        setShowLogPanel(function (prev) { return !prev; });
       }
       // Ctrl+Shift+Z is handled in capture phase below so Monaco cannot swallow it.
       if (e.key === 'Escape') {
@@ -1221,9 +1312,34 @@ var MbeditorApp = function MbeditorApp() {
       ctrlWTimeoutRef.current = setTimeout(function() { ctrlWPendingRef.current = false; }, 1500);
     };
 
+    // Capture-phase listener for Ctrl/Cmd+F. Monaco only intercepts Find while
+    // the editor DOM node has focus (bubble phase); once focus leaves the editor
+    // (e.g. clicking a tab) the browser's native Find takes over. This routes
+    // Find back to the active editor unless the user is typing in another input
+    // (sidebar search, rename box) or focus is already inside a Monaco editor.
+    var onFindCapture = function(e) {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+      if (e.key !== 'f' && e.key !== 'F') return;
+      var ed = window.__mbeditorActiveEditor;
+      if (!ed) return;
+      var ae = document.activeElement;
+      if (ae && ae.closest) {
+        // Already in a Monaco editor — let Monaco's own binding handle it.
+        if (ae.closest('.monaco-editor')) return;
+        // Don't hijack Find while typing in another input region.
+        if (ae.closest('.ide-sidebar, .git-panel, .quick-open-overlay, .schema-modal, input, textarea, [contenteditable="true"]')) return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      ed.focus();
+      var action = ed.getAction && ed.getAction('actions.find');
+      if (action) action.run();
+    };
+
     window.addEventListener('keydown', onKeyDown);
     document.addEventListener('keydown', onZenCapture, true);
     document.addEventListener('keydown', onCtrlWCapture, true);
+    document.addEventListener('keydown', onFindCapture, true);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
     return function () {
@@ -1238,6 +1354,7 @@ var MbeditorApp = function MbeditorApp() {
       window.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('keydown', onZenCapture, true);
       document.removeEventListener('keydown', onCtrlWCapture, true);
+      document.removeEventListener('keydown', onFindCapture, true);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
       document.body.style.cursor = '';
@@ -1304,10 +1421,33 @@ var MbeditorApp = function MbeditorApp() {
     if (offers.length > 0) setDraftRestoreOffer(offers);
   }, [serverOnline]);
 
+  // Live search-result refresh: when a save/rename/delete broadcast names the
+  // changed files and the search panel is showing results, re-scan just those
+  // files and splice their rows in place. Debounced so keystroke-saves don't
+  // spam single-file scans; paths accumulate across the debounce window.
+  var _pendingSearchRefreshPaths = useRef(new Set());
+  var _flushSearchRefresh = useRef(window._.debounce(function () {
+    var q = searchQueryRef.current;
+    var paths = Array.from(_pendingSearchRefreshPaths.current);
+    _pendingSearchRefreshPaths.current.clear();
+    if (!q || !searchPanelVisibleRef.current || paths.length === 0) return;
+    var opts = { regex: searchUseRegexRef.current, matchCase: searchMatchCaseRef.current, wholeWord: searchWholeWordRef.current };
+    paths.reduce(function (chain, p) {
+      return chain.then(function () {
+        return SearchService.refreshFile(q, p, opts).then(function (delta) {
+          var diff = delta.added - delta.removed;
+          if (diff !== 0) {
+            setSearchTotalCount(function (prev) { return Math.max(0, (prev || 0) + diff); });
+          }
+        });
+      });
+    }, Promise.resolve());
+  }, 2000)).current;
+
   // WebSocket push — when the server broadcasts files_changed, refresh the tree
   // and git status immediately (same work as the 10s poll below does).
   useEffect(function () {
-    function handleFilesChanged() {
+    function handleFilesChanged(payload) {
       if (document.hidden) return;
       GitService.fetchStatus()["catch"](function () {});
       FileService.getTree().then(function (data) {
@@ -1319,6 +1459,10 @@ var MbeditorApp = function MbeditorApp() {
         });
         checkOpenTabsForExternalChanges();
       })["catch"](function () {});
+      if (payload && payload.paths && searchQueryRef.current && searchPanelVisibleRef.current) {
+        payload.paths.forEach(function (p) { _pendingSearchRefreshPaths.current.add(p); });
+        _flushSearchRefresh();
+      }
     }
     WebSocketService.onFilesChanged(handleFilesChanged);
     return function () { WebSocketService.offFilesChanged(handleFilesChanged); };
@@ -1393,7 +1537,21 @@ var MbeditorApp = function MbeditorApp() {
         if (!data || typeof data.content !== 'string') return;
         var serverNorm = data.content.replace(/\r\n/g, '\n');
         var tabNorm = (pt.tab.content || '').replace(/\r\n/g, '\n');
+
+        // Did the file on disk actually change? Compare disk against the last
+        // disk content we saw, never against the buffer — a dirty buffer
+        // differs from disk by definition, so the old comparison reported
+        // every unsaved tab as "updated externally" whenever a files_changed
+        // push arrived (which our own save of some *other* file triggers).
+        // A clean tab's buffer IS the disk content, so it seeds the baseline;
+        // a dirty tab with no baseline yet can't be judged, so record and wait.
+        var prevDisk = lastDiskContentRef.current[pt.tab.path];
+        lastDiskContentRef.current[pt.tab.path] = serverNorm;
         if (serverNorm === tabNorm) return;
+        if (prevDisk === undefined && pt.tab.dirty) return;
+        if (prevDisk === undefined) prevDisk = tabNorm;
+        if (serverNorm === prevDisk) return;
+
         if (!pt.tab.dirty) {
           EditorStore.setState({
             panes: EditorStore.getState().panes.map(function (p) {
@@ -1435,16 +1593,18 @@ var MbeditorApp = function MbeditorApp() {
     });
   }
 
-  // Auto-refresh the file tree every 10s to pick up external changes (new files, deletions, etc.)
-  // When an ActionCable WebSocket is connected this acts only as a safety-net fallback —
-  // the WebSocket push above handles immediate invalidation after mbeditor mutations.
+  // Auto-refresh the file tree every 10s to pick up external changes (new files,
+  // deletions, a branch switch in a terminal).
+  //
+  // This runs whether or not the WebSocket is connected. It used to skip when
+  // connected, on the reasoning that the push covered it — but the server only
+  // broadcasts from mbeditor's own mutation endpoints, so a connected socket
+  // meant external changes were never picked up at all. The push remains the
+  // instant path for our own writes; this is what catches everything else.
   // Uses functional setTreeData to skip the re-render when nothing has changed.
   useEffect(function () {
     var intervalId = setInterval(function () {
       if (document.hidden) return;
-      if (WebSocketService.isConnected()) return; // WebSocket is handling refreshes
-      // Refresh tree and check for git branch changes (to trigger per-branch tab state swap)
-      GitService.fetchStatus()["catch"](function () {});
       FileService.getTree().then(function (data) {
         var newData = data || [];
         setTreeData(function (prevData) {
@@ -1456,6 +1616,60 @@ var MbeditorApp = function MbeditorApp() {
     }, 10000);
     return function () { clearInterval(intervalId); };
   }, []);
+
+  // Git branch/status must be polled independently of the WebSocket. The WS only
+  // broadcasts after mbeditor-initiated mutations, so an external `git checkout`
+  // (e.g. switching branches in a terminal) is never pushed. Poll on a short
+  // interval and refresh immediately when the tab regains focus so branch
+  // changes are picked up promptly instead of requiring a manual git-panel reload.
+  useEffect(function () {
+    // Steady-state ticks use the cheap lite poll; it escalates to the full
+    // /git_info fan-out on its own when the branch or working tree changed.
+    var refresh = function () {
+      if (document.hidden) return;
+      GitService.fetchStatusLite()["catch"](function () {});
+    };
+    // Regaining focus is a strong signal something may have happened in a
+    // terminal meanwhile — do a full refresh (server-side cache bounds cost).
+    var fullRefresh = function () {
+      if (document.hidden) return;
+      GitService.fetchStatus()["catch"](function () {});
+    };
+    var intervalId = setInterval(refresh, 5000);
+    var onVisible = function () { if (!document.hidden) fullRefresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', fullRefresh);
+    return function () {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', fullRefresh);
+    };
+  }, []);
+
+  // Keep the status-bar error/warning tallies in step with Monaco's markers.
+  // Every diagnostic source in the editor — rubocop, ruby-lsp, the TypeScript
+  // worker — lands here, so one subscription covers all of them. Markers change
+  // on every keystroke for JS, so the recount is debounced.
+  useEffect(function () {
+    if (!monacoReady || !window.monaco || !window.monaco.editor || !window.ProblemsPanel) return;
+
+    var timer = null;
+    var recount = function () {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function () {
+        timer = null;
+        setProblemCounts(window.ProblemsPanel.counts());
+      }, 250);
+    };
+
+    var sub = window.monaco.editor.onDidChangeMarkers(recount);
+    recount();
+
+    return function () {
+      if (timer) clearTimeout(timer);
+      sub.dispose();
+    };
+  }, [monacoReady]);
 
   var handleSelectFile = function handleSelectFile(path, name, line, col) {
     TabManager.openTab(path, name, line, null, false, col);
@@ -1607,6 +1821,47 @@ var MbeditorApp = function MbeditorApp() {
     EditorStore.setStatus("Closed " + pane.tabs.length + " editor" + (pane.tabs.length === 1 ? "" : "s") + " in Group " + paneId, "info");
   };
 
+  var handleCloseOtherTabs = function handleCloseOtherTabs(paneId, keepId) {
+    var pane = state.panes.find(function (p) { return p.id === paneId; });
+    if (!pane) return;
+    var others = pane.tabs.filter(function (t) { return t.id !== keepId; });
+    if (others.length === 0) return;
+    if (!confirmBulkClose(others, "other editors")) return;
+    TabManager.closeOtherTabsInPane(paneId, keepId);
+    EditorStore.setStatus("Closed " + others.length + " editor" + (others.length === 1 ? "" : "s"), "info");
+  };
+
+  var handleCloseSavedTabs = function handleCloseSavedTabs(paneId) {
+    var pane = state.panes.find(function (p) { return p.id === paneId; });
+    if (!pane) return;
+    var saved = pane.tabs.filter(function (t) { return !t.dirty; });
+    if (saved.length === 0) return;
+    TabManager.closeSavedTabsInPane(paneId);
+    EditorStore.setStatus("Closed " + saved.length + " saved editor" + (saved.length === 1 ? "" : "s"), "info");
+  };
+
+  var handleNewFileInTabDir = function handleNewFileInTabDir(paneId) {
+    var pane = state.panes.find(function (p) { return p.id === paneId; });
+    var activeForPane = pane && pane.tabs.find(function (t) { return t.id === pane.activeTabId; });
+    var activePath = activeForPane && activeForPane.path;
+    var isReal = activePath && activePath.indexOf('://') < 0 && activePath !== '__settings__';
+    var baseDir = isReal ? parentDir(activePath) : '';
+    // Make sure the explorer is visible so the inline-create row shows.
+    setActiveSidebarTab('explorer');
+    setSidebarCollapsed(false);
+    // Expand ancestors of the target dir.
+    if (baseDir) {
+      var parts = baseDir.split('/');
+      var ancestors = {};
+      for (var i = 1; i <= parts.length; i++) {
+        ancestors[parts.slice(0, i).join('/')] = true;
+      }
+      setExpandedDirs(function (prev) { return Object.assign({}, prev, ancestors); });
+    }
+    setPendingRename(null);
+    setPendingCreate({ type: 'file', parentPath: baseDir });
+  };
+
   // Persist state when panes, focusedPaneId, or collapsedSections changes
   useEffect(function () {
     // Don't overwrite server state with React defaults before the initial load completes.
@@ -1626,6 +1881,7 @@ var MbeditorApp = function MbeditorApp() {
               dirty: t.dirty,
               viewState: t.viewState,
               isSettings: !!t.isSettings,
+              isChangelog: !!t.isChangelog,
               isPreview: !!t.isPreview,
               previewFor: t.previewFor || null,
               isDiff: !!t.isDiff,
@@ -1699,6 +1955,26 @@ var MbeditorApp = function MbeditorApp() {
 
   var resourceLabelFromPath = function(p) {
     if (!p) return null;
+
+    // Custom paths are checked first so they work regardless of top-level prefix.
+    // Paths under app/assets/, app/javascript/, etc. never match standard
+    // app/controllers|models|views|helpers, so the check must happen first.
+    var customPaths = customPathsRef.current;
+    for (var ci = 0; ci < customPaths.length; ci++) {
+      var base = customPaths[ci];
+      if (p.startsWith(base + '/')) {
+        var rest = p.slice(base.length + 1);
+        var resource = rest.split('/')[0].replace(/\.[^.]+$/, '');
+        resource = resource.replace(/_(controller|model|helper|service)$/, '');
+        if (resource) {
+          var seg = resource.replace(/ies$/, 'y')
+            .replace(/(ss|sh|ch|x|z)es$/, '$1')
+            .replace(/([^s])s$/, '$1');
+          return seg.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+        }
+      }
+    }
+
     var parts = p.split('/');
     var file = parts[parts.length - 1];
     var name;
@@ -1713,25 +1989,11 @@ var MbeditorApp = function MbeditorApp() {
       else if (parts[1] === 'models') name = file.replace(/_(test|spec)\.rb$/, '');
       else return null;
     } else {
-      // Check custom paths
-      var customPaths = customPathsRef.current;
-      for (var ci = 0; ci < customPaths.length; ci++) {
-        var base = customPaths[ci];
-        if (p.startsWith(base + '/')) {
-          var rest = p.slice(base.length + 1);
-          var resource = rest.split('/')[0].replace(/\.[^.]+$/, '');
-          if (resource) {
-            var seg = resource.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
-            return seg;
-          }
-        }
-      }
       return null;
     }
     var seg = (name || '').split('/').pop() || name || '';
-    // Normalize plural→singular so views/users and models/user share one group
     seg = seg.replace(/ies$/, 'y')
-             .replace(/([^aeiou])es$/, '$1')
+             .replace(/(ss|sh|ch|x|z)es$/, '$1')
              .replace(/([^s])s$/, '$1');
     return seg.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
   };
@@ -2057,7 +2319,66 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
+  // Format-on-save helper: returns a Promise resolving to the formatted
+  // content, or null when no formatter applies / formatting fails (the save
+  // then proceeds with the original content — saving must never be blocked
+  // by a formatter problem).
+  var _formatContentForSave = function _formatContentForSave(tab) {
+    var isRubyLang = /\.(rb|rake|gemspec)$/.test(tab.path) || /(?:^|\/)(Rakefile|Gemfile)$/.test(tab.path);
+    if (isRubyLang) {
+      if (!rubocopAvailable) return Promise.resolve(null);
+      return FileService.formatFile(tab.path, tab.content)
+        .then(function (res) { return (res && res.content) || null; })
+        ["catch"](function () { return null; });
+    }
+    var ext = tab.path.split('.').pop().toLowerCase();
+    var parserMap = { 'js': 'babel', 'jsx': 'babel', 'json': 'json', 'css': 'css', 'scss': 'scss', 'html': 'html', 'md': 'markdown' };
+    var parserName = parserMap[ext];
+    if (!parserName) return Promise.resolve(null);
+    var run = function () {
+      return window.prettier.format(tab.content, {
+        parser: parserName,
+        plugins: Object.values(window.prettierPlugins),
+        printWidth: editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80,
+        tabWidth: editorPrefs.prettierTabWidth != null ? editorPrefs.prettierTabWidth : 2,
+        useTabs: !!editorPrefs.prettierUseTabs,
+        semi: editorPrefs.prettierSemi !== false,
+        singleQuote: !!editorPrefs.prettierSingleQuote,
+        trailingComma: editorPrefs.prettierTrailingComma || 'all',
+        bracketSpacing: editorPrefs.prettierBracketSpacing !== false
+      })["catch"](function () { return null; });
+    };
+    if (window.prettier && window.prettierPlugins) return run();
+    if (window.loadPrettierPlugins) return window.loadPrettierPlugins().then(run)["catch"](function () { return null; });
+    return Promise.resolve(null);
+  };
+
   var handleSave = function handleSave(paneId, tab) {
+    if (editorPrefs.formatOnSave === true) {
+      EditorStore.setStatus("Formatting " + tab.name + "...", "info");
+      _formatContentForSave(tab).then(function (formatted) {
+        if (formatted != null && formatted !== tab.content) {
+          // Push the formatted text into the tab (externalContentVersion makes
+          // the Monaco model pick it up), then save that content.
+          EditorStore.setState({
+            panes: EditorStore.getState().panes.map(function (p) {
+              if (p.id !== paneId) return p;
+              return _extends({}, p, { tabs: p.tabs.map(function (t) {
+                return t.id === tab.id ? _extends({}, t, { content: formatted, externalContentVersion: (t.externalContentVersion || 0) + 1 }) : t;
+              }) });
+            })
+          });
+          _doSave(paneId, _extends({}, tab, { content: formatted }));
+        } else {
+          _doSave(paneId, tab);
+        }
+      });
+      return;
+    }
+    _doSave(paneId, tab);
+  };
+
+  var _doSave = function _doSave(paneId, tab) {
     setLoading(function (prev) {
       return _extends({}, prev, { save: true });
     });
@@ -2094,6 +2415,27 @@ var MbeditorApp = function MbeditorApp() {
       // Hot reload for Markdown: sync preview tab after save
       if (/\.(md|markdown)$/i.test(tab.path)) {
         TabManager.syncMarkdownPreview(tab.path, tab.content);
+      }
+
+      // Save-time babel syntax check for JS/JSX: catches code the host's
+      // sprockets/react-rails pipeline can't transform (errors Monaco's TS
+      // worker misses). Save only — never per keystroke.
+      if (jsSyntaxCheckAvailableRef.current && /\.(js|jsx)$/i.test(tab.path)) {
+        FileService.lintFile(tab.path, tab.content, 'javascript').then(function (res) {
+          var babelMarkers = (res && res.markers) || [];
+          if (babelMarkers.length > 0) {
+            applyMarkersForTab(paneId, tab.id, babelMarkers);
+            EditorStore.setStatus('Saved — babel: ' + babelMarkers[0].message, 'warning');
+          } else {
+            // Clear any previous babel marker for this tab (keep others none —
+            // JS tabs have no rubocop markers, so replacing is safe).
+            var existing = (EditorStore.getState().panes.find(function (p) { return p.id === paneId; }) || { tabs: [] })
+              .tabs.find(function (t) { return t.id === tab.id; });
+            if (existing && existing.markers && existing.markers.length) {
+              applyMarkersForTab(paneId, tab.id, []);
+            }
+          }
+        })["catch"](function () {});
       }
 
       GitService.fetchStatus();
@@ -2431,11 +2773,11 @@ var MbeditorApp = function MbeditorApp() {
     } catch (e) {}
   };
 
-  var executeTestRun = function executeTestRun(filePath) {
+  var executeTestRun = function executeTestRun(filePath, line) {
     setTestLoading(true);
-    EditorStore.setStatus('Running tests...', 'info');
+    EditorStore.setStatus(line ? 'Running test at line ' + line + '...' : 'Running tests...', 'info');
 
-    FileService.runTests(filePath).then(function (res) {
+    FileService.runTests(filePath, line).then(function (res) {
       var resultWithMeta = Object.assign({}, res, { cachedAt: Date.now() });
       var targetFile = res.testFile || filePath;
       setTestResult(resultWithMeta);
@@ -2485,6 +2827,14 @@ var MbeditorApp = function MbeditorApp() {
     if (!activeTab || !activeTab.path) return;
     if (testLoading) return;
     executeTestRun(activeTab.path);
+  };
+
+  // Run only the test enclosing the cursor. Always re-runs (never serves the
+  // cached whole-file result) since the filter changes with the cursor.
+  var handleRunTestAtCursor = function handleRunTestAtCursor(line) {
+    if (!activeTab || !activeTab.path) return;
+    if (testLoading) return;
+    executeTestRun(activeTab.path, line);
   };
 
   var onFormatRef = useRef(handleFormat);
@@ -2663,6 +3013,14 @@ var MbeditorApp = function MbeditorApp() {
       if (!prev) GitService.fetchInfo();
       return !prev;
     });
+  };
+
+  var toggleLogPanel = function toggleLogPanel() {
+    setShowLogPanel(function (prev) { return !prev; });
+  };
+
+  var toggleProblemsPanel = function toggleProblemsPanel() {
+    setShowProblemsPanel(function (prev) { return !prev; });
   };
 
   var toggleZenMode = function toggleZenMode() {
@@ -3200,7 +3558,11 @@ var MbeditorApp = function MbeditorApp() {
           }
           return Object.assign({}, prev, updates);
         });
-      }
+      },
+      onCloseOthers: function (id) { handleCloseOtherTabs(paneId, id); },
+      onCloseSaved: function () { handleCloseSavedTabs(paneId); },
+      onCloseAll: function () { handleCloseEditorsInGroup(paneId); },
+      onNewFile: function () { handleNewFileInTabDir(paneId); }
     });
   };
 
@@ -3246,8 +3608,18 @@ var MbeditorApp = function MbeditorApp() {
       }
     });
     if (foundTab) {
+      // If the tab was restored from a persisted state that didn't include
+      // isChangelog (pre-v0.7.4), patch it so the pane renders ChangelogView.
       var switchPanes = st.panes.map(function(p) {
-        if (p.id === foundPaneId) return Object.assign({}, p, { activeTabId: CHANGELOG_TAB_ID });
+        if (p.id === foundPaneId) {
+          var patchedTabs = p.tabs.map(function(t) {
+            if (t.id === CHANGELOG_TAB_ID && !t.isChangelog) {
+              return Object.assign({}, t, { isChangelog: true });
+            }
+            return t;
+          });
+          return Object.assign({}, p, { tabs: patchedTabs, activeTabId: CHANGELOG_TAB_ID });
+        }
         return p;
       });
       EditorStore.setState({ panes: switchPanes, focusedPaneId: foundPaneId });
@@ -3285,6 +3657,25 @@ var MbeditorApp = function MbeditorApp() {
         { className: "ide-titlebar-title" },
         "Mini Browser Editor — ",
         window.location.host
+      ),
+      // The slot claims all the room between the title and the buttons; the
+      // search pill then takes 75% of it, centred. Sizing the pill against a
+      // slot rather than against the title bar keeps it proportional to the
+      // actual gap as the toolbar's button labels grow and shrink.
+      React.createElement(
+        'div',
+        { className: 'ide-titlebar-search-slot' },
+        React.createElement(
+          'button',
+          {
+            type: 'button',
+            className: 'ide-titlebar-search',
+            title: 'Search files (Ctrl/Cmd+P)',
+            onClick: function () { setQuickOpen(true); }
+          },
+          React.createElement('i', { className: 'fas fa-search', style: { marginRight: '6px', opacity: 0.7 } }),
+          React.createElement('span', { className: 'ide-titlebar-search-text' }, 'Search files…')
+        )
       ),
       React.createElement(
         "div",
@@ -3706,11 +4097,20 @@ var MbeditorApp = function MbeditorApp() {
           React.createElement(
             "div",
             { className: "search-input-shell" },
-            React.createElement("input", {
-              className: "search-input",
+            React.createElement("textarea", {
+              className: "search-input search-query-input",
+              rows: 2,
               placeholder: "Find in files…",
               value: searchQuery,
-              onChange: handleSearchChange
+              onChange: handleSearchChange,
+              // Enter triggers the search without inserting a newline; Shift+Enter
+              // still adds one for multi-line queries.
+              onKeyDown: function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  if (searchQuery) _debouncedSearch(searchQuery);
+                }
+              }
             }),
             React.createElement(
               "div",
@@ -4456,8 +4856,18 @@ var MbeditorApp = function MbeditorApp() {
                       React.createElement('input', {
                         type: 'checkbox',
                         className: 'ide-settings-checkbox',
-                        checked: editorPrefs.formatOnType !== false,
+                        checked: editorPrefs.formatOnType === true,
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { formatOnType: v }); }); }
+                      })
+                    ),
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Format the file before every save — RuboCop -A for Ruby, Prettier for JS/JSX/CSS/HTML/Markdown' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Format on save'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: editorPrefs.formatOnSave === true,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { formatOnSave: v }); }); }
                       })
                     ),
                     React.createElement(
@@ -4689,6 +5099,7 @@ var MbeditorApp = function MbeditorApp() {
                   onFormat: function() { onFormatRef.current(); },
                   onSave: function() { handleSave(pane.id, pActiveTab); },
                   onRunTest: handleRunTest,
+                  onRunTestAtCursor: handleRunTestAtCursor,
                   onShowHistory: function(path) { setHistoryPanelPath(path); },
                   onContentChange: function onContentChange(val) {
                     // Dirty/clean state is now set in EditorPanel via AVI comparison.
@@ -4887,7 +5298,16 @@ var MbeditorApp = function MbeditorApp() {
           onOpenAllChanges: function(scope, label) { TabManager.openCombinedDiffTab(scope, label); },
           onSelectCommit: handleSelectCommit
         })
-      )
+      ),
+      showLogPanel && !zenMode && React.createElement(window.LogPanel || LogPanel, {
+        onClose: function () { setShowLogPanel(false); }
+      }),
+      showProblemsPanel && !zenMode && React.createElement(window.ProblemsPanel || ProblemsPanel, {
+        onClose: function () { setShowProblemsPanel(false); },
+        onOpenFile: function (path, line, col) {
+          handleSelectFile(path, path.split('/').pop(), line, col);
+        }
+      })
     ),
     React.createElement(
       "div",
@@ -4910,6 +5330,23 @@ var MbeditorApp = function MbeditorApp() {
           " \u2193",
           state.gitInfo.behind
         )
+      ),
+      React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "statusbar-btn statusbar-problems" + (showProblemsPanel ? " active" : ""),
+          onClick: toggleProblemsPanel,
+          title: problemCounts.errors + " error(s), " + problemCounts.warnings +
+            " warning(s) in open files — click to open Problems"
+        },
+        React.createElement("i", { className: "fas fa-bug statusbar-problems-error-icon" }),
+        React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.errors),
+        React.createElement("i", {
+          className: "fas fa-exclamation-triangle statusbar-problems-warning-icon",
+          style: { marginLeft: "8px" }
+        }),
+        React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.warnings)
       ),
       !serverOnline && (function () {
         var dirtyCount = state.panes.reduce(function (acc, p) {
@@ -4939,6 +5376,36 @@ var MbeditorApp = function MbeditorApp() {
         "div",
         { className: "statusbar-msg " + state.statusMessage.kind },
         state.statusMessage.text
+      ),
+      React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "statusbar-btn statusbar-logs-btn" + (showLogPanel ? " active" : ""),
+          onClick: toggleLogPanel,
+          title: "Toggle Rails log (Ctrl+Shift+L)"
+        },
+        React.createElement("i", { className: "fas fa-stream" }),
+        " Logs"
+      ),
+      React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "statusbar-btn" + (editorPrefs.renderWhitespace === 'all' ? " active" : ""),
+          title: editorPrefs.renderWhitespace === 'all'
+            ? "Hide whitespace characters"
+            : "Show whitespace characters (tabs, spaces, control characters)",
+          "aria-pressed": editorPrefs.renderWhitespace === 'all',
+          onClick: function () {
+            setEditorPrefs(function (p) {
+              return _extends({}, p, {
+                renderWhitespace: p.renderWhitespace === 'all' ? 'none' : 'all'
+              });
+            });
+          }
+        },
+        React.createElement("i", { className: "fas fa-paragraph" })
       ),
       activeEOL && React.createElement(
         "button",

@@ -15,7 +15,7 @@ module Mbeditor
         end
       end
 
-      matcher = ExclusionMatcher.new(Mbeditor.configuration.excluded_paths)
+      matcher = ExclusionMatcher.new(Mbeditor.configuration.excluded_paths, root: root)
       data = traverse(root, root, matcher)
 
       MUTEX.synchronize do
@@ -49,7 +49,7 @@ module Mbeditor
         rel  = "" if rel == workspace_root
         is_excl = matcher.excluded?(rel)
 
-        if File.directory?(full)
+        if File.directory?(full) && !File.symlink?(full)
           children = is_excl ? [] : traverse(full, workspace_root, matcher, max_depth: max_depth, depth: depth + 1)
           node = { name: name, type: "folder", path: rel, children: children }
           node[:excluded] = true if is_excl

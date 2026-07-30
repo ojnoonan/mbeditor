@@ -9,7 +9,12 @@ Mbeditor (Mini Browser Editor) is a mountable Rails engine that adds a browser-b
 - Two-pane tabbed editor with drag-to-move tabs
 - File tree and project search
 - Git panel with working tree changes, unpushed file changes, and branch commit titles
+- Line numbers tinted by git status — green for added lines, orange for modified, red where lines were removed
+- Problems panel with error/warning counts in the status bar, listing every diagnostic across the open files
+- Outline dropdown for Ruby (methods, and test/spec structure in test files) and for JS/JSX/TS
+- Colour-coded Rails log drawer
 - Optional RuboCop lint and format endpoints (uses host app RuboCop)
+- Optional Ruby language-server integration (definitions, hover, completion, diagnostics)
 - Optional test runner with inline failure markers and a dedicated results panel (Minitest and RSpec)
 
 ## Security Warning
@@ -80,6 +85,10 @@ Mbeditor.configure do |config|
   # config.ruby_def_include_dirs = %w[app/models app/controllers app/helpers app/concerns]
   # config.related_files_custom_paths = %w[app/assets/javascripts/app app/policies]
 
+  # JavaScript intelligence (see the "JavaScript intelligence" section below)
+  # config.js_program = false                                        # disable the source program entirely
+  # config.js_program_exclude = %w[vendor app/assets/javascripts/react]  # third-party/generated JS
+
   # Resilient routing (see the "Resilient Routing" section below)
   # config.mount_path = "/mbeditor"   # explicit prefix override; auto-detected when nil
   # config.resilient_routing = false  # escape hatch; true keeps the editor up when host routes break
@@ -92,8 +101,19 @@ end
 |--------|---------|-------------|
 | `allowed_environments` | `[:development]` | Rails environments allowed to access the engine. |
 | `workspace_root` | `Rails.root` | Root directory exposed by Mbeditor. |
-| `excluded_paths` | `%w[.git tmp log node_modules .bundle coverage vendor/bundle]` | Files/directories hidden from the tree and path operations. Entries without `/` match a name anywhere in the path; entries with `/` match relative paths and their descendants. |
+| `excluded_paths` | `%w[.git tmp log node_modules .bundle coverage vendor/bundle public/assets storage]` | Files/directories hidden from the tree and path operations. Entries without `/` match a name anywhere in the path; entries with `/` match relative paths and their descendants. |
 | `rubocop_command` | `"rubocop"` | Command used for inline Ruby linting and formatting. |
+| `git_timeout` | `10` | Seconds each git subprocess may run; a timed-out call degrades its own field of the git panel instead of failing the request. `nil` disables the bound. |
+| `search_timeout` | `15` | Wall-clock bound on project-search subprocesses; a tripped deadline returns the partial results collected so far. `nil` disables. |
+| `search_respect_gitignore` | `false` | When `true`, project search and definition lookups skip files ignored by `.gitignore`. The default searches them, matching the editor's "show me everything on disk" behaviour. |
+| `js_global_identifiers` | `[]` | Extra JS names declared as ambient globals in the editor — for runtime-only globals the static workspace scan can't see (e.g. `%w[Routes I18n]`). |
+| `js_program` | `true` | Load the workspace's own JS source into Monaco's TypeScript program, so cross-file references get real inferred types instead of ambient `any`. See [JavaScript intelligence](#javascript-intelligence). `false` falls back to ambient declarations alone. |
+| `js_program_exclude` | `%w[vendor]` | Directories excluded from that program, on top of `excluded_paths`. Point this at any third-party or generated JS — vendored libraries are UMD-wrapped, so their source costs parse time and contributes no globals. |
+| `js_syntax_check` | `:auto` | Save-time babel parse check for JS/JSX using the host's `mini_racer` + babel-standalone (auto-detected; no-op when either is absent). `false` disables. |
+| `babel_standalone_path` | `nil` | Explicit path to the babel-standalone bundle for the syntax check; `nil` looks up `babel.min.js`/`babel.js` in the host's asset pipeline. |
+| `ruby_lsp` | `:auto` | Use the host's [ruby-lsp](https://github.com/Shopify/ruby-lsp) for Ruby go-to-definition, hover, completion, and diagnostics when it's installed (a persistent process is managed per workspace). `false` disables. Without ruby-lsp everything degrades to the built-in grep/Ripper services — no behavior change. |
+| `ruby_lsp_command` | `nil` | Override the ruby-lsp launch command (String or Array). `nil` auto-resolves `bin/ruby-lsp` → installed gem → `bundle exec ruby-lsp`. |
+| `ruby_lsp_timeout` | `3` | Seconds per LSP request; on timeout (e.g. during initial indexing) the editor falls back to the built-in services for that request. |
 
 ### Authentication
 
@@ -141,6 +161,73 @@ See [Resilient Routing](#resilient-routing) for details.
 |--------|---------|-------------|
 | `user_name_callback` | `nil` | Proc resolving the display name shown on your caret during realtime collaboration. Executed via `instance_exec` inside the controller (like `authenticate_with`), so it can read `session`, `cookies`, `current_user`, etc. — e.g. `proc { current_user&.name }`. When `nil` or it returns a blank value, each browser falls back to a generated, locally-persisted, user-editable name. Collaboration itself activates automatically whenever Action Cable is available (see [Realtime via Action Cable](#realtime-via-action-cable-optional)). |
 
+## JavaScript intelligence
+
+Under Sprockets every JS file shares one global scope, with no imports. The
+editor models that in two layers.
+
+**1. The source program.** Your workspace's own JS is loaded into Monaco's
+TypeScript program. A JS file with no `import`/`export` is a TypeScript
+*script*, so its top-level declarations land in the global scope — which is
+exactly the Sprockets model. You get real inferred types across files:
+
+```jsx
+// app/assets/javascripts/ux/Card.jsx
+var Card = function (props) { return <div>{props.title}</div>; };
+function formatCents(value) { return "$" + (value / 100).toFixed(2); }
+```
+
+```jsx
+// somewhere else — no import needed
+var c = <Card title="x" />;      // Card: (props: any) => JSX.Element
+var s = formatCents(500);        // formatCents(value: any): string
+var t = formatCents(1, 2);       // Expected 0-1 arguments, but got 2
+```
+
+Unknown names still report `Cannot find name` — this adds type information, it
+doesn't silence errors.
+
+**2. Ambient declarations**, for names the program can't supply.
+
+Both layers are needed, because TypeScript only sees *lexical* declarations:
+
+- `window.Foo = ...` is a runtime global TypeScript does not treat as a
+  declaration at all.
+- UMD-wrapped libraries — React, lodash, axios — assign their global inside a
+  closure, `factory(global.React = {})`, which TypeScript cannot follow
+  statically. **Loading their source gets you nothing**, which is why
+  `js_program_exclude` defaults to `vendor` and why React is typed by a
+  bundled stub instead.
+
+So point `js_program_exclude` at directories of third-party or generated JS,
+and leave your own application code in:
+
+```ruby
+config.js_program_exclude = %w[vendor app/assets/javascripts/react]
+```
+
+### Cost
+
+Measured against the Monaco TypeScript worker:
+
+| program size | build | per file opened after |
+|---|---|---|
+| 1 MB | 210 ms | 9 ms |
+| 3 MB | 378 ms | 11 ms |
+| 5.5 MB | 443 ms | 23 ms |
+| 9.4 MB | 872 ms | 32 ms |
+
+Roughly 93 ms/MB, paid once per session. JS gzips about 4.5:1, so a 10 MB tree
+is ~2.2 MB over the wire — worth knowing if your app runs on a remote host.
+After the initial load only changed files are re-sent, never the whole tree.
+
+Nothing is truncated silently: the browser console logs the file count, total
+size, and every skipped file with a reason (minified, oversized, unreadable).
+Minified bundles are skipped by filename and by shape, since they cost parse
+time and declare only one-letter names inside a closure.
+
+Set `config.js_program = false` to disable the layer entirely.
+
 ## Test Runner
 
 The Test button appears in the editor toolbar for any `.rb` file when a `test/` or `spec/` directory exists in the workspace root. Clicking it:
@@ -149,6 +236,13 @@ The Test button appears in the editor toolbar for any `.rb` file when a `test/` 
 2. Runs the test file using the configured command in a subprocess with a timeout.
 3. Shows a **Test Results** panel with pass/fail counts, per-test status icons, and error messages.
 4. Optionally overlays inline failure markers in the Monaco editor (separate from RuboCop markers — the two never interfere). Use the marker icon in the panel header to toggle them.
+
+**Running a single test.** With a test file open, `Ctrl+Shift+T` (or *Run Test
+at Cursor* in the editor context menu) runs only the test enclosing the cursor.
+The filter syntax follows the detected framework — `path:line` for RSpec and
+`bin/rails test`, a `-n` name filter for the plain Minitest runner — so it works
+with a custom `test_command` too. If the cursor isn't inside a test, or the open
+file is a source file rather than its test, the whole file runs as usual.
 
 **Framework auto-detection order:**
 1. File suffix: `_spec.rb` → RSpec, `_test.rb` → Minitest
@@ -185,6 +279,7 @@ A *broken route* is recoverable in the browser; a *failed boot* is not. If the a
 | `Ctrl+Shift+S` | Save all dirty files |
 | `Alt+Shift+F` | Format the active file |
 | `Ctrl+Shift+G` | Toggle the git panel |
+| `Ctrl+Shift+T` | Run only the test under the cursor |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / Redo (Monaco built-in) |
 
 ## Host Requirements (Optional)
@@ -194,6 +289,7 @@ The gem keeps host/tooling responsibilities in the host app:
 - `git` installed in environment (for Git panel data)
 - `minitest` or `rspec` in the host app's bundle (required for the test runner)
 - `actioncable` framework/gem (optional, required only for realtime file-change push + websocket state saves)
+- `ruby-lsp` gem (optional — see below)
 
 All lint and test tools are auto-detected at runtime. The engine gracefully disables features if the tools are not available. Neither `rubocop`, `haml_lint`, nor any test framework are runtime dependencies of the gem itself — they are discovered from the host app's environment.
 
@@ -272,27 +368,6 @@ common cause of *"the other person's edits never show up."* For pairing, run a s
 worker (`WEB_CONCURRENCY=0`, or `bundle exec rails server` which is single-process by
 default). A multi-worker setup would additionally need a cross-process cable adapter, but
 the in-memory buffer still would not be shared — single-process is the supported mode.
-
-### Syntax Highlighting Support
-Monaco runtime assets are served from the engine route namespace (`/mbeditor/monaco-editor/*` and `/mbeditor/monaco_worker.js`).
-The gem includes syntax highlighting for common Rails and React development file types:
-
-**Web & Template Languages:**
-- **Ruby** (.rb, Gemfile, gemspec, Rakefile)
-- **HTML** 
-- **ERB** (.html.erb, .erb) — Handlebars-based template syntax
-- **HAML** (.haml) — plaintext syntax highlighting (no dedicated HAML grammar in Monaco; haml-lint provides inline error markers when available)
-- **CSS** and **SCSS** stylesheets
-
-**JavaScript & React:**
-- **JavaScript** (.js, .jsx)
-- **TypeScript** for JSX with full language server support
-
-**Configuration & Documentation:**
-- **YAML** (.yml, .yaml)
-- **Markdown** (.md)
-
-These language modules are packaged locally with the gem for true offline operation. No network fallback is needed—all highlighting works without internet connectivity.
 
 ## Asset Pipeline
 

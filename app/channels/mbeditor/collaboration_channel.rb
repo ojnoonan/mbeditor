@@ -32,7 +32,7 @@ module Mbeditor
       bytes = data["update"]
       return if bytes.nil?
 
-      CollaborationDocStore.record_update(@path, bytes)
+      CollaborationDocStore.record_update(room_key, bytes)
       relay("type" => "doc_update", "update" => bytes)
     end
 
@@ -40,7 +40,7 @@ module Mbeditor
       bytes = data["snapshot"]
       return if bytes.nil?
 
-      CollaborationDocStore.replace_snapshot(@path, bytes)
+      CollaborationDocStore.replace_snapshot(room_key, bytes)
       relay("type" => "snapshot", "snapshot" => bytes)
     end
 
@@ -65,12 +65,20 @@ module Mbeditor
     def transmit_initial_state
       return unless respond_to?(:transmit, true)
 
-      state = CollaborationDocStore.state_for(@path)
+      state = CollaborationDocStore.state_for(room_key)
       transmit({ "type" => "sync", "snapshot" => state[:snapshot], "deltas" => state[:deltas] })
     end
 
+    # A room is identified by workspace *and* relative path. Keying on the path
+    # alone means two workspaces that both contain "README.md" share one buffer,
+    # so pointing `workspace_root` at a different project seeds its file with the
+    # previous project's content. The NUL separator cannot occur in either part.
+    def room_key
+      @room_key ||= "#{WorkspaceRootResolver.call}\0#{@path}"
+    end
+
     def stream_name
-      "#{STREAM_PREFIX}:#{Digest::SHA256.hexdigest(@path)}"
+      "#{STREAM_PREFIX}:#{Digest::SHA256.hexdigest(room_key)}"
     end
   end
 end

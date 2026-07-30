@@ -92,6 +92,17 @@ module Mbeditor
     # MAX_RESULTS cap
     # -------------------------------------------------------------------------
 
+    test "results carry the defining file and line for navigation" do
+      write_js("app/widgets/react_window.js", "// header\nReactWindow.open = function() {};\n")
+
+      results = call("ReactWindow")
+
+      member = results.find { |r| r[:name] == "open" }
+      assert member, "expected the member to be found"
+      assert_equal "app/widgets/react_window.js", member[:file]
+      assert_equal 2, member[:line]
+    end
+
     test "caps results at MAX_RESULTS" do
       (JsMembersService::MAX_RESULTS + 5).times do |i|
         write_js("app/comp_#{i}.js", "ReactWindow.method#{i} = function() {};")

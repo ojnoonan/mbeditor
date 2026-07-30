@@ -8,6 +8,7 @@ module Mbeditor
   # ---------
   # GET  /mbeditor/git/diff          ?file=<path>[&base=<sha>&head=<sha>]
   # GET  /mbeditor/git/blame         ?file=<path>
+  # GET  /mbeditor/git/line_diff     ?file=<path>
   # GET  /mbeditor/git/file_history  ?file=<path>
   # GET  /mbeditor/git/commit_graph
   # GET  /mbeditor/redmine/issue/:id
@@ -51,6 +52,16 @@ module Mbeditor
 
       lines = GitBlameService.new(repo_path: workspace_root, file_path: file).call
       render json: { lines: lines }
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
+    # GET /mbeditor/git/line_diff?file=<path>
+    def line_diff
+      file = require_file_param
+      return unless file
+
+      render json: GitLineDiffService.new(repo_path: workspace_root, file_path: file).call
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end

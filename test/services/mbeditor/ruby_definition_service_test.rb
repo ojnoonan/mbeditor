@@ -340,5 +340,92 @@ module Mbeditor
                "#{m} should be publicly callable"
       end
     end
+
+    # -------------------------------------------------------------------------
+    # Disk-cache cap (entries carry full file contents, so it must be bounded)
+    # -------------------------------------------------------------------------
+
+    def cache_hash
+      RubyDefinitionService.send(:file_cache)
+    end
+
+    def with_cache_cap(n)
+      original = RubyDefinitionService::MAX_CACHE_ENTRIES
+      $VERBOSE = nil
+      RubyDefinitionService.send(:remove_const, :MAX_CACHE_ENTRIES)
+      RubyDefinitionService.const_set(:MAX_CACHE_ENTRIES, n)
+      $VERBOSE = true
+      yield
+    ensure
+      $VERBOSE = nil
+      RubyDefinitionService.send(:remove_const, :MAX_CACHE_ENTRIES)
+      RubyDefinitionService.const_set(:MAX_CACHE_ENTRIES, original)
+      $VERBOSE = true
+    end
+
+    def with_cache_path
+      Dir.mktmpdir do |dir|
+        original = RubyDefinitionService.cache_path
+        RubyDefinitionService.cache_path = File.join(dir, "defs.json")
+        yield RubyDefinitionService.cache_path
+      ensure
+        RubyDefinitionService.cache_path = original
+      end
+    end
+
+    test "persisting trims the cache to MAX_CACHE_ENTRIES, dropping the oldest first" do
+      5.times { |i| write_rb("file#{i}.rb", "def m#{i}\nend\n") }
+
+      with_cache_cap(3) do
+        with_cache_path do |path|
+          svc = RubyDefinitionService.new(@workspace, nil)
+          5.times { |i| svc.send(:cache_entry_for, File.join(@workspace, "file#{i}.rb")) }
+          assert_equal 5, cache_hash.length, "entries accumulate during a scan"
+
+          RubyDefinitionService.send(:persist_cache)
+
+          assert_equal 3, cache_hash.length
+          remaining = cache_hash.keys.map { |k| File.basename(k) }
+          assert_equal %w[file2.rb file3.rb file4.rb], remaining
+          assert_equal 3, JSON.parse(File.read(path)).length
+        end
+      end
+    end
+
+    test "a re-read entry survives eviction ahead of older untouched ones" do
+      3.times { |i| write_rb("f#{i}.rb", "def m#{i}\nend\n") }
+
+      with_cache_cap(2) do
+        with_cache_path do
+          svc = RubyDefinitionService.new(@workspace, nil)
+          svc.send(:cache_entry_for, File.join(@workspace, "f0.rb"))
+          svc.send(:cache_entry_for, File.join(@workspace, "f1.rb"))
+          # Touch the oldest entry — it must now be the most recently used.
+          svc.send(:cache_entry_for, File.join(@workspace, "f0.rb"))
+          svc.send(:cache_entry_for, File.join(@workspace, "f2.rb"))
+
+          RubyDefinitionService.send(:persist_cache)
+
+          remaining = cache_hash.keys.map { |k| File.basename(k) }
+          assert_equal %w[f0.rb f2.rb], remaining, "f1 was least recently used"
+        end
+      end
+    end
+
+    test "definitions still resolve after the cache has been trimmed" do
+      write_rb("target.rb", "def findable_method\nend\n")
+
+      with_cache_cap(1) do
+        with_cache_path do
+          RubyDefinitionService.call(@workspace, "findable_method")
+          RubyDefinitionService.send(:persist_cache)
+          assert_operator cache_hash.length, :<=, 1
+
+          results = RubyDefinitionService.call(@workspace, "findable_method")
+          assert_equal 1, results.length
+          assert_equal "target.rb", results.first[:file]
+        end
+      end
+    end
   end
 end

@@ -337,5 +337,38 @@ module Mbeditor
       assert_equal "admin/users", plural
       assert_equal "admin/user",  singular
     end
+
+    test "extract_resource_names strips _controller suffix from custom path file" do
+      custom = "app/assets/javascripts/ux/app"
+      plural, singular = RailsRelatedFilesService.send(
+        :extract_resource_names,
+        "#{custom}/widgets_controller.js",
+        custom_paths: [custom]
+      )
+      assert_equal "widgets", plural
+      assert_equal "widget",  singular
+    end
+
+    test "extract_resource_names strips _model suffix from custom path file" do
+      custom = "app/assets/javascripts/ux/app"
+      plural, singular = RailsRelatedFilesService.send(
+        :extract_resource_names,
+        "#{custom}/widget_model.js",
+        custom_paths: [custom]
+      )
+      assert_equal "widgets", plural
+      assert_equal "widget",  singular
+    end
+
+    test "custom path file finds related controller and model" do
+      base = "app/assets/javascripts/ux/app"
+      touch "app/controllers/widgets_controller.rb"
+      touch "app/models/widget.rb"
+      result = find("#{base}/widgets_controller.js", custom_paths: [base])
+      assert result.key?(:controller), "expected :controller group"
+      assert result.key?(:model),      "expected :model group"
+      assert_equal "app/controllers/widgets_controller.rb", result[:controller].first[:path]
+      assert_equal "app/models/widget.rb",                  result[:model].first[:path]
+    end
   end
 end

@@ -13,6 +13,7 @@ var WebSocketService = (function () {
   var _filesChangedCallbacks = [];
   var _fileSavedCallbacks = [];
   var _presenceCallbacks = [];
+  var _logLinesCallbacks = [];
   var _serverSupportsWs = false;
   var _reconnectTimer = null;
   var _lastCableAttemptAt = 0;
@@ -115,12 +116,15 @@ var WebSocketService = (function () {
             _scheduleReconnect();
           },
           received: function (data) {
-            if (data && data.type === 'files_changed') {
+            if (!data) return;
+            if (data.type === 'files_changed') {
               _emitFilesChanged(data);
-            } else if (data && data.type === 'file_saved') {
+            } else if (data.type === 'file_saved') {
               _emitFileSaved(data);
-            } else if (data && data.type === 'presence') {
+            } else if (data.type === 'presence') {
               _emitPresence(data);
+            } else if (data.type === 'log') {
+              _emitLogLines(data);
             }
           }
         }
@@ -146,6 +150,12 @@ var WebSocketService = (function () {
 
   function _emitPresence(data) {
     _presenceCallbacks.forEach(function (fn) {
+      try { fn(data); } catch (e) { /* ignore */ }
+    });
+  }
+
+  function _emitLogLines(data) {
+    _logLinesCallbacks.forEach(function (fn) {
       try { fn(data); } catch (e) { /* ignore */ }
     });
   }
@@ -244,6 +254,15 @@ var WebSocketService = (function () {
     _presenceCallbacks = _presenceCallbacks.filter(function (f) { return f !== fn; });
   }
 
+  // Register a callback invoked when the server transmits a { type: 'log' } message.
+  function onLogLines(fn) {
+    _logLinesCallbacks.push(fn);
+  }
+
+  function offLogLines(fn) {
+    _logLinesCallbacks = _logLinesCallbacks.filter(function (f) { return f !== fn; });
+  }
+
   // Send a server-side channel action (e.g. 'save_state').
   // Returns true if the message was dispatched, false if not connected.
   function perform(action, data) {
@@ -268,6 +287,8 @@ var WebSocketService = (function () {
     onFileSaved: onFileSaved,
     offFileSaved: offFileSaved,
     onPresence: onPresence,
-    offPresence: offPresence
+    offPresence: offPresence,
+    onLogLines: onLogLines,
+    offLogLines: offLogLines
   };
 })();

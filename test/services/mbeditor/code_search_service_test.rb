@@ -34,6 +34,99 @@ module Mbeditor
     # Non-matching pattern
     # -------------------------------------------------------------------------
 
+    test "grep fallback passes exclude-dirs and a timeout through ProcessRunner" do
+      original_excluded = Mbeditor.configuration.excluded_paths
+      Mbeditor.configuration.excluded_paths = %w[node_modules tmp vendor/bundle]
+      captured = nil
+      singleton = class << ProcessRunner; self; end
+      singleton.alias_method :__orig_call, :call
+      ProcessRunner.define_singleton_method(:call) do |cmd, **opts|
+        # Background threads (git polling, cache warm) may call ProcessRunner
+        # concurrently — only capture the grep spawned by CodeSearchService.
+        if cmd.first == "grep"
+          captured = { cmd: cmd, opts: opts }
+          { stdout: "", stderr: "", exit_status: nil }
+        else
+          __orig_call(cmd, **opts)
+        end
+      end
+
+      sr_singleton = class << SearchReplaceService; self; end
+      sr_singleton.alias_method :__orig_rg_available?, :rg_available?
+      SearchReplaceService.define_singleton_method(:rg_available?) { false }
+
+      CodeSearchService.call("pattern", @workspace)
+
+      assert_equal "grep", captured[:cmd].first
+      assert_includes captured[:cmd], "--exclude-dir=node_modules"
+      assert_includes captured[:cmd], "-I"
+      assert_equal Mbeditor.configuration.search_timeout, captured[:opts][:timeout]
+      assert_equal "C", captured[:opts][:env]["LC_ALL"]
+    ensure
+      Mbeditor.configuration.excluded_paths = original_excluded
+      singleton.remove_method :call
+      singleton.alias_method :call, :__orig_call
+      singleton.remove_method :__orig_call
+      sr_singleton.remove_method :rg_available?
+      sr_singleton.alias_method :rg_available?, :__orig_rg_available?
+      sr_singleton.remove_method :__orig_rg_available?
+    end
+
+    test "the rg tier honours search_respect_gitignore like the search service" do
+      captured = nil
+      singleton = class << ProcessRunner; self; end
+      singleton.alias_method :__orig_call, :call
+      ProcessRunner.define_singleton_method(:call) do |cmd, **opts|
+        captured = cmd if cmd.first == "rg"
+        { stdout: "", stderr: "", exit_status: nil }
+      end
+
+      sr_singleton = class << SearchReplaceService; self; end
+      sr_singleton.alias_method :__orig_rg_available?, :rg_available?
+      SearchReplaceService.define_singleton_method(:rg_available?) { true }
+
+      original = Mbeditor.configuration.search_respect_gitignore
+
+      Mbeditor.configuration.search_respect_gitignore = false
+      CodeSearchService.call("pattern", @workspace)
+      assert_includes captured, "--no-ignore"
+
+      Mbeditor.configuration.search_respect_gitignore = true
+      CodeSearchService.call("pattern", @workspace)
+      assert_not_includes captured, "--no-ignore"
+    ensure
+      Mbeditor.configuration.search_respect_gitignore = original
+      singleton.remove_method :call
+      singleton.alias_method :call, :__orig_call
+      singleton.remove_method :__orig_call
+      sr_singleton.remove_method :rg_available?
+      sr_singleton.alias_method :rg_available?, :__orig_rg_available?
+      sr_singleton.remove_method :__orig_rg_available?
+    end
+
+    test "returns empty array when a search subprocess times out" do
+      singleton = class << ProcessRunner; self; end
+      singleton.alias_method :__orig_call, :call
+      ProcessRunner.define_singleton_method(:call) do |cmd, **opts|
+        raise ProcessRunner::TimeoutError, "timed out" if cmd.first == "grep"
+
+        __orig_call(cmd, **opts)
+      end
+
+      sr_singleton = class << SearchReplaceService; self; end
+      sr_singleton.alias_method :__orig_rg_available?, :rg_available?
+      SearchReplaceService.define_singleton_method(:rg_available?) { false }
+
+      assert_equal [], CodeSearchService.call("pattern", @workspace)
+    ensure
+      singleton.remove_method :call
+      singleton.alias_method :call, :__orig_call
+      singleton.remove_method :__orig_call
+      sr_singleton.remove_method :rg_available?
+      sr_singleton.alias_method :rg_available?, :__orig_rg_available?
+      sr_singleton.remove_method :__orig_rg_available?
+    end
+
     test "returns empty array when pattern does not match" do
       write_file("app.js", "function myFunction() {}")
 
@@ -89,6 +182,116 @@ module Mbeditor
 
       assert lines.any? { |l| l.include?("notes.rb") }
       assert lines.none? { |l| l.include?("app.js") }
+    end
+
+    # -------------------------------------------------------------------------
+    # Timeout: rg path routes through ProcessRunner with configured timeout
+    # -------------------------------------------------------------------------
+
+    test "rg path runs through ProcessRunner with the configured search_timeout" do
+      skip "rg not available" unless AvailabilityProbe.rg
+
+      write_file("app.js", "function myFunction() {}")
+
+      captured = []
+      with_search_timeout(7) do
+        with_process_runner_recorder(captured) do
+          lines = CodeSearchService.call("myFunction", @workspace)
+          assert lines.any? { |l| l.include?("myFunction") }
+        end
+      end
+
+      rg_call = captured.find { |c| c[:cmd].first == "rg" }
+      assert rg_call, "expected the rg search to run through ProcessRunner"
+      assert_equal 7, rg_call[:timeout]
+    end
+
+    # -------------------------------------------------------------------------
+    # Timeout: grep path routes through ProcessRunner with configured timeout
+    # -------------------------------------------------------------------------
+
+    test "grep path runs through ProcessRunner with the configured search_timeout" do
+      write_file("app.js", "function myFunction() {}")
+
+      captured = []
+      with_rg_available(false) do
+        with_search_timeout(3) do
+          with_process_runner_recorder(captured) do
+            lines = CodeSearchService.call("myFunction", @workspace)
+            assert lines.any? { |l| l.include?("myFunction") }
+          end
+        end
+      end
+
+      grep_call = captured.find { |c| c[:cmd].first == "grep" }
+      assert grep_call, "expected the grep search to run through ProcessRunner"
+      assert_equal 3, grep_call[:timeout]
+    end
+
+    # -------------------------------------------------------------------------
+    # Timeout: graceful degradation
+    # -------------------------------------------------------------------------
+
+    test "returns empty array when the search subprocess times out" do
+      write_file("app.js", "function myFunction() {}")
+
+      stub_process_runner_raising(ProcessRunner::TimeoutError.new("timed out")) do
+        lines = CodeSearchService.call("myFunction", @workspace)
+        assert_equal [], lines
+      end
+    end
+
+    private
+
+    def with_rg_available(value)
+      original = AvailabilityProbe.method(:rg)
+      AvailabilityProbe.define_singleton_method(:rg) { value }
+      yield
+    ensure
+      AvailabilityProbe.singleton_class.send(:remove_method, :rg)
+      AvailabilityProbe.define_singleton_method(:rg, original)
+    end
+
+    def with_search_timeout(seconds)
+      previous = Mbeditor.configuration.search_timeout
+      Mbeditor.configuration.search_timeout = seconds
+      yield
+    ensure
+      Mbeditor.configuration.search_timeout = previous
+    end
+
+    # Temporarily wrap ProcessRunner.call to record cmd + timeout while still
+    # delegating to the real runner. Mirrors the recorder in
+    # editors_controller_test.rb / git_info_service_test.rb.
+    def with_process_runner_recorder(captured)
+      real = ProcessRunner.method(:call)
+      verbose = $VERBOSE
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call) do |cmd, **kwargs|
+        captured << { cmd: cmd, timeout: kwargs[:timeout] }
+        real.call(cmd, **kwargs)
+      end
+      $VERBOSE = verbose
+      yield
+    ensure
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call, real)
+      $VERBOSE = verbose
+    end
+
+    def stub_process_runner_raising(error)
+      real = ProcessRunner.method(:call)
+      verbose = $VERBOSE
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call) do |*, **|
+        raise error
+      end
+      $VERBOSE = verbose
+      yield
+    ensure
+      $VERBOSE = nil
+      ProcessRunner.singleton_class.send(:define_method, :call, real)
+      $VERBOSE = verbose
     end
   end
 end

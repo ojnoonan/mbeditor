@@ -82,8 +82,10 @@ var FileService = (function () {
     return axios.delete(window.mbeditorBasePath() + '/delete', { data: { path: path } }).then(function(res) { return res.data; });
   }
 
-  function lintFile(path, code) {
-    return axios.post(window.mbeditorBasePath() + '/lint', { path: path, code: code }).then(function(res) { return res.data; });
+  function lintFile(path, code, language) {
+    var payload = { path: path, code: code };
+    if (language) payload.language = language;
+    return axios.post(window.mbeditorBasePath() + '/lint', payload).then(function(res) { return res.data; });
   }
 
   function quickFixOffense(path, code, copName) {
@@ -94,8 +96,12 @@ var FileService = (function () {
     return axios.post(window.mbeditorBasePath() + '/format', { path: path, code: code }).then(function(res) { return res.data; });
   }
 
-  function runTests(path) {
-    return axios.post(window.mbeditorBasePath() + '/test', { path: path }, { timeout: 120000 }).then(function(res) { return res.data; });
+  // line (1-based, optional) narrows the run to the single test at that line;
+  // the server ignores it unless `path` IS the test file.
+  function runTests(path, line) {
+    var payload = { path: path };
+    if (line) payload.line = line;
+    return axios.post(window.mbeditorBasePath() + '/test', payload, { timeout: 120000 }).then(function(res) { return res.data; });
   }
 
   function ping() {
@@ -188,8 +194,10 @@ var FileService = (function () {
     prefetchCache.delete(path);
   }
 
-  function getJsDefinition(symbol, extraOptions) {
-    var config = Object.assign({ params: { symbol: symbol }, timeout: 5000 }, extraOptions || {});
+  function getJsDefinition(symbol, extraOptions, parent) {
+    var params = { symbol: symbol };
+    if (parent) params.parent = parent;
+    var config = Object.assign({ params: params, timeout: 5000 }, extraOptions || {});
     return axios.get(window.mbeditorBasePath() + '/js_definition', config).then(function(res) { return res.data; });
   }
 
@@ -210,6 +218,47 @@ var FileService = (function () {
 
   function getClientConfig() {
     return axios.get(window.mbeditorBasePath() + '/client_config').then(function(res) { return res.data; });
+  }
+
+  // Bridge to the host's ruby-lsp process. lspMethod: 'definition' | 'hover'
+  // | 'completion'; line/character are Monaco 1-based. The server answers in
+  // provider-ready shapes, or { fallback: true } when the LSP can't answer in
+  // time (caller then uses the legacy grep/Ripper path).
+  function rubyLspRequest(lspMethod, path, content, line, character, extraOptions) {
+    var config = Object.assign({ timeout: 6000 }, extraOptions || {});
+    return axios.post(window.mbeditorBasePath() + '/ruby_lsp', {
+      lsp_method: lspMethod,
+      path: path,
+      content: content,
+      line: line,
+      character: character
+    }, config).then(function(res) { return res.data; });
+  }
+
+  // Whole-document Ruby diagnostics from ruby-lsp (RuboCop offenses + Prism
+  // syntax errors), translated server-side into the same marker shape /lint
+  // returns.
+  function lspDiagnostics(path, content) {
+    return rubyLspRequest('diagnostics', path, content, 1, 1, { timeout: 15000 });
+  }
+
+  function getJsGlobals() {
+    return axios.get(window.mbeditorBasePath() + '/js_globals', { timeout: 20000 })
+      .then(function(res) { return res.data; });
+  }
+
+  // The workspace's own JS source for Monaco's TypeScript program. This is the
+  // largest response the editor fetches (a big app is tens of MB before gzip),
+  // so it gets a generous timeout and is only ever fetched whole once — later
+  // changes go through getJsProgramFile.
+  function getJsProgram() {
+    return axios.get(window.mbeditorBasePath() + '/js_program', { timeout: 120000 })
+      .then(function(res) { return res.data; });
+  }
+
+  function getJsProgramFile(path) {
+    return axios.get(window.mbeditorBasePath() + '/js_program', { params: { path: path }, timeout: 15000 })
+      .then(function(res) { return res.data; });
   }
 
   function getRelatedFiles(path) {
@@ -256,6 +305,11 @@ var FileService = (function () {
     getModuleMembers: getModuleMembers,
     getFileIncludes: getFileIncludes,
     getClientConfig: getClientConfig,
+    getJsGlobals: getJsGlobals,
+    getJsProgram: getJsProgram,
+    getJsProgramFile: getJsProgramFile,
+    rubyLspRequest: rubyLspRequest,
+    lspDiagnostics: lspDiagnostics,
     getRelatedFiles: getRelatedFiles,
     getModelSchema: getModelSchema,
     getChangelog: getChangelog

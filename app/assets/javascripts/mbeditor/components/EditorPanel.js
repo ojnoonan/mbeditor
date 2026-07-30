@@ -23,6 +23,7 @@ var EditorPanel = function EditorPanel(_ref) {
   var onFormat = _ref.onFormat;
   var onSave = _ref.onSave;
   var onRunTest = _ref.onRunTest;
+  var onRunTestAtCursor = _ref.onRunTestAtCursor;
   var onShowHistory = _ref.onShowHistory;
   var treeData = _ref.treeData || [];
   var testResult = _ref.testResult;
@@ -85,6 +86,10 @@ var EditorPanel = function EditorPanel(_ref) {
   var setIsBlameLoading = _useState8[1];
 
   var blameDecorationsRef = useRef([]);
+  var gitLineDecorationsRef = useRef([]);
+  // Latest git line-diff refresh, read by the poll effect so its interval does
+  // not have to be torn down whenever the active tab changes.
+  var gitLineRefreshRef = useRef(null);
   var blameZoneIdsRef = useRef([]);
   var testDecorationIdsRef = useRef([]);
   var testZoneIdsRef = useRef([]);
@@ -104,36 +109,54 @@ var EditorPanel = function EditorPanel(_ref) {
   var methodsList = _useState14[0];
   var setMethodsList = _useState14[1];
 
-  var _useState15 = useState(null);
+  var _useState15 = useState(false);
   var _useState16 = _slicedToArray(_useState15, 2);
-  var methodsDropdownPos = _useState16[0];
-  var setMethodsDropdownPos = _useState16[1];
+  var methodsTruncated = _useState16[0];
+  var setMethodsTruncated = _useState16[1];
+
+  var _useState17 = useState(false);
+  var _useState18 = _slicedToArray(_useState17, 2);
+  var methodsUnavailable = _useState18[0];
+  var setMethodsUnavailable = _useState18[1];
+
+  var _useState19 = useState(null);
+  var _useState20 = _slicedToArray(_useState19, 2);
+  var methodsDropdownPos = _useState20[0];
+  var setMethodsDropdownPos = _useState20[1];
 
   var methodsBtnRef = useRef(null);
+  var methodsDropdownRef = useRef(null);
+  // Discards a JS outline that resolves after the dropdown was closed or reopened.
+  var methodsRequestRef = useRef(0);
 
   // Local pagination state — initialized from tab props; updated on page navigation
-  var _useState17 = useState(tab.startLine || 0);
-  var _useState18 = _slicedToArray(_useState17, 2);
-  var pageStartLine = _useState18[0];
-  var setPageStartLine = _useState18[1];
-
-  var _useState19 = useState(tab.lineCount || 0);
-  var _useState20 = _slicedToArray(_useState19, 2);
-  var pageLineCount = _useState20[0];
-  var setPageLineCount = _useState20[1];
-
-  var _useState21 = useState(tab.totalLines || 0);
+  var _useState21 = useState(tab.startLine || 0);
   var _useState22 = _slicedToArray(_useState21, 2);
-  var pageTotalLines = _useState22[0];
-  var setPageTotalLines = _useState22[1];
+  var pageStartLine = _useState22[0];
+  var setPageStartLine = _useState22[1];
 
-  var _useState23 = useState(tab.totalBytes || 0);
+  var _useState23 = useState(tab.lineCount || 0);
   var _useState24 = _slicedToArray(_useState23, 2);
-  var pageTotalBytes = _useState24[0];
-  var setPageTotalBytes = _useState24[1];
+  var pageLineCount = _useState24[0];
+  var setPageLineCount = _useState24[1];
+
+  var _useState25 = useState(tab.totalLines || 0);
+  var _useState26 = _slicedToArray(_useState25, 2);
+  var pageTotalLines = _useState26[0];
+  var setPageTotalLines = _useState26[1];
+
+  var _useState27 = useState(tab.totalBytes || 0);
+  var _useState28 = _slicedToArray(_useState27, 2);
+  var pageTotalBytes = _useState28[0];
+  var setPageTotalBytes = _useState28[1];
 
   var onFormatRef = useRef(onFormat);
   onFormatRef.current = onFormat;
+
+  // Kept in a ref so the long-lived Monaco action closure always calls the
+  // current handler rather than the one captured at registration.
+  var onRunTestAtCursorRef = useRef(onRunTestAtCursor);
+  onRunTestAtCursorRef.current = onRunTestAtCursor;
 
   var onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
@@ -211,6 +234,10 @@ var EditorPanel = function EditorPanel(_ref) {
 
     if (window.MbeditorEditorPlugins && window.MbeditorEditorPlugins.registerGlobalExtensions) {
       window.MbeditorEditorPlugins.registerGlobalExtensions(window.monaco);
+    }
+
+    if (window.MbeditorColorProvider) {
+      window.MbeditorColorProvider.register(window.monaco);
     }
 
     // Register HAML Monarch grammar once
@@ -514,6 +541,10 @@ var EditorPanel = function EditorPanel(_ref) {
       case 'rb':case 'ruby':case 'gemspec':case 'rake':
           language = 'ruby';break;
       case 'js':case 'jsx':
+        // Deliberate: .jsx and .js.jsx map to 'javascript' — Monaco's
+        // standalone TS worker has no 'javascriptreact' language; JSX is
+        // enabled globally via compilerOptions (jsx: JsxEmit.React) in
+        // editor_plugins.js. Do not add a compound-extension case for .js.jsx.
         language = 'javascript';break;
       case 'ts':case 'tsx':
         language = 'typescript';break;
@@ -619,7 +650,7 @@ var EditorPanel = function EditorPanel(_ref) {
       autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
       autoIndent: editorPrefs.autoIndent || 'full',
       formatOnPaste: editorPrefs.formatOnPaste !== false,
-      formatOnType: editorPrefs.formatOnType !== false,
+      formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
       quickSuggestions: editorPrefs.quickSuggestions !== false,
       wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',
       acceptSuggestionOnEnter: editorPrefs.acceptSuggestionOnEnter || 'on',
@@ -627,6 +658,8 @@ var EditorPanel = function EditorPanel(_ref) {
       fixedOverflowWidgets: true,
       hover: { above: false }
     });
+
+    applyLargeFileTuning(editor, modelObj);
 
     if (tab.viewState) {
       editor.restoreViewState(tab.viewState);
@@ -708,6 +741,21 @@ var EditorPanel = function EditorPanel(_ref) {
       });
     }
 
+    // Run only the test under the cursor. Registered as an editor action so it
+    // gets a context-menu entry and a keybinding without another toolbar button;
+    // the flask button stays whole-file.
+    var runTestAtCursorDisposable = editor.addAction({
+      id: 'mbeditor.runTestAtCursor',
+      label: 'Run Test at Cursor',
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1.6,
+      keybindings: [window.monaco.KeyMod.CtrlCmd | window.monaco.KeyMod.Shift | window.monaco.KeyCode.KeyT],
+      run: function(ed) {
+        var pos = ed.getPosition();
+        if (pos && onRunTestAtCursorRef.current) onRunTestAtCursorRef.current(pos.lineNumber);
+      }
+    });
+
     var formatActionDisposable = editor.addAction({
       id: 'mbeditor.formatDocument',
       label: 'Format Document',
@@ -716,6 +764,14 @@ var EditorPanel = function EditorPanel(_ref) {
       run: function() {
         if (onFormatRef.current) onFormatRef.current();
       }
+    });
+
+    // Ctrl/Cmd+P → quick-open. Bound at the Monaco level (not just the window
+    // listener) so the editor intercepts the key while it has focus; otherwise
+    // the browser's native print dialog fires before the bubbled window handler
+    // can preventDefault. The vim-mode mapping handles this separately.
+    editor.addCommand(window.monaco.KeyMod.CtrlCmd | window.monaco.KeyCode.KeyP, function() {
+      EditorStore.setState({ isQuickOpenVisible: true });
     });
 
     var editorPluginDisposable = null;
@@ -779,51 +835,58 @@ var EditorPanel = function EditorPanel(_ref) {
     }
     EditorStore.setState({ canUndo: avi > aviBaseRef.current, canRedo: avi < aviMaxRef.current });
 
-    var contentDisposable = modelObj.onDidChangeContent(function (e) {
-      if (!_collabActive && typeof HistoryService !== 'undefined') {
-        HistoryService.recordOps(tab.path, e.changes);
-      }
-      var currentAvi = modelObj.getAlternativeVersionId();
-      if (!e.isUndoing && !e.isRedoing) {
-        // New edit: redo stack discarded at this point, so max resets here
-        aviMaxRef.current = currentAvi;
-      } else if (currentAvi > aviMaxRef.current) {
-        aviMaxRef.current = currentAvi;
-      }
-      var newCanUndo = currentAvi > aviBaseRef.current;
-      var newCanRedo = currentAvi < aviMaxRef.current;
-      var _st = EditorStore.getState();
-      if (_st.canUndo !== newCanUndo || _st.canRedo !== newCanRedo) {
-        EditorStore.setState({ canUndo: newCanUndo, canRedo: newCanRedo });
-      }
-
-      var val = editor.getValue();
-
-      // Dirty-state tracking via alternativeVersionId — O(1), no string comparison.
-      // AVI decrements on undo so it returns to cleanVersionId after a full undo.
-      // Skip entirely when cleanVersionId is null — file is mid-load, not yet settled.
-      var _entry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
-      var _cleanAvi = _entry && _entry.cleanVersionId;
-      if (_cleanAvi !== null && _cleanAvi !== undefined) {
-        if (currentAvi !== _cleanAvi) {
-          TabManager.markDirty(paneId, tab.id, val);
-        } else {
-          TabManager.markClean(paneId, tab.id, val);
+    // Attached to whichever model the editor currently holds. The phase-2 replay
+    // below can swap the model, so this must be re-attached to the replacement —
+    // a listener left on the old model would silently stop tracking edits.
+    var _attachContentListener = function (model) {
+      return model.onDidChangeContent(function (e) {
+        if (!_collabActive && typeof HistoryService !== 'undefined') {
+          HistoryService.recordOps(tab.path, e.changes);
         }
-      }
+        var currentAvi = model.getAlternativeVersionId();
+        if (!e.isUndoing && !e.isRedoing) {
+          // New edit: redo stack discarded at this point, so max resets here
+          aviMaxRef.current = currentAvi;
+        } else if (currentAvi > aviMaxRef.current) {
+          aviMaxRef.current = currentAvi;
+        }
+        var newCanUndo = currentAvi > aviBaseRef.current;
+        var newCanRedo = currentAvi < aviMaxRef.current;
+        var _st = EditorStore.getState();
+        if (_st.canUndo !== newCanUndo || _st.canRedo !== newCanRedo) {
+          EditorStore.setState({ canUndo: newCanUndo, canRedo: newCanRedo });
+        }
 
-      var currentContent = latestContentRef.current;
+        var val = model.getValue();
 
-      // Normalize before comparing to prevent false positive dirty edits
-      var vNorm = val.replace(/\r\n/g, '\n');
-      var cNorm = currentContent.replace(/\r\n/g, '\n');
-      if (vNorm !== cNorm) {
-        // Update the ref immediately so rapid undo/redo events compare against the
-        // latest content rather than a stale snapshot from a previous React render.
-        latestContentRef.current = val;
-        onContentChange(val);
-      }
-    });
+        // Dirty-state tracking via alternativeVersionId — O(1), no string comparison.
+        // AVI decrements on undo so it returns to cleanVersionId after a full undo.
+        // Skip entirely when cleanVersionId is null — file is mid-load, not yet settled.
+        var _entry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+        var _cleanAvi = _entry && _entry.cleanVersionId;
+        if (_cleanAvi !== null && _cleanAvi !== undefined) {
+          if (currentAvi !== _cleanAvi) {
+            TabManager.markDirty(paneId, tab.id, val);
+          } else {
+            TabManager.markClean(paneId, tab.id, val);
+          }
+        }
+
+        var currentContent = latestContentRef.current;
+
+        // Normalize before comparing to prevent false positive dirty edits
+        var vNorm = val.replace(/\r\n/g, '\n');
+        var cNorm = currentContent.replace(/\r\n/g, '\n');
+        if (vNorm !== cNorm) {
+          // Update the ref immediately so rapid undo/redo events compare against the
+          // latest content rather than a stale snapshot from a previous React render.
+          latestContentRef.current = val;
+          onContentChange(val);
+        }
+      });
+    };
+
+    var contentDisposable = _attachContentListener(modelObj);
 
     // Phase 2: background undo-history replay.
     // Only run for newly-created models (reused models already have their undo stack).
@@ -915,24 +978,31 @@ var EditorPanel = function EditorPanel(_ref) {
           var _oldEntry = window.__mbeditorModels[_phase2Path];
           if (_oldEntry && _oldEntry.model !== modelB) {
             var _oldModel = _oldEntry.model;
+            // modelB holds the same text as modelA but its own version-id sequence,
+            // so re-anchor the clean baseline. Carry the dirty state across: when the
+            // tab was already dirty, -1 can never match a real AVI, so it stays dirty.
+            var _oldClean = _oldEntry.cleanVersionId;
+            var _wasDirty = _oldClean !== null && _oldClean !== undefined &&
+                            _oldModel.getAlternativeVersionId() !== _oldClean;
+            var _newAvi = modelB.getAlternativeVersionId();
             window.__mbeditorModels[_phase2Path] = {
               model:          modelB,
               aviBase:        aviBaseRef.current,
-              aviMax:         modelB.getAlternativeVersionId(),
+              aviMax:         _newAvi,
               lastAccessed:   Date.now(),
-              cleanVersionId: _oldEntry.cleanVersionId
+              cleanVersionId: _wasDirty ? -1 : _newAvi
             };
+            aviMaxRef.current = _newAvi;
             setTimeout(function () {
               if (_oldModel && !_oldModel.isDisposed()) _oldModel.dispose();
             }, 0);
           }
 
-          // Re-attach the HistoryService content listener to modelB so ops recorded
-          // after the swap are captured without waiting for the next tab switch.
-          var _modelBListener = modelB.onDidChangeContent(function (ev) {
-            HistoryService.recordOps(_phase2Path, ev.changes);
-          });
-          _phase2CleanupFn = function () { _modelBListener.dispose(); };
+          // Move the content listener onto modelB. It carries dirty tracking, content
+          // sync and history recording — leaving it on modelA strands all three.
+          contentDisposable.dispose();
+          contentDisposable = _attachContentListener(modelB);
+          _phase2CleanupFn = function () { _phase2Active = false; };
         }).catch(function () {
           _phase2Listener.dispose();
         });
@@ -984,6 +1054,7 @@ var EditorPanel = function EditorPanel(_ref) {
       }
       if (editorPluginDisposable) editorPluginDisposable.dispose();
       formatActionDisposable.dispose();
+      runTestAtCursorDisposable.dispose();
       columnSelectDisposable.dispose();
       contentDisposable.dispose();
       EditorStore.setState({ canUndo: false, canRedo: false });
@@ -1136,12 +1207,15 @@ var EditorPanel = function EditorPanel(_ref) {
         autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
         autoIndent: editorPrefs.autoIndent || 'full',
         formatOnPaste: editorPrefs.formatOnPaste !== false,
-        formatOnType: editorPrefs.formatOnType !== false,
+        formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
         quickSuggestions: editorPrefs.quickSuggestions !== false,
         wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',
         linkedEditing: !!(editorPrefs.linkedEditing),
         acceptSuggestionOnEnter: editorPrefs.acceptSuggestionOnEnter || 'on'
       });
+      // Re-apply large-file tuning last so a prefs change can't re-enable the
+      // expensive features for a big file.
+      applyLargeFileTuning(monacoRef.current, monacoRef.current.getModel());
     }
   }, [editorPrefs]);
 
@@ -1151,8 +1225,8 @@ var EditorPanel = function EditorPanel(_ref) {
     if (!editor) return;
 
     if (editorPrefs.vimMode) {
-      // Lazy-load monaco-vim via the same AMD loader that Monaco uses
-      require(['monaco-vim'], function(MonacoVim) {
+      // Lazy-load monaco-vim (bundled UMD; binds to the window.monaco global)
+      window.loadMonacoVim(function(MonacoVim) {
         // Dispose any previous instance first (e.g. editorPrefs changed rapidly)
         if (vimModeObjRef.current) {
           try { vimModeObjRef.current.dispose(); } catch (e) {}
@@ -1245,7 +1319,10 @@ var EditorPanel = function EditorPanel(_ref) {
             : window.monaco.MarkerSeverity.Warning;
           return {
             severity: sev,
-            source: 'rubocop',
+            // RuboCop-sourced markers keep the 'rubocop' source so the quick-fix
+        // code action provider offers a lightbulb; other sources (e.g. Prism
+        // syntax errors from ruby-lsp) correctly get none.
+        source: m.source || 'rubocop',
             code: m.copName || '',
             message: m.message,
             startLineNumber: m.startLine,
@@ -1291,6 +1368,115 @@ var EditorPanel = function EditorPanel(_ref) {
       testDecorationIdsRef.current = monacoRef.current.deltaDecorations(testDecorationIdsRef.current, []);
     }
   }, [tab.path]);
+
+  // Tint line numbers by git status: green added, orange modified, red where
+  // lines were removed.
+  //
+  // The ranges come from `git diff -U0` against HEAD, so they describe the file
+  // as last written to disk. Monaco anchors decorations to the model and shifts
+  // them as you type, which keeps them roughly right mid-edit; the authoritative
+  // refresh happens on the signals wired up at the end of this effect.
+
+  // Poll cadence for the tint, matching the file tree's. Slower to react than a
+  // filesystem watcher would be, at the cost of one `git diff -U0` on one file
+  // per visible pane — against a resource nothing else is competing for, rather
+  // than a share of the kernel's inotify budget.
+  var GIT_LINE_POLL_MS = 10000;
+
+  useEffect(function () {
+    if (!gitAvailable || !tab.path || tab.isDiff || tab.isCombinedDiff) return;
+
+    var cancelled = false;
+
+    function clear() {
+      if (!monacoRef.current || !monacoRef.current.getModel()) return;
+      gitLineDecorationsRef.current =
+        monacoRef.current.deltaDecorations(gitLineDecorationsRef.current, []);
+    }
+
+    function apply(data) {
+      var editor = monacoRef.current;
+      var model = editor && editor.getModel();
+      if (!model || !window.monaco) return;
+
+      var lineCount = model.getLineCount();
+      var decorations = [];
+
+      function push(ranges, className) {
+        (ranges || []).forEach(function (range) {
+          // A deletion above the first line is reported as line 0; mark line 1
+          // so the file's opening line carries the flag.
+          var start = Math.max(1, Math.min(range.start, lineCount));
+          var end = Math.max(start, Math.min(range.end, lineCount));
+          for (var line = start; line <= end; line++) {
+            decorations.push({
+              range: new window.monaco.Range(line, 1, line, 1),
+              options: { isWholeLine: true, lineNumberClassName: className }
+            });
+          }
+        });
+      }
+
+      push(data.added, 'mbeditor-gitline-added');
+      push(data.modified, 'mbeditor-gitline-modified');
+      push(data.deleted, 'mbeditor-gitline-deleted');
+
+      gitLineDecorationsRef.current =
+        editor.deltaDecorations(gitLineDecorationsRef.current, decorations);
+    }
+
+    function refresh() {
+      var path = tab.path;
+      GitService.fetchLineDiff(path).then(function (data) {
+        // The tab can be switched or closed while the request is in flight.
+        if (cancelled || !data || tab.path !== path) return;
+        apply(data);
+      }).catch(function () {
+        // Not a repo, file not readable, git missing — leave the numbers plain.
+        if (!cancelled) clear();
+      });
+    }
+
+    refresh();
+
+    // Publish the current refresh for the poll below, which lives in its own
+    // effect so a re-render of this one cannot restart its clock.
+    gitLineRefreshRef.current = refresh;
+
+    // Immediate path for writes mbeditor made itself.
+    var hasSocket = typeof WebSocketService !== 'undefined' && WebSocketService.onFilesChanged;
+    var onChanged = hasSocket ? function () { refresh(); } : null;
+    if (onChanged) WebSocketService.onFilesChanged(onChanged);
+
+    return function () {
+      cancelled = true;
+      gitLineRefreshRef.current = null;
+      if (onChanged && WebSocketService.offFilesChanged) WebSocketService.offFilesChanged(onChanged);
+      clear();
+    };
+  }, [tab.path, tab.externalContentVersion, tab.isDiff, tab.isCombinedDiff, gitAvailable]);
+
+  // The poll for changes made outside the editor — a terminal commit or branch
+  // switch alters the diff without touching this buffer.
+  //
+  // Deliberately its own effect with no dependencies. Held inside the effect
+  // above, the interval was cleared and recreated on every re-render of that
+  // one and never survived long enough to fire, so the tint only ever updated
+  // via the WebSocket — i.e. never for external changes, which is the whole
+  // point of it. Reading the refresh through a ref keeps this clock running
+  // across tab switches.
+  useEffect(function () {
+    var tick = function () {
+      if (document.hidden) return;
+      if (gitLineRefreshRef.current) gitLineRefreshRef.current();
+    };
+    var intervalId = setInterval(tick, GIT_LINE_POLL_MS);
+    window.addEventListener('focus', tick);
+    return function () {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', tick);
+    };
+  }, []);
 
   // Handle Blame data fetching
   useEffect(function () {
@@ -1623,6 +1809,15 @@ var EditorPanel = function EditorPanel(_ref) {
   var fileBaseName = (tab.path || '').split('/').pop().toLowerCase();
   var isRubyFile = ext === 'rb' || ext === 'ruby' || ext === 'gemspec' || ext === 'rake' ||
     fileBaseName === 'gemfile' || fileBaseName === 'gemfile.lock' || fileBaseName === 'rakefile';
+  var isJsFile = ['js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx'].indexOf(ext) !== -1;
+  var hasOutline = isRubyFile || isJsFile;
+  var isTestOutline = false;
+  try {
+    isTestOutline = isRubyFile && window.RubyOutline &&
+      typeof window.RubyOutline.isTestPath === 'function' && window.RubyOutline.isTestPath(tab.path);
+  } catch (err) {
+    isTestOutline = false;
+  }
 
   useEffect(function () {
     if (isMarkdown && window.marked) {
@@ -1660,8 +1855,8 @@ var EditorPanel = function EditorPanel(_ref) {
     if (!methodsOpen) return;
     function handleClickOutside(e) {
       var btn = methodsBtnRef.current;
-      // Close if click is not on the button (the dropdown uses onMouseDown with preventDefault)
-      if (btn && !btn.contains(e.target)) {
+      var dropdown = methodsDropdownRef.current;
+      if (btn && !btn.contains(e.target) && (!dropdown || !dropdown.contains(e.target))) {
         setMethodsOpen(false);
       }
     }
@@ -1669,20 +1864,61 @@ var EditorPanel = function EditorPanel(_ref) {
     return function() { document.removeEventListener('mousedown', handleClickOutside); };
   }, [methodsOpen]);
 
-  // Parse all method definitions from the current Monaco model
-  function parseRubyMethods(model) {
-    var methods = [];
+  // Large-file performance tuning. Above this many lines, scroll- and edit-time
+  // work from these features (minimap canvas repaint on every scroll,
+  // sticky-scroll scope recompute, folding-range and bracket-pair recomputation,
+  // occurrence highlighting, whole-document suggestion scans) dominates and makes
+  // the editor feel sluggish. Disabling them for big files keeps scrolling and
+  // typing responsive. This only ever downgrades — it never turns a feature on —
+  // so it cannot override a lighter user preference.
+  function applyLargeFileTuning(editor, model) {
+    if (!editor || !model) return;
+    if (model.getLineCount() < 2500) return;
+    editor.updateOptions({
+      minimap: { enabled: false },
+      stickyScroll: { enabled: false },
+      bracketPairColorization: { enabled: false },
+      folding: false,
+      occurrencesHighlight: 'off',
+      wordBasedSuggestions: 'off'
+    });
+  }
+
+  // Parse the current Monaco buffer so unsaved Ruby test declarations appear too.
+  function parseRubyOutline(model, path) {
     var lineCount = model.getLineCount();
-    var DEF_RE = /^\s*def\s+(self\.)?([a-zA-Z_][a-zA-Z0-9_?!=]*)/;
+    var lines = [];
     for (var i = 1; i <= lineCount; i++) {
-      var line = model.getLineContent(i);
-      var m = DEF_RE.exec(line);
-      if (m) {
-        var selfPrefix = m[1] ? 'self.' : '';
-        methods.push({ line: i, name: selfPrefix + m[2] });
-      }
+      lines.push(model.getLineContent(i));
     }
-    return methods;
+    return window.RubyOutline.parse(lines, { path: path });
+  }
+
+  // The JS/TS outline comes from the TypeScript worker rather than a lexer of
+  // our own, which makes it async — the worker is where the parse already
+  // lives, and it tracks the live buffer, so unsaved edits are included.
+  function loadJsOutline(model) {
+    var ts = window.monaco && window.monaco.languages && window.monaco.languages.typescript;
+    if (!ts || !window.JsOutline) return Promise.reject(new Error('outline unavailable'));
+
+    var workerFor = model.getLanguageId() === 'typescript' ? ts.getTypeScriptWorker : ts.getJavaScriptWorker;
+    return workerFor().then(function (getWorker) {
+      return getWorker(model.uri);
+    }).then(function (client) {
+      return client.getNavigationTree(model.uri.toString());
+    }).then(function (tree) {
+      return window.JsOutline.fromNavigationTree(tree, {
+        lineAt: function (offset) { return model.getPositionAt(offset).lineNumber; },
+        textAt: function (offset, length) {
+          var start = model.getPositionAt(offset);
+          var end = model.getPositionAt(offset + length);
+          return model.getValueInRange({
+            startLineNumber: start.lineNumber, startColumn: start.column,
+            endLineNumber: end.lineNumber, endColumn: end.column
+          });
+        }
+      });
+    });
   }
 
   if (tab.fileNotFound) {
@@ -1824,27 +2060,60 @@ var EditorPanel = function EditorPanel(_ref) {
         React.createElement('i', { className: 'fas fa-history', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
         !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, 'History')
       ),
-      isRubyFile && React.createElement(
+      hasOutline && React.createElement(
         'button',
         {
           ref: methodsBtnRef,
           className: 'ide-icon-btn' + (methodsOpen ? ' active' : ''),
           onClick: function() {
-            var nextOpen = !methodsOpen;
-            if (nextOpen) {
-              var model = monacoRef.current && monacoRef.current.getModel();
-              setMethodsList(model ? parseRubyMethods(model) : []);
+            // Bump first: a click that closes the dropdown must also cancel an
+            // outline request still in flight from the click that opened it.
+            var requestId = ++methodsRequestRef.current;
+            if (methodsOpen) {
+              setMethodsOpen(false);
+              return;
+            }
+
+            var model = monacoRef.current && monacoRef.current.getModel();
+
+            function openWith(entries, truncated, unavailable) {
+              setMethodsList(entries);
+              setMethodsTruncated(truncated);
+              setMethodsUnavailable(unavailable);
               if (methodsBtnRef.current) {
                 var rect = methodsBtnRef.current.getBoundingClientRect();
                 setMethodsDropdownPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
               }
+              setMethodsOpen(true);
             }
-            setMethodsOpen(nextOpen);
+
+            if (isJsFile) {
+              // The worker has already parsed the open buffer for diagnostics,
+              // so this resolves in a few ms — opening only once it answers
+              // avoids flashing "No methods found" on the way.
+              (model ? loadJsOutline(model) : Promise.resolve({ entries: [], truncated: false }))
+                .then(function (result) {
+                  if (methodsRequestRef.current !== requestId) return;
+                  openWith(result.entries || [], !!result.truncated, false);
+                })
+                .catch(function () {
+                  if (methodsRequestRef.current !== requestId) return;
+                  openWith([], false, true);
+                });
+              return;
+            }
+
+            try {
+              var result = model ? parseRubyOutline(model, tab.path) : { entries: [], truncated: false };
+              openWith(result.entries || [], !!result.truncated, false);
+            } catch (err) {
+              openWith([], false, true);
+            }
           },
-          title: 'Jump to Method'
+          title: isTestOutline ? 'Jump to Outline' : 'Jump to Method'
         },
         React.createElement('i', { className: 'fas fa-list-ul', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
-        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, 'Methods')
+        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, isTestOutline ? 'Outline' : 'Methods')
       ),
       gitAvailable && React.createElement(
         'button',
@@ -2031,31 +2300,101 @@ var EditorPanel = function EditorPanel(_ref) {
     methodsOpen && methodsDropdownPos && React.createElement(
       'div',
       {
+        ref: methodsDropdownRef,
         className: 'ide-methods-dropdown',
         style: { position: 'fixed', top: methodsDropdownPos.top + 'px', right: methodsDropdownPos.right + 'px', left: 'auto', zIndex: 9900 }
       },
-      methodsList.length === 0
-        ? React.createElement('div', { className: 'ide-methods-dropdown-empty' }, 'No methods found')
-        : methodsList.map(function(m) {
-            return React.createElement(
-              'div',
-              {
-                key: m.line,
-                className: 'ide-methods-dropdown-item',
-                onMouseDown: function(e) {
-                  e.preventDefault();
-                  setMethodsOpen(false);
-                  if (monacoRef.current) {
-                    monacoRef.current.revealLineInCenter(m.line);
-                    monacoRef.current.setPosition({ lineNumber: m.line, column: 1 });
-                    monacoRef.current.focus();
-                  }
+      methodsUnavailable
+        ? React.createElement('div', { className: 'ide-methods-dropdown-message' }, 'Outline unavailable')
+        : methodsList.length === 0
+          ? React.createElement('div', { className: 'ide-methods-dropdown-empty' }, isTestOutline ? 'No outline entries found' : 'No methods found')
+          : (function() {
+              var rows = [];
+              var visibility = null;
+              var visibilityStartLine = null;
+              var visibilityRows = [];
+              var icons = { method: 'fa-code', suite: 'fa-layer-group', test: 'fa-flask' };
+
+              function activateEntry(entry) {
+                setMethodsOpen(false);
+                if (monacoRef.current) {
+                  monacoRef.current.revealLineInCenter(entry.line);
+                  monacoRef.current.setPosition({ lineNumber: entry.line, column: 1 });
+                  monacoRef.current.focus();
                 }
-              },
-              React.createElement('span', { className: 'ide-methods-dropdown-line' }, m.line),
-              m.name
-            );
-          })
+              }
+
+              function flushVisibilityRows() {
+                if (visibilityRows.length === 0) return;
+                rows.push(React.createElement(
+                  'div',
+                  {
+                    key: 'visibility-group-' + visibilityStartLine,
+                    className: 'ide-methods-dropdown-visibility-group'
+                  },
+                  React.createElement(
+                    'div',
+                    { className: 'ide-methods-dropdown-visibility' },
+                    visibility
+                  ),
+                  visibilityRows
+                ));
+                visibility = null;
+                visibilityStartLine = null;
+                visibilityRows = [];
+              }
+
+              methodsList.forEach(function(entry, entryIndex) {
+                var depth = typeof entry.depth === 'number' ? entry.depth : 0;
+                var row = React.createElement(
+                  'button',
+                  {
+                    // Index-qualified: a JS class and its first member can share
+                    // a line, and kind+line alone would collide.
+                    key: entry.kind + '-' + entry.line + '-' + entryIndex,
+                    type: 'button',
+                    className: 'ide-methods-dropdown-item ide-outline-entry ide-outline-entry-' + entry.kind,
+                    'data-outline-kind': entry.kind,
+                    'data-outline-depth': depth,
+                    'aria-label': entry.name + ', line ' + entry.line,
+                    tabIndex: 0,
+                    autoFocus: entryIndex === 0,
+                    style: { paddingLeft: (12 + depth * 14) + 'px' },
+                    onClick: function() {
+                      activateEntry(entry);
+                    }
+                  },
+                  React.createElement('span', { className: 'ide-methods-dropdown-line' }, entry.line),
+                  React.createElement('i', {
+                    className: 'fas ' + (icons[entry.kind] || icons.method) + ' ide-outline-entry-icon',
+                    'aria-hidden': 'true'
+                  }),
+                  React.createElement('span', { className: 'ide-outline-entry-name' }, entry.name)
+                );
+
+                if (entry.kind === 'method' && entry.visibility) {
+                  if (visibility !== entry.visibility) {
+                    flushVisibilityRows();
+                    visibility = entry.visibility;
+                    visibilityStartLine = entry.line;
+                  }
+                  visibilityRows.push(row);
+                } else {
+                  flushVisibilityRows();
+                  rows.push(row);
+                }
+              });
+              flushVisibilityRows();
+
+              if (methodsTruncated) {
+                rows.push(React.createElement(
+                  'div',
+                  { key: 'truncated', className: 'ide-methods-dropdown-message' },
+                  'Results truncated at 5,000 entries'
+                ));
+              }
+              return rows;
+            })()
     ),
     React.createElement('div', { ref: vimStatusRef, className: 'vim-statusbar', style: { display: editorPrefs.vimMode ? 'flex' : 'none', height: '22px', alignItems: 'center', padding: '0 10px', fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace", fontSize: '12px', background: 'var(--ide-statusbar-bg, #1e1e2e)', color: 'var(--ide-statusbar-fg, #9cdcfe)', borderTop: '1px solid var(--ide-border, #3e3e3e)', flexShrink: 0, userSelect: 'none', letterSpacing: '0.02em' } })
   );

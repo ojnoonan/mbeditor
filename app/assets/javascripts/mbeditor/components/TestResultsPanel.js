@@ -42,7 +42,11 @@ var TestResultsPanel = function TestResultsPanel(_ref) {
           'span',
           null,
           'Tests: ',
-          testFile ? testFile.split('/').pop() : 'Results'
+          testFile ? testFile.split('/').pop() : 'Results',
+          result && result.filteredLine
+            ? React.createElement('span', { style: { opacity: 0.6, marginLeft: '6px', fontWeight: 'normal' } },
+                '(line ' + result.filteredLine + ')')
+            : null
         )
       ),
       React.createElement(

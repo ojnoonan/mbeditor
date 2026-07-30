@@ -40,8 +40,25 @@ module Mbeditor
     private
 
     # "User" → "users", "OrderItem" → "order_items", "Order Item" → "order_items"
+    # Also checks the model file for an explicit `self.table_name = "..."` declaration.
     def derive_table_name(model_name)
       normalized = model_name.delete(" ")
+
+      # Check model file for an explicit table_name override
+      singular = ActiveSupport::Inflector.underscore(normalized)
+      model_file = File.join(@workspace_root, "app", "models", "#{singular}.rb")
+      if File.exist?(model_file)
+        begin
+          source = File.read(model_file, encoding: "utf-8")
+          # Matches: self.table_name = "name"  or  = :name  or  = 'name'
+          if (m = source.match(/self\.table_name\s*=\s*[:"']([^"'\s]+)["']?/))
+            return m[1]
+          end
+        rescue StandardError
+          # fall through to default derivation
+        end
+      end
+
       ActiveSupport::Inflector.tableize(normalized)
     end
 
@@ -53,7 +70,7 @@ module Mbeditor
       begin
         content = File.read(schema_path, encoding: "utf-8")
         parse_schema_rb(content, table_name)
-      rescue Errno::ENOENT, Errno::EACCES => e
+      rescue StandardError => e
         Rails.logger.debug("SchemaService: failed to read #{schema_path}: #{e.message}")
         nil
       end
@@ -67,7 +84,7 @@ module Mbeditor
       begin
         content = File.read(schema_path, encoding: "utf-8")
         parse_structure_sql(content, table_name)
-      rescue Errno::ENOENT, Errno::EACCES => e
+      rescue StandardError => e
         Rails.logger.debug("SchemaService: failed to read #{schema_path}: #{e.message}")
         nil
       end
@@ -145,11 +162,13 @@ module Mbeditor
       # Handles: PostgreSQL, MySQL, SQLite with quoted/unquoted names
       # Ends with different delimiters: ); ENGINE...; or just );
       quoted_name = Regexp.escape(table_name)
+      # Schema prefix pattern: matches public., "public"., myschema., "myschema". or nothing.
+      schema_prefix = /(?:(?:"[^"]+"|`[^`]+`|\w+)\.)?/
       patterns = [
-        # PostgreSQL with public schema: CREATE TABLE public."users" ( ... );
-        /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?["`]?#{quoted_name}["`]?\s*\(([\s\S]*?)\)\s*;/mi,
-        # MySQL with ENGINE: CREATE TABLE `users` ( ... ) ENGINE=...;
-        /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?#{quoted_name}["`]?\s*\(([\s\S]*?)\)\s*(?:ENGINE|DEFAULT)/mi
+        # PostgreSQL: CREATE TABLE [schema.]table ( ... );
+        /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?#{schema_prefix}["`]?#{quoted_name}["`]?\s*\(([\s\S]*?)\)\s*;/mi,
+        # MySQL: CREATE TABLE [schema.]`table` ( ... ) ENGINE=...;
+        /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?#{schema_prefix}["`]?#{quoted_name}["`]?\s*\(([\s\S]*?)\)\s*(?:ENGINE|DEFAULT)/mi
       ]
 
       table_def = nil
@@ -240,6 +259,9 @@ module Mbeditor
       type_map = {
         'integer' => 'integer',
         'int' => 'integer',
+        'int4' => 'integer',
+        'int2' => 'integer',
+        'int8' => 'bigint',
         'bigint' => 'bigint',
         'smallint' => 'integer',
         'bigserial' => 'bigint',
@@ -247,21 +269,50 @@ module Mbeditor
         'varchar' => 'string',
         'character varying' => 'string',
         'character' => 'string',
+        'char' => 'string',
         'text' => 'text',
+        'citext' => 'string',
         'boolean' => 'boolean',
         'bool' => 'boolean',
         'decimal' => 'decimal',
         'numeric' => 'decimal',
+        'real' => 'float',
         'float' => 'float',
+        'float4' => 'float',
+        'float8' => 'float',
+        'double precision' => 'float',
         'double' => 'float',
+        'money' => 'decimal',
         'timestamp' => 'datetime',
+        'timestamp without time zone' => 'datetime',
+        'timestamp with time zone' => 'datetime',
+        'timestamptz' => 'datetime',
         'datetime' => 'datetime',
         'date' => 'date',
         'time' => 'time',
+        'time without time zone' => 'time',
+        'time with time zone' => 'time',
+        'interval' => 'string',
         'json' => 'json',
         'jsonb' => 'jsonb',
         'uuid' => 'uuid',
-        'bytea' => 'binary'
+        'bytea' => 'binary',
+        'bit' => 'string',
+        'bit varying' => 'string',
+        'inet' => 'string',
+        'cidr' => 'string',
+        'macaddr' => 'string',
+        'xml' => 'string',
+        'hstore' => 'hstore',
+        'tsvector' => 'string',
+        'ltree' => 'string',
+        'point' => 'string',
+        'line' => 'string',
+        'lseg' => 'string',
+        'box' => 'string',
+        'path' => 'string',
+        'polygon' => 'string',
+        'circle' => 'string'
       }
 
       type_map[sql_type.downcase] || sql_type

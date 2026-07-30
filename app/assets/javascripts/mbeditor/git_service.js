@@ -30,6 +30,45 @@ var GitService = (function () {
       });
   }
 
+  // Cheap steady-state poll: hits /git_status (2 git subprocesses) and only
+  // escalates to the expensive /git_info fan-out when something actually
+  // changed — an external branch switch or a working-tree change. Rich fields
+  // from the last full fetch (unpushedCommits, branchCommits, ...) are
+  // preserved rather than clobbered.
+  function fetchStatusLite() {
+    return axios.get(window.mbeditorBasePath() + '/git_status')
+      .then(function(res) {
+        var data = res.data;
+        if (!data || !data.ok) return fetchInfo();
+
+        var st = EditorStore.getState();
+        var prevInfo = st.gitInfo;
+        var files = data.files || [];
+        var gitSig = function(arr) { return arr.map(function(f) { return f.path + '\x00' + f.status; }).join('\x01'); };
+        var branchChanged = (data.branch || "") !== (st.gitBranch || "");
+        var treeChanged = gitSig(files) !== gitSig(st.gitFiles || []);
+
+        // No full snapshot yet, or the branch changed under us (external
+        // `git checkout`) — run the full fan-out.
+        if (!prevInfo || !prevInfo.ok || branchChanged) return fetchInfo();
+
+        if (treeChanged) {
+          // Patch the cheap fields immediately for responsiveness, then
+          // refresh the rich fields in the background.
+          EditorStore.setState({
+            gitBranch: data.branch || "",
+            gitFiles: files,
+            gitInfo: Object.assign({}, prevInfo, { branch: data.branch || "", workingTree: files }),
+            gitInfoError: null
+          });
+          return fetchInfo();
+        }
+
+        return data;
+      })
+      .catch(function () {}); // transient poll errors retry on the next tick
+  }
+
   function fetchStatus() {
     return fetchInfo().then(function(data) {
       if (data && data.ok) return data;
@@ -75,6 +114,13 @@ var GitService = (function () {
     });
   }
 
+  // Per-line add/modify/delete ranges for one file, used to tint line numbers.
+  function fetchLineDiff(path) {
+    return axios.get(window.mbeditorBasePath() + '/git/line_diff?file=' + encodeURIComponent(path)).then(function(res) {
+      return res.data;
+    });
+  }
+
   function fetchFileHistory(path) {
     return axios.get(window.mbeditorBasePath() + '/git/file_history?file=' + encodeURIComponent(path)).then(function(res) {
       return res.data;
@@ -95,9 +141,11 @@ var GitService = (function () {
 
   return {
     fetchStatus: fetchStatus,
+    fetchStatusLite: fetchStatusLite,
     fetchInfo: fetchInfo,
     fetchDiff: fetchDiff,
     fetchBlame: fetchBlame,
+    fetchLineDiff: fetchLineDiff,
     fetchFileHistory: fetchFileHistory,
     fetchCommitGraph: fetchCommitGraph,
     fetchCommitDetail: fetchCommitDetail

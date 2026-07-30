@@ -138,11 +138,24 @@ module Mbeditor
 
     # Resolve a file path safely within repo_path.  Returns full path string or
     # nil if the path escapes the root.
+    #
+    # Follows symlinks (via SafePath, including dangling ones) so that a symlink
+    # inside the repo cannot escape it, mirroring
+    # ApplicationController#resolve_path.  When repo_path is not a real directory
+    # (e.g. unit tests with synthetic roots) the symlink check is skipped, since
+    # there is nothing on disk to resolve and repo_path is server-controlled.
     def resolve_path(repo_path, relative)
       return nil if relative.blank?
 
-      full = File.expand_path(relative.to_s, repo_path.to_s)
-      full.start_with?(repo_path.to_s + "/") || full == repo_path.to_s ? full : nil
+      root = repo_path.to_s
+      full = File.expand_path(relative.to_s, root)
+      return nil unless full.start_with?("#{root}/") || full == root
+      return full unless File.directory?(root)
+      return nil unless SafePath.within?(root, full)
+
+      full
+    rescue Errno::EACCES
+      nil
     end
 
     def self.parse_log_entries(raw_output, with_parents:)

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "open3"
 require "pathname"
 
 module Mbeditor
@@ -13,6 +14,11 @@ module Mbeditor
 
       stream_from "mbeditor_editor" if respond_to?(:stream_from)
     end
+
+    # Push newly appended log lines to this subscriber ~once a second while the
+    # client has the log panel open. Guarded so the class still loads when
+    # ActionCable is absent (CableBaseClass == Object).
+    periodically :push_log_lines, every: 1 if respond_to?(:periodically)
 
     def unsubscribed
       # Announce that this participant has left so peers can drop them from the
@@ -49,8 +55,22 @@ module Mbeditor
       branch = data["branch"].to_s.strip
       state  = data["state"]
       EditorStateService.new(workspace_root).write_branch_state(branch, state)
+    rescue EditorStateService::InvalidBranchError
+      # A misbehaving client sent a malformed branch name. Don't crash the
+      # connection, but log it so the misconfiguration is observable.
+      Rails.logger.warn("[mbeditor] EditorChannel#save_branch_state: rejected invalid branch name #{branch.inspect}")
     rescue StandardError
       # Never let a state-save failure crash the WebSocket connection
+    end
+
+    def start_log_tail(data)
+      raw = data && data["offset"]
+      @log_offset = raw.nil? ? nil : raw.to_i
+      @log_watching = true
+    end
+
+    def stop_log_tail(_data = nil)
+      @log_watching = false
     end
 
     private
@@ -63,15 +83,24 @@ module Mbeditor
       # Never let a relay failure crash the WebSocket connection.
     end
 
-    def workspace_root
-      configured = Mbeditor.configuration.workspace_root
-      return Pathname.new(configured.to_s) if configured.present?
+    def push_log_lines
+      return unless @log_watching
 
-      rails_root = Rails.root.to_s
-      out, _err, status = Open3.capture3("git", "-C", rails_root, "rev-parse", "--show-toplevel")
-      Pathname.new(status.success? && out.strip.present? ? out.strip : rails_root)
+      result = LogTailService.new(log_path).read_since(@log_offset)
+      @log_offset = result[:offset]
+      return if result[:lines].empty? && !result[:reset]
+
+      transmit({ type: "log", lines: result[:lines], offset: result[:offset], reset: result[:reset] })
     rescue StandardError
-      Rails.root
+      # Never let a log-tail failure crash the WebSocket connection.
+    end
+
+    def log_path
+      Rails.root.join("log", "#{Rails.env}.log")
+    end
+
+    def workspace_root
+      WorkspaceRootResolver.call
     end
   end
 end

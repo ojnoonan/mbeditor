@@ -107,23 +107,276 @@
 
   // Declare a discovered global in Monaco's extra libs so the TS2304 warning disappears.
   // Calling addExtraLib with the same URI replaces the previous content in-place.
-  function addDiscoveredGlobal(name) {
-    if (discoveredJsGlobals[name]) return;
-    if (REACT_MINI_UMD_GLOBALS[name]) return; // already in the mini-UMD
-    discoveredJsGlobals[name] = true;
+  //
+  // Coalesced: addExtraLib invalidates the TypeScript worker and re-validates
+  // EVERY open model. A JSX file that references 500 host-app globals resolves
+  // 500 symbols, and calling addExtraLib once per symbol meant 500 full
+  // re-validations — the editor spends minutes pegged at 100% CPU redoing work
+  // it is about to redo again. Batch them into one flush instead.
+  var _discoveredFlushTimer = null;
+  function flushDiscoveredGlobals() {
+    _discoveredFlushTimer = null;
     var mts = window.monaco && window.monaco.languages && window.monaco.languages.typescript;
-    if (!mts) return;
+    if (!mts || !mts.javascriptDefaults) return;
     var decls = Object.keys(discoveredJsGlobals)
       .map(function(k) { return 'declare var ' + k + ': any;'; }).join('\n');
     mts.javascriptDefaults.addExtraLib(decls, 'inmemory://mbeditor/discovered-globals.d.ts');
   }
 
+  function addDiscoveredGlobal(name) {
+    if (discoveredJsGlobals[name]) return;
+    if (REACT_MINI_UMD_GLOBALS[name]) return; // already in the mini-UMD
+    discoveredJsGlobals[name] = true;
+    if (_discoveredFlushTimer) return;
+    _discoveredFlushTimer = setTimeout(flushDiscoveredGlobals, 300);
+  }
+
+  // Reactive TS2304 resolution runs ONE /js_definition request at a time.
+  // Each request spawns an rg process on the server, so firing one per
+  // unresolved symbol in parallel (a big JSX file can have hundreds) saturated
+  // the dev server: the file tree poll, git status, and file saves all queued
+  // behind hundreds of greps. That is what made the whole editor feel slow and
+  // what let the "file was edited externally" check race its own save.
+  var JS_LOOKUP_QUEUE_MAX = 400;
+  var jsLookupQueue = [];
+  var jsLookupBusy = false;
+
+  function pumpJsLookupQueue() {
+    if (jsLookupBusy) return;
+    var job = jsLookupQueue.shift();
+    if (!job) return;
+    jsLookupBusy = true;
+    var done = function () { jsLookupBusy = false; pumpJsLookupQueue(); };
+    FileService.getJsDefinition(job.sym)
+      .then(function (data) {
+        var results = data && data.results;
+        if (results && results.length && results[0].file !== job.modelPath) {
+          addDiscoveredGlobal(job.sym);
+        } else if (!results || !results.length) {
+          if (isRuntimeWindowGlobal(job.sym)) addDiscoveredGlobal(job.sym);
+        }
+      })
+      .then(done, done);
+  }
+
+  function queueJsGlobalLookup(sym, modelPath) {
+    if (jsLookupQueue.length >= JS_LOOKUP_QUEUE_MAX) return;
+    jsLookupQueue.push({ sym: sym, modelPath: modelPath });
+    pumpJsLookupQueue();
+  }
+
+  // ── The workspace TypeScript program ──────────────────────────────────────
+  //
+  // Two layers, because one does not cover everything:
+  //
+  //   1. /js_program — the workspace's own JS source, added as extraLibs at
+  //      file:/// URIs. A JS file with no import/export is a *script*, so
+  //      TypeScript puts its top-level declarations in the global scope: the
+  //      Sprockets model exactly. This gives REAL types — member completion,
+  //      inferred signatures, argument-count checks — for the host app's own
+  //      components, and still reports TS2304 for genuinely unknown names.
+  //
+  //   2. /js_globals — ambient `declare var X: any` for names the program
+  //      can't supply. UMD-wrapped libraries (React, lodash, axios) assign
+  //      their global inside a closure, `factory(global.React = {})`, which
+  //      TypeScript cannot follow statically, so their source contributes no
+  //      global at all. Those names only exist as ambient declarations.
+  //
+  // A global is skipped from layer 2 only when layer 1 genuinely supplies it,
+  // so a real inferred type is never shadowed by `any` — and, just as
+  // importantly, a name the program can't see never loses its declaration.
+  // "In a program file" is NOT sufficient: `window.Foo = ...` is a runtime
+  // global that TypeScript does not treat as a declaration at all, so those
+  // must keep their ambient `declare var` even though their file is in the
+  // program. Only lexical declarations land in TypeScript's global scope.
+  //
+  // Same-URI addExtraLib replaces content in place; that is how both layers
+  // refresh.
+  var PROGRAM_VISIBLE_KINDS = { 'var': 1, 'let': 1, 'const': 1, 'function': 1, 'class': 1 };
+  var programPaths = {}; // workspace-relative path -> true, for the filter above
+
+  function programUri(path) {
+    return 'file:///' + String(path).replace(/^\/+/, '');
+  }
+
+  function loadWorkspaceProgram(monaco) {
+    if (typeof FileService === 'undefined') return;
+    var mts = monaco && monaco.languages && monaco.languages.typescript;
+    if (!mts || !mts.javascriptDefaults) return;
+
+    var programLoaded = FileService.getJsProgram
+      ? FileService.getJsProgram().then(function (data) {
+          if (!data || !data.ok || !data.files) return;
+          data.files.forEach(function (f) {
+            if (!f || typeof f.content !== 'string' || !f.path) return;
+            programPaths[f.path] = true;
+            mts.javascriptDefaults.addExtraLib(f.content, programUri(f.path));
+          });
+          if (data.skipped && data.skipped.length && window.console) {
+            console.info('[mbeditor] ' + data.fileCount + ' source files (' +
+              Math.round(data.totalBytes / 1024) + ' KB) in the TypeScript program; ' +
+              data.skipped.length + ' skipped:', data.skipped);
+          }
+        }).catch(function () { /* fall through to ambient globals alone */ })
+      : Promise.resolve();
+
+    programLoaded.then(function () { loadWorkspaceGlobals(monaco); });
+  }
+
+  function loadWorkspaceGlobals(monaco) {
+    if (typeof FileService === 'undefined' || !FileService.getJsGlobals) return;
+    var mts = monaco && monaco.languages && monaco.languages.typescript;
+    if (!mts || !mts.javascriptDefaults) return;
+    FileService.getJsGlobals().then(function (data) {
+      if (!data || !data.ok || !data.symbols) return;
+      var names = [];
+      data.symbols.forEach(function (s) {
+        var name = s && s.name;
+        if (!name || !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name)) return;
+        if (REACT_MINI_UMD_GLOBALS[name]) return;
+        if (discoveredJsGlobals[name]) return; // already in discovered-globals.d.ts
+        // The program already declares this one, with a real type.
+        if (s.file && programPaths[s.file] && PROGRAM_VISIBLE_KINDS[s.kind]) {
+          attemptedJsGlobals[name] = true;
+          return;
+        }
+        names.push(name);
+        // Pre-seed the reactive resolver so the marker patcher never fires a
+        // per-symbol /js_definition request for these.
+        attemptedJsGlobals[name] = true;
+      });
+      var decls = names.map(function (n) { return 'declare var ' + n + ': any;'; }).join('\n');
+      mts.javascriptDefaults.addExtraLib(decls, 'inmemory://mbeditor/workspace-globals.d.ts');
+    }).catch(function () { /* endpoint unavailable — reactive path still works */ });
+  }
+
+  // Incremental refresh: re-send only the files that changed, never the whole
+  // tree. A workspace can be tens of MB, so re-fetching it on every save would
+  // cost more than the feature is worth.
+  function refreshProgramPaths(monaco, paths) {
+    var mts = monaco && monaco.languages && monaco.languages.typescript;
+    if (!mts || !mts.javascriptDefaults) return;
+    if (typeof FileService === 'undefined' || !FileService.getJsProgramFile) return;
+    (paths || []).forEach(function (path) {
+      if (!path || !/\.(js|jsx|ts|tsx)$/i.test(path)) return;
+      FileService.getJsProgramFile(path).then(function (data) {
+        if (!data || !data.ok || !data.file) return;
+        programPaths[data.file.path] = true;
+        mts.javascriptDefaults.addExtraLib(data.file.content, programUri(data.file.path));
+      }).catch(function () {});
+    });
+  }
+
   // Navigate to the first workspace definition of a JS symbol.
   // Returns a Promise<boolean> — true if a definition was found and opened.
-  function navigateToJsWord(editor, word) {
+  // Try the host's ruby-lsp (via the /ruby_lsp bridge) for a Ruby language
+  // request. Resolves to the translated payload, or null whenever the legacy
+  // grep/Ripper path should run instead: flag off, oversized buffer, HTTP
+  // error, server-side fallback signal, or an empty result. A 422 means the
+  // server has decided ruby-lsp is unavailable — flip the flag off so we stop
+  // asking.
+  function tryRubyLsp(lspMethod, model, position) {
+    try {
+      if (!window.MBEDITOR_RUBY_LSP_AVAILABLE) return Promise.resolve(null);
+      if (typeof FileService === 'undefined' || !FileService.rubyLspRequest) return Promise.resolve(null);
+      if (!model || !model._mbeditorPath || !position) return Promise.resolve(null);
+      if (model.getValueLength() > 5 * 1024 * 1024) return Promise.resolve(null);
+      return FileService.rubyLspRequest(lspMethod, model._mbeditorPath, model.getValue(), position.lineNumber, position.column)
+        .then(function (data) {
+          if (!data || data.fallback || data.error) return null;
+          if (lspMethod === 'definition') return (data.results && data.results.length) ? data : null;
+          if (lspMethod === 'hover') return data.markdown ? data : null;
+          if (lspMethod === 'completion') return (data.suggestions && data.suggestions.length) ? data : null;
+          return null;
+        })
+        .catch(function (err) {
+          if (err && err.response && err.response.status === 422) {
+            window.MBEDITOR_RUBY_LSP_AVAILABLE = false;
+          }
+          return null;
+        });
+    } catch (e) {
+      return Promise.resolve(null);
+    }
+  }
+
+  // Extract the parent object name for a word at a position, when the usage
+  // is `Parent.word` or `const { ..., word, ... } = Parent`. Returns null for
+  // plain references. The parent lets the backend resolve nested member
+  // definitions instead of falling back to the (ranked) global search.
+  // True when the position sits inside an ERB tag (<% ... %>, <%= ... %>).
+  // Finds the nearest preceding delimiter: an opener means we're inside Ruby
+  // code, a closer (or nothing) means we're in the HTML body. Correct across
+  // multi-line blocks because it searches backwards through the whole buffer
+  // rather than the current line.
+  function isInsideErbTag(model, position) {
+    if (!model || !position) return false;
+    try {
+      var match = model.findPreviousMatch('<%|%>', position, true, false, null, false);
+      if (!match || !match.range) return false;
+      // A match starting at/after the cursor wrapped around to the end of the
+      // buffer — treat that as "no preceding delimiter".
+      if (match.range.startLineNumber > position.lineNumber) return false;
+      if (match.range.startLineNumber === position.lineNumber &&
+          match.range.startColumn > position.column) return false;
+      return model.getValueInRange(match.range).indexOf('<%') === 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Rails view helpers are defined inside the framework, not the workspace, so
+  // looking them up from ERB only ever produces empty round-trips.
+  var RAILS_VIEW_HELPERS = {
+    link_to: 1, button_to: 1, form_with: 1, form_for: 1, form_tag: 1, fields_for: 1,
+    render: 1, yield: 1, content_for: 1, content_tag: 1, tag: 1, url_for: 1,
+    image_tag: 1, javascript_include_tag: 1, stylesheet_link_tag: 1, favicon_link_tag: 1,
+    csrf_meta_tags: 1, csp_meta_tag: 1, asset_path: 1, image_path: 1,
+    number_to_currency: 1, number_with_delimiter: 1, truncate: 1, pluralize: 1,
+    time_ago_in_words: 1, distance_of_time_in_words: 1, simple_format: 1,
+    sanitize: 1, raw: 1, escape_javascript: 1, j: 1, t: 1, l: 1,
+    label_tag: 1, text_field_tag: 1, submit_tag: 1, hidden_field_tag: 1,
+    check_box_tag: 1, select_tag: 1, options_for_select: 1
+  };
+
+  function extractJsParentContext(model, lineNumber, wordInfo) {
+    if (!model || !wordInfo) return null;
+    var line = model.getLineContent(lineNumber);
+
+    // Dot form: SomeParent.word — back-walk the identifier before the dot.
+    if (line[wordInfo.startColumn - 2] === '.') {
+      var end = wordInfo.startColumn - 2; // index of the '.'
+      var start = end;
+      while (start > 0 && /[a-zA-Z0-9_$]/.test(line[start - 1])) start--;
+      var parent = line.substring(start, end);
+      // Reject call/index results like foo().word or foo[0].word — those
+      // aren't a named parent object.
+      if (parent && /^[a-zA-Z_$]/.test(parent) && (start === 0 || !/[)\]]/.test(line[start - 1]))) {
+        return parent;
+      }
+      return null;
+    }
+
+    // Destructuring form: const { a, word, b } = SomeParent
+    var m = line.match(/(?:const|let|var)\s*\{([^}]*)\}\s*=\s*([a-zA-Z_$][a-zA-Z0-9_$]*)/);
+    if (m) {
+      var braceStart = line.indexOf('{', m.index) + 2; // 1-based column after '{'
+      var braceEnd = braceStart + m[1].length;
+      if (wordInfo.startColumn >= braceStart && wordInfo.endColumn <= braceEnd + 1) {
+        var names = m[1].split(',').map(function (seg) {
+          // `source: alias` renames — the SOURCE property lives on the parent.
+          return seg.split(':')[0].trim();
+        });
+        if (names.indexOf(wordInfo.word) !== -1) return m[2];
+      }
+    }
+    return null;
+  }
+
+  function navigateToJsWord(editor, word, parent) {
     if (typeof FileService === 'undefined' || !FileService.getJsDefinition) return Promise.resolve(false);
     var currentPath = editor.getModel && editor.getModel() && editor.getModel()._mbeditorPath;
-    return FileService.getJsDefinition(word)
+    return FileService.getJsDefinition(word, null, parent)
       .then(function(data) {
         var results = data && data.results;
         if (!results || !results.length) {
@@ -131,9 +384,10 @@
           return false;
         }
         var r = results[0];
-        // Only declare as a global when the definition lives in a different file.
-        // Locally-defined functions/classes must not get a duplicate declare var.
-        if (r.file !== currentPath) addDiscoveredGlobal(word);
+        // Only declare as a global when the definition is itself a top-level
+        // (Sprockets-global) declaration in a different file. Nested/member
+        // definitions must not get an ambient declare var.
+        if (r.topLevel && r.file !== currentPath) addDiscoveredGlobal(word);
         if (typeof TabManager !== 'undefined' && TabManager.openTab) {
           TabManager.openTab(r.file, r.file.split('/').pop(), r.line);
         }
@@ -151,9 +405,13 @@
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  function rubyIndentUnit(model) {
+  function rubyIndentUnit(model, openerIndent) {
+    // Trust the file over the model options: indentation auto-detection can
+    // misreport tabs for files with little existing indentation, which would
+    // insert a stray tab into a spaces file (or vice versa).
+    if (openerIndent && openerIndent.indexOf('\t') !== -1) return '\t';
     var options = model.getOptions ? model.getOptions() : null;
-    if (options && options.insertSpaces === false) {
+    if (!openerIndent && options && options.insertSpaces === false) {
       return '\t';
     }
     var tabSize = options && options.tabSize ? options.tabSize : 4;
@@ -162,7 +420,7 @@
 
   function rubyClosingIndent(model, cursorLineNumber, openerLine) {
     var cursorIndent = leadingWhitespace(model.getLineContent(cursorLineNumber));
-    var indentUnit = rubyIndentUnit(model);
+    var indentUnit = rubyIndentUnit(model, cursorIndent);
 
     if (cursorIndent.length >= indentUnit.length) {
       return cursorIndent.slice(0, cursorIndent.length - indentUnit.length);
@@ -177,6 +435,10 @@
     return RUBY_BLOCK_START.test(line) || RUBY_DO_BLOCK_START.test(trimmed);
   }
 
+  // Keywords that legitimately sit at the SAME indent as the opener while
+  // still belonging to its block (if/else, case/when, begin/rescue...).
+  var RUBY_MID_BLOCK_LINE = /^(else|elsif|when|in|rescue|ensure)\b/;
+
   function hasMatchingRubyEnd(model, openerLineNumber, openerIndent) {
     var lineCount = model.getLineCount();
     var openerIndentLength = openerIndent.length;
@@ -189,9 +451,16 @@
       var lineIndent = leadingWhitespace(line);
       var lineIndentLength = lineIndent.length;
 
-      if (RUBY_END_LINE.test(trimmed)) {
-        if (lineIndentLength === openerIndentLength) return true;
-        if (lineIndentLength < openerIndentLength) return false;
+      // Dedented code: the opener's block ended without an `end` of its own.
+      if (lineIndentLength < openerIndentLength) return false;
+
+      if (lineIndentLength === openerIndentLength) {
+        if (RUBY_END_LINE.test(trimmed)) return true;
+        if (RUBY_MID_BLOCK_LINE.test(trimmed)) continue;
+        // Any other code at the opener's indent (e.g. a SIBLING `def` below
+        // the insertion point) means the `end` found later belongs to that
+        // sibling, not to the opener — the opener has no end yet.
+        return false;
       }
     }
 
@@ -223,7 +492,7 @@
     var context = rubyEnterContext(editor, model);
     if (!context) return false;
 
-    var innerIndent = context.openerIndent + rubyIndentUnit(model);
+    var innerIndent = context.openerIndent + rubyIndentUnit(model, context.openerIndent);
     var insertedText = '\n' + innerIndent;
     if (!context.hasExistingEnd) {
       insertedText += '\n' + context.openerIndent + 'end';
@@ -379,18 +648,27 @@
       });
     }
 
-    if (language === 'ruby') {
+    // ERB gets the same Ruby navigation and auto-end, but only inside <% %>,
+    // and always through the workspace services (ruby-lsp cannot parse ERB).
+    if (language === 'ruby' || language === 'erb') {
+      var isErbDoc = language === 'erb';
+      var rubyContextAt = function (position) {
+        return !isErbDoc || isInsideErbTag(model, position);
+      };
+
       keydownDisposable = editor.onKeyDown(function (event) {
         if (event.keyCode !== window.monaco.KeyCode.Enter) return;
+        if (!rubyContextAt(editor.getPosition())) return;
         if (!handleRubyEnter(editor, model)) return;
 
         event.preventDefault();
         event.stopPropagation();
       });
 
-      // Navigate to a Ruby symbol: modules/classes go to their definition file,
-      // lowercase symbols go to their def line.
-      function navigateToWord(word) {
+      // Navigate to a Ruby symbol: ruby-lsp first when available (accurate,
+      // position-aware), else modules/classes go to their definition file and
+      // lowercase symbols go to their def line via the grep/Ripper services.
+      function legacyNavigateToWord(word) {
         if (/^[A-Z]/.test(word) && typeof FileService !== 'undefined' && FileService.getModuleMembers) {
           FileService.getModuleMembers(word).then(function(data) {
             if (!data || !data.file) return;
@@ -412,6 +690,21 @@
         }).catch(function() {});
       }
 
+      function navigateToWord(word, position) {
+        if (isErbDoc) return legacyNavigateToWord(word);
+
+        tryRubyLsp('definition', model, position).then(function (lsp) {
+          if (lsp && lsp.results && lsp.results.length) {
+            var r = lsp.results[0];
+            if (typeof TabManager !== 'undefined' && TabManager.openTab) {
+              TabManager.openTab(r.file, r.file.split('/').pop(), r.line);
+            }
+            return;
+          }
+          legacyNavigateToWord(word);
+        });
+      }
+
       // Ctrl/Cmd+click — navigate to definition
       gotoMouseDisposable = editor.onMouseDown(function(event) {
         var ctrlOrCmd = event.event.ctrlKey || event.event.metaKey;
@@ -426,9 +719,10 @@
         if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
         if (RUBY_KEYWORDS[wordInfo.word]) return;
         if (RUBY_CORE_METHODS[wordInfo.word]) return;
+        if (isErbDoc && (!rubyContextAt(position) || RAILS_VIEW_HELPERS[wordInfo.word])) return;
 
         event.event.preventDefault();
-        navigateToWord(wordInfo.word);
+        navigateToWord(wordInfo.word, position);
       });
 
       // F12 — go to definition from keyboard
@@ -445,7 +739,8 @@
           if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
           if (RUBY_KEYWORDS[wordInfo.word]) return;
           if (RUBY_CORE_METHODS[wordInfo.word]) return;
-          navigateToWord(wordInfo.word);
+          if (isErbDoc && (!rubyContextAt(pos) || RAILS_VIEW_HELPERS[wordInfo.word])) return;
+          navigateToWord(wordInfo.word, pos);
         }
       });
     }
@@ -461,7 +756,8 @@
         var wordInfo = model.getWordAtPosition(position);
         if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
         event.event.preventDefault();
-        navigateToJsWord(editor, wordInfo.word).then(function(found) {
+        var parentCtx = extractJsParentContext(model, position.lineNumber, wordInfo);
+        navigateToJsWord(editor, wordInfo.word, parentCtx).then(function(found) {
           if (!found) editor.trigger('', 'editor.action.revealDefinition', null);
         });
       });
@@ -479,7 +775,8 @@
           if (!pos) return;
           var wordInfo = model.getWordAtPosition(pos);
           if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
-          navigateToJsWord(ed, wordInfo.word).then(function(found) {
+          var parentCtx = extractJsParentContext(model, pos.lineNumber, wordInfo);
+          navigateToJsWord(ed, wordInfo.word, parentCtx).then(function(found) {
             if (!found) ed.trigger('', 'editor.action.revealDefinition', null);
           });
         }
@@ -536,6 +833,10 @@
         noSemanticValidation: false,
         noSyntaxValidation: false,
         noSuggestionDiagnostics: false
+        // No diagnosticCodesToIgnore here on purpose: JS/JSX markers are
+        // filtered by category in the marker patcher below (see JS_KEEP_CODES),
+        // which is a closed rule rather than a list that grows by one code
+        // every time a new false positive turns up.
       });
       monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
         target: monaco.languages.typescript.ScriptTarget.ES2020,
@@ -665,23 +966,73 @@
         );
       }
 
-      // Downgrade certain TypeScript diagnostic codes from Error to Warning.
-      // TypeScript has no built-in way to emit these as warnings, so we intercept
-      // the marker set after the worker fires and re-apply with lower severity.
+      // The workspace program (source files) plus the ambient globals it can't
+      // supply, loaded once now.
+      loadWorkspaceProgram(monaco);
+
+      // On a change: refresh just the touched files' program entries, and
+      // re-run the (cheap, cached) globals scan. The whole tree is never
+      // re-sent — see refreshProgramPaths.
+      var refreshWorkspaceGlobals = function () { loadWorkspaceGlobals(monaco); };
+      if (window._ && window._.debounce) {
+        refreshWorkspaceGlobals = window._.debounce(refreshWorkspaceGlobals, 2000);
+      }
+      if (typeof WebSocketService !== 'undefined' && WebSocketService.onFilesChanged) {
+        WebSocketService.onFilesChanged(function (payload) {
+          if (payload && payload.paths) refreshProgramPaths(monaco, payload.paths);
+          refreshWorkspaceGlobals();
+        });
+      }
+      var _lastGlobalsFocusRefresh = Date.now();
+      window.addEventListener('focus', function () {
+        if (Date.now() - _lastGlobalsFocusRefresh < 60000) return;
+        _lastGlobalsFocusRefresh = Date.now();
+        loadWorkspaceGlobals(monaco);
+      });
+
+      // Patch the TypeScript worker's markers after it fires.
       //
-      // Patch markers after the TypeScript worker fires:
-      // - JS files: downgrade TS2304 ("Cannot find name") to Warning — host-app
-      //   globals injected at runtime are invisible to the language service, so
-      //   hard errors are almost always false positives. Downgrading keeps the
-      //   signal without blocking genuine undefined-variable detection.
-      // - Both: downgrade TS6133 ("declared but never read") from Error to Warning.
-      // - JS/JSX: suppress TS2300 ("Duplicate identifier") — in Sprockets apps all
-      //   open files share a global script context in Monaco's TS worker, so a
-      //   component defined in file_a.jsx looks like a redeclaration when file_b.jsx
-      //   is also open. This is a structural false positive, not a real error.
-      var JS_SUPPRESS_CODES = { '2300': true, '2451': true };
-      var JS_WARN_CODES    = { '2304': true, '6133': true };
-      var TS_WARN_CODES    = { '6133': true };
+      // ── JS/JSX: keep only the diagnostics that are sound without types ──────
+      // Plain JS/JSX is untyped, so every *type* diagnostic TypeScript emits is
+      // an inference guess, and which way it guesses is arbitrary: state seeded
+      // with `useState({})` infers `{}` and errors on every key, while the same
+      // object from `JSON.parse` infers `any` and stays silent. Identical code,
+      // opposite verdicts. Denylisting each false-positive code as it turned up
+      // never converged — it reached eight codes and still leaked (2322 on a
+      // spread with an extra prop), because the tail is every code TypeScript
+      // has. So invert it: keep the categories below and drop the rest.
+      //
+      //   • syntax errors — always real. Their codes are 1xxx (and 17xxx for
+      //     the JSX-specific ones, e.g. 17008 "no corresponding closing tag"),
+      //     which is why the ranges rather than a code list are matched.
+      //   • 2304 "Cannot find name" — scope resolution, not type checking.
+      //     Downgraded to Warning below and auto-resolved against the workspace,
+      //     since host-app globals are invisible to the language service.
+      //   • 6133 "declared but never read" — a lint. Downgraded to Warning.
+      //   • anything below Error severity — hints and suggestions render faint
+      //     and cost nothing, so they pass through untouched.
+      //
+      // Deliberately dropped along with the type errors: 2300 "Duplicate
+      // identifier" and 2403 "Subsequent variable declarations…", which are
+      // structural false positives in the Sprockets model — every open file
+      // shares one global script context, so a component in file_a.jsx looks
+      // like a redeclaration once file_b.jsx is open, and the ambient
+      // `declare var Foo: any` from workspace-globals.d.ts collides with the
+      // real `function Foo()` when its defining file is open.
+      //
+      // .ts/.tsx keeps full checking: there the types are hand-written, so a
+      // type error is a statement about code the author actually wrote.
+      var JS_KEEP_CODES  = { '2304': true, '6133': true };
+      var JS_SYNTAX_CODE = /^(?:1\d{3}|17\d{3})$/;
+      var JS_WARN_CODES  = { '2304': true, '6133': true };
+      var TS_WARN_CODES  = { '6133': true };
+
+      function keepJsMarker(marker) {
+        if (marker.severity !== monaco.MarkerSeverity.Error) return true;
+        var code = String(marker.code == null ? '' : marker.code);
+        return JS_KEEP_CODES[code] === true || JS_SYNTAX_CODE.test(code);
+      }
+
       var _severityPatchActive = false;
       monaco.editor.onDidChangeMarkers(function(uris) {
         if (_severityPatchActive) return;
@@ -691,22 +1042,23 @@
             var model = monaco.editor.getModel(uri);
             if (!model) return;
             [
-              { owner: 'javascript', suppress: JS_SUPPRESS_CODES, warn: JS_WARN_CODES },
-              { owner: 'typescript', suppress: {},                 warn: TS_WARN_CODES }
+              { owner: 'javascript', keep: keepJsMarker, warn: JS_WARN_CODES },
+              { owner: 'typescript', keep: null,         warn: TS_WARN_CODES }
             ].forEach(function(entry) {
               var markers = monaco.editor.getModelMarkers({ resource: uri, owner: entry.owner });
-              var needsPatch = markers.some(function(m) {
-                var code = String(m.code);
-                return (m.severity === monaco.MarkerSeverity.Error && (entry.suppress[code] || entry.warn[code]));
-              });
-              if (!needsPatch) return;
-              monaco.editor.setModelMarkers(model, entry.owner, markers.filter(function(m) {
-                return !entry.suppress[String(m.code)];
+              var patched = markers.filter(function(m) {
+                return entry.keep ? entry.keep(m) : true;
               }).map(function(m) {
                 return (m.severity === monaco.MarkerSeverity.Error && entry.warn[String(m.code)])
                   ? Object.assign({}, m, { severity: monaco.MarkerSeverity.Warning })
                   : m;
-              }));
+              });
+              // Re-applying an unchanged set would re-enter this handler
+              // forever, so only write when the patch actually changed something.
+              var changed = patched.length !== markers.length || patched.some(function(m, i) {
+                return m.severity !== markers[i].severity;
+              });
+              if (changed) monaco.editor.setModelMarkers(model, entry.owner, patched);
             });
           });
         } finally {
@@ -729,17 +1081,7 @@
               var sym = match[1];
               if (attemptedJsGlobals[sym]) return;
               attemptedJsGlobals[sym] = true;
-              var modelPath = model._mbeditorPath;
-              FileService.getJsDefinition(sym)
-                .then(function(data) {
-                  var results = data && data.results;
-                  if (results && results.length && results[0].file !== modelPath) {
-                    addDiscoveredGlobal(sym);
-                  } else if (!results || !results.length) {
-                    if (isRuntimeWindowGlobal(sym)) addDiscoveredGlobal(sym);
-                  }
-                })
-                .catch(function() {});
+              queueJsGlobalLookup(sym, model._mbeditorPath);
             });
           });
         }
@@ -812,6 +1154,12 @@
           // module + name
           [/(\bmodule\b)(\s+)([A-Z][\w:]*)/, ['keyword.control.module', '', 'entity.name.class']],
           [/\bmodule\b/, 'keyword.control.module'],
+
+          // Test DSL suites, runnable examples, hooks, and helpers
+          [/\b(describe|context|feature)(?![a-zA-Z0-9_!?=])/, 'keyword.control.test'],
+          [/\b(test|it|specify|example|scenario)(?![a-zA-Z0-9_!?=])/, 'entity.name.function.test'],
+          [/\b(setup|teardown|before|after|around|subject)(?![a-zA-Z0-9_!?=])/, 'support.function.test'],
+          [/\blet!?(?=\s|\()/, 'support.function.test'],
 
           // Language literals
           [/\b(nil|true|false)\b/, 'constant.language'],
@@ -1149,15 +1497,61 @@
       }).catch(function() {});
     });
 
+    // Target of the command links the backend rewrites ruby-lsp's file://
+    // "Definitions" links into (see EditorsController#rewrite_lsp_hover_links).
+    monaco.editor.registerCommand('mbeditor.openDefinition', function(_accessor, path, line) {
+      if (!path) return;
+      if (typeof TabManager === 'undefined' || !TabManager.openTab) return;
+      TabManager.openTab(path, String(path).split('/').pop(), line || 1);
+    });
+
     // Ruby method definition hover provider.
     // Calls the backend /definition endpoint (Ripper-based) and renders
     // the method signature and any preceding # comments as hover markdown.
     // Results are cached client-side for 60 s to make re-hovers instantaneous.
     var hoverCache = {};
     var HOVER_CACHE_TTL_MS = 60000;
+    var HOVER_MEMBER_LIMIT = 20;
 
-    monaco.languages.registerHoverProvider('ruby', {
+    // ruby-lsp's hover for a constant is a title, a Definitions link and any
+    // doc comments — it never lists what the class/module defines. Keep the
+    // /module_members breakdown that the legacy hover showed, appended below.
+    // Resolves to '' (never rejects) for anything that isn't a constant.
+    function moduleMembersMarkdown(word) {
+      if (!/^[A-Z]/.test(word)) return Promise.resolve('');
+      if (typeof FileService === 'undefined' || !FileService.getModuleMembers) return Promise.resolve('');
+
+      var key = '__members__' + word;
+      var cached = hoverCache[key];
+      if (cached && (Date.now() - cached.ts) < HOVER_CACHE_TTL_MS) return Promise.resolve(cached.markdown);
+
+      return FileService.getModuleMembers(word, {}).then(function(data) {
+        var methods = (data && data.methods) || [];
+        var markdown = '';
+        if (methods.length > 0) {
+          var lines = ['', '---', '**Methods**', ''];
+          methods.slice(0, HOVER_MEMBER_LIMIT).forEach(function(m) {
+            lines.push('- `' + (m.signature || m.name) + '`');
+          });
+          if (methods.length > HOVER_MEMBER_LIMIT) {
+            lines.push('- _' + (methods.length - HOVER_MEMBER_LIMIT) + ' more_');
+          }
+          markdown = '\n\n' + lines.join('\n');
+        }
+        hoverCache[key] = { ts: Date.now(), markdown: markdown };
+        return markdown;
+      }).catch(function() { return ''; });
+    }
+
+    // Registered for 'erb' as well as 'ruby'. In ERB the provider only fires
+    // inside <% %> and always uses the workspace (grep/Ripper) services:
+    // ruby-lsp is told every document is Ruby, and Prism cannot parse ERB.
+    ['ruby', 'erb'].forEach(function (lang) {
+    monaco.languages.registerHoverProvider(lang, {
       provideHover: function provideHover(model, position, token) {
+        var isErb = lang === 'erb';
+        if (isErb && !isInsideErbTag(model, position)) return null;
+
         var wordInfo = model.getWordAtPosition(position);
         if (!wordInfo) return null;
 
@@ -1165,8 +1559,46 @@
         if (!word || word.length < 2) return null;
         if (RUBY_KEYWORDS[word]) return null;
         if (RUBY_CORE_METHODS[word]) return null;
+        if (isErb && RAILS_VIEW_HELPERS[word]) return null;
         if (typeof FileService === 'undefined' || !FileService.getDefinition) return null;
 
+        // ruby-lsp first: accurate, position-aware documentation. The LSP
+        // hover cache is keyed by location, not just word — the same method
+        // name can mean different things at different positions.
+        if (!isErb && window.MBEDITOR_RUBY_LSP_AVAILABLE) {
+          var lspKey = '__lsp__' + (model._mbeditorPath || '') + ':' + position.lineNumber + ':' + word;
+          var lspCached = hoverCache[lspKey];
+          if (lspCached && (Date.now() - lspCached.ts) < HOVER_CACHE_TTL_MS) {
+            if (lspCached.result) return lspCached.result;
+            // Cached LSP miss — fall through to the legacy paths below.
+          } else {
+            return tryRubyLsp('hover', model, position).then(function (lsp) {
+              if (token && token.isCancellationRequested) return null;
+              if (lsp && lsp.markdown) {
+                return moduleMembersMarkdown(word).then(function (members) {
+                  if (token && token.isCancellationRequested) return null;
+                  var lspResult = {
+                    range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
+                    contents: [{ value: lsp.markdown + members, isTrusted: true }]
+                  };
+                  hoverCache[lspKey] = { ts: Date.now(), result: lspResult };
+                  return lspResult;
+                });
+              }
+              hoverCache[lspKey] = { ts: Date.now(), result: null };
+              return legacyRubyHover(model, position, token, wordInfo);
+            });
+          }
+        }
+
+        return legacyRubyHover(model, position, token, wordInfo);
+      }
+    });
+    });
+
+    function legacyRubyHover(model, position, token, wordInfo) {
+      var word = wordInfo.word;
+      {
         // Uppercase first letter → likely a module/class name.
         // Look up the module's exposed methods via /module_members.
         if (/^[A-Z]/.test(word) && FileService.getModuleMembers) {
@@ -1233,7 +1665,7 @@
           return buildHoverResult(results);
         }).catch(function() { return null; });
       }
-    });
+    }
 
     function buildHoverResult(results) {
       var first = results[0];
@@ -1280,9 +1712,54 @@
       }).filter(function(p) { return p.length > 0; });
     }
 
-    monaco.languages.registerCompletionItemProvider('ruby', {
+    // Map server-translated LSP completion items to Monaco suggestion objects.
+    function mapLspCompletionSuggestions(suggestions) {
+      return {
+        suggestions: suggestions.map(function (s) {
+          var kind = monaco.languages.CompletionItemKind[s.kind];
+          var item = {
+            label: s.label,
+            kind: kind != null ? kind : monaco.languages.CompletionItemKind.Text,
+            detail: s.detail || '',
+            insertText: s.insertText || s.label
+          };
+          if (s.isSnippet) {
+            item.insertTextRules = monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
+          }
+          return item;
+        })
+      };
+    }
+
+    ['ruby', 'erb'].forEach(function (lang) {
+    monaco.languages.registerCompletionItemProvider(lang, {
       triggerCharacters: ['.'],
       provideCompletionItems: function(model, position) {
+        var isErb = lang === 'erb';
+        // In ERB only complete inside <% %>, and only from the workspace
+        // services — ruby-lsp can't parse an ERB document.
+        if (isErb) {
+          if (!isInsideErbTag(model, position)) return { suggestions: [] };
+          return legacyRubyCompletions(model, position);
+        }
+
+        // ruby-lsp first — real scope-aware completions; the include-based
+        // provider below stays as the fallback.
+        if (window.MBEDITOR_RUBY_LSP_AVAILABLE) {
+          return tryRubyLsp('completion', model, position).then(function (lsp) {
+            if (lsp && lsp.suggestions && lsp.suggestions.length) {
+              return mapLspCompletionSuggestions(lsp.suggestions);
+            }
+            return legacyRubyCompletions(model, position);
+          });
+        }
+        return legacyRubyCompletions(model, position);
+      }
+    });
+    });
+
+    function legacyRubyCompletions(model, position) {
+      {
         var path = model._mbeditorPath;
         if (!path || typeof FileService === 'undefined' || !FileService.getFileIncludes) {
           return { suggestions: [] };
@@ -1327,7 +1804,7 @@
           return buildSuggestions(result);
         }).catch(function() { return { suggestions: [] }; });
       }
-    });
+    }
 
     // JS/JSX hover provider: looks up workspace definitions for window globals.
     // Fires for mixed-case identifiers and for any symbol already in discoveredJsGlobals.
@@ -1347,7 +1824,11 @@
           return new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn);
         }
 
-        var cached = jsHoverCache[word];
+        var parentCtx = extractJsParentContext(model, position.lineNumber, wordInfo);
+        // Parent-qualified hovers cache separately: Parent.myFunction and a
+        // bare myFunction can resolve to different definitions.
+        var cacheKey = (parentCtx ? parentCtx + '.' : '') + word;
+        var cached = jsHoverCache[cacheKey];
         if (cached && (Date.now() - cached.ts) < JS_HOVER_CACHE_TTL_MS) {
           if (!cached.contents) return null;
           return { range: makeHoverRange(), contents: cached.contents };
@@ -1357,7 +1838,7 @@
         if (controller && token && token.onCancellationRequested) {
           token.onCancellationRequested(function() { controller.abort(); });
         }
-        return FileService.getJsDefinition(word, controller ? { signal: controller.signal } : {})
+        return FileService.getJsDefinition(word, controller ? { signal: controller.signal } : {}, parentCtx)
           .then(function(data) {
             if (token && token.isCancellationRequested) return null;
             var results = data && data.results;
@@ -1366,22 +1847,23 @@
                 addDiscoveredGlobal(word);
                 var kind = typeof window[word];
                 var rtContents = [{ value: '**' + word + '** — runtime global (`' + kind + '`)' }];
-                jsHoverCache[word] = { ts: Date.now(), contents: rtContents };
+                jsHoverCache[cacheKey] = { ts: Date.now(), contents: rtContents };
                 return { range: makeHoverRange(), contents: rtContents };
               }
-              jsHoverCache[word] = { ts: Date.now(), contents: null };
+              jsHoverCache[cacheKey] = { ts: Date.now(), contents: null };
               return null;
             }
             var r = results[0];
-            // Only declare as global when the definition is in a different file —
-            // locally-defined functions must not get a duplicate declare var.
-            if (r.file !== model._mbeditorPath) addDiscoveredGlobal(word);
+            // Only declare as global when the definition is a top-level
+            // (Sprockets-global) declaration in a different file — nested and
+            // member definitions must not get a duplicate declare var.
+            if (r.topLevel && r.file !== model._mbeditorPath) addDiscoveredGlobal(word);
             var fileRef = r.file + ':' + r.line;
             var contents = [
               { value: '```javascript\n' + r.snippet + '\n```', isTrusted: true },
               { value: '<span style="opacity:0.55;font-size:0.9em;">' + fileRef + '</span>', isTrusted: true, supportHtml: true }
             ];
-            jsHoverCache[word] = { ts: Date.now(), contents: contents };
+            jsHoverCache[cacheKey] = { ts: Date.now(), contents: contents };
             return { range: makeHoverRange(), contents: contents };
           }).catch(function() { return null; });
       }
@@ -1461,6 +1943,8 @@
   window.MbeditorEditorPlugins = {
     registerGlobalExtensions: registerGlobalExtensions,
     attachEditorFeatures: attachEditorFeatures,
+    // Exposed so the ERB gating can be asserted directly in system tests.
+    isInsideErbTag: isInsideErbTag,
     runRubyEnter: function runRubyEnter(editor) {
       if (!editor || !editor.getModel) return false;
       return handleRubyEnter(editor, editor.getModel());

@@ -382,5 +382,135 @@ module Mbeditor
         assert_match(/timed out/i, result[:error])
       end
     end
+
+    # -------------------------------------------------------------------------
+    # test_name_at_line
+    # -------------------------------------------------------------------------
+
+    MINITEST_FILE = <<~RUBY
+      class UserTest < ActiveSupport::TestCase
+        def test_first_thing
+          assert true
+        end
+
+        test "does a second thing" do
+          assert true
+        end
+
+        def test_third_thing?
+          assert true
+        end
+      end
+    RUBY
+
+    def with_minitest_file
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "user_test.rb")
+        File.write(path, MINITEST_FILE)
+        yield path, dir
+      end
+    end
+
+    test "test_name_at_line finds an enclosing def test_ method" do
+      with_minitest_file do |path|
+        assert_equal "test_first_thing", TestRunnerService.test_name_at_line(path, 3)
+      end
+    end
+
+    test "test_name_at_line converts a Rails test macro to its generated method name" do
+      with_minitest_file do |path|
+        assert_equal "test_does_a_second_thing", TestRunnerService.test_name_at_line(path, 7)
+      end
+    end
+
+    test "test_name_at_line keeps a trailing question mark in the method name" do
+      with_minitest_file do |path|
+        assert_equal "test_third_thing?", TestRunnerService.test_name_at_line(path, 11)
+      end
+    end
+
+    test "test_name_at_line resolves to the nearest preceding test when between tests" do
+      with_minitest_file do |path|
+        # Line 5 is the blank line after the first test's `end`.
+        assert_equal "test_first_thing", TestRunnerService.test_name_at_line(path, 5)
+      end
+    end
+
+    test "test_name_at_line returns nil above the first test and for a missing file" do
+      with_minitest_file do |path, dir|
+        assert_nil TestRunnerService.test_name_at_line(path, 1)
+        assert_nil TestRunnerService.test_name_at_line(File.join(dir, "nope.rb"), 3)
+      end
+    end
+
+    # -------------------------------------------------------------------------
+    # build_command — line filtering
+    # -------------------------------------------------------------------------
+
+    test "build_command targets the whole file when no line is given" do
+      Dir.mktmpdir do |dir|
+        cmd = TestRunnerService.build_command(dir, "test/user_test.rb", :minitest, nil)
+        assert_includes cmd, File.join(dir, "test/user_test.rb")
+        assert_not_includes cmd, "-n"
+      end
+    end
+
+    test "build_command uses path:line for rspec" do
+      Dir.mktmpdir do |dir|
+        cmd = TestRunnerService.build_command(dir, "spec/user_spec.rb", :rspec, nil, line: 12)
+        assert_equal "#{File.join(dir, 'spec/user_spec.rb')}:12", cmd.last
+        assert_includes cmd, "--format"
+      end
+    end
+
+    test "build_command uses path:line for minitest when bin/rails exists" do
+      Dir.mktmpdir do |dir|
+        FileUtils.mkdir_p(File.join(dir, "bin"))
+        File.write(File.join(dir, "bin", "rails"), "")
+
+        cmd = TestRunnerService.build_command(dir, "test/user_test.rb", :minitest, nil, line: 7)
+        assert_equal File.join(dir, "bin", "rails"), cmd.first
+        assert_equal "#{File.join(dir, 'test/user_test.rb')}:7", cmd.last
+      end
+    end
+
+    test "build_command uses a name filter for the plain minitest runner" do
+      with_minitest_file do |path, dir|
+        rel = File.basename(path)
+        cmd = TestRunnerService.build_command(dir, rel, :minitest, nil, line: 7)
+
+        assert_equal "-n", cmd[-2]
+        assert_equal "/\\Atest_does_a_second_thing\\z/", cmd.last
+      end
+    end
+
+    test "build_command falls back to the whole file when no test encloses the line" do
+      with_minitest_file do |path, dir|
+        cmd = TestRunnerService.build_command(dir, File.basename(path), :minitest, nil, line: 1)
+
+        assert_not_includes cmd, "-n"
+        assert_equal "--verbose", cmd.last
+      end
+    end
+
+    test "build_command applies line filtering to custom commands by framework" do
+      with_minitest_file do |path, dir|
+        rel = File.basename(path)
+
+        minitest_cmd = TestRunnerService.build_command(dir, rel, :minitest, "bundle exec ruby -Itest", line: 7)
+        assert_equal "-n", minitest_cmd[-2]
+        assert_equal "/\\Atest_does_a_second_thing\\z/", minitest_cmd.last
+
+        rspec_cmd = TestRunnerService.build_command(dir, rel, :rspec, "bundle exec rspec", line: 7)
+        assert_equal "#{File.join(dir, rel)}:7", rspec_cmd.last
+      end
+    end
+
+    test "build_command ignores a non-positive line" do
+      Dir.mktmpdir do |dir|
+        cmd = TestRunnerService.build_command(dir, "test/user_test.rb", :rspec, nil, line: 0)
+        assert_equal File.join(dir, "test/user_test.rb"), cmd.last
+      end
+    end
   end
 end
