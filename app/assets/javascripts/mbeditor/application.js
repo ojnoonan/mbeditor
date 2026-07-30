@@ -29,3 +29,4 @@
 //= require mbeditor/components/TabBar
 //= require mbeditor/components/MbeditorApp
 //= require mbeditor/application_iife_tail
+//= require mbeditor/components/ImportConflictModal

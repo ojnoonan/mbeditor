@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Ruby's Jump to Method panel now marks protected and private sections.**
+  Sticky visibility headers stay in view while scrolling long method lists,
+  including across nested class and singleton-class scopes.
+- **Drag files and folders from your desktop straight into the explorer.**
+  Drop onto a folder row to import there, or onto the empty space below the
+  tree to import into the workspace root. Folders are imported recursively.
+  Any file type works — binary content round-trips byte for byte. When a
+  target path already exists, a dialog offers Overwrite all, Keep both (which
+  writes `name 2.ext` beside the original), or Skip. Imports are capped at 100
+  files and 50 MB per drop, and 5 MB per file, and every target path goes
+  through the same sandbox checks as every other file operation.
+
 ## [0.8.1] - 2026-07-22
 
 ### Fixed
