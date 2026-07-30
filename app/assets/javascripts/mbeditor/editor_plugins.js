@@ -1040,6 +1040,24 @@
         return JS_KEEP_CODES[code] === true || JS_SYNTAX_CODE.test(code);
       }
 
+      // A 2304 whose span is an assignment TARGET (`foo = 1` with no
+      // declaration anywhere) is an implicit global — code the host's babel
+      // pipeline rejects — so it stays an Error, while read-side 2304s
+      // downgrade to Warning (those are usually host globals the language
+      // service can't see). Matches `=` (not `==`/`=>`) and compound
+      // assignment operators after the flagged identifier.
+      var JS_ASSIGN_AFTER = /^\s*(=(?![=>])|(\*\*|<<|>>>?|[+\-*/%&|^]|&&|\|\||\?\?)=)/;
+      var JS_IMPLICIT_GLOBAL_HINT = ' This assignment creates an implicit global — declare the variable with var, let, or const.';
+      function isUndeclaredAssignment(model, marker) {
+        var rest = model.getValueInRange({
+          startLineNumber: marker.endLineNumber,
+          startColumn: marker.endColumn,
+          endLineNumber: marker.endLineNumber,
+          endColumn: model.getLineMaxColumn(marker.endLineNumber)
+        });
+        return JS_ASSIGN_AFTER.test(rest);
+      }
+
       var _severityPatchActive = false;
       monaco.editor.onDidChangeMarkers(function(uris) {
         if (_severityPatchActive) return;
@@ -1056,14 +1074,17 @@
               var patched = markers.filter(function(m) {
                 return entry.keep ? entry.keep(m) : true;
               }).map(function(m) {
-                return (m.severity === monaco.MarkerSeverity.Error && entry.warn[String(m.code)])
-                  ? Object.assign({}, m, { severity: monaco.MarkerSeverity.Warning })
-                  : m;
+                if (m.severity !== monaco.MarkerSeverity.Error || !entry.warn[String(m.code)]) return m;
+                if (String(m.code) === '2304' && isUndeclaredAssignment(model, m)) {
+                  return m.message.indexOf(JS_IMPLICIT_GLOBAL_HINT) !== -1 ? m
+                    : Object.assign({}, m, { message: m.message + JS_IMPLICIT_GLOBAL_HINT });
+                }
+                return Object.assign({}, m, { severity: monaco.MarkerSeverity.Warning });
               });
               // Re-applying an unchanged set would re-enter this handler
               // forever, so only write when the patch actually changed something.
               var changed = patched.length !== markers.length || patched.some(function(m, i) {
-                return m.severity !== markers[i].severity;
+                return m.severity !== markers[i].severity || m.message !== markers[i].message;
               });
               if (changed) monaco.editor.setModelMarkers(model, entry.owner, patched);
             });
