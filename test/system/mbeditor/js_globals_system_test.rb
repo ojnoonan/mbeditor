@@ -20,6 +20,7 @@ module Mbeditor
           return <HelloWidget title="hi" />;
         }
         var causesWarning = TotallyUndefinedSymbolXyz;
+        implicitGlobalXyz = 42;
       JSX
       JsGlobalsService.invalidate(@workspace)
       Mbeditor.configure do |c|
@@ -69,6 +70,38 @@ module Mbeditor
              "expected a marker for the truly undefined symbol"
       assert messages.none? { |m| m.include?("HelloWidget") },
              "expected no marker for the cross-file component, got: #{messages.inspect}"
+    end
+
+    # Monaco MarkerSeverity: Error = 8, Warning = 4.
+    test "assignment to an undeclared variable is an Error while an unknown read stays a Warning" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "App.js.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      markers = nil
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 30
+      loop do
+        markers = page.evaluate_script(<<~'JS')
+          (function () {
+            if (!window.monaco) return null;
+            return window.monaco.editor.getModelMarkers({ owner: 'javascript' })
+              .map(function (m) { return { severity: m.severity, message: m.message }; });
+          })()
+        JS
+        if markers.is_a?(Array) &&
+           markers.any? { |m| m["message"].include?("implicitGlobalXyz") } &&
+           markers.any? { |m| m["message"].include?("TotallyUndefinedSymbolXyz") && m["severity"] == 4 }
+          break
+        end
+        flunk "markers never settled; last: #{markers.inspect}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        sleep 0.5
+      end
+
+      implicit = markers.find { |m| m["message"].include?("implicitGlobalXyz") }
+      assert_equal 8, implicit["severity"],
+                   "expected the undeclared assignment to stay an Error, got: #{implicit.inspect}"
+      assert_includes implicit["message"], "implicit global"
     end
   end
 end
