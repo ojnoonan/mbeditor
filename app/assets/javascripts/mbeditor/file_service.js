@@ -239,6 +239,15 @@ var FileService = (function () {
       .then(function(res) { return res.data; });
   }
 
+  // ActiveRecord models and their associations. Generating this eager-loads the
+  // host app, so the timeout is generous and it is only requested on demand.
+  function getModelGraph(force) {
+    return axios.get(window.mbeditorBasePath() + '/model_graph', {
+      params: force ? { refresh: 1 } : {},
+      timeout: 60000
+    }).then(function (res) { return res.data; });
+  }
+
   // Exceptions raised by the host app, newest first. The cable push is the
   // live path; this seeds the panel and covers hosts without ActionCable.
   function getExceptions() {
@@ -337,6 +346,7 @@ var FileService = (function () {
     rubyLspRequest: rubyLspRequest,
     lspDiagnostics: lspDiagnostics,
     rubyRename: rubyRename,
+    getModelGraph: getModelGraph,
     getExceptions: getExceptions,
     clearExceptions: clearExceptions,
     getRelatedFiles: getRelatedFiles,

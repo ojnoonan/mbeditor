@@ -451,6 +451,18 @@ var MbeditorApp = function MbeditorApp() {
   var problemCounts = _useStateProblemCounts2[0];
   var setProblemCounts = _useStateProblemCounts2[1];
 
+  // Model graph. Built lazily — generating it eager-loads the host app — and
+  // only when the Models tab is opened.
+  var _useStateModelGraph = useState(null);
+  var _useStateModelGraph2 = _slicedToArray(_useStateModelGraph, 2);
+  var modelGraph = _useStateModelGraph2[0];
+  var setModelGraph = _useStateModelGraph2[1];
+
+  var _useStateModelGraphLoading = useState(false);
+  var _useStateModelGraphLoading2 = _slicedToArray(_useStateModelGraphLoading, 2);
+  var modelGraphLoading = _useStateModelGraphLoading2[0];
+  var setModelGraphLoading = _useStateModelGraphLoading2[1];
+
   // ruby-lsp status for the status-bar chip. 'off' means never available here,
   // 'degraded' means we backed off after a failure, 'ok' means it's answering.
   var _useStateLspHealth = useState({ status: 'off', reason: null });
@@ -738,6 +750,46 @@ var MbeditorApp = function MbeditorApp() {
     }
   };
 
+  // Opens the schema modal for a model. Shared by the Rails panel's schema
+  // button and the model diagram, so both show the same thing.
+  var openSchemaModal = function openSchemaModal(label) {
+    if (schemaLoadingLabel === label) return;
+    setSchemaLoadingLabel(label);
+    FileService.getModelSchema(label.replace(/\s+/g, '')).then(function (data) {
+      setSchemaLoadingLabel(null);
+      setSchemaModal(data && data.columns
+        ? { label: label, data: data }
+        : { label: label, error: 'No schema found for ' + label });
+    })["catch"](function (err) {
+      setSchemaLoadingLabel(null);
+      var msg = (err && err.response && err.response.data && err.response.data.error) ||
+        'No db/schema.rb found or table not defined';
+      setSchemaModal({ label: label, error: msg });
+    });
+  };
+
+  // The server caches on a fingerprint of app/models and db/migrate mtimes, so
+  // re-requesting on every tab visit is cheap and picks up a saved model or a
+  // new migration without any invalidation wiring here.
+  var loadModelGraph = function loadModelGraph(force) {
+    if (!FileService.getModelGraph) return;
+    setModelGraphLoading(true);
+    FileService.getModelGraph(force).then(function (data) {
+      setModelGraph(data);
+    })["catch"](function (err) {
+      setModelGraph({
+        ok: false,
+        error: (err && err.response && err.response.data && err.response.data.error) ||
+          'Could not load the model graph.'
+      });
+    })["finally"](function () { setModelGraphLoading(false); });
+  };
+
+  useEffect(function () {
+    if (activeSidebarTab !== 'models' || sidebarCollapsed) return;
+    loadModelGraph(false);
+  }, [activeSidebarTab, sidebarCollapsed]);
+
   var readLspHealth = function readLspHealth() {
     if (!window.MBEDITOR_RUBY_LSP_AVAILABLE) {
       return { status: 'off', reason: window.MBEDITOR_RUBY_LSP_REASON || null };
@@ -1008,6 +1060,9 @@ var MbeditorApp = function MbeditorApp() {
         if (t.isCombinedDiff || (t.path || '').startsWith('combined-diff://') || (t.path || '').startsWith('diff://')) {
           return Promise.resolve({ content: '' });
         }
+        if (t.isModelGraph || t.path === 'mbeditor://model-graph') {
+          return Promise.resolve({ content: '' });
+        }
         var sourcePath = t.isPreview || /::preview$/.test(t.path || '') ? t.previewFor || (t.path || '').replace(/::preview$/, '') : t.path;
         return FileService.getFile(sourcePath, { allowMissing: true }).then(function (data) {
           return {
@@ -1031,7 +1086,7 @@ var MbeditorApp = function MbeditorApp() {
           p.tabs.forEach(function (t) {
             var res = results[resIdx++];
             var isPlainFile = t.path && !t.isDiff && !t.isCombinedDiff && !t.isSettings &&
-              !t.isChangelog && !t.isPreview &&
+              !t.isChangelog && !t.isPreview && !t.isModelGraph &&
               !/^(diff|combined-diff):\/\//.test(t.path) && !/::preview$/.test(t.path);
             if (isPlainFile) {
               if (seenPaths[t.path]) return;
@@ -1040,7 +1095,11 @@ var MbeditorApp = function MbeditorApp() {
             tabs.push(_extends({}, t, {
               content: res.content,
               externalContentVersion: (t.externalContentVersion || 0) + 1
-            }, res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {},
+            },
+            // A state saved before this tab type existed carries the path but
+            // not the flag, and would restore as a missing file.
+            t.path === 'mbeditor://model-graph' ? { isModelGraph: true } : {},
+            res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {},
             typeof res.fileNotFound === 'boolean' ? { fileNotFound: res.fileNotFound, dirty: res.fileNotFound ? false : t.dirty } : {},
             res.image === true ? { isImage: true } : {}));
           });
@@ -1151,7 +1210,7 @@ var MbeditorApp = function MbeditorApp() {
           return {
             id: p.id,
             activeTabId: p.activeTabId,
-            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff; }).map(function (t) {
+            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff && !t.isModelGraph; }).map(function (t) {
               return {
                 id: t.id, path: t.path, name: t.name, dirty: t.dirty, viewState: t.viewState,
                 isSettings: !!t.isSettings, isPreview: !!t.isPreview, previewFor: t.previewFor || null,
@@ -1866,7 +1925,7 @@ var MbeditorApp = function MbeditorApp() {
         return {
           id: p.id,
           activeTabId: p.activeTabId,
-          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff; }).map(function (t) {
+          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff && !t.isModelGraph; }).map(function (t) {
             return {
               id: t.id,
               path: t.path,
@@ -3496,6 +3555,48 @@ var MbeditorApp = function MbeditorApp() {
     EditorStore.setState({ panes: newPanes2, focusedPaneId: paneId, activeTabId: '__settings__' });
   }
 
+  // The diagram lives in an editor tab, not the sidebar: a layered graph is
+  // inherently wide and a ~300px panel can only ever show its first column.
+  // The sidebar tab is the entry point and the searchable model list.
+  var MODEL_GRAPH_TAB_ID = 'mbeditor://model-graph';
+  function openModelGraphTab() {
+    var st = EditorStore.getState();
+    var paneId = st.focusedPaneId;
+
+    var existing = null;
+    st.panes.forEach(function (p) {
+      if (!existing && p.tabs.some(function (t) { return t.id === MODEL_GRAPH_TAB_ID; })) {
+        existing = p.id;
+      }
+    });
+    if (existing) {
+      EditorStore.setState({
+        panes: st.panes.map(function (p) {
+          return p.id === existing ? Object.assign({}, p, { activeTabId: MODEL_GRAPH_TAB_ID }) : p;
+        }),
+        focusedPaneId: existing
+      });
+      return;
+    }
+
+    var pane = st.panes.find(function (p) { return p.id === paneId; }) || st.panes[0];
+    if (!pane) return;
+
+    var newTab = {
+      id: MODEL_GRAPH_TAB_ID, path: MODEL_GRAPH_TAB_ID, name: 'Model Graph',
+      dirty: false, content: '', isModelGraph: true
+    };
+    EditorStore.setState({
+      panes: st.panes.map(function (p) {
+        return p.id === pane.id
+          ? Object.assign({}, p, { tabs: p.tabs.concat(newTab), activeTabId: MODEL_GRAPH_TAB_ID })
+          : p;
+      }),
+      focusedPaneId: pane.id
+    });
+    loadModelGraph(false);
+  }
+
   var CHANGELOG_TAB_ID = 'mbeditor://changelog';
   function openChangelogTab() {
     var st = EditorStore.getState();
@@ -3706,6 +3807,16 @@ var MbeditorApp = function MbeditorApp() {
               onClick: function() { handleActivityBarClick('rails'); }
             },
             React.createElement("i", { className: "far fa-gem" })
+          ),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "ide-activity-btn" + (!sidebarCollapsed && activeSidebarTab === 'models' ? ' active' : ''),
+              title: "Model graph",
+              onClick: function() { handleActivityBarClick('models'); }
+            },
+            React.createElement("i", { className: "fas fa-project-diagram" })
           )
         ),
         React.createElement(
@@ -3730,7 +3841,21 @@ var MbeditorApp = function MbeditorApp() {
         React.createElement("div", { className: "sidebar-panel-title" },
           activeSidebarTab === 'explorer' ? 'Explorer' :
           activeSidebarTab === 'search' ? 'Search' :
-          activeSidebarTab === 'rails' ? 'Rails' : ''
+          activeSidebarTab === 'rails' ? 'Rails' :
+          activeSidebarTab === 'models' ? 'Models' : ''
+        ),
+        activeSidebarTab === 'models' && React.createElement(
+          "div",
+          { className: "ide-sidebar-content" },
+          React.createElement(ModelList, {
+            graph: modelGraph,
+            loading: modelGraphLoading,
+            onRefresh: function () { loadModelGraph(true); },
+            onOpenDiagram: openModelGraphTab,
+            onOpenFile: function (path, line) {
+              TabManager.openTab(path, path.split('/').pop(), line || 1);
+            }
+          })
         ),
         activeSidebarTab === 'explorer' && React.createElement(
           "div",
@@ -4146,25 +4271,7 @@ var MbeditorApp = function MbeditorApp() {
                   title: 'View database schema for ' + label,
                   onClick: (function(lbl) { return function(e) {
                     e.stopPropagation();
-                    if (schemaLoadingLabel === lbl) return;
-                    setSchemaLoadingLabel(lbl);
-                    var modelName = lbl.replace(/\s+/g, '');
-                    FileService.getModelSchema(modelName)
-                      .then(function(data) {
-                        setSchemaLoadingLabel(null);
-                        if (data && data.columns) {
-                          setSchemaModal({ label: lbl, data: data });
-                        } else {
-                          setSchemaModal({ label: lbl, error: 'No schema found for ' + lbl });
-                        }
-                      })
-                      ['catch'](function(err) {
-                        setSchemaLoadingLabel(null);
-                        var msg = (err && err.response && err.response.data && err.response.data.error)
-                          ? err.response.data.error
-                          : 'No db/schema.rb found or table not defined';
-                        setSchemaModal({ label: lbl, error: msg });
-                      });
+                    openSchemaModal(lbl);
                   }; })(label)
                 },
                 React.createElement('i', {
@@ -4320,6 +4427,13 @@ var MbeditorApp = function MbeditorApp() {
                 content = React.createElement(window.CommitGraph || CommitGraph, {
                   commits: pActiveTab.commits || [],
                   onSelectCommit: handleSelectCommit
+                });
+              } else if (pActiveTab.isModelGraph) {
+                content = React.createElement(ModelGraph, {
+                  graph: modelGraph,
+                  loading: modelGraphLoading,
+                  onRefresh: function () { loadModelGraph(true); },
+                  onOpenModel: function (model) { openSchemaModal(model.name); }
                 });
               } else if (pActiveTab.isChangelog) {
                 content = React.createElement(ChangelogView, {

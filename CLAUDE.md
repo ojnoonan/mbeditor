@@ -175,6 +175,48 @@ this bridge unchanged. Its model hover overlaps the existing `SchemaService` /
 editor is served by the app being debugged. Use `rdbg --open` (socket-based, so
 other threads keep serving), or run mbeditor from a second process.
 
+## Model graph
+
+`app/services/mbeditor/model_graph_service.rb` reads the host app's
+ActiveRecord models by **reflection**, not by parsing model files: mbeditor
+runs inside the host app, so `reflect_on_all_associations` is right there and
+resolves `class_name:`, `through:`, polymorphic and inverse sides correctly —
+all of which regex or AST parsing of `has_many` lines silently gets wrong.
+ruby-lsp cannot help here; its index models constants and methods, not
+associations.
+
+Never touches the database connection for the graph itself. Reflections are
+pure metadata, so it works against a database that isn't running or migrated;
+`columns` is attempted and degrades to an empty list. Only the first
+`MAX_COLUMNS_SENT` columns travel — the box shows those, the schema modal
+fetches the rest from `/model_schema`.
+
+Cached on a fingerprint of `app/models` and `db/migrate` mtimes plus file
+count, so saving a model or adding a migration invalidates it with **no
+file-change hook to keep in sync**. `?refresh=1` forces a rebuild.
+`Rails.application.eager_load!` is the expensive step, which is why the graph
+is only built when the tab is opened. Also writes
+`tmp/mbeditor_model_graph.{json,mmd}`; the `.mmd` is a Mermaid erDiagram that
+GitHub and VS Code render natively.
+
+The diagram lives in an **editor tab**, not the sidebar — a graph is inherently
+wide and a ~300px panel only ever shows its first column. The sidebar tab is
+the entry point and the model list. Layout is radial: the most-connected model
+is the hub, everything else sits in rings by hop count, ordered within a ring
+by a barycentre sweep to cut edge crossings. Two things that look like
+over-caution and are not: ring radius must grow monotonically (a busy inner
+ring gets a large circumference-derived radius and the next ring would
+otherwise land inside it), and each node claims arc proportional to its own
+footprint (spacing evenly by count makes tall boxes collide).
+
+Pan/zoom is wired through a **callback ref**, not `useRef` + `useEffect`. The
+SVG mounts on a render where the graph data has not changed — `loading` flips
+false separately from the data arriving — so an effect keyed on the data never
+re-runs once the element exists and the listener is never attached. The wheel
+listener is also manual and non-passive; React's `onWheel` is passive, so
+`preventDefault` is ignored and the editor scrolls instead of the diagram
+zooming.
+
 ## Runtime exceptions
 
 `lib/mbeditor/exception_log.rb` — a 50-entry ring of host-app exceptions, in

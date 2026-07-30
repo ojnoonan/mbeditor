@@ -654,6 +654,19 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
+    # GET /mbeditor/model_graph — ActiveRecord models and their associations.
+    #
+    # Cached until a model or migration file changes; `refresh=1` forces a
+    # rebuild. Generating it eager-loads the host app, which is why this is
+    # only requested when the Models tab is opened.
+    def model_graph
+      ModelGraphService.invalidate(workspace_root) if params[:refresh].present?
+      render json: ModelGraphService.call(workspace_root)
+    rescue StandardError => e
+      render json: { ok: false, error: e.message, models: [], edges: [] },
+             status: :unprocessable_content
+    end
+
     # GET /mbeditor/exceptions — recorded host-app exceptions, newest first.
     #
     # The cable push is the live path; this seeds the panel on load and covers
