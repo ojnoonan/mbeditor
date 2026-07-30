@@ -323,6 +323,31 @@
     return Date.now() < (window.MBEDITOR_RUBY_LSP_DISABLED_UNTIL || 0);
   }
 
+  // Raw-passthrough LSP methods keep their 0-based ranges on the wire; these
+  // two put them back into Monaco's 1-based world at the provider.
+  function lspRange(r) {
+    if (!r) return new window.monaco.Range(1, 1, 1, 1);
+    return new window.monaco.Range(
+      (r.start && r.start.line || 0) + 1,
+      (r.start && r.start.character || 0) + 1,
+      (r.end && r.end.line || r.start && r.start.line || 0) + 1,
+      (r.end && r.end.character || r.start && r.start.character || 0) + 1
+    );
+  }
+
+  // The backend rewrites every in-workspace file:// URI to a relative path and
+  // drops the rest, so what arrives here is always workspace-relative. Monaco
+  // needs an absolute-looking URI, and registerEditorOpener maps it back.
+  function lspUri(relativePath) {
+    return window.monaco.Uri.parse('file:///' + String(relativePath).replace(/^\/+/, ''));
+  }
+
+  // Send a raw-passthrough request and hand back result.result, or null when
+  // the legacy path should run instead.
+  function rawRubyLsp(lspMethod, model, position) {
+    return tryRubyLsp(lspMethod, model, position || { lineNumber: 1, column: 1 });
+  }
+
   function tryRubyLsp(lspMethod, model, position) {
     try {
       if (!window.MBEDITOR_RUBY_LSP_AVAILABLE || lspBackedOff()) return Promise.resolve(null);
@@ -340,6 +365,10 @@
           if (lspMethod === 'definition') return (data.results && data.results.length) ? data : null;
           if (lspMethod === 'hover') return data.markdown ? data : null;
           if (lspMethod === 'completion') return (data.suggestions && data.suggestions.length) ? data : null;
+          // Raw-passthrough methods answer with { result: <LSP JSON> }. An
+          // empty array is a real answer ("no references here"), not a reason
+          // to fall back, so only a missing key counts as nothing.
+          if (data.result !== undefined) return data.result;
           return null;
         })
         .catch(function (err) {
@@ -614,8 +643,6 @@
     var suppressInternalEdit = false;
     var keydownDisposable = null;
     var emmetTabDisposable = null;
-    var gotoMouseDisposable = null;
-    var gotoActionDisposable = null;
     var jsGotoMouseDisposable = null;
     var jsGotoActionDisposable = null;
 
@@ -716,84 +743,9 @@
         event.stopPropagation();
       });
 
-      // Navigate to a Ruby symbol: ruby-lsp first when available (accurate,
-      // position-aware), else modules/classes go to their definition file and
-      // lowercase symbols go to their def line via the grep/Ripper services.
-      function legacyNavigateToWord(word) {
-        if (/^[A-Z]/.test(word) && typeof FileService !== 'undefined' && FileService.getModuleMembers) {
-          FileService.getModuleMembers(word).then(function(data) {
-            if (!data || !data.file) return;
-            var filename = data.file.split('/').pop();
-            if (typeof TabManager !== 'undefined' && TabManager.openTab) {
-              TabManager.openTab(data.file, filename, 1);
-            }
-          }).catch(function() {});
-          return;
-        }
-        if (typeof FileService === 'undefined' || !FileService.getDefinition) return;
-        FileService.getDefinition(word, 'ruby').then(function(data) {
-          var results = data && Array.isArray(data.results) ? data.results : [];
-          if (results.length === 0) return;
-          var r = results[0];
-          if (typeof TabManager !== 'undefined' && TabManager.openTab) {
-            TabManager.openTab(r.file, r.file.split('/').pop(), r.line);
-          }
-        }).catch(function() {});
-      }
-
-      function navigateToWord(word, position) {
-        if (isErbDoc) return legacyNavigateToWord(word);
-
-        tryRubyLsp('definition', model, position).then(function (lsp) {
-          if (lsp && lsp.results && lsp.results.length) {
-            var r = lsp.results[0];
-            if (typeof TabManager !== 'undefined' && TabManager.openTab) {
-              TabManager.openTab(r.file, r.file.split('/').pop(), r.line);
-            }
-            return;
-          }
-          legacyNavigateToWord(word);
-        });
-      }
-
-      // Ctrl/Cmd+click — navigate to definition
-      gotoMouseDisposable = editor.onMouseDown(function(event) {
-        var ctrlOrCmd = event.event.ctrlKey || event.event.metaKey;
-        if (!ctrlOrCmd) return;
-        // Target type 6 = CONTENT_TEXT in Monaco's MouseTargetType enum
-        if (!event.target || event.target.type !== 6) return;
-
-        var position = event.target.position;
-        if (!position) return;
-
-        var wordInfo = model.getWordAtPosition(position);
-        if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
-        if (RUBY_KEYWORDS[wordInfo.word]) return;
-        if (RUBY_CORE_METHODS[wordInfo.word]) return;
-        if (isErbDoc && (!rubyContextAt(position) || RAILS_VIEW_HELPERS[wordInfo.word])) return;
-
-        event.event.preventDefault();
-        navigateToWord(wordInfo.word, position);
-      });
-
-      // F12 — go to definition from keyboard
-      gotoActionDisposable = editor.addAction({
-        id: 'mbeditor.gotoRubyDefinition',
-        label: 'Go to Ruby Definition',
-        keybindings: [window.monaco.KeyCode.F12],
-        contextMenuGroupId: 'navigation',
-        contextMenuOrder: 1.5,
-        run: function(ed) {
-          var pos = ed.getPosition();
-          if (!pos) return;
-          var wordInfo = model.getWordAtPosition(pos);
-          if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
-          if (RUBY_KEYWORDS[wordInfo.word]) return;
-          if (RUBY_CORE_METHODS[wordInfo.word]) return;
-          if (isErbDoc && (!rubyContextAt(pos) || RAILS_VIEW_HELPERS[wordInfo.word])) return;
-          navigateToWord(wordInfo.word, pos);
-        }
-      });
+      // Go-to-definition is a global DefinitionProvider (registered in
+      // registerGlobalExtensions), not wired per editor. Monaco owns Ctrl+click,
+      // F12, Alt+F12 peek and the Ctrl+hover preview from that one registration.
     }
 
     if (language === 'javascript') {
@@ -862,8 +814,6 @@
       dispose: function dispose() {
         if (keydownDisposable) keydownDisposable.dispose();
         if (emmetTabDisposable) emmetTabDisposable.dispose();
-        if (gotoMouseDisposable) gotoMouseDisposable.dispose();
-        if (gotoActionDisposable) gotoActionDisposable.dispose();
         if (jsGotoMouseDisposable) jsGotoMouseDisposable.dispose();
         if (jsGotoActionDisposable) jsGotoActionDisposable.dispose();
         contentDisposable.dispose();
@@ -1597,6 +1547,183 @@
       if (!path) return;
       if (typeof TabManager === 'undefined' || !TabManager.openTab) return;
       TabManager.openTab(path, String(path).split('/').pop(), line || 1);
+    });
+
+    // ── ruby-lsp navigation ──────────────────────────────────────────────────
+
+    // Teaches Monaco how to open a file:// resource in this editor. Without it
+    // every provider below can find a location but nothing can go there:
+    // peek-definition, the references widget and Ctrl+hover previews all route
+    // their "open this" through here.
+    monaco.editor.registerEditorOpener({
+      openCodeEditor: function (_source, resource, selectionOrPosition) {
+        var path = String(resource.path || '').replace(/^\/+/, '');
+        if (!path || typeof TabManager === 'undefined' || !TabManager.openTab) return false;
+
+        var pos = selectionOrPosition || {};
+        var line = pos.startLineNumber || pos.lineNumber || 1;
+        var col = pos.startColumn || pos.column || 1;
+        TabManager.openTab(path, path.split('/').pop(), line, null, false, col);
+        return true;
+      }
+    });
+
+    // Words never worth a definition lookup: language keywords, core methods,
+    // and (in ERB) Rails view helpers that live in the framework rather than
+    // the workspace. Guarding here rather than in the request means Ctrl+hover
+    // over `end` doesn't light up as a link.
+    function rubyNavigableWord(model, position, isErb) {
+      var info = model.getWordAtPosition(position);
+      if (!info || !info.word || info.word.length < 2) return null;
+      if (RUBY_KEYWORDS[info.word] || RUBY_CORE_METHODS[info.word]) return null;
+      if (isErb) {
+        if (!isInsideErbTag(model, position)) return null;
+        if (RAILS_VIEW_HELPERS[info.word]) return null;
+      }
+      return info.word;
+    }
+
+    // Definition: ruby-lsp when it can answer, else the grep/Ripper services.
+    // ERB always takes the legacy path — Prism cannot parse ERB.
+    ['ruby', 'erb'].forEach(function (languageId) {
+      var isErb = languageId === 'erb';
+
+      monaco.languages.registerDefinitionProvider(languageId, {
+        provideDefinition: function provideDefinition(model, position) {
+          var word = rubyNavigableWord(model, position, isErb);
+          if (!word) return null;
+
+          var lsp = isErb ? Promise.resolve(null) : tryRubyLsp('definition', model, position);
+          return lsp.then(function (data) {
+            if (data && data.results && data.results.length) {
+              return data.results.map(function (r) {
+                var line = r.line || 1;
+                return {
+                  uri: lspUri(r.file),
+                  range: new monaco.Range(line, r.col || 1, r.endLine || line, r.endCol || 1)
+                };
+              });
+            }
+            return legacyRubyDefinition(word);
+          });
+        }
+      });
+    });
+
+    // The pre-ruby-lsp lookup, now expressed as locations rather than as a
+    // side-effecting "open a tab": constants resolve through /module_members,
+    // everything else through the Ripper-backed /definition index.
+    function legacyRubyDefinition(word) {
+      if (typeof FileService === 'undefined') return null;
+
+      if (/^[A-Z]/.test(word) && FileService.getModuleMembers) {
+        return FileService.getModuleMembers(word).then(function (data) {
+          if (!data || !data.file) return null;
+          return [{ uri: lspUri(data.file), range: new monaco.Range(1, 1, 1, 1) }];
+        }).catch(function () { return null; });
+      }
+
+      if (!FileService.getDefinition) return null;
+      return FileService.getDefinition(word, 'ruby').then(function (data) {
+        var results = (data && Array.isArray(data.results)) ? data.results : [];
+        return results.map(function (r) {
+          return { uri: lspUri(r.file), range: new monaco.Range(r.line || 1, 1, r.line || 1, 1) };
+        });
+      }).catch(function () { return null; });
+    }
+
+    // References. No legacy equivalent exists — the workspace search panel is a
+    // text grep, not a reference index — so an empty list is the honest answer
+    // when ruby-lsp can't help.
+    monaco.languages.registerReferenceProvider('ruby', {
+      provideReferences: function provideReferences(model, position) {
+        if (!rubyNavigableWord(model, position, false)) return null;
+
+        return rawRubyLsp('references', model, position).then(function (locations) {
+          if (!Array.isArray(locations)) return null;
+          return locations.filter(function (loc) { return loc && loc.uri; }).map(function (loc) {
+            return { uri: lspUri(loc.uri), range: lspRange(loc.range) };
+          });
+        });
+      }
+    });
+
+    // Occurrences of the symbol under the cursor. Monaco has a built-in
+    // word-match highlighter, but it cannot tell a local named `id` from a
+    // method named `id`; ruby-lsp resolves the actual symbol.
+    monaco.languages.registerDocumentHighlightProvider('ruby', {
+      provideDocumentHighlights: function provideDocumentHighlights(model, position) {
+        return rawRubyLsp('document_highlight', model, position).then(function (highlights) {
+          if (!Array.isArray(highlights)) return null;
+          return highlights.filter(Boolean).map(function (h) {
+            return { range: lspRange(h.range), kind: h.kind };
+          });
+        });
+      }
+    });
+
+    // Document symbols feed Monaco's breadcrumbs, sticky scroll and
+    // Ctrl+Shift+O — all of which are dark for Ruby today.
+    //
+    // This deliberately does NOT replace ruby_outline.js. That lexer supplies
+    // method visibility and test-block (describe/it/test) entries which
+    // ruby-lsp's documentSymbol does not emit, and the outline panel groups on
+    // both. It also still has to cover ERB, HAML, and the case where ruby-lsp
+    // isn't running.
+    var LSP_SYMBOL_KINDS = {
+      1: 'File', 2: 'Module', 3: 'Namespace', 4: 'Package', 5: 'Class',
+      6: 'Method', 7: 'Property', 8: 'Field', 9: 'Constructor', 10: 'Enum',
+      11: 'Interface', 12: 'Function', 13: 'Variable', 14: 'Constant',
+      15: 'String', 16: 'Number', 17: 'Boolean', 18: 'Array', 19: 'Object',
+      20: 'Key', 21: 'Null', 22: 'EnumMember', 23: 'Struct', 24: 'Event',
+      25: 'Operator', 26: 'TypeParameter'
+    };
+
+    function toMonacoSymbols(symbols, depth) {
+      if (!Array.isArray(symbols) || depth > 16) return [];
+      return symbols.filter(Boolean).map(function (s) {
+        var full = lspRange(s.range);
+        return {
+          name: String(s.name || ''),
+          detail: s.detail || '',
+          kind: monaco.languages.SymbolKind[LSP_SYMBOL_KINDS[s.kind] || 'Variable'],
+          tags: [],
+          range: full,
+          selectionRange: s.selectionRange ? lspRange(s.selectionRange) : full,
+          children: toMonacoSymbols(s.children, depth + 1)
+        };
+      });
+    }
+
+    monaco.languages.registerDocumentSymbolProvider('ruby', {
+      displayName: 'Ruby',
+      provideDocumentSymbols: function provideDocumentSymbols(model) {
+        return rawRubyLsp('document_symbol', model).then(function (symbols) {
+          if (!Array.isArray(symbols)) return null;
+          return toMonacoSymbols(symbols, 0);
+        });
+      }
+    });
+
+    // Real class/def/block/heredoc folding. Monaco merges the results of every
+    // folding provider, so the vim-marker provider registered further down
+    // keeps working alongside this one.
+    monaco.languages.registerFoldingRangeProvider('ruby', {
+      provideFoldingRanges: function provideFoldingRanges(model) {
+        return rawRubyLsp('folding_range', model).then(function (ranges) {
+          if (!Array.isArray(ranges)) return null;
+          return ranges.filter(Boolean).map(function (r) {
+            return {
+              start: (r.startLine || 0) + 1,
+              end: (r.endLine || 0) + 1,
+              kind: r.kind === 'comment' ? monaco.languages.FoldingRangeKind.Comment
+                : r.kind === 'imports' ? monaco.languages.FoldingRangeKind.Imports
+                : r.kind === 'region' ? monaco.languages.FoldingRangeKind.Region
+                : undefined
+            };
+          });
+        });
+      }
     });
 
     // Ruby method definition hover provider.

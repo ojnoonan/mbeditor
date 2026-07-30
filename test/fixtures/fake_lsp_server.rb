@@ -113,6 +113,38 @@ loop do
 
         **fake hover** — snowman ☃
       MD
+    when "textDocument/references"
+      # One in-workspace hit and one in a gem: the gem location must be dropped
+      # by the controller's URI sanitizer before it reaches the browser.
+      uri = msg.dig("params", "textDocument", "uri")
+      [{ "uri" => uri,
+         "range" => { "start" => { "line" => 6, "character" => 4 },
+                      "end" => { "line" => 6, "character" => 8 } } },
+       { "uri" => "file:///gems/activesupport/lib/thing.rb",
+         "range" => { "start" => { "line" => 1, "character" => 0 },
+                      "end" => { "line" => 1, "character" => 4 } } }]
+    when "textDocument/documentHighlight"
+      [{ "range" => { "start" => { "line" => 2, "character" => 4 },
+                      "end" => { "line" => 2, "character" => 8 } }, "kind" => 1 },
+       { "range" => { "start" => { "line" => 5, "character" => 2 },
+                      "end" => { "line" => 5, "character" => 6 } }, "kind" => 2 }]
+    when "textDocument/documentSymbol"
+      [{ "name" => "User", "kind" => 5,
+         "range" => { "start" => { "line" => 0, "character" => 0 },
+                      "end" => { "line" => 8, "character" => 3 } },
+         "selectionRange" => { "start" => { "line" => 0, "character" => 6 },
+                               "end" => { "line" => 0, "character" => 10 } },
+         "children" => [
+           { "name" => "full_name", "kind" => 6,
+             "range" => { "start" => { "line" => 2, "character" => 2 },
+                          "end" => { "line" => 4, "character" => 5 } },
+             "selectionRange" => { "start" => { "line" => 2, "character" => 6 },
+                                   "end" => { "line" => 2, "character" => 15 } },
+             "children" => [] }
+         ] }]
+    when "textDocument/foldingRange"
+      [{ "startLine" => 0, "endLine" => 8 },
+       { "startLine" => 2, "endLine" => 4, "kind" => "comment" }]
     when "textDocument/completion"
       { "items" => [{ "label" => "fake_method", "kind" => 2,
                       "insertText" => "fake_method", "detail" => "FakeClass#fake_method" }] }

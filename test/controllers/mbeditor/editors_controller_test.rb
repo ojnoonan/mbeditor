@@ -193,8 +193,66 @@ module Mbeditor
     end
 
     test "ruby_lsp rejects an unknown lsp_method" do
-      post "/mbeditor/ruby_lsp", params: { lsp_method: "rename", path: "a.rb", content: "", line: 1, character: 1 }
+      post "/mbeditor/ruby_lsp", params: { lsp_method: "workspace/executeCommand", path: "a.rb",
+                                           content: "", line: 1, character: 1 }
       assert_response :bad_request
+    end
+
+    test "ruby_lsp passes raw methods through and rewrites their URIs" do
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "references", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        refs = json["result"]
+        assert_equal 1, refs.length, "the gem location has no place in this editor and must be dropped"
+        assert_equal "app/models/user.rb", refs.first["uri"], "absolute file:// URIs never reach the browser"
+        refute_includes response.body, "file://"
+        # Raw passthrough keeps LSP's own 0-based ranges; the JS provider converts.
+        assert_equal 6, refs.first.dig("range", "start", "line")
+
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "document_symbol", path: "app/models/user.rb",
+                                             content: "class User; end" }
+        assert_response :ok
+        assert_equal "User", json["result"].first["name"]
+        assert_equal "full_name", json["result"].first["children"].first["name"]
+
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "folding_range", path: "app/models/user.rb",
+                                             content: "class User; end" }
+        assert_response :ok
+        assert_equal [0, 2], json["result"].map { |r| r["startLine"] }
+
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "document_highlight", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        assert_equal [1, 2], json["result"].map { |h| h["kind"] }
+      end
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
+    end
+
+    test "definition results carry a full range so peek has something to show" do
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        first = json["results"].first
+        assert_equal 5, first["line"]
+        assert_equal 3, first["col"], "0-based character 2 becomes 1-based 3"
+        assert_equal 5, first["endLine"]
+        assert_equal 11, first["endCol"]
+      end
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
     end
 
     test "ruby_lsp rejects a traversal path" do

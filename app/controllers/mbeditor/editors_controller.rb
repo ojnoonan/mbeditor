@@ -477,19 +477,43 @@ module Mbeditor
       render json: { ok: false, error: e.message }, status: :unprocessable_content
     end
 
-    # Symbol values are handled locally instead of being forwarded to the
-    # server; they need no path, no document and no running process.
+    # The whitelist is the trust boundary: only these reach the language server.
+    # Symbol values are handled locally instead of being forwarded; they need no
+    # path, no document and no running process.
+    #
+    # The first four have bespoke translators producing 1-based, editor-shaped
+    # payloads, kept for their existing consumers. Everything added since is in
+    # RUBY_LSP_RAW below: raw LSP JSON, 0-based, through one URI sanitizer. Eight
+    # more hand-written translators would be ~200 lines restating shapes Monaco
+    # already understands.
     RUBY_LSP_METHODS = {
-      "definition"  => "textDocument/definition",
-      "hover"       => "textDocument/hover",
-      "completion"  => "textDocument/completion",
-      "diagnostics" => "textDocument/diagnostic",
-      "health"      => :health,
-      "restart"     => :restart
+      "definition"       => "textDocument/definition",
+      "hover"            => "textDocument/hover",
+      "completion"       => "textDocument/completion",
+      "diagnostics"      => "textDocument/diagnostic",
+      "references"       => "textDocument/references",
+      "document_highlight" => "textDocument/documentHighlight",
+      "document_symbol"  => "textDocument/documentSymbol",
+      "folding_range"    => "textDocument/foldingRange",
+      "health"           => :health,
+      "restart"          => :restart
     }.freeze
 
-    # Diagnostics are whole-document, not positional.
-    RUBY_LSP_POSITIONLESS = %w[textDocument/diagnostic].freeze
+    # Passed through as raw LSP JSON rather than translated. Ranges stay 0-based
+    # on the wire and are converted by one helper at the Monaco provider.
+    RUBY_LSP_RAW = %w[
+      references document_highlight document_symbol folding_range
+    ].freeze
+
+    # Whole-document requests, which carry no cursor position.
+    RUBY_LSP_POSITIONLESS = %w[
+      textDocument/diagnostic textDocument/documentSymbol textDocument/foldingRange
+    ].freeze
+
+    # Extra params per method, merged into the request alongside the position.
+    RUBY_LSP_EXTRA_PARAMS = {
+      "textDocument/references" => { context: { includeDeclaration: true } }
+    }.freeze
 
     # RuboCop's first run inside a freshly booted ruby-lsp is far slower than a
     # hover/definition lookup, so diagnostics get their own budget.
@@ -520,14 +544,18 @@ module Mbeditor
                               rubyLspAvailable: false }, status: :unprocessable_content
       end
 
-      extra = if RUBY_LSP_POSITIONLESS.include?(lsp_method)
+      positionless = RUBY_LSP_POSITIONLESS.include?(lsp_method)
+      extra = if positionless
         {}
       else
         # Monaco positions are 1-based; LSP positions are 0-based.
         { position: { line: [params[:line].to_i - 1, 0].max,
                       character: [params[:character].to_i - 1, 0].max } }
       end
-      timeout = RUBY_LSP_POSITIONLESS.include?(lsp_method) ? RUBY_LSP_DIAGNOSTICS_TIMEOUT : nil
+      extra = extra.merge(RUBY_LSP_EXTRA_PARAMS.fetch(lsp_method, {}))
+      # Only diagnostics pay RuboCop's boot cost; documentSymbol and
+      # foldingRange are a single Prism parse and want the normal budget.
+      timeout = lsp_method == "textDocument/diagnostic" ? RUBY_LSP_DIAGNOSTICS_TIMEOUT : nil
 
       client = RubyLspClient.for(workspace_root.to_s)
       result = client.request_with_document(lsp_method, path, content, extra, timeout: timeout)
@@ -1185,7 +1213,57 @@ module Mbeditor
       when "hover"       then { markdown: translate_lsp_hover(result) }
       when "completion"  then { suggestions: translate_lsp_completions(result) }
       when "diagnostics" then LspDiagnosticsTranslator.call(result, uri)
+      when *RUBY_LSP_RAW then { result: sanitize_lsp_uris(result) }
       end
+    end
+
+    # The one trust boundary for every raw-passthrough method. Walks the LSP
+    # response and rewrites each file:// URI to a workspace-relative path,
+    # dropping any object that points outside the workspace — a reference in a
+    # gem is not something this editor can open, and a path outside the root is
+    # not something it should hand to the browser at all.
+    #
+    # Recursion is bounded by MAX_LSP_DEPTH: the payload comes from a
+    # subprocess, and a cyclic or pathologically nested one must not take the
+    # request thread down with it.
+    MAX_LSP_DEPTH = 32
+
+    URI_KEYS = %w[uri targetUri].freeze
+
+    def sanitize_lsp_uris(node, depth = 0)
+      return nil if depth > MAX_LSP_DEPTH
+
+      case node
+      when Array
+        node.filter_map { |child| sanitize_lsp_uris(child, depth + 1) }
+      when Hash
+        sanitized = {}
+        node.each do |key, value|
+          if URI_KEYS.include?(key) && value.is_a?(String)
+            rel = workspace_relative_uri(value)
+            # A URI we can't place inside the workspace disqualifies its object.
+            return nil unless rel
+
+            sanitized[key] = rel
+          else
+            child = sanitize_lsp_uris(value, depth + 1)
+            sanitized[key] = child unless child.nil? && !value.nil?
+          end
+        end
+        sanitized
+      else
+        node
+      end
+    end
+
+    def workspace_relative_uri(uri)
+      return nil unless uri.start_with?("file://")
+
+      path = uri.delete_prefix("file://")
+      prefix = "#{workspace_root}/"
+      return nil unless path.start_with?(prefix)
+
+      path.delete_prefix(prefix)
     end
 
     def translate_lsp_locations(result)
@@ -1203,7 +1281,17 @@ module Mbeditor
         # the frontend fall back to the legacy services (ri covers stdlib).
         next unless fpath.start_with?("#{root}/")
 
-        { file: fpath.delete_prefix("#{root}/"), line: (range&.dig("start", "line") || 0) + 1 }
+        start_line = (range&.dig("start", "line") || 0) + 1
+        {
+          file: fpath.delete_prefix("#{root}/"),
+          line: start_line,
+          # Columns and the end of the range are additive: existing consumers
+          # only read :file and :line, but peek-definition needs a real range
+          # to highlight rather than the start of the line.
+          col: (range&.dig("start", "character") || 0) + 1,
+          endLine: (range&.dig("end", "line") || range&.dig("start", "line") || 0) + 1,
+          endCol: (range&.dig("end", "character") || range&.dig("start", "character") || 0) + 1
+        }
       end
     end
 
