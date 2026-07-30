@@ -498,6 +498,7 @@ module Mbeditor
       "formatting"       => "textDocument/formatting",
       "signature_help"   => "textDocument/signatureHelp",
       "selection_range"  => "textDocument/selectionRange",
+      "prepare_rename"   => "textDocument/prepareRename",
       "health"           => :health,
       "restart"          => :restart
     }.freeze
@@ -506,7 +507,7 @@ module Mbeditor
     # on the wire and are converted by one helper at the Monaco provider.
     RUBY_LSP_RAW = %w[
       references document_highlight document_symbol folding_range
-      formatting signature_help selection_range
+      formatting signature_help selection_range prepare_rename
     ].freeze
 
     # Whole-document requests, which carry no cursor position.
@@ -590,6 +591,67 @@ module Mbeditor
       render json: { fallback: true, lspState: RubyLspClient.for(workspace_root.to_s).state }
     rescue StandardError => e
       render json: { error: e.message, fallback: true }
+    end
+
+    # ruby-lsp renames constants only (Rename#perform locates
+    # ConstantReadNode | ConstantPathNode | ConstantPathTargetNode and nothing
+    # else), so anything that isn't a constant path is rejected before we ask.
+    RUBY_CONSTANT_PATH = /\A[A-Z][A-Za-z0-9_]*(::[A-Z][A-Za-z0-9_]*)*\z/
+
+    # Rename#collect_text_edits globs **/*.rb and Prism-parses every hit, which
+    # is seconds on a large app rather than the usual milliseconds.
+    RUBY_LSP_RENAME_TIMEOUT = 30
+
+    # POST /mbeditor/ruby_rename — rename a Ruby constant across the workspace.
+    #
+    # Body: { path:, content:, line:, character:, new_name:, open_paths: [] }
+    #
+    # The workspace edit is split by whether the file is open in the editor:
+    #
+    #   - open files    -> edits returned for Monaco to apply, so the change is
+    #                      undoable, marks the tab dirty, and respects the
+    #                      buffer the user is actually looking at
+    #   - closed files  -> written here, then announced over the cable
+    #
+    # That split is what makes unsaved work safe: anything dirty is by
+    # definition open, and open files are never written by the server.
+    def ruby_rename
+      path = resolve_path(params[:path])
+      return render json: { error: "Invalid path" }, status: :bad_request unless path
+
+      new_name = params[:new_name].to_s.strip
+      unless new_name.match?(RUBY_CONSTANT_PATH)
+        return render json: { error: "Only Ruby constants can be renamed, and #{new_name.inspect} is not one." },
+                      status: :unprocessable_content
+      end
+
+      content = params[:content].to_s
+      if content.bytesize > FileOperationService::MAX_FILE_SIZE_BYTES
+        return render json: { error: "Content too large" }, status: :content_too_large
+      end
+
+      unless AvailabilityProbe.ruby_lsp(workspace_root)
+        return render json: { error: "ruby-lsp unavailable", reason: ruby_lsp_unavailable_reason,
+                              rubyLspAvailable: false }, status: :unprocessable_content
+      end
+
+      result = RubyLspClient.for(workspace_root.to_s).request_with_document(
+        "textDocument/rename", path, content,
+        { position: { line: [params[:line].to_i - 1, 0].max,
+                      character: [params[:character].to_i - 1, 0].max },
+          newName: new_name },
+        timeout: RUBY_LSP_RENAME_TIMEOUT
+      )
+
+      render json: apply_rename_changes(result, Array(params[:open_paths]).map(&:to_s))
+    rescue RubyLspClient::TimeoutError, RubyLspClient::NotReadyError
+      render json: { error: "ruby-lsp did not answer in time", fallback: true,
+                     lspState: RubyLspClient.for(workspace_root.to_s).state },
+             status: :unprocessable_content
+    rescue StandardError => e
+      # ruby-lsp raises InvalidNameError ("already in use by X") for a clash;
+      # its message is the most useful thing we can show.
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # GET /mbeditor/module_members?name=ArticlesHelper
@@ -1193,6 +1255,57 @@ module Mbeditor
       timeout = timeout_seconds && timeout_seconds > 0 ? timeout_seconds : nil
       result = ProcessRunner.call(cmd, timeout: timeout, env: env, stdin_data: stdin_data)
       result[:stdout]
+    end
+
+    def apply_rename_changes(result, open_paths)
+      changes = result.is_a?(Hash) ? (result["changes"] || {}) : {}
+      open = open_paths.to_set
+      written = []
+      rejected = []
+      edits_for_open = {}
+
+      changes.each do |uri, raw_edits|
+        rel = workspace_relative_uri(uri.to_s)
+        # Outside the workspace, or a path we refuse to write: record it so a
+        # partial rename is visibly partial rather than silently so.
+        target = rel && resolve_path(rel)
+        if rel.nil? || target.nil? || path_blocked_for_operations?(target)
+          rejected << (rel || uri.to_s)
+          next
+        end
+
+        edits = Array(raw_edits).filter_map { |e| LspDiagnosticsTranslator.sanitize_edit(e) }
+        next if edits.empty?
+
+        if open.include?(rel)
+          edits_for_open[rel] = edits
+        else
+          # ponytail: no transaction. A failure part-way leaves some files
+          # renamed and some not; `written` says which. Upgrade path is
+          # write-to-temp then rename-all if that ever bites.
+          FileOperationService.new(workspace_root).save(target, apply_edits(File.read(target), edits))
+          written << rel
+        end
+      end
+
+      broadcast_files_changed(written.map { |rel| File.join(workspace_root, rel) }) if written.any?
+      { ok: true, written: written, rejected: rejected, edits: edits_for_open }
+    end
+
+    # Applies 1-based text edits to a source string. Sorted descending so an
+    # earlier edit never invalidates a later one's offsets.
+    def apply_edits(source, edits)
+      lines = source.split("\n", -1)
+      edits.sort_by { |e| [-e[:startLine], -e[:startCol]] }.each do |edit|
+        next unless edit[:startLine] == edit[:endLine] # ruby-lsp's renames are single-line
+
+        line = lines[edit[:startLine] - 1]
+        next if line.nil?
+
+        lines[edit[:startLine] - 1] =
+          line[0, edit[:startCol] - 1].to_s + edit[:text].to_s + line[(edit[:endCol] - 1)..].to_s
+      end
+      lines.join("\n")
     end
 
     def ruby_lsp_unavailable_reason

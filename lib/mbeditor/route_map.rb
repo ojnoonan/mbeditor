@@ -34,6 +34,7 @@ module Mbeditor
     get    'js_globals',      to: 'editors#js_globals'
     get    'js_program',      to: 'editors#js_program'
     post   'ruby_lsp',        to: 'editors#ruby_lsp'
+  post   'ruby_rename',     to: 'editors#ruby_rename'
     get    'module_members',  to: 'editors#module_members'
     get    'file_includes',   to: 'editors#file_includes'
     get    'client_config',   to: 'editors#client_config'

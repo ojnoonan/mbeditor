@@ -239,6 +239,16 @@ var FileService = (function () {
       .then(function(res) { return res.data; });
   }
 
+  // Rename a Ruby constant across the workspace. openPaths lists every file
+  // with a live editor model: the server returns their edits for Monaco to
+  // apply (undoable, marks the tab dirty) and writes the rest to disk itself.
+  function rubyRename(path, content, line, character, newName, openPaths) {
+    return axios.post(window.mbeditorBasePath() + '/ruby_rename', {
+      path: path, content: content, line: line, character: character,
+      new_name: newName, open_paths: openPaths || []
+    }, { timeout: 35000 }).then(function (res) { return res.data; });
+  }
+
   // Whole-document Ruby diagnostics from ruby-lsp (RuboCop offenses + Prism
   // syntax errors), translated server-side into the same marker shape /lint
   // returns.
@@ -314,6 +324,7 @@ var FileService = (function () {
     getJsProgramFile: getJsProgramFile,
     rubyLspRequest: rubyLspRequest,
     lspDiagnostics: lspDiagnostics,
+    rubyRename: rubyRename,
     getRelatedFiles: getRelatedFiles,
     getModelSchema: getModelSchema,
     getChangelog: getChangelog

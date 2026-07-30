@@ -284,6 +284,91 @@ module Mbeditor
       Mbeditor.configuration.ruby_lsp_command = original_cmd
     end
 
+    # ── ruby_rename ──────────────────────────────────────────────────────────
+
+    def with_fake_lsp
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+      with_ruby_lsp_available(true) { yield }
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
+    end
+
+    def sibling_path
+      File.join(@workspace, "app", "models", "rename_sibling.rb")
+    end
+
+    test "ruby_rename rejects anything that is not a Ruby constant" do
+      ["lower_case", "9Bad", "With Space", "", "Foo::bar"].each do |name|
+        post "/mbeditor/ruby_rename", params: { path: "app/models/user.rb", content: "class User; end",
+                                                line: 1, character: 7, new_name: name }
+        assert_response :unprocessable_content, "#{name.inspect} should be refused"
+        assert_includes json["error"], "constants"
+      end
+    end
+
+    test "ruby_rename writes closed files and returns edits for open ones" do
+      File.write(sibling_path, "class User\n  def x(User); end\nend\n")
+
+      with_fake_lsp do
+        post "/mbeditor/ruby_rename", params: {
+          path: "app/models/user.rb", content: "class User; end", line: 1, character: 7,
+          new_name: "Account", open_paths: ["app/models/user.rb"]
+        }
+        assert_response :ok
+
+        # The open file is never written; its edits come back for Monaco.
+        assert_equal ["app/models/user.rb"], json["edits"].keys
+        assert_equal "class User; end\n", File.read(File.join(@workspace, "app/models/user.rb")),
+                     "an open buffer must not be overwritten behind the editor's back"
+        edit = json["edits"]["app/models/user.rb"].first
+        assert_equal [1, 7, 1, 11], edit.values_at("startLine", "startCol", "endLine", "endCol")
+        assert_equal "Account", edit["text"]
+
+        # The closed sibling is written, with both of its edits applied.
+        assert_equal ["app/models/rename_sibling.rb"], json["written"]
+        assert_equal "class Account\n  def x(Account); end\nend\n", File.read(sibling_path)
+
+        # And the out-of-workspace target is refused, visibly.
+        assert_equal 1, json["rejected"].length
+        assert_equal "class User; end\n", File.read(File.join(@workspace, "app/models/user.rb"))
+      end
+    end
+
+    test "ruby_rename writes a file the editor did not declare as open" do
+      File.write(sibling_path, "class User\n  def x(User); end\nend\n")
+
+      with_fake_lsp do
+        post "/mbeditor/ruby_rename", params: {
+          path: "app/models/user.rb", content: "class User; end", line: 1, character: 7,
+          new_name: "Account", open_paths: []
+        }
+        assert_response :ok
+        assert_empty json["edits"], "nothing is open, so nothing comes back for Monaco"
+        assert_equal %w[app/models/user.rb app/models/rename_sibling.rb].sort, json["written"].sort
+        assert_equal "class Account; end\n", File.read(File.join(@workspace, "app/models/user.rb"))
+      end
+    end
+
+    test "ruby_rename returns 422 when ruby-lsp is unavailable" do
+      with_ruby_lsp_available(false) do
+        post "/mbeditor/ruby_rename", params: { path: "app/models/user.rb", content: "class User; end",
+                                                line: 1, character: 7, new_name: "Account" }
+        assert_response :unprocessable_content
+        assert_equal false, json["rubyLspAvailable"]
+      end
+    end
+
+    test "ruby_rename requires the client header" do
+      ActionDispatch::Integration::Session.new(Rails.application).tap do |sess|
+        sess.post "/mbeditor/ruby_rename",
+                  params: { path: "app/models/user.rb", new_name: "Account" }, as: :json
+        assert_equal 403, sess.response.status
+      end
+    end
+
     test "definition results carry a full range so peek has something to show" do
       original_cmd = Mbeditor.configuration.ruby_lsp_command
       Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]

@@ -168,6 +168,32 @@ loop do
             "parameters" => [{ "label" => "first" }, { "label" => "last" }] }
         ],
         "activeSignature" => 0, "activeParameter" => 1 }
+    when "textDocument/prepareRename"
+      { "range" => { "start" => { "line" => 0, "character" => 6 },
+                     "end" => { "line" => 0, "character" => 10 } },
+        "placeholder" => "User" }
+    when "textDocument/rename"
+      # Three targets: the requested document, a sibling the client did not
+      # open, and one outside the workspace that must be refused.
+      uri = msg.dig("params", "textDocument", "uri")
+      name = msg.dig("params", "newName")
+      root = File.dirname(uri.delete_prefix("file://"))
+      { "changes" => {
+          uri => [{ "range" => { "start" => { "line" => 0, "character" => 6 },
+                                 "end" => { "line" => 0, "character" => 10 } },
+                    "newText" => name }],
+          "file://#{root}/rename_sibling.rb" =>
+            [{ "range" => { "start" => { "line" => 1, "character" => 8 },
+                            "end" => { "line" => 1, "character" => 12 } },
+               "newText" => name },
+             { "range" => { "start" => { "line" => 0, "character" => 6 },
+                            "end" => { "line" => 0, "character" => 10 } },
+               "newText" => name }],
+          "file:///etc/passwd" =>
+            [{ "range" => { "start" => { "line" => 0, "character" => 0 },
+                            "end" => { "line" => 0, "character" => 1 } },
+               "newText" => "x" }]
+        } }
     when "textDocument/selectionRange"
       # A linked list: innermost range first, widening through `parent`.
       [{ "range" => { "start" => { "line" => 2, "character" => 4 },

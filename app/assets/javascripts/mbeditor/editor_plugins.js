@@ -1782,6 +1782,85 @@
       }
     });
 
+    // F2 rename. ruby-lsp renames *constants only*, so resolveRenameLocation
+    // declines anything else up front — otherwise F2 on a method name would
+    // open the input box and then fail after you'd typed a new name.
+    monaco.languages.registerRenameProvider('ruby', {
+      resolveRenameLocation: function resolveRenameLocation(model, position) {
+        return rawRubyLsp('prepare_rename', model, position).then(function (result) {
+          if (!result) {
+            return { rejectReason: 'Only Ruby constants can be renamed here.' };
+          }
+          // prepareRename answers either a bare Range or { range, placeholder }.
+          var range = result.range || result;
+          var wordInfo = model.getWordAtPosition(position);
+          return {
+            range: lspRange(range),
+            text: result.placeholder || (wordInfo && wordInfo.word) || ''
+          };
+        });
+      },
+
+      provideRenameEdits: function provideRenameEdits(model, position, newName) {
+        if (typeof FileService === 'undefined' || !FileService.rubyRename) return null;
+
+        // Every path with a live model. The server returns their edits for us
+        // to apply rather than writing them, so unsaved buffers survive.
+        var openPaths = monaco.editor.getModels()
+          .filter(function (m) { return m._mbeditorPath && !m.isDisposed(); })
+          .map(function (m) { return m._mbeditorPath; });
+
+        return FileService.rubyRename(model._mbeditorPath, model.getValue(),
+                                      position.lineNumber, position.column, newName, openPaths)
+          .then(function (data) {
+            var edits = [];
+            Object.keys((data && data.edits) || {}).forEach(function (relPath) {
+              var target = modelForPath(relPath) || null;
+              data.edits[relPath].forEach(function (e) {
+                edits.push({
+                  resource: target ? target.uri : lspUri(relPath),
+                  versionId: target ? target.getVersionId() : undefined,
+                  textEdit: {
+                    range: new monaco.Range(e.startLine, e.startCol, e.endLine, e.endCol),
+                    text: e.text
+                  }
+                });
+              });
+            });
+
+            reportRenameOutcome(data);
+            return { edits: edits };
+          })
+          .catch(function (err) {
+            var message = (err && err.response && err.response.data && err.response.data.error) ||
+              'Rename failed.';
+            return { edits: [], rejectReason: message };
+          });
+      }
+    });
+
+    function modelForPath(relPath) {
+      return monaco.editor.getModels().filter(function (m) {
+        return m._mbeditorPath === relPath && !m.isDisposed();
+      })[0];
+    }
+
+    // Files written straight to disk leave no dirty tab and no undo entry, so
+    // say how many were touched — otherwise a workspace-wide rename looks like
+    // it only changed the file you were looking at.
+    function reportRenameOutcome(data) {
+      if (typeof EditorStore === 'undefined' || !EditorStore.setStatus) return;
+
+      var written = (data && data.written) || [];
+      var rejected = (data && data.rejected) || [];
+      var parts = [];
+      if (written.length) parts.push(written.length + ' file' + (written.length === 1 ? '' : 's') + ' saved');
+      if (rejected.length) parts.push(rejected.length + ' skipped (outside the workspace)');
+      if (!parts.length) return;
+
+      EditorStore.setStatus('Renamed — ' + parts.join(', '), rejected.length ? 'warning' : 'success');
+    }
+
     // Real class/def/block/heredoc folding. Monaco merges the results of every
     // folding provider, so the vim-marker provider registered further down
     // keeps working alongside this one.
