@@ -451,6 +451,35 @@ var MbeditorApp = function MbeditorApp() {
   var problemCounts = _useStateProblemCounts2[0];
   var setProblemCounts = _useStateProblemCounts2[1];
 
+  // Below this the toolbar's labelled buttons no longer fit beside the title
+  // and the file search, and start pushing each other out of the bar.
+  var TOOLBAR_LABEL_MIN_WIDTH = 1180;
+
+  // matchMedia rather than a resize listener: the browser only tells us when
+  // the answer actually changes, so there is nothing to throttle.
+  var _useStateNarrow = useState(function () {
+    return typeof window.matchMedia === 'function' &&
+      window.matchMedia('(max-width: ' + TOOLBAR_LABEL_MIN_WIDTH + 'px)').matches;
+  });
+  var _useStateNarrow2 = _slicedToArray(_useStateNarrow, 2);
+  var narrowToolbar = _useStateNarrow2[0];
+  var setNarrowToolbar = _useStateNarrow2[1];
+
+  useEffect(function () {
+    if (typeof window.matchMedia !== 'function') return;
+    var mq = window.matchMedia('(max-width: ' + TOOLBAR_LABEL_MIN_WIDTH + 'px)');
+    var onChange = function (e) { setNarrowToolbar(e.matches); };
+    setNarrowToolbar(mq.matches);
+    // addEventListener on MediaQueryList is the modern spelling; addListener
+    // is kept for older Safari, which mbeditor still runs in.
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    else mq.addListener(onChange);
+    return function () {
+      if (mq.removeEventListener) mq.removeEventListener('change', onChange);
+      else mq.removeListener(onChange);
+    };
+  }, []);
+
   // Model graph. Built lazily — generating it eager-loads the host app — and
   // only when the Models tab is opened.
   var _useStateModelGraph = useState(null);
@@ -559,6 +588,10 @@ var MbeditorApp = function MbeditorApp() {
   var _useState18p2 = _slicedToArray(_useState18p, 2);
   var editorPrefs = _useState18p2[0];
   var setEditorPrefs = _useState18p2[1];
+
+  // Icon-only toolbar: on by preference, or automatically once the window is
+  // too narrow for the labels to fit beside the title and file search.
+  var toolbarIconOnly = editorPrefs.toolbarIconOnly || narrowToolbar;
 
   var _useState19 = useState({
     openEditors: false,
@@ -3693,7 +3726,7 @@ var MbeditorApp = function MbeditorApp() {
               return activeTab && handleSave(focusedPane.id, activeTab);
             }, disabled: loading.save || !activeTab || !activeTab.dirty, 'aria-busy': !!loading.save },
           !loading.save && React.createElement("i", { className: "fas fa-save" }),
-          !editorPrefs.toolbarIconOnly && !loading.save && " Save",
+          !toolbarIconOnly && !loading.save && " Save",
           !loading.save && activeTab && activeTab.dirty ? " ●" : ""
         ),
         React.createElement(
@@ -3708,7 +3741,7 @@ var MbeditorApp = function MbeditorApp() {
             { className: "fas fa-save", style: { position: 'relative' } },
             React.createElement("i", { className: "fas fa-save", style: { position: 'absolute', top: '-2px', left: '3px', fontSize: '9px', opacity: 0.8 } })
           ),
-          !editorPrefs.toolbarIconOnly && !loading.saveAll && " Save All"
+          !toolbarIconOnly && !loading.saveAll && " Save All"
         ),
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
@@ -3718,13 +3751,13 @@ var MbeditorApp = function MbeditorApp() {
             "button",
             { className: "statusbar-btn", onClick: function() { var ed = window.__mbeditorActiveEditor; if (ed) ed.trigger('keyboard', 'undo', null); }, disabled: !activeTab || !state.canUndo, title: "Undo (Ctrl+Z)" },
             React.createElement("i", { className: "fas fa-undo" }),
-            !editorPrefs.toolbarIconOnly && " Undo"
+            !toolbarIconOnly && " Undo"
           ),
           React.createElement(
             "button",
             { className: "statusbar-btn", onClick: function() { var ed = window.__mbeditorActiveEditor; if (ed) ed.trigger('keyboard', 'redo', null); }, disabled: !activeTab || !state.canRedo, title: "Redo (Ctrl+Y)" },
             React.createElement("i", { className: "fas fa-redo" }),
-            !editorPrefs.toolbarIconOnly && " Redo"
+            !toolbarIconOnly && " Redo"
           )
         ),
         React.createElement("div", { className: "statusbar-sep" }),
@@ -3732,7 +3765,7 @@ var MbeditorApp = function MbeditorApp() {
           "button",
           { className: "statusbar-btn", onClick: handleFormat, disabled: loading.format || !canLintAndFormat, 'aria-busy': !!loading.format },
           !loading.format && React.createElement("i", { className: "fas fa-magic" }),
-          !editorPrefs.toolbarIconOnly && !loading.format && " Format"
+          !toolbarIconOnly && !loading.format && " Format"
         ),
         hasGitBranch && React.createElement(
           React.Fragment,
@@ -3742,7 +3775,7 @@ var MbeditorApp = function MbeditorApp() {
             "button",
             { type: "button", className: "statusbar-btn", onClick: toggleGitPanel },
             React.createElement("i", { className: "fas fa-code-branch" }),
-            !editorPrefs.toolbarIconOnly && " Git"
+            !toolbarIconOnly && " Git"
           )
         ),
         React.createElement("div", { className: "statusbar-sep" }),
@@ -3750,7 +3783,7 @@ var MbeditorApp = function MbeditorApp() {
           "button",
           { type: "button", className: "statusbar-btn", onClick: function () { return setShowHelp(true); }, title: "Keyboard shortcuts & help" },
           React.createElement("i", { className: "fas fa-keyboard" }),
-          !editorPrefs.toolbarIconOnly && " Help"
+          !toolbarIconOnly && " Help"
         ),
         pwaInstallPrompt && React.createElement(
           React.Fragment,
@@ -3768,7 +3801,7 @@ var MbeditorApp = function MbeditorApp() {
               }
             },
             React.createElement("i", { className: "fas fa-download" }),
-            !editorPrefs.toolbarIconOnly && " Install"
+            !toolbarIconOnly && " Install"
           )
         )
       )
@@ -4325,12 +4358,18 @@ var MbeditorApp = function MbeditorApp() {
         "aria-orientation": "vertical",
         "aria-label": "Resize explorer panel"
       }),
+      // Column wrapping the split panes and the bottom drawers. ide-main is a
+      // row of panes, so the drawers need a vertical parent to push against;
+      // as absolute overlays they covered the editor instead.
+      React.createElement(
+      "div",
+      { className: "ide-center-column" },
       React.createElement(
         "div",
         {
           id: "ide-main-split-container",
           className: "ide-main",
-          style: { position: 'relative', display: 'flex', flexDirection: 'row', width: '100%', height: '100%', cursor: activeResizeMode === 'pane' ? 'col-resize' : 'default', userSelect: activeResizeMode ? 'none' : 'auto' },
+          style: { position: 'relative', display: 'flex', flexDirection: 'row', width: '100%', flex: '1 1 auto', minHeight: 0, cursor: activeResizeMode === 'pane' ? 'col-resize' : 'default', userSelect: activeResizeMode ? 'none' : 'auto' },
           onDragOverCapture: function (e) {
             if (!draggedTab) return;
             e.preventDefault();
@@ -4961,6 +5000,9 @@ var MbeditorApp = function MbeditorApp() {
                       React.createElement('input', {
                         type: 'checkbox',
                         className: 'ide-settings-checkbox',
+                        // The stored preference, not the derived value: at a
+                        // narrow width the box would otherwise show as checked
+                        // and unchecking it would appear to do nothing.
                         checked: !!(editorPrefs.toolbarIconOnly),
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { toolbarIconOnly: v }); }); }
                       })
@@ -5231,6 +5273,16 @@ var MbeditorApp = function MbeditorApp() {
           );
         })
       ),
+      showLogPanel && !zenMode && React.createElement(window.LogPanel || LogPanel, {
+        onClose: function () { setShowLogPanel(false); }
+      }),
+      showProblemsPanel && !zenMode && React.createElement(window.ProblemsPanel || ProblemsPanel, {
+        onClose: function () { setShowProblemsPanel(false); },
+        onOpenFile: function (path, line, col) {
+          handleSelectFile(path, path.split('/').pop(), line, col);
+        }
+      })
+      ),
 
       // Right-side Git panel (children of ide-body, alongside sidebar and ide-main)
       showGitPanel && !zenMode && React.createElement("div", {
@@ -5255,15 +5307,6 @@ var MbeditorApp = function MbeditorApp() {
           onSelectCommit: handleSelectCommit
         })
       ),
-      showLogPanel && !zenMode && React.createElement(window.LogPanel || LogPanel, {
-        onClose: function () { setShowLogPanel(false); }
-      }),
-      showProblemsPanel && !zenMode && React.createElement(window.ProblemsPanel || ProblemsPanel, {
-        onClose: function () { setShowProblemsPanel(false); },
-        onOpenFile: function (path, line, col) {
-          handleSelectFile(path, path.split('/').pop(), line, col);
-        }
-      })
     ),
     React.createElement(
       "div",

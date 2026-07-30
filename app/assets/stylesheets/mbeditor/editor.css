@@ -315,6 +315,16 @@ html, body, #mbeditor-root {
 .yml-icon { color: #cb171e !important; }
 
 /* ── Main Editor Area ────────────────────────────────────── */
+/* Editor column: the split panes on top, any open bottom drawers beneath. */
+.ide-center-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .ide-main {
   flex: 1;
   display: flex;
@@ -2779,17 +2789,16 @@ button:not(.pico-btn) { margin-bottom: 0; }
 }
 
 /* ── Rails log drawer ─────────────────────────────────────────────────────── */
+/* Flow siblings of the editor inside .ide-center-column, not overlays: an
+   open drawer shrinks the editor rather than covering the code you are
+   reading. Both can be open at once and simply stack. */
 .ide-log-drawer {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 22px; /* sit above the status bar */
+  flex: none;
   height: 240px; /* default; overridden by the drag-resized inline height */
   display: flex;
   flex-direction: column;
   background: var(--ide-panel-bg, #1e1e1e);
   border-top: 1px solid var(--ide-border, #333);
-  z-index: 40;
 }
 .ide-log-resize {
   flex: 0 0 auto;
@@ -2860,16 +2869,12 @@ button:not(.pico-btn) { margin-bottom: 0; }
    Same geometry as the log drawer so the two read as one family; only the
    body differs, being a list of clickable diagnostics rather than raw text. */
 .ide-problems-drawer {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 22px; /* sit above the status bar */
+  flex: none;
   height: 240px; /* default; overridden by the drag-resized inline height */
   display: flex;
   flex-direction: column;
   background: var(--ide-panel-bg, #1e1e1e);
   border-top: 1px solid var(--ide-border, #333);
-  z-index: 41; /* above the log drawer when both are open */
 }
 .ide-problems-resize {
   flex: 0 0 auto;
