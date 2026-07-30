@@ -531,7 +531,9 @@ module Mbeditor
 
       client = RubyLspClient.for(workspace_root.to_s)
       result = client.request_with_document(lsp_method, path, content, extra, timeout: timeout)
-      render json: translate_ruby_lsp_result(params[:lsp_method].to_s, result)
+      # The URI is what the diagnostics translator checks embedded code-action
+      # edits against, so it must be the same string the client sent.
+      render json: translate_ruby_lsp_result(params[:lsp_method].to_s, result, "file://#{path}")
     rescue RubyLspClient::TimeoutError, RubyLspClient::NotReadyError
       # lspState lets the frontend tell "this one request was slow" from "the
       # server is dead", and stop asking in the latter case.
@@ -1177,12 +1179,12 @@ module Mbeditor
       { available: false, disabled: false, state: :failed, restarts: 0, error: e.message }
     end
 
-    def translate_ruby_lsp_result(kind, result)
+    def translate_ruby_lsp_result(kind, result, uri = nil)
       case kind
       when "definition"  then { results: translate_lsp_locations(result) }
       when "hover"       then { markdown: translate_lsp_hover(result) }
       when "completion"  then { suggestions: translate_lsp_completions(result) }
-      when "diagnostics" then LspDiagnosticsTranslator.call(result)
+      when "diagnostics" then LspDiagnosticsTranslator.call(result, uri)
       end
     end
 

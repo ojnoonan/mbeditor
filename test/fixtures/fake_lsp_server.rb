@@ -119,6 +119,7 @@ loop do
     when "textDocument/diagnostic"
       # One RuboCop-shaped (correctable, carries a cop name) and one
       # Prism-shaped (syntax error, no cop name) diagnostic.
+      uri = msg.dig("params", "textDocument", "uri")
       { "kind" => "full", "items" => [
         { "source" => "RuboCop",
           "code" => "Layout/SpaceAroundOperators",
@@ -130,7 +131,34 @@ loop do
           "message" => "Surrounding space missing for operator `=`.",
           "range" => { "start" => { "line" => 2, "character" => 4 },
                        "end" => { "line" => 2, "character" => 5 } },
-          "data" => { "correctable" => true } },
+          # ruby-lsp embeds the complete fix edits here; its codeAction handler
+          # only echoes them back, so the editor applies them with no request.
+          "data" => {
+            "correctable" => true,
+            "code_actions" => [
+              { "title" => "Autocorrect Layout/SpaceAroundOperators",
+                "kind" => "quickfix",
+                "isPreferred" => true,
+                "edit" => { "documentChanges" => [
+                  { "textDocument" => { "version" => nil, "uri" => uri },
+                    "edits" => [
+                      { "range" => { "start" => { "line" => 2, "character" => 4 },
+                                     "end" => { "line" => 2, "character" => 5 } },
+                        "newText" => " = " }
+                    ] }
+                ] } },
+              { "title" => "Disable Layout/SpaceAroundOperators for this line",
+                "kind" => "quickfix",
+                "edit" => { "documentChanges" => [
+                  { "textDocument" => { "version" => nil, "uri" => uri },
+                    "edits" => [
+                      { "range" => { "start" => { "line" => 2, "character" => 8 },
+                                     "end" => { "line" => 2, "character" => 8 } },
+                        "newText" => " # rubocop:disable Layout/SpaceAroundOperators" }
+                    ] }
+                ] } }
+            ]
+          } },
         { "source" => "Prism",
           "severity" => 1,
           "message" => "unexpected end-of-input",

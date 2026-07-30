@@ -283,6 +283,17 @@
     return code || '';
   }
 
+  // Identifies a marker across both the backend shape (copName/startLine) and
+  // the Monaco shape (code/startLineNumber), so the code-action provider can
+  // find the fixes belonging to the marker it was handed. Cop name alone won't
+  // do — the same cop fires many times in a file.
+  function markerFixKey(m) {
+    var cop = m.copName !== undefined ? m.copName : codeValue(m.code);
+    var line = m.startLine !== undefined ? m.startLine : m.startLineNumber;
+    var col = m.startCol !== undefined ? m.startCol : m.startColumn;
+    return cop + ':' + line + ':' + col;
+  }
+
   // How long a failure keeps us off ruby-lsp. Long enough that a dead server
   // isn't hammered on every keystroke, short enough that a server which comes
   // back on its own is picked up without a page reload — which is what the old
@@ -1490,37 +1501,78 @@
 
     // RuboCop quick-fix code-action provider for Ruby files.
     // Only registers when RuboCop is available in the workspace.
+    //
+    // Two sources of fixes, preferred in this order:
+    //
+    //  1. Edits ruby-lsp embedded in the diagnostic itself. Applied directly as
+    //     a Monaco workspace edit — no request, no subprocess. This is also the
+    //     only source of the "Disable <cop> for this line" action, which
+    //     ruby-lsp offers even for cops that can never be autocorrected.
+    //  2. The /quick_fix endpoint, which runs `rubocop -A` over the buffer.
+    //     Still needed whenever diagnostics came from the plain rubocop path
+    //     rather than ruby-lsp.
     monaco.languages.registerCodeActionProvider('ruby', {
       provideCodeActions: function provideCodeActions(model, _range, context) {
         if (!window.MBEDITOR_RUBOCOP_AVAILABLE) return { actions: [], dispose: function() {} };
 
         var correctableCops = model._mbeditorCorrectableCops || new Set();
-        var rubocopMarkers = context.markers.filter(function(m) {
-          var cop = codeValue(m.code);
-          return m.source === 'rubocop' && cop && correctableCops.has(cop);
-        });
-
-        if (rubocopMarkers.length === 0) return { actions: [], dispose: function() {} };
-
+        var embedded = model._mbeditorFixes || {};
         var modelPath = model._mbeditorPath || null;
-        if (!modelPath) return { actions: [], dispose: function() {} };
+        var actions = [];
 
-        var code = model.getValue();
+        context.markers.forEach(function (marker) {
+          if (marker.source !== 'rubocop') return;
 
-        var actions = rubocopMarkers.map(function(marker) {
           var cop = codeValue(marker.code);
-          return {
+          var fixes = embedded[markerFixKey(marker)];
+
+          if (fixes && fixes.length) {
+            fixes.forEach(function (fix) {
+              actions.push({
+                title: fix.title,
+                kind: 'quickfix',
+                autocorrect: /^Autocorrect/.test(fix.title),
+                diagnostics: [marker],
+                edit: {
+                  edits: fix.edits.map(function (e) {
+                    return {
+                      resource: model.uri,
+                      versionId: model.getVersionId(),
+                      textEdit: {
+                        range: new monaco.Range(e.startLine, e.startCol, e.endLine, e.endCol),
+                        text: e.text
+                      }
+                    };
+                  })
+                }
+              });
+            });
+            return;
+          }
+
+          if (!cop || !correctableCops.has(cop) || !modelPath) return;
+          actions.push({
             title: 'Fix: ' + cop,
             kind: 'quickfix',
-            isPreferred: rubocopMarkers.length === 1,
             diagnostics: [marker],
             command: {
               id: 'mbeditor.applyRubocopFix',
               title: 'Apply RuboCop fix for ' + cop,
-              arguments: [model, cop, code, modelPath]
+              arguments: [model, cop, model.getValue(), modelPath]
             }
-          };
+          });
         });
+
+        // Mark the autocorrect as preferred when it is the only one on offer,
+        // matching what this provider did before embedded fixes existed. With
+        // several offenses under the cursor there is no single obvious fix, so
+        // nothing is preferred and the user picks from the list.
+        // (Note: monaco's `editor.action.autoFix` ignores isPreferred in this
+        // standalone build — verified against a bare probe provider — so this
+        // only affects ordering in the lightbulb menu.)
+        var autocorrects = actions.filter(function (a) { return a.autocorrect; });
+        if (autocorrects.length === 1) autocorrects[0].isPreferred = true;
+        actions.forEach(function (a) { delete a.autocorrect; });
 
         return { actions: actions, dispose: function() {} };
       }
@@ -1990,6 +2042,9 @@
     // the window flags itself.
     noteLspFailure: noteLspFailure,
     lspBackedOff: lspBackedOff,
+    // EditorPanel keys the embedded-fix side map with this; the code-action
+    // provider reads it back. One definition so the two cannot drift.
+    markerFixKey: markerFixKey,
     // Exposed so the ERB gating can be asserted directly in system tests.
     isInsideErbTag: isInsideErbTag,
     runRubyEnter: function runRubyEnter(editor) {

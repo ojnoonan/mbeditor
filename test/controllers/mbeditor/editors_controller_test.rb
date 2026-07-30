@@ -166,11 +166,26 @@ module Mbeditor
         assert_equal 5, rubocop["startCol"]
         assert_includes rubocop["message"], "[Layout/SpaceAroundOperators]"
 
+        assert_equal "https://docs.rubocop.org/rubocop/cops_layout.html#layoutspacearoundoperators",
+                     rubocop["codeHref"], "the cop name links out to its docs"
+
+        # ruby-lsp embeds the fix edits in the diagnostic, so the lightbulb
+        # applies them with no second request.
+        fixes = rubocop["fixes"]
+        assert_equal ["Autocorrect Layout/SpaceAroundOperators",
+                      "Disable Layout/SpaceAroundOperators for this line"],
+                     fixes.map { |f| f["title"] }
+        edit = fixes.first["edits"].first
+        assert_equal 3, edit["startLine"], "0-based LSP line 2 becomes 1-based 3"
+        assert_equal 5, edit["startCol"]
+        assert_equal " = ", edit["text"]
+
         prism = markers.last
         assert_equal "error", prism["severity"]
         assert_equal "prism", prism["source"], "non-RuboCop sources must not claim a lightbulb"
         assert_equal "", prism["copName"]
         assert_equal false, prism["correctable"]
+        assert_nil prism["fixes"], "a diagnostic with no code actions carries no fixes key"
       end
     ensure
       Mbeditor::RubyLspClient.reset!

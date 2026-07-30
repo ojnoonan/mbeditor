@@ -38,18 +38,30 @@ module Mbeditor
     # Prism squiggle drawn on top and nothing looks greyed out at all.
     UNNECESSARY_MESSAGE = /\Aassigned but unused variable|\Astatement not reached|\Aunused literal/.freeze
 
-    def call(result)
+    # Most actions a diagnostic can carry. RuboCop sends two (autocorrect and
+    # disable-for-this-line); the cap is a bound on a payload we don't control.
+    MAX_CODE_ACTIONS = 5
+
+    # Refuse to ship an absurd replacement into the browser. RuboCop's
+    # replacements are a few characters; anything near this is a bug or an
+    # attack, not a quick fix.
+    MAX_EDIT_BYTES = 64 * 1024
+
+    # +uri+ is the request's own document URI. Code actions are only accepted
+    # when every edit they carry targets exactly that document — see
+    # sanitize_code_actions.
+    def call(result, uri = nil)
       items = case result
               when Hash  then Array(result["items"])
               when Array then result
               else []
               end
 
-      markers = items.filter_map { |diag| translate_one(diag) }
+      markers = items.filter_map { |diag| translate_one(diag, uri) }
       { markers: markers, summary: { "offense_count" => markers.length } }
     end
 
-    def translate_one(diag)
+    def translate_one(diag, uri = nil)
       return nil unless diag.is_a?(Hash)
 
       range      = diag["range"] || {}
@@ -62,6 +74,7 @@ module Mbeditor
 
       cop_name = extract_code(diag["code"])
       message  = clean_message(diag["message"])
+      fixes    = sanitize_code_actions(diag, uri)
 
       {
         severity: SEVERITIES.fetch(diag["severity"], "info"),
@@ -80,6 +93,53 @@ module Mbeditor
         # on the marker's code. Absent for non-RuboCop diagnostics.
         # NB: the LSP wire key is camelCase.
         codeHref: diag.dig("codeDescription", "href")
+      }.tap { |marker| marker[:fixes] = fixes if fixes.any? }
+    end
+
+    # ruby-lsp embeds the complete edits for each RuboCop fix in the diagnostic
+    # itself. Its textDocument/codeAction handler does nothing but echo these
+    # back (see Requests::CodeActions#perform), so lifting them here lets the
+    # editor apply a fix with no further request at all -- no codeAction call
+    # and no `rubocop -A` subprocess.
+    #
+    # This is a trust boundary: the payload arrives from a subprocess and is
+    # applied to the user's buffer. An action is taken only if every edit in it
+    # targets the very document we asked about.
+    def sanitize_code_actions(diag, uri)
+      return [] if uri.nil?
+
+      Array(diag.dig("data", "code_actions")).first(MAX_CODE_ACTIONS).filter_map do |action|
+        next unless action.is_a?(Hash)
+
+        changes = Array(action.dig("edit", "documentChanges"))
+        next if changes.empty?
+        # Any edit aimed at another file disqualifies the whole action. RuboCop
+        # fixes are always single-file, so this rejects nothing legitimate.
+        next unless changes.all? { |c| c.is_a?(Hash) && c.dig("textDocument", "uri") == uri }
+
+        edits = changes.flat_map { |c| Array(c["edits"]) }.filter_map { |edit| sanitize_edit(edit) }
+        next if edits.empty?
+
+        { title: action["title"].to_s, edits: edits }
+      end
+    end
+
+    # One LSP TextEdit -> the 1-based shape the rest of the marker uses.
+    def sanitize_edit(edit)
+      return nil unless edit.is_a?(Hash)
+
+      text = edit["newText"].to_s
+      return nil if text.bytesize > MAX_EDIT_BYTES
+
+      range = edit["range"]
+      return nil unless range.is_a?(Hash)
+
+      {
+        startLine: (range.dig("start", "line") || 0) + 1,
+        startCol:  (range.dig("start", "character") || 0) + 1,
+        endLine:   (range.dig("end", "line") || range.dig("start", "line") || 0) + 1,
+        endCol:    (range.dig("end", "character") || range.dig("start", "character") || 0) + 1,
+        text: text
       }
     end
 

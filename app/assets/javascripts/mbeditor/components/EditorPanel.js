@@ -1268,6 +1268,17 @@ var EditorPanel = function EditorPanel(_ref) {
         model._mbeditorCorrectableCops = new Set(
           markers.filter(function(m) { return m.correctable && m.copName; }).map(function(m) { return m.copName; })
         );
+        // ruby-lsp ships the complete edits for each fix inside the diagnostic,
+        // so the code-action provider can apply one without any request at all.
+        // They ride a side map rather than the marker because setModelMarkers
+        // normalises marker objects and drops unknown properties.
+        var fixes = {};
+        markers.forEach(function (m) {
+          if (m.fixes && m.fixes.length) {
+            fixes[MbeditorEditorPlugins.markerFixKey(m)] = m.fixes;
+          }
+        });
+        model._mbeditorFixes = fixes;
       }
     }
   }, [markers, tab.id]);
