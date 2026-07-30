@@ -70,6 +70,15 @@ var FileService = (function () {
     return axios.post(window.mbeditorBasePath() + '/create_file', { path: path, code: code || '' }).then(function(res) { return res.data; });
   }
 
+  // Multipart import of files dragged in from outside the browser. The
+  // default 30 s axios timeout is too tight for a large drop on a slow disk,
+  // so this one call gets a longer leash.
+  function importFiles(formData) {
+    return axios.post(window.mbeditorBasePath() + '/import', formData, {
+      timeout: 120000
+    }).then(function (res) { return res.data; });
+  }
+
   function createDir(path) {
     return axios.post(window.mbeditorBasePath() + '/create_dir', { path: path }).then(function(res) { return res.data; });
   }
@@ -318,6 +327,7 @@ var FileService = (function () {
     getFileChunk: getFileChunk,
     saveFile: saveFile,
     createFile: createFile,
+    importFiles: importFiles,
     createDir: createDir,
     renamePath: renamePath,
     deletePath: deletePath,

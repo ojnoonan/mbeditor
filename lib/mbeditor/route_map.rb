@@ -17,6 +17,7 @@ module Mbeditor
     post   'file',            to: 'editors#save'
     post   'create_file',     to: 'editors#create_file'
     post   'create_dir',      to: 'editors#create_dir'
+    post   'import',          to: 'editors#import'
     patch  'rename',          to: 'editors#rename'
     delete 'delete',          to: 'editors#destroy_path'
     get    'state',           to: 'editors#state'

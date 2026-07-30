@@ -37,6 +37,7 @@ module Mbeditor
     end
 
     def teardown
+      FileUtils.rm_rf(@upload_dir) if @upload_dir
       FileUtils.rm_rf(@workspace)
       Mbeditor.configure do |c|
         c.authenticate_with = nil
@@ -2444,6 +2445,185 @@ module Mbeditor
            as: :json
       assert_response :ok
       assert_equal true, json["ok"]
+    end
+
+    # ---------------------------------------------------------------------------
+    # import
+    # ---------------------------------------------------------------------------
+
+    # Rack::Test::UploadedFile needs a file on disk; @upload_dir holds the
+    # sources so they are never confused with workspace contents.
+    def uploaded(name, content)
+      @upload_dir ||= Dir.mktmpdir("mbeditor_uploads_")
+      source = File.join(@upload_dir, name)
+      FileUtils.mkdir_p(File.dirname(source))
+      File.binwrite(source, content)
+      ::Rack::Test::UploadedFile.new(source, "application/octet-stream", true)
+    end
+
+    test "import writes a dropped file into the workspace" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("notes.txt", "hello")],
+        paths: ["notes.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_equal ["notes.txt"], json["imported"].map { |e| e["path"] }
+      assert_empty json["conflicts"]
+      assert_empty json["errors"]
+      assert_equal "hello", File.read(File.join(@workspace, "notes.txt"))
+    end
+
+    test "import preserves binary content byte for byte" do
+      bytes = "\x89PNG\r\n\x1a\n\x00\x01\x02\xff".dup.force_encoding(Encoding::BINARY)
+
+      post "/mbeditor/import", params: {
+        files: [uploaded("logo.png", bytes)],
+        paths: ["app/assets/logo.png"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_equal bytes, File.binread(File.join(@workspace, "app/assets/logo.png"))
+    end
+
+    test "import reports an existing target as a conflict without writing it" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("README.md", "replacement")],
+        paths: ["README.md"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_equal ["README.md"], json["conflicts"].map { |e| e["path"] }
+      assert_equal "# Hello\n", File.read(File.join(@workspace, "README.md"))
+    end
+
+    test "import overwrites when asked to" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("README.md", "replacement")],
+        paths: ["README.md"],
+        on_conflict: "overwrite"
+      }
+
+      assert_response :ok
+      assert_equal ["README.md"], json["imported"].map { |e| e["path"] }
+      assert_equal "replacement", File.read(File.join(@workspace, "README.md"))
+    end
+
+    test "import rejects a path outside the workspace as an entry error" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("evil.txt", "x")],
+        paths: ["../evil.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_empty json["imported"]
+      assert_equal ["../evil.txt"], json["errors"].map { |e| e["path"] }
+    end
+
+    test "import rejects an excluded path as an entry error" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("cache.txt", "x")],
+        paths: ["tmp/cache.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_empty json["imported"]
+      assert_equal ["tmp/cache.txt"], json["errors"].map { |e| e["path"] }
+      refute File.exist?(File.join(@workspace, "tmp", "cache.txt"))
+    end
+
+    # File.expand_path raises ArgumentError on a null byte. Before resolve_path
+    # rescued it, that escaped the per-entry loop and the blanket rescue turned
+    # the whole drop into a 422 — one malformed name losing every good file.
+    test "import isolates a null-byte path to its own entry error" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("good.txt", "kept"), uploaded("weird.txt", "x")],
+        paths: ["good.txt", "we\0ird.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_equal ["good.txt"], json["imported"].map { |e| e["path"] }
+      assert_equal ["we\0ird.txt"], json["errors"].map { |e| e["path"] }
+      assert_equal "kept", File.read(File.join(@workspace, "good.txt"))
+    end
+
+    test "import without the client header is forbidden" do
+      # Bypass the header-injecting override defined at the top of this class.
+      # Going straight to the session skips the copy-back that populates
+      # @response for assert_response, so assert on the session's own response.
+      integration_session.post "/mbeditor/import", params: {
+        files: [uploaded("notes.txt", "hello")],
+        paths: ["notes.txt"]
+      }
+
+      assert_equal 403, integration_session.response.status
+      refute File.exist?(File.join(@workspace, "notes.txt"))
+    end
+
+    test "import rejects a batch whose files and paths lengths differ" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("a.txt", "a")],
+        paths: ["a.txt", "b.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :unprocessable_content
+      assert_match(/same length/, json["error"])
+    end
+
+    test "import rejects an unknown conflict mode" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("a.txt", "a")],
+        paths: ["a.txt"],
+        on_conflict: "clobber"
+      }
+
+      assert_response :unprocessable_content
+      assert_match(/on_conflict/, json["error"])
+      refute File.exist?(File.join(@workspace, "a.txt"))
+    end
+
+    # 101 file parts stays under Rack's multipart_part_limit of 128, so the
+    # request reaches the action and the guard answers with a real 422. Raising
+    # IMPORT_MAX_FILES to 128 or beyond would make this a 500 instead.
+    test "import rejects a batch over the file count limit" do
+      count = EditorsController::IMPORT_MAX_FILES + 1
+      files = Array.new(count) { |i| uploaded("f#{i}.txt", "x") }
+      paths = Array.new(count) { |i| "f#{i}.txt" }
+
+      post "/mbeditor/import", params: { files: files, paths: paths, on_conflict: "ask" }
+
+      assert_response :unprocessable_content
+      assert_match(/Too many files/, json["error"])
+      refute File.exist?(File.join(@workspace, "f0.txt"))
+    end
+
+    test "import rejects a batch over the total size limit" do
+      # Two files of 30 MB each clear the per-file 5 MB check only because the
+      # batch guard runs first — this asserts the batch guard, not the entry one.
+      chunk = "x" * (30 * 1024 * 1024)
+
+      post "/mbeditor/import", params: {
+        files: [uploaded("big1.bin", chunk), uploaded("big2.bin", chunk)],
+        paths: ["big1.bin", "big2.bin"],
+        on_conflict: "ask"
+      }
+
+      assert_response :unprocessable_content
+      assert_match(/too large/i, json["error"])
+    end
+
+    test "import rejects an empty batch" do
+      post "/mbeditor/import", params: { on_conflict: "ask" }
+
+      assert_response :unprocessable_content
+      assert_match(/Nothing to import/, json["error"])
     end
 
     private
