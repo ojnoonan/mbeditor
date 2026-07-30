@@ -37,8 +37,76 @@ module Mbeditor
       assert_equal "error",   first_marker("severity" => 1)[:severity]
       assert_equal "warning", first_marker("severity" => 2)[:severity]
       assert_equal "info",    first_marker("severity" => 3)[:severity]
-      assert_equal "info",    first_marker("severity" => 4)[:severity]
+      assert_equal "hint",    first_marker("severity" => 4)[:severity]
       assert_equal "info",    first_marker("severity" => nil)[:severity], "unknown severity degrades to info"
+    end
+
+    test "INFORMATION and HINT stay distinct so convention offenses outrank rubocop info" do
+      refute_equal first_marker("severity" => 3)[:severity], first_marker("severity" => 4)[:severity]
+    end
+
+    test "flags cops that mean dead code so the editor can fade them" do
+      %w[
+        Lint/UselessAssignment
+        Lint/UnusedMethodArgument
+        Lint/UnusedBlockArgument
+        Lint/UnreachableCode
+        Style/RedundantSelf
+        Lint/DeprecatedClassMethods
+      ].each do |cop|
+        assert LspDiagnosticsTranslator.unnecessary?(cop), "#{cop} should be treated as unnecessary"
+        assert_equal true, first_marker("code" => cop)[:unnecessary]
+      end
+    end
+
+    test "does not flag cops that mean the code is wrong rather than absent" do
+      %w[
+        Layout/SpaceAroundOperators
+        Style/StringLiterals
+        Metrics/MethodLength
+        Lint/Void
+      ].each do |cop|
+        refute LspDiagnosticsTranslator.unnecessary?(cop), "#{cop} should not be faded"
+        assert_equal false, first_marker("code" => cop)[:unnecessary]
+      end
+
+      assert_equal false, first_marker("code" => nil)[:unnecessary], "a missing cop name is not unnecessary"
+    end
+
+    test "passes through the RuboCop documentation URL when the server sends one" do
+      href = "https://docs.rubocop.org/rubocop/cops_layout.html#layoutspacearoundoperators"
+      # camelCase — the LSP wire key, not the Ruby keyword argument name. The
+      # snake_case spelling silently yields nil.
+      assert_equal href, first_marker("codeDescription" => { "href" => href })[:codeHref]
+
+      assert_nil first_marker[:codeHref], "no codeDescription means no link"
+      assert_nil first_marker("codeDescription" => {})[:codeHref]
+      assert_nil first_marker("codeDescription" => nil)[:codeHref]
+      assert_nil first_marker("code_description" => { "href" => href })[:codeHref],
+                 "snake_case is not the wire key and must not be read"
+    end
+
+    test "fades Prism's cop-less dead-code warnings, which duplicate the RuboCop ones" do
+      # Both land on the same range; fading only the RuboCop marker leaves the
+      # Prism squiggle drawn over it and nothing appears greyed out.
+      %w[
+        assigned\ but\ unused\ variable\ -\ total
+        statement\ not\ reached
+      ].each do |message|
+        marker = first_marker("source" => "Prism", "code" => nil, "message" => message)
+        assert_equal true, marker[:unnecessary], "#{message.inspect} should fade"
+      end
+
+      assert_equal false,
+                   first_marker("source" => "Prism", "code" => nil,
+                                "message" => "unexpected end-of-input")[:unnecessary]
+    end
+
+    test "a cop name never has its message consulted for the unnecessary tag" do
+      # Otherwise a cop whose description happens to say "unused" would fade.
+      marker = first_marker("code" => "Metrics/MethodLength",
+                            "message" => "assigned but unused variable - x")
+      assert_equal false, marker[:unnecessary]
     end
 
     test "extracts the cop name from string, integer, and CodeDescription forms" do

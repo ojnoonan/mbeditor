@@ -122,6 +122,10 @@ loop do
       { "kind" => "full", "items" => [
         { "source" => "RuboCop",
           "code" => "Layout/SpaceAroundOperators",
+          # camelCase: this is the LSP wire key, not the Ruby keyword argument.
+          "codeDescription" => {
+            "href" => "https://docs.rubocop.org/rubocop/cops_layout.html#layoutspacearoundoperators"
+          },
           "severity" => 3,
           "message" => "Surrounding space missing for operator `=`.",
           "range" => { "start" => { "line" => 2, "character" => 4 },

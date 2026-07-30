@@ -477,11 +477,15 @@ module Mbeditor
       render json: { ok: false, error: e.message }, status: :unprocessable_content
     end
 
+    # Symbol values are handled locally instead of being forwarded to the
+    # server; they need no path, no document and no running process.
     RUBY_LSP_METHODS = {
       "definition"  => "textDocument/definition",
       "hover"       => "textDocument/hover",
       "completion"  => "textDocument/completion",
-      "diagnostics" => "textDocument/diagnostic"
+      "diagnostics" => "textDocument/diagnostic",
+      "health"      => :health,
+      "restart"     => :restart
     }.freeze
 
     # Diagnostics are whole-document, not positional.
@@ -499,6 +503,9 @@ module Mbeditor
       lsp_method = RUBY_LSP_METHODS[params[:lsp_method].to_s]
       return render json: { error: "Invalid lsp_method" }, status: :bad_request unless lsp_method
 
+      # Before resolve_path: health and restart carry no document.
+      return render json: ruby_lsp_health(restart: lsp_method == :restart) if lsp_method.is_a?(Symbol)
+
       path = resolve_path(params[:path])
       return render json: { error: "Invalid path" }, status: :bad_request unless path
 
@@ -508,7 +515,9 @@ module Mbeditor
       end
 
       unless AvailabilityProbe.ruby_lsp(workspace_root)
-        return render json: { error: "ruby-lsp unavailable", rubyLspAvailable: false }, status: :unprocessable_content
+        return render json: { error: "ruby-lsp unavailable",
+                              reason: ruby_lsp_unavailable_reason,
+                              rubyLspAvailable: false }, status: :unprocessable_content
       end
 
       extra = if RUBY_LSP_POSITIONLESS.include?(lsp_method)
@@ -524,7 +533,9 @@ module Mbeditor
       result = client.request_with_document(lsp_method, path, content, extra, timeout: timeout)
       render json: translate_ruby_lsp_result(params[:lsp_method].to_s, result)
     rescue RubyLspClient::TimeoutError, RubyLspClient::NotReadyError
-      render json: { fallback: true }
+      # lspState lets the frontend tell "this one request was slow" from "the
+      # server is dead", and stop asking in the latter case.
+      render json: { fallback: true, lspState: RubyLspClient.for(workspace_root.to_s).state }
     rescue StandardError => e
       render json: { error: e.message, fallback: true }
     end
@@ -762,7 +773,11 @@ module Mbeditor
           startLine: offense.dig("location", "start_line") || offense.dig("location", "line"),
           startCol: offense.dig("location", "start_column") || offense.dig("location", "column") || 1,
           endLine: offense.dig("location", "last_line") || offense.dig("location", "line"),
-          endCol: offense.dig("location", "last_column") || offense.dig("location", "column") || 1
+          endCol: offense.dig("location", "last_column") || offense.dig("location", "column") || 1,
+          # Same predicate the ruby-lsp path uses, so dead code fades whichever
+          # linter produced the offense. Plain rubocop JSON carries no
+          # code_description, so there's no codeHref to pass on here.
+          unnecessary: LspDiagnosticsTranslator.unnecessary?(offense["cop_name"])
         }
       end
 
@@ -1128,6 +1143,40 @@ module Mbeditor
       result[:stdout]
     end
 
+    def ruby_lsp_unavailable_reason
+      return "Disabled by configuration (config.mbeditor.ruby_lsp = false)" if Mbeditor.configuration.ruby_lsp == false
+
+      "ruby-lsp is not installed in this workspace"
+    end
+
+    # Status for the editor's ruby-lsp indicator, and the recovery path behind
+    # clicking it. Never returns the resolved command — that would leak absolute
+    # host paths to the browser.
+    def ruby_lsp_health(restart: false)
+      if restart
+        # ponytail: reset! clears every probe, not just ruby-lsp. Harmless (they
+        # all re-probe on next use) and the alternative is a per-key API nothing
+        # else wants.
+        AvailabilityProbe.reset!
+        RubyLspClient.for(workspace_root.to_s).reset!
+      end
+
+      available = AvailabilityProbe.ruby_lsp(workspace_root)
+      health = available ? RubyLspClient.for(workspace_root.to_s).health : {}
+
+      payload = {
+        available: available,
+        disabled: Mbeditor.configuration.ruby_lsp == false,
+        state: health[:state] || :stopped,
+        restarts: health[:restarts] || 0,
+        error: health[:error]
+      }
+      payload[:reason] = ruby_lsp_unavailable_reason unless available
+      payload
+    rescue StandardError => e
+      { available: false, disabled: false, state: :failed, restarts: 0, error: e.message }
+    end
+
     def translate_ruby_lsp_result(kind, result)
       case kind
       when "definition"  then { results: translate_lsp_locations(result) }
@@ -1221,10 +1270,15 @@ module Mbeditor
       LSP_COMPLETION_KINDS[kind] || "Text"
     end
 
+    # Kept in step with LspDiagnosticsTranslator::SEVERITIES so a file linted
+    # through ruby-lsp and the same file linted through `rubocop --stdin` grade
+    # their offenses identically. rubocop's own `info` is the weakest level and
+    # maps to hint; convention/refactor fall through to info.
     def cop_severity(severity)
       case severity
       when "error", "fatal" then "error"
       when "warning" then "warning"
+      when "info" then "hint"
       else "info"
       end
     end

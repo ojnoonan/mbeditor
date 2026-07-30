@@ -76,6 +76,7 @@ module Mbeditor
       @next_id      = 0
       @state        = :stopped # :stopped | :ready | :crashed | :failed
       @crash_times  = []
+      @last_error   = nil # last start failure, surfaced to the editor's status chip
     end
 
     attr_reader :state
@@ -83,6 +84,28 @@ module Mbeditor
     def ready?
       ensure_started
       @state == :ready
+    end
+
+    # A snapshot for the editor's status indicator. Deliberately does not start
+    # the process — asking "how are you?" must not be what boots the server.
+    def health
+      @state_mutex.synchronize do
+        { state: @state, restarts: @crash_times.length, error: @last_error }
+      end
+    end
+
+    # Clears the crash budget so a client latched at :failed can be revived
+    # without restarting the whole Rails process. Clearing @crash_times is the
+    # load-bearing part: restart_allowed? re-latches :failed immediately if the
+    # window still holds MAX_RESTARTS entries.
+    def reset!
+      stop
+      @state_mutex.synchronize do
+        @crash_times.clear
+        @last_error = nil
+        @state = :stopped
+      end
+      ready?
     end
 
     # Syncs the document (didOpen / full-text didChange) and issues a request
@@ -215,6 +238,7 @@ module Mbeditor
       @state = :ready
     rescue StandardError => e
       Rails.logger.warn("[mbeditor] ruby-lsp start failed: #{e.class}: #{e.message}") if defined?(Rails)
+      @last_error = "#{e.class}: #{e.message}"
       record_crash
       cleanup_process
       @state = @crash_times.length >= MAX_RESTARTS ? :failed : :crashed
@@ -310,10 +334,13 @@ module Mbeditor
     def start_monitor_thread
       wait_thr = @wait_thr
       @monitor_thread = Thread.new do
-        wait_thr.value # blocks until process exit
+        status = wait_thr.value # blocks until process exit
         @state_mutex.synchronize do
           next if @stopping || @wait_thr != wait_thr
 
+          # A crash mid-session leaves no exception to quote, so the exit
+          # status is the only reason the status chip can show.
+          @last_error = "ruby-lsp exited (#{status.exitstatus || status})"
           record_crash
           cleanup_process
           @state = @crash_times.length >= MAX_RESTARTS ? :failed : :crashed

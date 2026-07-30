@@ -275,24 +275,64 @@
   // error, server-side fallback signal, or an empty result. A 422 means the
   // server has decided ruby-lsp is unavailable — flip the flag off so we stop
   // asking.
+  // A Monaco marker's `code` is either a plain string or, when the backend
+  // supplied a docs URL, a { value, target } object. Everything that compares
+  // or displays a cop name has to go through this.
+  function codeValue(code) {
+    if (code && typeof code === 'object') return code.value || '';
+    return code || '';
+  }
+
+  // How long a failure keeps us off ruby-lsp. Long enough that a dead server
+  // isn't hammered on every keystroke, short enough that a server which comes
+  // back on its own is picked up without a page reload — which is what the old
+  // permanent flag flip cost you.
+  var LSP_BACKOFF_MS = 60000;
+
+  // Single owner of the "ruby-lsp is unwell" state. Everything that talks to
+  // the bridge routes its failures here so the status indicator and the
+  // request guard can never disagree.
+  function noteLspFailure(err) {
+    var status = err && err.response && err.response.status;
+    var data = (err && err.response && err.response.data) || (err && err.lspData) || {};
+    // A 422 means the server has decided ruby-lsp isn't there at all; a
+    // 'failed' state means it crashed past its restart budget. Both are worth
+    // backing off from. An ordinary timeout is not.
+    if (status !== 422 && data.lspState !== 'failed') return;
+
+    window.MBEDITOR_RUBY_LSP_DISABLED_UNTIL = Date.now() + LSP_BACKOFF_MS;
+    window.MBEDITOR_RUBY_LSP_REASON = data.reason || data.error ||
+      (data.lspState === 'failed' ? 'ruby-lsp crashed repeatedly' : 'ruby-lsp is unavailable');
+    try {
+      window.dispatchEvent(new CustomEvent('mbeditor:lsp-health'));
+    } catch (e) { /* CustomEvent unavailable — the guard still works */ }
+  }
+
+  function lspBackedOff() {
+    return Date.now() < (window.MBEDITOR_RUBY_LSP_DISABLED_UNTIL || 0);
+  }
+
   function tryRubyLsp(lspMethod, model, position) {
     try {
-      if (!window.MBEDITOR_RUBY_LSP_AVAILABLE) return Promise.resolve(null);
+      if (!window.MBEDITOR_RUBY_LSP_AVAILABLE || lspBackedOff()) return Promise.resolve(null);
       if (typeof FileService === 'undefined' || !FileService.rubyLspRequest) return Promise.resolve(null);
       if (!model || !model._mbeditorPath || !position) return Promise.resolve(null);
       if (model.getValueLength() > 5 * 1024 * 1024) return Promise.resolve(null);
       return FileService.rubyLspRequest(lspMethod, model._mbeditorPath, model.getValue(), position.lineNumber, position.column)
         .then(function (data) {
-          if (!data || data.fallback || data.error) return null;
+          if (!data || data.fallback || data.error) {
+            // A 200 can still carry lspState: 'failed' — the server answered,
+            // the language server did not.
+            if (data) noteLspFailure({ lspData: data });
+            return null;
+          }
           if (lspMethod === 'definition') return (data.results && data.results.length) ? data : null;
           if (lspMethod === 'hover') return data.markdown ? data : null;
           if (lspMethod === 'completion') return (data.suggestions && data.suggestions.length) ? data : null;
           return null;
         })
         .catch(function (err) {
-          if (err && err.response && err.response.status === 422) {
-            window.MBEDITOR_RUBY_LSP_AVAILABLE = false;
-          }
+          noteLspFailure(err);
           return null;
         });
     } catch (e) {
@@ -1456,7 +1496,8 @@
 
         var correctableCops = model._mbeditorCorrectableCops || new Set();
         var rubocopMarkers = context.markers.filter(function(m) {
-          return m.source === 'rubocop' && m.code && correctableCops.has(m.code);
+          var cop = codeValue(m.code);
+          return m.source === 'rubocop' && cop && correctableCops.has(cop);
         });
 
         if (rubocopMarkers.length === 0) return { actions: [], dispose: function() {} };
@@ -1467,15 +1508,16 @@
         var code = model.getValue();
 
         var actions = rubocopMarkers.map(function(marker) {
+          var cop = codeValue(marker.code);
           return {
-            title: 'Fix: ' + marker.code,
+            title: 'Fix: ' + cop,
             kind: 'quickfix',
             isPreferred: rubocopMarkers.length === 1,
             diagnostics: [marker],
             command: {
               id: 'mbeditor.applyRubocopFix',
-              title: 'Apply RuboCop fix for ' + marker.code,
-              arguments: [model, marker, code, modelPath]
+              title: 'Apply RuboCop fix for ' + cop,
+              arguments: [model, cop, code, modelPath]
             }
           };
         });
@@ -1485,9 +1527,9 @@
     });
 
     // Command handler that fetches the fix from the backend and applies it.
-    monaco.editor.registerCommand('mbeditor.applyRubocopFix', function(_accessor, model, marker, code, modelPath) {
+    monaco.editor.registerCommand('mbeditor.applyRubocopFix', function(_accessor, model, copName, code, modelPath) {
       if (typeof FileService === 'undefined' || !FileService.quickFixOffense) return;
-      FileService.quickFixOffense(modelPath, code, marker.code).then(function(data) {
+      FileService.quickFixOffense(modelPath, code, copName).then(function(data) {
         if (!data || !data.fix) return;
         var fix = data.fix;
         model.pushEditOperations([], [{
@@ -1943,6 +1985,11 @@
   window.MbeditorEditorPlugins = {
     registerGlobalExtensions: registerGlobalExtensions,
     attachEditorFeatures: attachEditorFeatures,
+    // The one place that decides ruby-lsp is unwell. Anything outside this file
+    // that talks to the bridge reports its failures here rather than writing
+    // the window flags itself.
+    noteLspFailure: noteLspFailure,
+    lspBackedOff: lspBackedOff,
     // Exposed so the ERB gating can be asserted directly in system tests.
     isInsideErbTag: isInsideErbTag,
     runRubyEnter: function runRubyEnter(editor) {

@@ -13,6 +13,10 @@ var _hamlLangRegistered = false;
 var _erbLangRegistered = false;
 var _jsErbLangRegistered = false;
 
+// Backend marker severity -> monaco.MarkerSeverity. Literals rather than a
+// reference to window.monaco, which does not exist when this file is parsed.
+var MARKER_SEVERITY = { hint: 1, info: 2, warning: 4, error: 8 };
+
 var EditorPanel = function EditorPanel(_ref) {
   var tab = _ref.tab;
   var paneId = _ref.paneId;
@@ -1232,16 +1236,25 @@ var EditorPanel = function EditorPanel(_ref) {
       var model = monacoRef.current.getModel();
       if (model) {
         var monacoMarkers = markers.map(function (m) {
-          var sev = m.severity === 'error'
-            ? window.monaco.MarkerSeverity.Error
-            : window.monaco.MarkerSeverity.Warning;
+          // Backend severities map 1:1 onto MarkerSeverity. Grading them
+          // properly is what stops RuboCop's convention offenses — the bulk of
+          // any lint run — from rendering as a wall of yellow warnings.
+          var sev = MARKER_SEVERITY[m.severity];
           return {
-            severity: sev,
+            severity: sev != null ? sev : window.monaco.MarkerSeverity.Warning,
             // RuboCop-sourced markers keep the 'rubocop' source so the quick-fix
         // code action provider offers a lightbulb; other sources (e.g. Prism
         // syntax errors from ruby-lsp) correctly get none.
         source: m.source || 'rubocop',
-            code: m.copName || '',
+            // An object code renders the cop name as a link to its docs page.
+            // Readers must cope with both shapes — see codeValue() in
+            // editor_plugins.js.
+            code: m.codeHref
+              ? { value: m.copName || '', target: window.monaco.Uri.parse(m.codeHref) }
+              : (m.copName || ''),
+            // Fades the range instead of squiggling it: dead code reads as
+            // absent rather than as a problem.
+            tags: m.unnecessary ? [window.monaco.MarkerTag.Unnecessary] : undefined,
             message: m.message,
             startLineNumber: m.startLine,
             startColumn: m.startCol,

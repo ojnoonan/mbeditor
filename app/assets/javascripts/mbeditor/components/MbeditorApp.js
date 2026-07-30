@@ -451,6 +451,13 @@ var MbeditorApp = function MbeditorApp() {
   var problemCounts = _useStateProblemCounts2[0];
   var setProblemCounts = _useStateProblemCounts2[1];
 
+  // ruby-lsp status for the status-bar chip. 'off' means never available here,
+  // 'degraded' means we backed off after a failure, 'ok' means it's answering.
+  var _useStateLspHealth = useState({ status: 'off', reason: null });
+  var _useStateLspHealth2 = _slicedToArray(_useStateLspHealth, 2);
+  var lspHealth = _useStateLspHealth2[0];
+  var setLspHealth = _useStateLspHealth2[1];
+
   var _useState18g = useState(320);
   var _useState18g2 = _slicedToArray(_useState18g, 2);
   var gitPanelWidth = _useState18g2[0];
@@ -723,6 +730,60 @@ var MbeditorApp = function MbeditorApp() {
     return path && (path.endsWith('.rb') || path.endsWith('.gemspec') || path.endsWith('Rakefile') || path.endsWith('Gemfile'));
   };
 
+  // editor_plugins.js owns the ruby-lsp health flags; this app never writes
+  // them directly. Tolerates the plugins file not having loaded yet.
+  var noteLspFailure = function noteLspFailure(err) {
+    if (window.MbeditorEditorPlugins && MbeditorEditorPlugins.noteLspFailure) {
+      MbeditorEditorPlugins.noteLspFailure(err);
+    }
+  };
+
+  var readLspHealth = function readLspHealth() {
+    if (!window.MBEDITOR_RUBY_LSP_AVAILABLE) {
+      return { status: 'off', reason: window.MBEDITOR_RUBY_LSP_REASON || null };
+    }
+    if (window.MbeditorEditorPlugins && MbeditorEditorPlugins.lspBackedOff()) {
+      return { status: 'degraded', reason: window.MBEDITOR_RUBY_LSP_REASON || null };
+    }
+    return { status: 'ok', reason: null };
+  };
+
+  // The backoff expires on a wall-clock deadline rather than a timer, so the
+  // chip also re-reads on a slow interval — otherwise it would sit on
+  // 'degraded' until the next failure or restart click.
+  useEffect(function () {
+    var sync = function () { setLspHealth(readLspHealth()); };
+    sync();
+    window.addEventListener('mbeditor:lsp-health', sync);
+    var tick = setInterval(sync, 10000);
+    return function () {
+      window.removeEventListener('mbeditor:lsp-health', sync);
+      clearInterval(tick);
+    };
+  }, []);
+
+  var restartRubyLsp = function restartRubyLsp() {
+    if (!FileService.rubyLspRequest) return;
+    EditorStore.setStatus('Restarting ruby-lsp…', 'info');
+    FileService.rubyLspRequest('restart', '', '', 1, 1).then(function (data) {
+      var ok = data && data.available && data.state !== 'failed';
+      if (ok) {
+        window.MBEDITOR_RUBY_LSP_AVAILABLE = true;
+        window.MBEDITOR_RUBY_LSP_DISABLED_UNTIL = 0;
+        window.MBEDITOR_RUBY_LSP_REASON = null;
+      } else {
+        window.MBEDITOR_RUBY_LSP_REASON =
+          (data && (data.reason || data.error)) || 'ruby-lsp did not come back';
+      }
+      EditorStore.setStatus(ok ? 'ruby-lsp restarted' : 'ruby-lsp unavailable', ok ? 'success' : 'warning');
+      setLspHealth(readLspHealth());
+    })["catch"](function (err) {
+      noteLspFailure(err);
+      EditorStore.setStatus('Could not restart ruby-lsp', 'error');
+      setLspHealth(readLspHealth());
+    });
+  };
+
   var applyMarkersForTab = function applyMarkersForTab(paneId, tabId, nextMarkers) {
     var currentPane = EditorStore.getState().panes.find(function (p) {
       return p.id === paneId;
@@ -755,14 +816,15 @@ var MbeditorApp = function MbeditorApp() {
     // Anything short of a usable answer falls through to the HTTP lint for
     // this call, so behaviour without ruby-lsp is unchanged.
     var lintRequest;
-    if (window.MBEDITOR_RUBY_LSP_AVAILABLE && isRubyPath(tab.path) && FileService.lspDiagnostics) {
+    var lspUsable = window.MBEDITOR_RUBY_LSP_AVAILABLE &&
+      !(window.MbeditorEditorPlugins && MbeditorEditorPlugins.lspBackedOff());
+    if (lspUsable && isRubyPath(tab.path) && FileService.lspDiagnostics) {
       lintRequest = FileService.lspDiagnostics(tab.path, tab.content).then(function (res) {
         if (res && res.markers && !res.fallback && !res.error) return res;
+        noteLspFailure({ lspData: res || {} });
         return FileService.lintFile(tab.path, tab.content);
       })["catch"](function (err) {
-        if (err && err.response && err.response.status === 422) {
-          window.MBEDITOR_RUBY_LSP_AVAILABLE = false;
-        }
+        noteLspFailure(err);
         return FileService.lintFile(tab.path, tab.content);
       });
     } else {
@@ -5107,6 +5169,27 @@ var MbeditorApp = function MbeditorApp() {
           style: { marginLeft: "8px" }
         }),
         React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.warnings)
+      ),
+      // ruby-lsp indicator. Hidden entirely when ruby-lsp was never available
+      // and nothing has gone wrong — a permanent "off" badge in a project with
+      // no Ruby is noise. A healthy server gets a quiet icon; a degraded one
+      // gets an amber chip you can click to restart.
+      (lspHealth.status !== 'off' || lspHealth.reason) && React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "statusbar-btn statusbar-lsp statusbar-lsp-" + lspHealth.status,
+          onClick: restartRubyLsp,
+          title: lspHealth.status === 'ok'
+            ? 'ruby-lsp is running — click to restart'
+            : 'ruby-lsp unavailable' + (lspHealth.reason ? ': ' + lspHealth.reason : '') +
+              '. Falling back to search-based lookups. Click to retry.'
+        },
+        React.createElement("i", {
+          className: "fas " + (lspHealth.status === 'ok' ? 'fa-gem' : 'fa-plug'),
+          "aria-hidden": "true"
+        }),
+        lspHealth.status !== 'ok' && React.createElement("span", null, " ruby-lsp")
       ),
       !serverOnline && (function () {
         var dirtyCount = state.panes.reduce(function (acc, p) {

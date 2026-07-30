@@ -2948,6 +2948,7 @@ button:not(.pico-btn) { margin-bottom: 0; }
 .ide-problems-icon { flex-shrink: 0; }
 .ide-problems-item-error .ide-problems-icon { color: var(--ide-danger); }
 .ide-problems-item-warning .ide-problems-icon { color: var(--ide-warning); }
+.ide-problems-item-info .ide-problems-icon { color: var(--ide-accent, #3794ff); }
 .ide-problems-msg { flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The offending source line, dimmed so it reads as context rather than as part
    of the message. It is the one part of the row allowed to shrink, so a long
@@ -2968,12 +2969,34 @@ button:not(.pico-btn) { margin-bottom: 0; }
   font-size: 10px;
   text-transform: lowercase;
 }
+/* The cop name, linking out to its RuboCop docs page. Underlined only on hover
+   so a list of rows doesn't read as a wall of links. */
+.ide-problems-docs {
+  flex-shrink: 0;
+  color: var(--ide-text-muted, #858585);
+  font-size: 11px;
+  font-family: var(--ide-mono, monospace);
+  text-decoration: none;
+}
+.ide-problems-docs:hover,
+.ide-problems-docs:focus-visible {
+  color: var(--ide-accent, #3794ff);
+  text-decoration: underline;
+}
 .ide-problems-loc {
   flex-shrink: 0;
   margin-left: auto;
   color: var(--ide-text-muted, #858585);
   font-size: 11px;
 }
+
+/* Status-bar ruby-lsp indicator. Healthy is a dim icon you can ignore;
+   degraded/off is amber with a label, because that one you should read. */
+.statusbar-lsp { display: inline-flex; align-items: center; gap: 4px; }
+.statusbar-lsp-ok { opacity: 0.45; }
+.statusbar-lsp-ok:hover { opacity: 1; }
+.statusbar-lsp-degraded,
+.statusbar-lsp-off { color: var(--ide-warning); }
 
 /* Status-bar problems indicator: bug count then warning count, VS Code style. */
 .statusbar-problems { display: inline-flex; align-items: center; gap: 4px; }
