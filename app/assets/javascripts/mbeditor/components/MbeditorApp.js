@@ -3130,6 +3130,12 @@ var MbeditorApp = function MbeditorApp() {
       openSettingsTab();
       return;
     }
+    // The model graph is a view, not a panel: it takes over the central area
+    // and needs the width. There is no sidebar half to show.
+    if (tab === 'models') {
+      openModelGraphTab();
+      return;
+    }
     if (!sidebarCollapsed && activeSidebarTab === tab) {
       setSidebarCollapsed(true);
     } else {
@@ -3812,7 +3818,7 @@ var MbeditorApp = function MbeditorApp() {
             "button",
             {
               type: "button",
-              className: "ide-activity-btn" + (!sidebarCollapsed && activeSidebarTab === 'models' ? ' active' : ''),
+              className: "ide-activity-btn" + (activeTab && activeTab.isModelGraph ? ' active' : ''),
               title: "Model graph",
               onClick: function() { handleActivityBarClick('models'); }
             },
@@ -3841,21 +3847,7 @@ var MbeditorApp = function MbeditorApp() {
         React.createElement("div", { className: "sidebar-panel-title" },
           activeSidebarTab === 'explorer' ? 'Explorer' :
           activeSidebarTab === 'search' ? 'Search' :
-          activeSidebarTab === 'rails' ? 'Rails' :
-          activeSidebarTab === 'models' ? 'Models' : ''
-        ),
-        activeSidebarTab === 'models' && React.createElement(
-          "div",
-          { className: "ide-sidebar-content" },
-          React.createElement(ModelList, {
-            graph: modelGraph,
-            loading: modelGraphLoading,
-            onRefresh: function () { loadModelGraph(true); },
-            onOpenDiagram: openModelGraphTab,
-            onOpenFile: function (path, line) {
-              TabManager.openTab(path, path.split('/').pop(), line || 1);
-            }
-          })
+          activeSidebarTab === 'rails' ? 'Rails' : ''
         ),
         activeSidebarTab === 'explorer' && React.createElement(
           "div",

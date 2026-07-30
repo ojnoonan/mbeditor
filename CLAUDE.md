@@ -199,15 +199,22 @@ is only built when the tab is opened. Also writes
 `tmp/mbeditor_model_graph.{json,mmd}`; the `.mmd` is a Mermaid erDiagram that
 GitHub and VS Code render natively.
 
-The diagram lives in an **editor tab**, not the sidebar — a graph is inherently
-wide and a ~300px panel only ever shows its first column. The sidebar tab is
-the entry point and the model list. Layout is radial: the most-connected model
+The diagram is a **view, not a panel**: the activity-bar button opens it as an
+editor tab that takes over the central area. There is no sidebar half — a graph
+is inherently wide and a ~300px panel only ever shows its first column. Layout
+is radial: the most-connected model
 is the hub, everything else sits in rings by hop count, ordered within a ring
-by a barycentre sweep to cut edge crossings. Two things that look like
-over-caution and are not: ring radius must grow monotonically (a busy inner
-ring gets a large circumference-derived radius and the next ring would
-otherwise land inside it), and each node claims arc proportional to its own
-footprint (spacing evenly by count makes tall boxes collide).
+by a barycentre sweep to cut edge crossings. Three things that look like
+over-caution and are not: the hub is positioned by its **centre** like every
+other node (placing it by its top-left shifts it half a box into the ring
+around it), ring radius must grow monotonically (a busy inner ring gets a large
+circumference-derived radius and the next ring would otherwise land inside it),
+and each node claims arc proportional to its own footprint (spacing evenly by
+count makes tall boxes collide).
+
+Each edge is drawn twice: the visible 1.2px line, and a transparent 14px twin
+beneath it that carries the hover. A thin stroke is its own hit area, so
+without the twin the association lines are effectively un-hoverable.
 
 Pan/zoom is wired through a **callback ref**, not `useRef` + `useEffect`. The
 SVG mounts on a render where the graph data has not changed — `loading` flips

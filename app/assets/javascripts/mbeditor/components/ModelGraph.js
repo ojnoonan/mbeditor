@@ -127,9 +127,13 @@ var ModelGraph = (function () {
 
       if (ringIndex === 0) {
         names.forEach(function (name) {
-          positions[name] = { x: 0, y: 0, model: byName[name] };
+          // Centred on the origin, like every other node. Placing the hub by
+          // its top-left instead shifts it half a box down and right, straight
+          // into the ring around it.
+          var h = nodeHeight(byName[name]);
+          positions[name] = { x: -NODE_W / 2, y: -h / 2, model: byName[name] };
           angleOf[name] = 0;
-          prevHalf = Math.max(prevHalf, Math.max(NODE_W, nodeHeight(byName[name])) / 2);
+          prevHalf = Math.max(prevHalf, Math.max(NODE_W, h) / 2);
         });
         return;
       }
@@ -232,6 +236,15 @@ var ModelGraph = (function () {
     has_and_belongs_to_many: 'mg-edge-habtm'
   };
 
+  // What the association means in cardinality terms, since the arrow alone
+  // only shows direction.
+  var MACRO_CARDINALITY = {
+    belongs_to: 'many → one',
+    has_one: 'one → one',
+    has_many: 'one → many',
+    has_and_belongs_to_many: 'many ↔ many'
+  };
+
   var MIN_ZOOM = 0.2;
   var MAX_ZOOM = 2.5;
 
@@ -243,6 +256,14 @@ var ModelGraph = (function () {
 
     var _view = React.useState({ k: 1, x: 0, y: 0 });
     var view = _view[0], setView = _view[1];
+    var _search = React.useState('');
+    var search = _search[0], setSearch = _search[1];
+    var _focused = React.useState(null);
+    var focused = _focused[0], setFocused = _focused[1];
+    var _hovered = React.useState(null);
+    var hovered = _hovered[0], setHovered = _hovered[1];
+    var _pointer = React.useState({ x: 0, y: 0 });
+    var pointer = _pointer[0], setPointer = _pointer[1];
     var dragRef = React.useRef(null);
     var svgRef = React.useRef(null);
 
@@ -269,6 +290,28 @@ var ModelGraph = (function () {
     }, [placed && placed.width, placed && placed.height]);
 
     React.useEffect(function () { fitToPane(); }, [fitToPane]);
+
+    // Bring one model to the middle of the pane at the current zoom, and mark
+    // it so it's findable in a dense graph once it gets there.
+    var centreOn = React.useCallback(function (name) {
+      var el = svgRef.current;
+      var pos = placed && placed.positions[name];
+      if (!el || !pos) return;
+      var rect = el.getBoundingClientRect();
+      var h = nodeHeight(pos.model);
+      setFocused(name);
+      setView(function (v) {
+        // Close half the distance to actual size, so a model found while
+        // fitted (often ~0.3) lands readable. Never zooms out: if you were
+        // already past 1:1 you meant to be there.
+        var k = v.k >= 1 ? v.k : Math.min(MAX_ZOOM, v.k + (1 - v.k) / 2);
+        return {
+          k: k,
+          x: rect.width / 2 - (pos.x + NODE_W / 2) * k,
+          y: rect.height / 2 - (pos.y + h / 2) * k
+        };
+      });
+    }, [placed]);
 
     // Same mounting problem as the wheel listener: the fit effect can run
     // before the SVG exists and not again afterwards. Kept current so the
@@ -354,14 +397,67 @@ var ModelGraph = (function () {
         React.createElement('span', null, models.length + ' models, ' + edges.length + ' associations'),
         graph.truncated && React.createElement('span', { className: 'ide-model-graph-warn' }, ' (truncated)'),
         React.createElement('span', { className: 'ide-model-graph-hint' }, 'drag to pan · scroll to zoom · click a model for its schema'),
-        React.createElement('button', {
-          type: 'button', className: 'ide-model-graph-btn', title: 'Fit the whole graph',
-          onClick: fitToPane
-        }, React.createElement('i', { className: 'fas fa-compress-arrows-alt' })),
-        React.createElement('button', {
-          type: 'button', className: 'ide-model-graph-btn',
-          title: 'Rebuild from the current code', onClick: onRefresh
-        }, React.createElement('i', { className: 'fas fa-sync' }))
+        React.createElement(
+          'div',
+          { className: 'ide-model-graph-actions' },
+          // A native datalist rather than a bespoke dropdown: the browser gives
+          // us the filtering and keyboard handling for free.
+          React.createElement('input', {
+            className: 'ide-model-graph-search',
+            type: 'search',
+            list: 'mg-model-names',
+            placeholder: 'Centre on a model…',
+            value: search,
+            onChange: function (e) {
+              setSearch(e.target.value);
+              // Picking from the datalist fires change with the full name, so
+              // an exact hit centres immediately rather than needing Enter.
+              if (placed.positions[e.target.value]) centreOn(e.target.value);
+            },
+            onKeyDown: function (e) {
+              if (e.key !== 'Enter') return;
+              var match = models.filter(function (m) {
+                return m.name.toLowerCase().indexOf(e.target.value.trim().toLowerCase()) === 0;
+              })[0];
+              if (match) { setSearch(match.name); centreOn(match.name); }
+            }
+          }),
+          React.createElement(
+            'datalist',
+            { id: 'mg-model-names' },
+            models.map(function (m) {
+              return React.createElement('option', { key: m.name, value: m.name });
+            })
+          ),
+          React.createElement('button', {
+            type: 'button', className: 'ide-model-graph-btn', title: 'Fit the whole graph',
+            onClick: fitToPane
+          }, React.createElement('i', { className: 'fas fa-compress-arrows-alt' })),
+          React.createElement('button', {
+            type: 'button', className: 'ide-model-graph-btn',
+            title: 'Rebuild from the current code', onClick: onRefresh
+          }, React.createElement('i', { className: 'fas fa-sync' }))
+        )
+      ),
+      hovered && React.createElement(
+        'div',
+        {
+          className: 'mg-tooltip',
+          // Offset from the cursor, and flipped left near the right edge so
+          // the tooltip never runs off the pane.
+          style: {
+            left: pointer.x + (svgRef.current && pointer.x > svgRef.current.clientWidth - 260 ? -240 : 14) + 'px',
+            top: (pointer.y + 14) + 'px'
+          }
+        },
+        React.createElement('div', { className: 'mg-tooltip-title' },
+          hovered.edge.from + ' → ' + hovered.edge.to),
+        React.createElement('div', { className: 'mg-tooltip-macro' },
+          hovered.edge.macro + ' :' + hovered.edge.name),
+        React.createElement('div', { className: 'mg-tooltip-meta' },
+          MACRO_CARDINALITY[hovered.edge.macro] || hovered.edge.macro),
+        hovered.edge.through && React.createElement('div', { className: 'mg-tooltip-meta' },
+          'through :' + hovered.edge.through)
       ),
       React.createElement(
         'svg',
@@ -392,16 +488,29 @@ var ModelGraph = (function () {
             var a = placed.positions[e.from];
             var b = placed.positions[e.to];
             if (!a || !b || e.from === e.to) return null;
+            var d = edgePath(a, b);
+            var isHovered = hovered && hovered.index === i;
             return React.createElement(
-              'path',
-              {
-                key: 'e' + i,
-                d: edgePath(a, b),
-                className: 'mg-edge ' + (MACRO_CLASS[e.macro] || ''),
+              'g',
+              { key: 'e' + i },
+              // A transparent, much thicker copy of the line under the real
+              // one. A 1.2px stroke is its own hit area, which makes hovering
+              // an association essentially impossible without this.
+              React.createElement('path', {
+                d: d,
+                className: 'mg-edge-hit',
+                onMouseEnter: function () { setHovered({ index: i, edge: e }); },
+                onMouseMove: function (ev) {
+                  var rect = svgRef.current.getBoundingClientRect();
+                  setPointer({ x: ev.clientX - rect.left, y: ev.clientY - rect.top });
+                },
+                onMouseLeave: function () { setHovered(null); }
+              }),
+              React.createElement('path', {
+                d: d,
+                className: 'mg-edge ' + (MACRO_CLASS[e.macro] || '') + (isHovered ? ' mg-edge-hovered' : ''),
                 markerEnd: 'url(#mg-arrow)'
-              },
-              React.createElement('title', null,
-                e.from + '.' + e.name + ' — ' + e.macro + (e.through ? ' through ' + e.through : ''))
+              })
             );
           }),
           models.map(function (m) {
@@ -414,7 +523,7 @@ var ModelGraph = (function () {
               'g',
               {
                 key: m.name,
-                className: 'mg-node',
+                className: 'mg-node' + (focused === m.name ? ' mg-focused' : ''),
                 transform: 'translate(' + pos.x + ',' + pos.y + ')',
                 onClick: function () {
                   // A drag that ends over a box must not also open it.
@@ -454,70 +563,3 @@ var ModelGraph = (function () {
 })();
 
 window.ModelGraph = ModelGraph;
-
-// ModelList — the sidebar half: just the models, click to open the diagram or
-// jump to a file. The diagram itself needs the full editor width.
-var ModelList = (function () {
-  return function ModelListComponent(_ref) {
-    var graph = _ref.graph;
-    var loading = _ref.loading;
-    var onRefresh = _ref.onRefresh;
-    var onOpenDiagram = _ref.onOpenDiagram;
-    var onOpenFile = _ref.onOpenFile;
-
-    if (loading) {
-      return React.createElement('div', { className: 'ide-model-graph-empty' }, 'Building the model graph…');
-    }
-    if (!graph) {
-      return React.createElement('div', { className: 'ide-model-graph-empty' }, 'Loading…');
-    }
-    if (!graph.ok) {
-      return React.createElement(
-        'div',
-        { className: 'ide-model-graph-empty' },
-        React.createElement('div', null, graph.error || 'No model graph available.'),
-        React.createElement('button', {
-          type: 'button', className: 'ide-model-graph-btn', onClick: onRefresh
-        }, 'Try again')
-      );
-    }
-
-    return React.createElement(
-      'div',
-      { className: 'ide-model-list' },
-      React.createElement(
-        'div',
-        { className: 'ide-model-graph-toolbar' },
-        React.createElement('span', null, (graph.models || []).length + ' models'),
-        React.createElement('button', {
-          type: 'button', className: 'ide-model-graph-btn',
-          title: 'Rebuild from the current code', onClick: onRefresh
-        }, React.createElement('i', { className: 'fas fa-sync' }))
-      ),
-      React.createElement('button', {
-        type: 'button', className: 'ide-model-open-diagram', onClick: onOpenDiagram
-      }, React.createElement('i', { className: 'fas fa-project-diagram' }), ' Open diagram'),
-      React.createElement(
-        'div',
-        { className: 'ide-model-list-items' },
-        (graph.models || []).map(function (m) {
-          return React.createElement(
-            'button',
-            {
-              key: m.name,
-              type: 'button',
-              className: 'ide-model-name' + (m.file ? '' : ' ide-model-name-external'),
-              title: m.file || m.name + ' is defined outside the workspace',
-              disabled: !m.file,
-              onClick: function () { if (m.file && onOpenFile) onOpenFile(m.file, 1); }
-            },
-            m.name,
-            React.createElement('span', { className: 'ide-model-count' }, m.table || '')
-          );
-        })
-      )
-    );
-  };
-})();
-
-window.ModelList = ModelList;
