@@ -1531,7 +1531,7 @@ In `CHANGELOG.md`, add an `## [Unreleased]` section directly below the intro par
   tree to import into the workspace root. Folders are imported recursively.
   Any file type works — binary content round-trips byte for byte. When a
   target path already exists, a dialog offers Overwrite all, Keep both (which
-  writes `name 2.ext` beside the original), or Skip. Imports are capped at 200
+  writes `name 2.ext` beside the original), or Skip. Imports are capped at 100
   files and 50 MB per drop, and 5 MB per file, and every target path goes
   through the same sandbox checks as every other file operation.
 ```

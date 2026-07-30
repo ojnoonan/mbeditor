@@ -18,6 +18,7 @@ cd test/dummy && rails server  # http://localhost:3000/mbeditor
 - `EditorStateService` — JSON state persistence with file locking; used by both `EditorsController` and `EditorChannel`
 - `ExclusionMatcher` — unified path exclusion predicate
 - `FileOperationService` — all file mutations (save, create, rename, delete) with path-safety invariants
+- `FileImportService` — writes files dropped in from outside the browser; owns the ask/overwrite/rename conflict protocol
 - `ProcessRunner` — subprocess-with-timeout (used by `GitService`, `TestRunnerService`, lint path)
 - `AvailabilityProbe` — checks tool availability (rg, rubocop, haml_lint, etc.)
 - `FileTreeService` — builds the directory tree response

@@ -111,12 +111,34 @@ var FileImport = (function () {
     return fd;
   }
 
+  // Match conflict occurrences from the end of the original entry list. If
+  // two dropped files map to one previously-free path, pass one imports the
+  // first and reports only the later occurrence as conflicting; retrying every
+  // entry with that path would duplicate the already-imported file.
+  function conflictedEntries(entries, targetFolderPath, conflicts) {
+    var remaining = {};
+    (conflicts || []).forEach(function(c) {
+      var key = '$' + c.path;
+      remaining[key] = (remaining[key] || 0) + 1;
+    });
+
+    var retry = [];
+    for (var i = entries.length - 1; i >= 0; i--) {
+      var targetKey = '$' + joinPath(targetFolderPath, entries[i].relativePath);
+      if (!remaining[targetKey]) continue;
+      retry.unshift(entries[i]);
+      remaining[targetKey] -= 1;
+    }
+    return retry;
+  }
+
   return {
     MAX_ENTRIES: MAX_ENTRIES,
     hasExternalFiles: hasExternalFiles,
     collectEntries: collectEntries,
     joinPath: joinPath,
-    buildFormData: buildFormData
+    buildFormData: buildFormData,
+    conflictedEntries: conflictedEntries
   };
 })();
 

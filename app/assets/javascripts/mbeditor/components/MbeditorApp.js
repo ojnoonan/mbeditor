@@ -356,6 +356,11 @@ var MbeditorApp = function MbeditorApp() {
   var schemaModal = _useStateSchemaModal2[0];
   var setSchemaModal = _useStateSchemaModal2[1];
 
+  var _useStateImportConflict = useState(null);
+  var _useStateImportConflict2 = _slicedToArray(_useStateImportConflict, 2);
+  var importConflict = _useStateImportConflict2[0];
+  var setImportConflict = _useStateImportConflict2[1];
+
   var _useStateSchemaLoading = useState(null);
   var _useStateSchemaLoading2 = _slicedToArray(_useStateSchemaLoading, 2);
   var schemaLoadingLabel = _useStateSchemaLoading2[0];
@@ -3097,6 +3102,77 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
+  var finishImport = function finishImport(result) {
+    var imported = (result.imported || []).length;
+    var skipped  = (result.conflicts || []).length;
+    var failed   = (result.errors || []).length;
+
+    var parts = [imported + ' file' + (imported === 1 ? '' : 's') + ' imported'];
+    if (skipped > 0) parts.push(skipped + ' skipped');
+    if (failed > 0) parts.push(failed + ' failed');
+
+    var level = failed === 0 ? 'success' : (imported === 0 ? 'error' : 'warning');
+    EditorStore.setStatus(parts.join(', ') + '.', level);
+
+    if (imported > 0) {
+      refreshProjectTree().then(function() { GitService.fetchStatus(); });
+    }
+  };
+
+  // Files dragged in from outside the browser. Pass one reports conflicts
+  // without touching them; if there are any, the modal collects a resolution
+  // and pass two re-sends just those entries.
+  var handleImportFiles = function handleImportFiles(entries, targetFolderPath, meta) {
+    if (meta && meta.truncated) {
+      EditorStore.setStatus('That drop holds more than ' + FileImport.MAX_ENTRIES +
+        ' files — only the first ' + FileImport.MAX_ENTRIES + ' will be imported.', 'warning');
+    } else if (meta && meta.foldersSkipped) {
+      EditorStore.setStatus('This browser cannot read dropped folders — only loose files were imported.', 'warning');
+    } else {
+      EditorStore.setStatus('Importing ' + entries.length + ' file' +
+        (entries.length === 1 ? '' : 's') + '...', 'info');
+    }
+
+    return FileService.importFiles(FileImport.buildFormData(entries, targetFolderPath, 'ask'))
+      .then(function(result) {
+        if (result.conflicts && result.conflicts.length > 0) {
+          setImportConflict({ result: result, entries: entries, targetFolderPath: targetFolderPath });
+        } else {
+          finishImport(result);
+        }
+      })['catch'](function(err) {
+        var message = err && err.response && err.response.data && err.response.data.error || err.message;
+        EditorStore.setStatus('Import failed: ' + message, 'error');
+      });
+  };
+
+  var resolveImportConflict = function resolveImportConflict(mode) {
+    var pending = importConflict;
+    setImportConflict(null);
+    if (!pending) return;
+
+    if (mode === 'skip') { finishImport(pending.result); return; }
+
+    var retry = FileImport.conflictedEntries(
+      pending.entries,
+      pending.targetFolderPath,
+      pending.result.conflicts
+    );
+    if (retry.length === 0) { finishImport(pending.result); return; }
+
+    FileService.importFiles(FileImport.buildFormData(retry, pending.targetFolderPath, mode))
+      .then(function(second) {
+        finishImport({
+          imported: (pending.result.imported || []).concat(second.imported || []),
+          conflicts: [],
+          errors: (pending.result.errors || []).concat(second.errors || [])
+        });
+      })['catch'](function(err) {
+        var message = err && err.response && err.response.data && err.response.data.error || err.message;
+        EditorStore.setStatus('Import failed: ' + message, 'error');
+      });
+  };
+
   var openContextMenu = function openContextMenu(e, node) {
     setContextMenu({ x: e.clientX, y: e.clientY, node: node });
     handleNodeSelect(node);
@@ -4075,6 +4151,7 @@ var MbeditorApp = function MbeditorApp() {
               onNodeSelect: handleNodeSelect,
               onMultiSelect: handleMultiSelect,
               onMove: handleMoveNodes,
+              onImportFiles: handleImportFiles,
               gitFiles: state.gitFiles,
               expandedDirs: expandedDirs,
               onExpandedDirsChange: setExpandedDirs,
@@ -5760,6 +5837,13 @@ var MbeditorApp = function MbeditorApp() {
         )
       )
     ),
+
+    /* ── Import conflict modal ─────────────────────────────────────────── */
+    importConflict && React.createElement(ImportConflictModal, {
+      conflicts: importConflict.result.conflicts,
+      errors: importConflict.result.errors,
+      onResolve: resolveImportConflict
+    }),
 
     /* ── Schema modal ──────────────────────────────────────────────────── */
     schemaModal && React.createElement(

@@ -2585,7 +2585,19 @@ module Mbeditor
       }
 
       assert_response :unprocessable_content
-      assert_match(/on_conflict/, json["error"])
+      assert_equal "Unknown on_conflict: clobber", json["error"]
+      refute File.exist?(File.join(@workspace, "a.txt"))
+    end
+
+    test "import rejects values that are not uploaded files" do
+      post "/mbeditor/import", params: {
+        files: ["not-an-upload"],
+        paths: ["a.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :unprocessable_content
+      assert_equal "files must be uploaded files", json["error"]
       refute File.exist?(File.join(@workspace, "a.txt"))
     end
 

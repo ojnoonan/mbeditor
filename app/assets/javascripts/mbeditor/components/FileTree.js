@@ -28,6 +28,7 @@ var FileTree = function FileTree(_ref) {
   var onNodeSelect = _ref.onNodeSelect;     // fn(node) — single select (also clears multi)
   var onMultiSelect = _ref.onMultiSelect;   // fn(Set<string>) — multi-select update
   var onMove = _ref.onMove;                 // fn(srcPaths[], destFolderPath) — DnD move
+  var onImportFiles = _ref.onImportFiles; // fn(entries[], destFolderPath, meta) — external file drop
   var gitFiles = _ref.gitFiles;
   var expandedDirs = _ref.expandedDirs;
   var onExpandedDirsChange = _ref.onExpandedDirsChange;
@@ -52,6 +53,14 @@ var FileTree = function FileTree(_ref) {
   var _useStateDnD2 = _slicedToArray(_useStateDnD, 2);
   var dragOverFolder = _useStateDnD2[0];
   var setDragOverFolder = _useStateDnD2[1];
+
+  // Target of an in-flight *external* drag: a folder path, '' for the tree
+  // root, or null when no external drag is over the tree. Kept separate from
+  // dragOverFolder so the two drop kinds highlight differently.
+  var _useStateExt = useState(null);
+  var _useStateExt2 = _slicedToArray(_useStateExt, 2);
+  var externalDragOver = _useStateExt2[0];
+  var setExternalDragOver = _useStateExt2[1];
 
   var inlineRef = useRef(null);
   var committedRef = useRef(false);
@@ -421,6 +430,19 @@ var FileTree = function FileTree(_ref) {
   var startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER);
   var endIdx = Math.min(flatItems.length - 1, Math.ceil((scrollTop + containerHeight) / ROW_HEIGHT) + BUFFER);
 
+  // collectEntries must be kicked off synchronously inside the drop handler —
+  // see the note in file_import.js.
+  var startExternalImport = function(dataTransfer, targetFolderPath) {
+    if (!onImportFiles) return;
+    FileImport.collectEntries(dataTransfer).then(function(res) {
+      if (res.entries.length > 0) onImportFiles(res.entries, targetFolderPath, res);
+    });
+  };
+
+  var isRowTarget = function(e) {
+    return !!(e.target && e.target.closest && e.target.closest('.tree-item'));
+  };
+
   var renderRow = function renderRow(item, idx) {
     var indentPx = 8 + item.depth * 12;
 
@@ -439,6 +461,7 @@ var FileTree = function FileTree(_ref) {
     var isOpenFile = activePath === node.path;
     var isSelected = !!(selectedPaths && selectedPaths.has(node.path));
     var isDragOver = isFolder && dragOverFolder === node.path;
+    var isDragOverExternal = isFolder && externalDragOver === node.path;
     var status = getGitStatus(node.path);
     var statusMeta = getTreeStatusMeta(status);
     var isModified = statusMeta && (statusMeta.cssKey === 'M' || statusMeta.cssKey === 'A');
@@ -447,7 +470,8 @@ var FileTree = function FileTree(_ref) {
       (isOpenFile ? ' active' : '') +
       (isSelected ? ' selected' : '') +
       (isModified ? ' modified' : '') +
-      (isDragOver ? ' drag-over' : '');
+      (isDragOver ? ' drag-over' : '') +
+      (isDragOverExternal ? ' drag-over-external' : '');
 
     return React.createElement(
       'div',
@@ -471,26 +495,49 @@ var FileTree = function FileTree(_ref) {
               e.dataTransfer.effectAllowed = 'move';
             },
             onDragOver: function(e) {
-              if (!isFolder) return;
+              var external = FileImport.hasExternalFiles(e.dataTransfer);
+              if (!isFolder) {
+                // Cancel the browser's default external-file action (usually
+                // navigating away to open the file) without accepting it.
+                if (external) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = 'none';
+                }
+                return;
+              }
               e.preventDefault();
               e.stopPropagation();
-              e.dataTransfer.dropEffect = 'move';
-              if (dragOverFolder !== node.path) setDragOverFolder(node.path);
+              e.dataTransfer.dropEffect = external ? 'copy' : 'move';
+              if (external) {
+                if (externalDragOver !== node.path) setExternalDragOver(node.path);
+                if (dragOverFolder !== null) setDragOverFolder(null);
+              } else if (dragOverFolder !== node.path) {
+                if (externalDragOver !== null) setExternalDragOver(null);
+                setDragOverFolder(node.path);
+              }
             },
-            onDragLeave: function() {
+            onDragLeave: function(e) {
+              if (e.currentTarget.contains(e.relatedTarget)) return;
               if (dragOverFolder === node.path) setDragOverFolder(null);
+              if (externalDragOver === node.path) setExternalDragOver(null);
             },
             onDrop: function(e) {
               e.preventDefault();
               e.stopPropagation();
               setDragOverFolder(null);
+              setExternalDragOver(null);
               if (!isFolder) return;
+              if (FileImport.hasExternalFiles(e.dataTransfer)) {
+                startExternalImport(e.dataTransfer, node.path);
+                return;
+              }
               try {
                 var srcPaths = JSON.parse(e.dataTransfer.getData('text/plain'));
                 if (onMove && srcPaths && srcPaths.length > 0) onMove(srcPaths, node.path);
               } catch (err) {}
             },
-            onDragEnd: function() { setDragOverFolder(null); },
+            onDragEnd: function() { setDragOverFolder(null); setExternalDragOver(null); },
             onClick: function(e) {
               if (e.ctrlKey || e.metaKey) {
                 if (onMultiSelect) {
@@ -568,7 +615,32 @@ var FileTree = function FileTree(_ref) {
 
   return React.createElement(
     'div',
-    { className: 'file-tree file-tree-root', ref: containerRef, tabIndex: 0, style: { outline: 'none', padding: 0 } },
+    {
+      className: 'file-tree file-tree-root' + (externalDragOver === '' ? ' drag-over-external-root' : ''),
+      ref: containerRef,
+      tabIndex: 0,
+      style: { outline: 'none', padding: 0 },
+      // Empty space below the last row imports into the workspace root.
+      // Folder rows stop propagation, so only genuine misses reach here; the
+      // isRowTarget guard covers file rows, which accept nothing.
+      onDragOver: function(e) {
+        if (!FileImport.hasExternalFiles(e.dataTransfer) || isRowTarget(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        if (externalDragOver !== '') setExternalDragOver('');
+      },
+      onDragLeave: function(e) {
+        if (e.currentTarget.contains(e.relatedTarget)) return;
+        setExternalDragOver(null);
+      },
+      onDrop: function(e) {
+        if (!FileImport.hasExternalFiles(e.dataTransfer)) return;
+        setExternalDragOver(null);
+        if (isRowTarget(e)) return;
+        e.preventDefault();
+        startExternalImport(e.dataTransfer, '');
+      }
+    },
     React.createElement(
       'div',
       { style: { height: totalHeight, position: 'relative' } },
