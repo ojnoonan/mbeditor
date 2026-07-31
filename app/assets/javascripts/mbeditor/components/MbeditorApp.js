@@ -3119,6 +3119,27 @@ var MbeditorApp = function MbeditorApp() {
     }
   };
 
+  // A file dropped anywhere that isn't a drop target makes the browser
+  // navigate away and open it, which loses the editor and every unsaved
+  // buffer with it. Swallow those at the window so a near-miss is a no-op
+  // rather than a disaster. Real targets stopPropagation before this runs.
+  useEffect(function () {
+    var swallow = function (e) {
+      var types = (e.dataTransfer && e.dataTransfer.types) || [];
+      if (Array.prototype.indexOf.call(types, 'Files') === -1) return;
+      e.preventDefault();
+      // dragover is left alone beyond preventDefault: setting dropEffect here
+      // would override the 'copy' cursor the tree sets on a valid folder.
+      if (e.type === 'drop') e.dataTransfer.dropEffect = 'none';
+    };
+    window.addEventListener('dragover', swallow);
+    window.addEventListener('drop', swallow);
+    return function () {
+      window.removeEventListener('dragover', swallow);
+      window.removeEventListener('drop', swallow);
+    };
+  }, []);
+
   // Files dragged in from outside the browser. Pass one reports conflicts
   // without touching them; if there are any, the modal collects a resolution
   // and pass two re-sends just those entries.

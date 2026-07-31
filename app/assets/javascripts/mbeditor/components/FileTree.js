@@ -494,6 +494,16 @@ var FileTree = function FileTree(_ref) {
               e.dataTransfer.setData('text/plain', JSON.stringify(srcPaths));
               e.dataTransfer.effectAllowed = 'move';
             },
+            // An element only counts as a drop target if it cancels dragenter
+            // as well as dragover. Chrome is happy with dragover alone, but
+            // Firefox and Safari are not — without this the highlight appears
+            // (dragover still runs) while the browser refuses the drop, so
+            // nothing happens on release.
+            onDragEnter: function(e) {
+              if (!isFolder) return;
+              e.preventDefault();
+              e.stopPropagation();
+            },
             onDragOver: function(e) {
               var external = FileImport.hasExternalFiles(e.dataTransfer);
               if (!isFolder) {
@@ -623,6 +633,12 @@ var FileTree = function FileTree(_ref) {
       // Empty space below the last row imports into the workspace root.
       // Folder rows stop propagation, so only genuine misses reach here; the
       // isRowTarget guard covers file rows, which accept nothing.
+      // Cancelled for the same reason as the row handler above: without a
+      // cancelled dragenter, Firefox and Safari never fire the drop.
+      onDragEnter: function(e) {
+        if (!FileImport.hasExternalFiles(e.dataTransfer) || isRowTarget(e)) return;
+        e.preventDefault();
+      },
       onDragOver: function(e) {
         if (!FileImport.hasExternalFiles(e.dataTransfer) || isRowTarget(e)) return;
         e.preventDefault();
