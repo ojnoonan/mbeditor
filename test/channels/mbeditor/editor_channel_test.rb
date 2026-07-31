@@ -18,10 +18,6 @@ module Mbeditor
       PresenceRegistry.reset!
     end
 
-    def teardown
-      PresenceRegistry.reset!
-    end
-
     test "subscribes and streams from mbeditor_editor" do
       subscribe
       assert subscription.confirmed?
@@ -362,6 +358,9 @@ module Mbeditor
     def teardown
       # The cache lives in a class ivar; clear it so it doesn't leak between tests.
       clear_workspace_root_cache!
+      # Likewise the presence roster — a participant recorded here would otherwise
+      # show up in another test's roster assertions.
+      PresenceRegistry.reset!
     end
 
     # Clears the process-wide @workspace_root_cache on the *exact* channel class

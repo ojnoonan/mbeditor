@@ -76,9 +76,15 @@ module Mbeditor
     end
 
     test "live channel traffic opportunistically reclaims a room idle past the grace window" do
-      # An ancient idle room (last activity at monotonic 0; real monotonic now is
-      # far larger than GRACE_TTL), and real channel traffic on another file.
-      CollaborationDocStore.record_update(room_key_for("abandoned/old.rb"), "OLD", now: 0.0)
+      # An idle room, aged relative to the *current* monotonic reading rather than
+      # parked at 0.0. The channel traffic below reads the real clock, and on Linux
+      # CLOCK_MONOTONIC counts from boot — so on a freshly started CI runner "now"
+      # can be smaller than SWEEP_INTERVAL, making 0.0 not a past time at all and
+      # the sweep never fire. Anchoring to the real clock makes the age exact
+      # regardless of host uptime.
+      ancient = Process.clock_gettime(Process::CLOCK_MONOTONIC) -
+                (CollaborationDocStore::GRACE_TTL + CollaborationDocStore::SWEEP_INTERVAL + 1)
+      CollaborationDocStore.record_update(room_key_for("abandoned/old.rb"), "OLD", now: ancient)
 
       subscribe path: "live/new.rb"
       perform :doc_update, "update" => "NEW"
