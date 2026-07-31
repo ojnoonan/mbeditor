@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Realtime collaborative editing (pair programming).** When Action Cable is
+  available, two or more people can open the same file and edit it together —
+  content converges through a Yjs CRDT, with live remote carets, selections and
+  a coloured name label per participant. Undo is scoped to your own edits, so
+  Ctrl+Z can never revert your partner's work. Joining late is safe: the shared
+  document wins over the copy on disk, and one save on any side settles the file
+  for everyone.
+
+  Participants appear as chips in the toolbar. A solid dot means they are in the
+  file you are looking at, a hollow ring means they are elsewhere (with their
+  filename beside it, when the toolbar is showing labels). Hovering gives their
+  name, current file and measured cable latency; clicking follows them, so their
+  file and scroll position track yours. Past three participants the chips
+  collapse to colour dots so the toolbar cannot overflow. Colours are assigned
+  against the live roster rather than hashed from the name, so two people never
+  share one while a free colour exists.
+
+  Collaboration only activates once someone else is actually connected — on your
+  own, the editor behaves exactly as before, keeping persistent undo history and
+  external-change detection.
+
+  **This is the one feature intended to be reached from another machine**, so it
+  is a deliberate exception to mbeditor's localhost-only posture. Read the
+  [Collaborative pairing](README.md#collaborative-pairing-optional) section
+  before exposing it: put it behind a trusted tunnel, set `authenticate_with`
+  (now also evaluated on the WebSocket handshake, fail-closed), restrict
+  `action_cable.allowed_request_origins`, and run a single web process. New
+  `user_name_callback` config resolves the display name from your host app.
+
 - **Drag files and folders from your desktop straight into the explorer.**
   Drop onto a folder row to import there, or onto the empty space below the
   tree to import into the workspace root. Folders are imported recursively.

@@ -13,6 +13,13 @@ module Mbeditor
         c.allowed_environments = %i[test development]
         c.workspace_root       = @workspace
       end
+      # Process-wide registry: without this, one test's participants leak into the
+      # next test's roster assertions.
+      PresenceRegistry.reset!
+    end
+
+    def teardown
+      PresenceRegistry.reset!
     end
 
     test "subscribes and streams from mbeditor_editor" do
@@ -40,41 +47,78 @@ module Mbeditor
 
     # ── presence ─────────────────────────────────────────────────────────────
 
-    test "presence relays the participant heartbeat on the mbeditor_editor stream" do
+    test "presence broadcasts the whole roster, not just the sender" do
+      PresenceRegistry.record("peer-9", {"name" => "Keen Hacker", "colour" => "#98c379",
+                                        "current_file" => "app/models/order.rb"})
       subscribe
 
-      expected = {
-        "type"         => "presence",
-        "status"       => "here",
-        "client_id"    => "abc123",
-        "name"         => "Swift Otter",
-        "colour"       => "#61afef",
-        "current_file" => "app/models/user.rb"
-      }
-      assert_broadcast_on("mbeditor_editor", expected) do
-        perform :presence,
-                "client_id"    => "abc123",
-                "name"         => "Swift Otter",
-                "colour"       => "#61afef",
-                "current_file" => "app/models/user.rb"
-      end
+      perform :presence,
+              "client_id"    => "abc123",
+              "name"         => "Swift Otter",
+              "colour"       => "#61afef",
+              "current_file" => "app/models/user.rb"
+
+      payload = broadcasts("mbeditor_editor").map { |m| ActiveSupport::JSON.decode(m) }.last
+      assert_equal "presence", payload["type"]
+      assert_equal %w[abc123 peer-9].sort, payload["roster"].keys.sort
+      assert_equal "Swift Otter", payload["roster"]["abc123"]["name"]
+      assert_equal "app/models/order.rb", payload["roster"]["peer-9"]["current_file"]
     end
 
-    test "unsubscribing broadcasts a leave for the last-seen presence client" do
+    test "presence carries the sender's own measured rtt to peers" do
+      subscribe
+
+      perform :presence,
+              "client_id"    => "abc123",
+              "name"         => "Swift Otter",
+              "colour"       => "#61afef",
+              "current_file" => "app/models/user.rb",
+              "rtt"          => 42
+
+      payload = broadcasts("mbeditor_editor").map { |m| ActiveSupport::JSON.decode(m) }.last
+      assert_equal 42, payload["roster"]["abc123"]["rtt"]
+    end
+
+    test "unsubscribing drops the participant from the broadcast roster" do
       subscribe
       perform :presence, "client_id" => "abc123", "name" => "Swift Otter", "current_file" => "a.rb"
 
-      assert_broadcast_on("mbeditor_editor", "type" => "presence", "status" => "leave", "client_id" => "abc123") do
-        unsubscribe
-      end
+      unsubscribe
+
+      payload = broadcasts("mbeditor_editor").map { |m| ActiveSupport::JSON.decode(m) }.last
+      assert_equal({}, payload["roster"])
     end
 
-    test "unsubscribing without a presence heartbeat broadcasts no leave" do
+    # The whole point of a server-authoritative roster: a client that missed the
+    # departure still gets a roster without the departed peer on the next change,
+    # so a dropped message cannot leave a permanent phantom.
+    test "a roster broadcast after a departure omits the departed peer" do
+      PresenceRegistry.record("gone", {"name" => "Ghost", "current_file" => "a.rb"})
+      PresenceRegistry.remove("gone")
+      subscribe
+
+      perform :presence, "client_id" => "abc123", "name" => "Swift Otter", "current_file" => "a.rb"
+
+      payload = broadcasts("mbeditor_editor").map { |m| ActiveSupport::JSON.decode(m) }.last
+      assert_equal %w[abc123], payload["roster"].keys
+    end
+
+    test "unsubscribing without a presence heartbeat broadcasts nothing" do
       subscribe
 
       assert_no_broadcasts("mbeditor_editor") do
         unsubscribe
       end
+    end
+
+    test "subscribing transmits the current roster to the joiner" do
+      PresenceRegistry.record("peer-9", {"name" => "Keen Hacker", "current_file" => "app/models/order.rb"})
+
+      subscribe
+
+      payload = transmissions.last
+      assert_equal "presence", payload["type"]
+      assert_equal %w[peer-9], payload["roster"].keys
     end
 
     test "a presence relay failure does not crash the socket" do
@@ -158,9 +202,11 @@ module Mbeditor
       end
 
       with_fake_log_tail_service(fake) do
-        # Not watching yet -> nothing transmitted.
+        # Not watching yet -> no log transmitted. Subscribing itself transmits the
+        # presence roster, so assert on log messages rather than on there being no
+        # transmissions at all.
         subscription.send(:push_log_lines)
-        assert_empty transmissions
+        assert_empty transmissions.select { |m| m["type"] == "log" }
 
         subscription.start_log_tail("offset" => 0)
         subscription.send(:push_log_lines)

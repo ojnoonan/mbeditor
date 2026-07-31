@@ -162,7 +162,7 @@ See [Resilient Routing](#resilient-routing) for details.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `user_name_callback` | `nil` | Proc resolving the display name shown on your caret during realtime collaboration. Executed via `instance_exec` inside the controller (like `authenticate_with`), so it can read `session`, `cookies`, `current_user`, etc. — e.g. `proc { current_user&.name }`. When `nil` or it returns a blank value, each browser falls back to a generated, locally-persisted, user-editable name. Collaboration itself activates automatically whenever Action Cable is available (see [Realtime via Action Cable](#realtime-via-action-cable-optional)). |
+| `user_name_callback` | `nil` | Proc resolving the display name shown on your caret during realtime collaboration. Executed via `instance_exec` inside the controller (like `authenticate_with`), so it can read `session`, `cookies`, `current_user`, etc. — e.g. `proc { current_user&.name }`. When `nil` or it returns a blank value, each browser falls back to a generated, locally-persisted, user-editable name. Collaboration activates once another participant actually connects, not merely when Action Cable is up (see [Collaborative pairing](#collaborative-pairing-optional)). |
 
 ## JavaScript intelligence
 
@@ -315,11 +315,16 @@ If any of these are missing, mbeditor still runs in polling mode.
 
 ### Collaborative pairing (Optional)
 
-When Action Cable is available, mbeditor enables **realtime collaborative editing** —
+When Action Cable is available, mbeditor supports **realtime collaborative editing** —
 live cursors and content sync over a WebSocket, so a second person can join the same
 files. This is the one feature intended to be reached from another machine, so exposing
 it is a **deliberate exception** to the localhost-only [Security Warning](#security-warning)
 above. Expose it narrowly and only while you are actively pairing.
+
+Collaboration activates only once **another participant is actually connected**, not
+merely because Action Cable is up. On your own the editor behaves exactly as it does
+without cable — persistent undo history and external-change detection stay in force,
+both of which defer to the shared document while a session is live.
 
 **1. Restrict the network exposure to a trusted path.**
 Put the editor behind a **trusted tunnel** (e.g. an authenticated `ngrok`/Tailscale/

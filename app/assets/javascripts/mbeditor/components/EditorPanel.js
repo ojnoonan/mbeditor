@@ -50,11 +50,10 @@ var EditorPanel = function EditorPanel(_ref) {
   // is suspended and undo is routed through the room's local Yjs UndoManager.
   var collabActiveRef = useRef(false);
 
-  // Collaboration availability (Yjs globals + cable) settles asynchronously after
-  // page load, so a tab restored on first paint can build its editor before a room
-  // can activate. This flips false->true once collaboration is reachable and is a
-  // dependency of the editor-creation effect below, so an already-open tab rebuilds
-  // and joins the room then — reusing the persistent model, exactly like reopening.
+  // Collaboration becomes available when a peer joins, which can be at any point
+  // in the session. This flips with that transition and is a dependency of the
+  // editor-creation effect below, so an already-open tab rebuilds and joins the
+  // room then — reusing the persistent model, exactly like reopening.
   var _collabReadyState = useState(function () {
     return typeof CollaborationService !== 'undefined' &&
       typeof CollaborationService.isAvailable === 'function' &&
@@ -210,27 +209,17 @@ var EditorPanel = function EditorPanel(_ref) {
     return null;
   };
 
-  // Watch for collaboration becoming available after the editor already mounted
-  // (cable connects a moment after page load). Poll until it is reachable, then
-  // flip collabReady so the editor-creation effect re-runs and joins the room.
-  // Stops once ready, or after a bounded window when no cable is coming.
+  // Watch for collaboration becoming available after the editor already mounted.
+  // Event-driven, not polled: a peer can join at any point in the session, so a
+  // bounded poll would either miss a late arrival or burn a timer per open tab
+  // forever. CollaborationService fires only on a real transition.
   useEffect(function () {
-    if (collabReady) return;
     if (typeof CollaborationService === 'undefined' ||
-        typeof CollaborationService.isAvailable !== 'function') return;
-
-    var attempts = 0;
-    var id = setInterval(function () {
-      attempts += 1;
-      if (CollaborationService.isAvailable()) {
-        setCollabReady(true);
-        clearInterval(id);
-      } else if (attempts >= 40) { // ~30s; cable isn't going to appear
-        clearInterval(id);
-      }
-    }, 750);
-    return function () { clearInterval(id); };
-  }, [collabReady]);
+        typeof CollaborationService.onAvailabilityChange !== 'function') return;
+    return CollaborationService.onAvailabilityChange(function (available) {
+      setCollabReady(available);
+    });
+  }, []);
 
   useEffect(function () {
     if (tab.isPreview) return;

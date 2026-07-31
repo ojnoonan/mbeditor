@@ -5,5 +5,6 @@ window.FileService = FileService;
 // (same test-seam convention as the services above).
 window.EditorStore = EditorStore;
 window.CollaborationService = CollaborationService;
+window.CollaborationIdentity = CollaborationIdentity;
 window.WebSocketService = WebSocketService;
 })(window.MbeditorRuntime.React, window.MbeditorRuntime.ReactDOM);

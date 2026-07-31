@@ -7,8 +7,10 @@
 // inbound (received -> Y.applyUpdate). Bytes cross the wire as base64 strings;
 // the server (CollaborationDocStore) stores them opaquely.
 //
-// Activation rides on cable presence: when ActionCable is unavailable the module
-// is inert and the editor stays exactly as it is today (no binding, native undo).
+// Activation rides on *participant* presence, not merely on the cable being up:
+// with nobody else connected the module is inert and the editor behaves exactly as
+// it does without ActionCable (no binding, native undo, external-change detection
+// intact). See the gating section for why cable availability alone is not enough.
 //
 // Scope of slice 4: content convergence + late-join + first-opener seed +
 // local-origin-scoped undo. Slice 5 (#56) adds awareness — remote carets,
@@ -57,19 +59,73 @@ var CollaborationService = (function () {
   // ---------------------------------------------------------------------------
   // Gating
   // ---------------------------------------------------------------------------
+
+  // Is anyone else actually connected? Fed by MbeditorApp from the presence
+  // roster, which is the only signal that distinguishes "cable is up" from
+  // "someone is pairing with me".
+  //
+  // Collaboration MUST NOT activate on cable availability alone. Action Cable is
+  // up in a normal dev setup, so gating on it put every solo user into full
+  // collaboration mode: persistent undo (HistoryService + the Phase-2 replay) was
+  // suspended for every file, and external on-disk changes were suppressed
+  // outright, because both defer to the CRDT once a room is bound. Nobody was
+  // ever on the other end of that CRDT.
+  var _peerPresent = false;
+  var _availabilityListeners = [];
+
   function _globalsReady() {
     return typeof window.Y !== 'undefined' &&
            typeof window.MonacoBinding !== 'undefined' &&
            typeof WebSocketService !== 'undefined' &&
-           WebSocketService.isCableAvailable();
+           WebSocketService.isCableAvailable() &&
+           _peerPresent;
   }
 
-  // Is collaboration available at all right now? The Yjs globals and the cable
-  // connection come up asynchronously after page load, so this can flip from false
-  // to true shortly after the editor first mounts. EditorPanel polls it to join
-  // already-open tabs once it turns true (path-independent — no per-file checks).
+  // Is collaboration available at all right now? Flips when a peer joins or
+  // leaves (the Yjs globals and the cable come up before that, asynchronously).
+  // EditorPanel subscribes via onAvailabilityChange so an already-open tab joins
+  // the room the moment someone arrives — path-independent, no per-file checks.
   function isAvailable() {
     return _globalsReady();
+  }
+
+  // Called by MbeditorApp on every presence roster message.
+  //
+  // Availability is two conditions, not one: a peer is present AND the cable is
+  // up. Deliberately no "last notified" cache to suppress repeats — the cable half
+  // changes without passing through here (a drop, a reconnect), so a remembered
+  // value desyncs from reality and then the next genuine change looks like no
+  // change at all, leaving the editor stranded in single-user mode with a peer
+  // sitting right there. That is a real bug this cost me: `available` read true
+  // while no room had been created, because the edge had been swallowed.
+  //
+  // Instead this publishes the current value every time it is called, which is on
+  // every roster message. Listeners are expected to be idempotent — the React ones
+  // bail on an unchanged value — so the steady state costs a boolean compare.
+  function setPeerPresent(present) {
+    _peerPresent = !!present;
+    refreshAvailability();
+  }
+
+  function refreshAvailability() {
+    var available = isAvailable();
+    // No longer collaborating: close every room so the editor returns to solo
+    // behaviour — persistent undo and external-change detection both key off
+    // there being no live binding.
+    if (!available && Object.keys(_rooms).length) {
+      Object.keys(_rooms).forEach(function (path) { leaveRoom(path); });
+    }
+    _availabilityListeners.slice().forEach(function (fn) {
+      try { fn(available); } catch (e) { /* a bad listener must not stop the rest */ }
+    });
+  }
+
+  // Subscribe to availability transitions. Returns an unsubscribe function.
+  function onAvailabilityChange(fn) {
+    _availabilityListeners.push(fn);
+    return function () {
+      _availabilityListeners = _availabilityListeners.filter(function (f) { return f !== fn; });
+    };
   }
 
   // Synchronous predicate: should this path participate in collaboration at all?
@@ -91,8 +147,11 @@ var CollaborationService = (function () {
   // handshake. Idempotent. Returns true when a live room exists (so the caller
   // can gate its own behavior), false when collaboration could not activate.
   function ensureRoom(path) {
-    if (_rooms[path]) return true;
+    // Gate first, then reuse. Checking `_rooms` first would keep reporting an
+    // active room after the last peer left, so the caller would never fall back
+    // out of collaboration mode.
     if (!isEnabledFor(path)) return false;
+    if (_rooms[path]) return true;
 
     var doc = new window.Y.Doc();
     var room = {
@@ -459,7 +518,9 @@ var CollaborationService = (function () {
         var user = state && state.user;
         if (!user || !user.color) return;
         seen[cid] = true;
-        var color = String(user.color);
+        // Both of these came off the wire from another machine and are about to
+        // become stylesheet text, so both are escaped at this boundary.
+        var color = CollaborationIdentity.safeColor(user.color);
         var name = _cssString(user.name || 'Anonymous');
         css +=
           '.yRemoteSelection-' + cid + '{background-color:' + _hexToRgba(color, 0.30) + ';}' +
@@ -612,6 +673,8 @@ var CollaborationService = (function () {
 
   return {
     isAvailable: isAvailable,
+    setPeerPresent: setPeerPresent,
+    onAvailabilityChange: onAvailabilityChange,
     isEnabledFor: isEnabledFor,
     ensureRoom: ensureRoom,
     bindEditor: bindEditor,

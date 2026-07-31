@@ -13,6 +13,10 @@ module Mbeditor
       return unless mbeditor_authenticated?
 
       stream_from "mbeditor_editor" if respond_to?(:stream_from)
+      # Hand the joiner the current roster straight away. Without it they would
+      # only learn about a peer who happens to heartbeat after they connected,
+      # and would show an empty participant list until then.
+      transmit(presence_payload) if respond_to?(:transmit, true)
     end
 
     # Push newly appended log lines to this subscriber ~once a second while the
@@ -21,27 +25,26 @@ module Mbeditor
     periodically :push_log_lines, every: 1 if respond_to?(:periodically)
 
     def unsubscribed
-      # Announce that this participant has left so peers can drop them from the
-      # roster. Only meaningful once we've seen a presence heartbeat.
+      # Action Cable calls this on a clean close *and* on its own connection
+      # timeout, which is what makes the registry authoritative: a participant
+      # cannot linger past their socket.
       return if @presence_client_id.nil?
 
-      relay("type" => "presence", "status" => "leave", "client_id" => @presence_client_id)
+      PresenceRegistry.remove(@presence_client_id)
+      relay(presence_payload)
     end
 
-    # Presence heartbeat: relay this participant's identity + which file they are
-    # in to every other peer on the global stream. The channel adds the envelope
-    # (type/status); the rest is opaque relay. Resilient like CollaborationChannel
-    # — a broadcast failure must never crash the socket.
+    # Presence heartbeat: record this participant and broadcast the whole roster.
+    #
+    # Whole roster, not just the sender: clients replace theirs outright, so they
+    # cannot accumulate a participant the server has already dropped. That is the
+    # one guarantee per-participant events could not give, and it also removes the
+    # client-side merge, the leave handling and the greet-a-new-peer re-announce
+    # that used to stand in for it.
     def presence(data)
       @presence_client_id = data["client_id"]
-      relay(
-        "type"         => "presence",
-        "status"       => "here",
-        "client_id"    => data["client_id"],
-        "name"         => data["name"],
-        "colour"       => data["colour"],
-        "current_file" => data["current_file"]
-      )
+      PresenceRegistry.record(@presence_client_id, data)
+      relay(presence_payload)
     end
 
     def save_state(data)
@@ -74,6 +77,10 @@ module Mbeditor
     end
 
     private
+
+    def presence_payload
+      { "type" => "presence", "roster" => PresenceRegistry.roster }
+    end
 
     def relay(payload)
       return unless defined?(ActionCable) && ActionCable.respond_to?(:server)

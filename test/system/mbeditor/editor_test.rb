@@ -11,6 +11,9 @@ module Mbeditor
       # in-process Capybara server; clear it so buffered CRDT state from a prior
       # test can't leak into a late-join here.
       Mbeditor::CollaborationDocStore.reset! if defined?(Mbeditor::CollaborationDocStore)
+      # Same story for the presence registry: a participant left over from a prior
+      # test would make collaboration activate before this test's peer joins.
+      Mbeditor::PresenceRegistry.reset! if defined?(Mbeditor::PresenceRegistry)
       @workspace = Dir.mktmpdir("mbeditor_sys_")
       FileUtils.mkdir_p(File.join(@workspace, "app", "models"))
       File.write(File.join(@workspace, "README.md"), "# Hello\n")
@@ -56,6 +59,21 @@ module Mbeditor
       Mbeditor.configure { |c| c.authenticate_with = nil }
     end
 
+    # Collaboration activates only once another participant is connected, never on
+    # cable availability alone — on your own the editor keeps persistent undo and
+    # external-change detection. So any test that needs a live room has to put a
+    # second participant on the cable first. This opens one and leaves it
+    # connected; Capybara tears the session down in teardown.
+    def join_collaboration_peer(session_name = :collab_peer)
+      Capybara.using_session(session_name) do
+        visit "/mbeditor"
+        assert_selector ".file-tree", wait: 10
+        page.execute_script("window.WebSocketService.connect(true);")
+        assert wait_for_js("window.WebSocketService.isCableAvailable()"),
+               "the peer session should reach Action Cable"
+      end
+    end
+
     def expand_tree_folder(path)
       find(".tree-item[data-path='#{path}']").click
     end
@@ -93,6 +111,9 @@ module Mbeditor
     end
 
     test "external on-disk edit does not clobber a collaboratively-bound buffer" do
+      # A room needs someone to be in it — see join_collaboration_peer.
+      join_collaboration_peer
+
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
 
@@ -123,14 +144,14 @@ module Mbeditor
       assert_editor_value_stays("# Hello\n")
     end
 
-    test "a tab opened before collaboration is available joins the room once cable connects" do
+    test "an already-open tab joins the room once a participant arrives" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
 
-      # Force collaboration unavailable, then open a file — its editor is built in
-      # single-user mode. This is the first-paint race: a restored tab can mount
-      # before the cable connects. (Stubbing the predicate is deterministic; the
-      # app's own async auto-connect would otherwise re-enable cable mid-test.)
+      # Open a file with the cable held down, so its editor is built in single-user
+      # mode. This is the first-paint race: a restored tab can mount before the
+      # cable connects. (Stubbing the predicate is deterministic; the app's own
+      # async auto-connect would otherwise re-enable cable mid-test.)
       page.execute_script(<<~'JS')
         window.__origCableAvailable = window.WebSocketService.isCableAvailable;
         window.WebSocketService.isCableAvailable = function () { return false; };
@@ -140,18 +161,52 @@ module Mbeditor
       refute wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 2),
              "precondition: the file should open without collaboration while cable is down"
 
-      # Cable comes up after the tab is already open.
+      # Cable alone must NOT be enough — that was the old behaviour, and it put
+      # every solo user into collaboration mode with nobody on the other end.
       page.execute_script(<<~'JS')
         window.WebSocketService.isCableAvailable = window.__origCableAvailable;
         window.WebSocketService.connect(true);
       JS
+      assert wait_for_js("window.WebSocketService.isCableAvailable()")
+      refute wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 3),
+             "cable being up on its own must not activate collaboration"
 
-      # The already-open tab joins the room on its own — no close/reopen needed.
+      # A second participant arrives. The already-open tab joins the room on its
+      # own — no close/reopen needed.
+      join_collaboration_peer
+
       assert wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 15),
-             "an already-open tab should join collaboration once the cable connects"
+             "an already-open tab should join collaboration once a participant arrives"
+    end
+
+    test "a participant's colour survives a reload" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      before = page.evaluate_script("window.CollaborationIdentity.get().color")
+      client_before = page.evaluate_script("window.CollaborationIdentity.get().clientId")
+
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      after = page.evaluate_script("window.CollaborationIdentity.get().color")
+      client_after = page.evaluate_script("window.CollaborationIdentity.get().clientId")
+
+      # Seeding the colour on the per-load client id made every refresh hand you a
+      # new colour, which peers saw as your caret changing hue for no reason.
+      assert_equal before, after, "colour should be stable across a reload"
+      refute_equal client_before, client_after,
+                   "precondition: the client id is per-connection and should differ"
     end
 
     test "a late joiner receives the first browser's existing edits" do
+      # B connects first but stays out of the file. It is A's *participant*, which
+      # is what lets A's room activate at all; B is the late joiner to the file.
+      Capybara.using_session(:browser_b) do
+        visit "/mbeditor"
+        assert_selector ".file-tree", wait: 10
+        page.execute_script("window.WebSocketService.connect(true);")
+        assert wait_for_js("window.WebSocketService.isCableAvailable()")
+      end
+
       Capybara.using_session(:browser_a) do
         visit "/mbeditor"
         assert_selector ".file-tree", wait: 10
@@ -159,7 +214,7 @@ module Mbeditor
         assert wait_for_js("window.WebSocketService.isCableAvailable()")
         all(".tree-item-name", text: "README.md").first.click
         assert_selector ".monaco-editor", wait: 10
-        assert wait_for_js("window.CollaborationService.isAttached('README.md')"),
+        assert wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 15),
                "browser A should bind the room"
 
         # An edit that flows through the binding into the shared Yjs document.
@@ -173,13 +228,9 @@ module Mbeditor
       end
 
       Capybara.using_session(:browser_b) do
-        visit "/mbeditor"
-        assert_selector ".file-tree", wait: 10
-        page.execute_script("window.WebSocketService.connect(true);")
-        assert wait_for_js("window.WebSocketService.isCableAvailable()")
         all(".tree-item-name", text: "README.md").first.click
         assert_selector ".monaco-editor", wait: 10
-        assert wait_for_js("window.CollaborationService.isAttached('README.md')"),
+        assert wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 15),
                "browser B should bind the room"
 
         # B joined after A's edit; the late-join sync must carry A's existing edits.
@@ -225,14 +276,19 @@ module Mbeditor
           ed.trigger('keyboard', 'type', { text: 'PRECONNECT-EDIT ' });
         JS
         wait_for_editor_value("PRECONNECT-EDIT # Hello\n")
+      end
 
+      # A participant arrives, which is what makes collaboration available at all.
+      join_collaboration_peer
+
+      Capybara.using_session(:browser_a) do
         # Now collaboration becomes available; A should join and seed its edits.
         page.execute_script(<<~'JS')
           window.WebSocketService.isCableAvailable = window.__origCableAvailable;
           window.WebSocketService.connect(true);
         JS
         assert wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 15),
-               "browser A should join the room after cable connects"
+               "browser A should join the room once a participant is present"
       end
 
       Capybara.using_session(:browser_b) do
@@ -250,8 +306,18 @@ module Mbeditor
           window.WebSocketService.isCableAvailable = window.__origCableAvailable;
           window.WebSocketService.connect(true);
         JS
-        assert wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 15),
-               "browser B should bind the room after cable connects"
+        unless wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 15)
+          diag = page.evaluate_script(<<~'JS')
+            JSON.stringify({
+              cable: window.WebSocketService.isCableAvailable(),
+              connected: window.WebSocketService.isConnected(),
+              available: window.CollaborationService.isAvailable(),
+              bound: window.CollaborationService.isBound('README.md'),
+              models: Object.keys(window.__mbeditorModels || {})
+            })
+          JS
+          flunk "browser B should bind the room after cable connects; state: #{diag}"
+        end
 
         assert wait_for_js(
           "window.__mbeditorActiveEditor && window.__mbeditorActiveEditor.getValue().indexOf('PRECONNECT-EDIT') !== -1",
