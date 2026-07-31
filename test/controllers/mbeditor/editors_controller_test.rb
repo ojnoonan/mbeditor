@@ -4,6 +4,8 @@ require "test_helper"
 
 module Mbeditor
   class EditorsControllerTest < ActionDispatch::IntegrationTest
+    include ActionCable::TestHelper
+
     def setup
       @workspace = Dir.mktmpdir("mbeditor_test_")
       FileUtils.mkdir_p(File.join(@workspace, "tmp"))
@@ -1220,6 +1222,20 @@ module Mbeditor
       assert json.key?("error")
     end
 
+    test "save broadcasts file_saved with the relative path on the global stream" do
+      assert_broadcast_on("mbeditor_editor", type: "file_saved", path: "README.md") do
+        post "/mbeditor/file", params: { path: "README.md", code: "# Updated\n" }, as: :json
+      end
+      assert_response :ok
+    end
+
+    test "a forbidden save does not broadcast file_saved" do
+      assert_no_broadcasts("mbeditor_editor") do
+        post "/mbeditor/file", params: { path: "../../evil.rb", code: "bad" }, as: :json
+      end
+      assert_response :forbidden
+    end
+
     # ---------------------------------------------------------------------------
     # create_file
     # ---------------------------------------------------------------------------
@@ -2399,6 +2415,41 @@ module Mbeditor
       assert_includes json["related_files_custom_paths"], "app/javascript/components"
     ensure
       Mbeditor.configure { |c| c.related_files_custom_paths = [] }
+    end
+
+    test "client_config resolves user_name from user_name_callback" do
+      Mbeditor.configure { |c| c.user_name_callback = proc { "Ada" } }
+      get "/mbeditor/client_config"
+      assert_response :ok
+      assert_equal "Ada", json["user_name"]
+    ensure
+      Mbeditor.configure { |c| c.user_name_callback = nil }
+    end
+
+    test "client_config user_name is null when no user_name_callback is configured" do
+      Mbeditor.configure { |c| c.user_name_callback = nil }
+      get "/mbeditor/client_config"
+      assert_response :ok
+      assert json.key?("user_name")
+      assert_nil json["user_name"]
+    end
+
+    test "user_name_callback is resolved in controller context (can read request params)" do
+      Mbeditor.configure { |c| c.user_name_callback = proc { params[:who] } }
+      get "/mbeditor/client_config", params: { who: "Grace" }
+      assert_response :ok
+      assert_equal "Grace", json["user_name"]
+    ensure
+      Mbeditor.configure { |c| c.user_name_callback = nil }
+    end
+
+    test "user_name_callback that raises falls back to null" do
+      Mbeditor.configure { |c| c.user_name_callback = proc { raise "boom" } }
+      get "/mbeditor/client_config"
+      assert_response :ok
+      assert_nil json["user_name"]
+    ensure
+      Mbeditor.configure { |c| c.user_name_callback = nil }
     end
 
     # ---------------------------------------------------------------------------

@@ -675,6 +675,35 @@ var MbeditorApp = function MbeditorApp() {
   var setCustomPaths = _useStateCP2[1];
   var customPathsRef = useRef([]);
   customPathsRef.current = customPaths;
+  // Whether to show the presence chips at all. Read at render rather than held in
+  // state: cable availability changes on handshake and on every reconnect, so a
+  // stored copy is stale the moment it is written. This only decides whether a
+  // chip paints — the protocol itself is gated on the roster.
+  var collabEnabled = typeof WebSocketService !== 'undefined' &&
+    typeof WebSocketService.isCableAvailable === 'function' &&
+    WebSocketService.isCableAvailable();
+  var _useStateIdent = useState(
+    typeof CollaborationIdentity !== 'undefined' ? CollaborationIdentity.get() : null
+  );
+  var _useStateIdent2 = _slicedToArray(_useStateIdent, 2);
+  var collabIdentity = _useStateIdent2[0];
+  var setCollabIdentity = _useStateIdent2[1];
+  // Presence roster: other connected participants, keyed by client_id →
+  // { name, colour, current_file }. Fed by the global presence stream; rendered
+  // as click-to-jump chips in the status bar.
+  var _useStateRoster = useState({});
+  var _useStateRoster2 = _slicedToArray(_useStateRoster, 2);
+  var collabRoster = _useStateRoster2[0];
+  var setCollabRoster = _useStateRoster2[1];
+
+  // Follow mode (slice 8): the presence client_id of the participant whose file +
+  // viewport we're tracking, or null when navigating independently. Toggled from a
+  // roster chip. The file-open is driven by the effect below; the scroll-tracking
+  // lives in CollaborationService.setFollow().
+  var _useStateFollow = useState(null);
+  var _useStateFollow2 = _slicedToArray(_useStateFollow, 2);
+  var followedClientId = _useStateFollow2[0];
+  var setFollowedClientId = _useStateFollow2[1];
   var recentSavesRef = useRef({});
   var isSavingRef = useRef(false);
   // True once the saved session has finished loading into the panes. Anything
@@ -1631,6 +1660,41 @@ var MbeditorApp = function MbeditorApp() {
     return function () { WebSocketService.offFilesChanged(handleFilesChanged); };
   }, []);
 
+  // WebSocket push — when a peer saves a collaboratively-bound file, the CRDT has
+  // already kept our buffer byte-identical, so the single on-disk write is enough
+  // for everyone. Reset that tab's clean baseline and clear its dirty indicator
+  // without touching disk or undo history. Gated on the file being collab-bound:
+  // for non-collab tabs a peer's save is an external change handled by the
+  // files_changed path above (which respects local unsaved edits).
+  useEffect(function () {
+    function handleFileSaved(data) {
+      var path = data && data.path;
+      if (!path) return;
+      if (typeof CollaborationService === 'undefined' || !CollaborationService.isBound(path)) return;
+
+      var st = EditorStore.getState();
+      var changed = false;
+      var newPanes = st.panes.map(function (p) {
+        return Object.assign({}, p, {
+          tabs: p.tabs.map(function (t) {
+            if (t.path !== path || !t.dirty) return t;
+            changed = true;
+            return Object.assign({}, t, { dirty: false, cleanContent: t.content });
+          })
+        });
+      });
+      if (changed) EditorStore.setState({ panes: newPanes });
+
+      // Reset the AVI clean baseline so undo past this peer's save shows dirty correctly.
+      var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[path];
+      if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
+        _modelEntry.cleanVersionId = _modelEntry.model.getAlternativeVersionId();
+      }
+    }
+    WebSocketService.onFileSaved(handleFileSaved);
+    return function () { WebSocketService.offFileSaved(handleFileSaved); };
+  }, []);
+
   function checkOpenTabsForExternalChanges() {
     var st = EditorStore.getState();
     var allTabs = st.panes.reduce(function (acc, p) {
@@ -1651,6 +1715,16 @@ var MbeditorApp = function MbeditorApp() {
     fileTabs.forEach(function (pt) {
       var savedAt = recentSavesRef.current[pt.tab.path];
       if (savedAt && Date.now() - savedAt < 3000) return;
+      // A collaboratively-bound file's live buffer is the shared CRDT, kept
+      // converged across peers and reconciled with disk on save (file_saved).
+      // Re-applying an external on-disk snapshot over it would silently clobber
+      // everyone's shared state, so skip detection here — the CRDT is authoritative
+      // while peers are editing. Intentional local edits (Format/Load) still flow
+      // through the binding and are unaffected.
+      if (typeof CollaborationService !== 'undefined' &&
+          CollaborationService.isAttached(pt.tab.path)) {
+        return;
+      }
       FileService.getFile(pt.tab.path, { allowMissing: true }).then(function (data) {
         if (!data || typeof data.content !== 'string') return;
         var serverNorm = data.content.replace(/\r\n/g, '\n');
@@ -2039,7 +2113,19 @@ var MbeditorApp = function MbeditorApp() {
   useEffect(function() {
     FileService.getClientConfig().then(function(cfg) {
       setCustomPaths(Array.isArray(cfg.related_files_custom_paths) ? cfg.related_files_custom_paths : []);
+      // Host-app override for the collaboration display name (user_name_callback).
+      // Null/blank falls back to the browser-generated, user-editable name.
+      if (typeof CollaborationIdentity !== 'undefined') {
+        CollaborationIdentity.setServerName(cfg.user_name);
+      }
     })['catch'](function() {});
+  }, []);
+
+  // Keep the presence chip in sync with name edits / host overrides.
+  useEffect(function() {
+    if (typeof CollaborationIdentity === 'undefined') return;
+    setCollabIdentity(CollaborationIdentity.get());
+    return CollaborationIdentity.onChange(function(id) { setCollabIdentity(id); });
   }, []);
 
   // Version-update detection: open the changelog tab automatically when the
@@ -2200,6 +2286,239 @@ var MbeditorApp = function MbeditorApp() {
   var activeTab = focusedPane && focusedPane.tabs.find(function (t) {
     return t.id === focusedPane.activeTabId;
   });
+
+  // ── Collaboration presence (slice 7) ──────────────────────────────────────
+  // Only real, openable files belong in presence — virtual tabs (diffs, previews,
+  // settings/changelog) are reported as "no file" so a peer's chip stays blank
+  // rather than pointing at something click-to-jump can't open.
+  var _presenceFileFor = function (tab) {
+    if (!tab || !tab.path) return null;
+    var p = tab.path;
+    if (tab.isDiff || tab.isCombinedDiff || tab.isCommitGraph || tab.isPreview || tab.isSettings || tab.isChangelog) return null;
+    if (p.indexOf('diff://') === 0 || p.indexOf('combined-diff://') === 0 || p.indexOf('mbeditor://') === 0) return null;
+    if (p.indexOf('::preview') !== -1 || p === '__settings__') return null;
+    return p;
+  };
+  var presenceFile = _presenceFileFor(activeTab);
+
+  // Latest heartbeat payload, read by the throttled sender and the late-join
+  // re-announce so both always relay our current identity + file.
+  // Round-trip time to the cable, in ms. Our heartbeat comes back on the same
+  // stream, so timing it needs no clock comparison and no extra ping traffic. We
+  // publish the result in the next heartbeat; a peer's hover card therefore shows
+  // *their* server RTT, which is the number that explains why their edits lag.
+  //
+  // Matched by sequence number, not just "our entry appeared". Every participant's
+  // heartbeat rebroadcasts the whole roster, so our entry comes back on other
+  // people's beats too — timing against those measured the gap since our last send
+  // instead of the round trip, and read as seconds.
+  var presenceSentAtRef = useRef(0);
+  var presenceSeqRef = useRef(0);
+  var measuredSeqRef = useRef(-1);
+  var ownRttRef = useRef(null);
+  // Peer RTT + local arrival time, kept in a ref rather than roster state on
+  // purpose: both change on every heartbeat, and folding them into the compared
+  // roster fields would reinstate the 5s idle re-render this branch just removed.
+  // The hover card reads them when it opens instead, and ticks only while open.
+  var peerStatsRef = useRef({});
+
+  var presencePayloadRef = useRef(null);
+  presencePayloadRef.current = collabIdentity ? {
+    client_id:    collabIdentity.clientId,
+    name:         collabIdentity.name,
+    colour:       collabIdentity.color,
+    current_file: presenceFile,
+    rtt:          ownRttRef.current,
+    seed:         collabIdentity.seed
+  } : null;
+
+  var _sendPresenceNow = function () {
+    if (!presencePayloadRef.current) return;
+    presenceSentAtRef.current = Date.now();
+    presenceSeqRef.current += 1;
+    WebSocketService.perform(
+      'presence',
+      Object.assign({}, presencePayloadRef.current, { seq: presenceSeqRef.current })
+    );
+  };
+  // Throttle heartbeats (presence is coarse — not cursor-level), trailing edge so
+  // the final file/identity always lands.
+  var sendPresenceRef = useRef(null);
+  if (!sendPresenceRef.current) {
+    sendPresenceRef.current = (window._ && window._.throttle)
+      ? window._.throttle(_sendPresenceNow, 1000, { leading: true, trailing: true })
+      : _sendPresenceNow;
+  }
+
+  // Heartbeat: announce ourselves when the active file or our identity changes,
+  // plus a keepalive that refreshes peers who joined in between.
+  //
+  // Deliberately NOT gated on cable availability. Whether cable is up is not
+  // knowable at any single moment worth latching: the handshake completes after
+  // the /workspace fetch that first reads it, and reconnects flip it again. Any
+  // boolean captured for this decision goes stale and silently strands the page in
+  // single-user mode. WebSocketService.perform() already no-ops while
+  // disconnected, so an ungated heartbeat costs one dead call every 5s and starts
+  // working the instant the socket does.
+  useEffect(function () {
+    sendPresenceRef.current();
+    var id = setInterval(function () { sendPresenceRef.current(); }, 5000);
+    return function () { clearInterval(id); };
+  }, [presenceFile, collabIdentity ? collabIdentity.clientId : null,
+      collabIdentity ? collabIdentity.name : null, collabIdentity ? collabIdentity.color : null]);
+
+  // Roster sync. The server sends the complete roster on every change and we
+  // replace ours with it, rather than merging per-participant here/leave events.
+  // Merging could not self-correct: one missed leave left a peer in the roster
+  // permanently, and since the roster gates collaboration, that one phantom kept
+  // persistent undo off and external-change detection suppressed for the whole
+  // session. A dropped message now costs one stale interval instead.
+  // Subscribed for the life of the app, for the same reason the heartbeat is:
+  // no message arrives without a cable, so there is nothing to gate, and gating it
+  // on a latched boolean is what left presence unsubscribed when the handshake
+  // landed after startup.
+  useEffect(function () {
+    var handler = function (data) {
+      var roster = data && data.roster;
+      if (!roster) return;
+      var me = (typeof CollaborationIdentity !== 'undefined') ? CollaborationIdentity.get().clientId : null;
+
+      // The first broadcast carrying our newest seq is the one our own heartbeat
+      // caused — the server records then broadcasts in the same call. Later
+      // broadcasts repeat that seq, hence measuring once per sequence number.
+      var mineEcho = me && roster[me];
+      if (mineEcho && presenceSentAtRef.current &&
+          mineEcho.seq === presenceSeqRef.current &&
+          measuredSeqRef.current !== presenceSeqRef.current) {
+        measuredSeqRef.current = presenceSeqRef.current;
+        ownRttRef.current = Date.now() - presenceSentAtRef.current;
+      }
+
+      // rtt and idle change every broadcast, so they stay out of the compared
+      // state entirely — folding them in would re-render the app every 5s to keep
+      // a hover card fresh that nobody is looking at. The card reads this ref.
+      var next = {};
+      var stats = {};
+      Object.keys(roster).forEach(function (cid) {
+        if (cid === me) return;
+        var p = roster[cid];
+        // Validated once, here, rather than at each of the places that paints it.
+        next[cid] = {
+          name: p.name,
+          colour: CollaborationIdentity.safeColor(p.colour),
+          current_file: p.current_file,
+          seed: p.seed
+        };
+        stats[cid] = { rtt: p.rtt, idle: p.idle };
+      });
+      peerStatsRef.current = stats;
+
+      // Re-evaluated on every roster message rather than only when the peer count
+      // transitions, so availability recovers on its own after a reconnect. The
+      // service compares the computed value, so a no-change call costs nothing.
+      if (typeof CollaborationService !== 'undefined') {
+        CollaborationService.setPeerPresent(Object.keys(next).length > 0);
+      }
+
+      // Stop following someone who is no longer here.
+      setFollowedClientId(function (cur) {
+        if (cur && !next[cur]) {
+          if (typeof CollaborationService !== 'undefined') CollaborationService.clearFollow();
+          return null;
+        }
+        return cur;
+      });
+
+      setCollabRoster(function (prev) {
+        var prevIds = Object.keys(prev);
+        var nextIds = Object.keys(next);
+        var same = prevIds.length === nextIds.length && nextIds.every(function (cid) {
+          var a = prev[cid], b = next[cid];
+          return a && a.name === b.name && a.colour === b.colour &&
+                 a.current_file === b.current_file && a.seed === b.seed;
+        });
+        return same ? prev : next;
+      });
+    };
+    WebSocketService.onPresence(handler);
+    return function () { WebSocketService.offPresence(handler); };
+  }, []);
+
+  // The roster is the only "is anyone actually pairing with me?" signal, so it is
+  // what gates collaboration. Cable availability alone is not enough: it is up in
+  // a normal dev setup, and gating on it silently disabled persistent undo and
+  // external-change detection for solo users. The service is told about the roster
+  // from the presence handler above, not from an effect here, so it hears about
+  // every message rather than only about a change in the participant count.
+  var collabPeerIds = Object.keys(collabRoster);
+
+  // A labelled peer chip costs ~110px (name + filename), and the titlebar button
+  // cluster does not shrink or wrap: past three peers it squeezes the search pill
+  // to its floor and then pushes Help / Install off the right edge. Drop to bare
+  // colour dots instead of hiding peers behind a "+N more" summary — a dot is
+  // ~20px, so ten peers still fit, every chip stays clickable to follow, and the
+  // solid/hollow ring keeps working. The name and file live in the tooltip.
+  var COLLAB_LABEL_LIMIT = 3;
+  var collabPeerLabels = !toolbarIconOnly && collabPeerIds.length <= COLLAB_LABEL_LIMIT;
+
+  // Colour is minted from a hash before any peer is known, so it has to be
+  // reconciled against the roster once one exists. Runs on every roster change;
+  // reconcileColor no-ops unless we actually clash and lose the tie-break, so the
+  // usual case costs one array map and no state write.
+  useEffect(function () {
+    if (typeof CollaborationIdentity === 'undefined') return;
+    CollaborationIdentity.reconcileColor(collabPeerIds.map(function (cid) {
+      return { clientId: cid, color: collabRoster[cid].colour, seed: collabRoster[cid].seed };
+    }));
+  }, [collabRoster]);
+
+  // Hover card. Anchored from the chip's own rect, right-aligned because these
+  // chips sit against the right edge of the titlebar and a left-anchored card
+  // would run off screen.
+  var _useStateHover = useState(null);
+  var _useStateHover2 = _slicedToArray(_useStateHover, 2);
+  var collabHover = _useStateHover2[0];
+  var setCollabHover = _useStateHover2[1];
+
+  var openCollabHover = function (cid, e) {
+    var r = e.currentTarget.getBoundingClientRect();
+    setCollabHover({ cid: cid, top: r.bottom + 4, right: window.innerWidth - r.right });
+  };
+
+  // Latency and last-seen only need to tick while the card is actually on screen,
+  // so the interval lives and dies with it. Idle cost stays zero.
+  var _useStateHoverTick = useState(0);
+  var _useStateHoverTick2 = _slicedToArray(_useStateHoverTick, 2);
+  var setCollabHoverTick = _useStateHoverTick2[1];
+  useEffect(function () {
+    if (!collabHover) return;
+    var id = setInterval(function () { setCollabHoverTick(function (n) { return n + 1; }); }, 1000);
+    return function () { clearInterval(id); };
+  }, [collabHover]);
+
+  // Follow mode (slice 8): toggle tracking a roster participant. Following sets up
+  // the viewport scroll-tracking in CollaborationService; the file-open is handled
+  // by the effect below (it also re-fires when the followed peer switches files).
+  var followedFile = (followedClientId && collabRoster[followedClientId])
+    ? collabRoster[followedClientId].current_file : null;
+  var toggleFollow = function (cid) {
+    if (followedClientId === cid) {
+      setFollowedClientId(null);
+      if (typeof CollaborationService !== 'undefined') CollaborationService.clearFollow();
+    } else {
+      setFollowedClientId(cid);
+      if (typeof CollaborationService !== 'undefined') CollaborationService.setFollow(cid);
+    }
+  };
+
+  // While following, open/focus whatever file the followed participant currently
+  // has open, and re-open when they switch files. Viewport tracking within that
+  // file is handled by CollaborationService once both peers share the room.
+  useEffect(function () {
+    if (!followedClientId || !followedFile) return;
+    if (activeTab && activeTab.path === followedFile) return;
+    handleSelectFile(followedFile, followedFile.split('/').pop());
+  }, [followedClientId, followedFile]);
 
   // Phase 7: Per-file last-commit info shown in the status bar
   var _useState31 = useState(null);
@@ -2397,6 +2716,10 @@ var MbeditorApp = function MbeditorApp() {
       var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
       if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
         _modelEntry.cleanVersionId = _modelEntry.model.getAlternativeVersionId();
+      }
+      // Collab: push a fresh snapshot so the server compacts the buffered deltas.
+      if (typeof CollaborationService !== 'undefined' && CollaborationService.isBound(tab.path)) {
+        CollaborationService.pushSnapshot(tab.path);
       }
       EditorStore.setStatus("Saved", "success");
       _clearDraft(tab.path);
@@ -3894,6 +4217,70 @@ var MbeditorApp = function MbeditorApp() {
             !toolbarIconOnly && " Git"
           )
         ),
+        collabEnabled && collabIdentity && React.createElement(
+          React.Fragment,
+          null,
+          React.createElement("div", { className: "statusbar-sep" }),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "statusbar-btn",
+              onMouseEnter: function (e) { openCollabHover('__me__', e); },
+              onMouseLeave: function () { setCollabHover(null); },
+              onClick: function () { CollaborationIdentity.editName(); }
+            },
+            React.createElement("i", {
+              className: "fas fa-circle collab-pulse",
+              style: { color: collabIdentity.color, fontSize: "0.7em", marginRight: "2px" }
+            }),
+            !toolbarIconOnly && (" " + collabIdentity.name)
+          )
+        ),
+        collabEnabled && collabPeerIds.length > 0 && React.createElement(
+          React.Fragment,
+          null,
+          React.createElement("div", { className: "statusbar-sep" }),
+          collabPeerIds.map(function (cid) {
+            var peer = collabRoster[cid];
+            var file = peer.current_file;
+            var name = peer.name || 'Anonymous';
+            var colour = peer.colour || '#888888';
+            var following = followedClientId === cid;
+            // Solid dot: they are in the file you are looking at, so their caret
+            // is on screen. Hollow ring: they are somewhere else and there is
+            // nothing to see — without this the chip looked identical either way
+            // and a peer's caret just vanished with no explanation.
+            var elsewhere = file !== presenceFile;
+            return React.createElement(
+              "button",
+              {
+                key: cid,
+                type: "button",
+                className: "statusbar-btn",
+                style: following
+                  ? { background: 'color-mix(in srgb, ' + colour + ' 28%, transparent)' }
+                  : undefined,
+                onMouseEnter: function (e) { openCollabHover(cid, e); },
+                onMouseLeave: function () { setCollabHover(null); },
+                onClick: function () { toggleFollow(cid); }
+              },
+              React.createElement("i", {
+                className: (following ? "fas fa-eye" : (elsewhere ? "far fa-circle" : "fas fa-circle")) +
+                  " collab-pulse",
+                style: { color: colour, fontSize: "0.7em", marginRight: "2px" }
+              }),
+              collabPeerLabels && (" " + name),
+              // Where they went, when they are not where you are. Basename only —
+              // the chip has ~110px to spend and the full path is in the tooltip.
+              collabPeerLabels && elsewhere && file && React.createElement(
+                "span",
+                { style: { opacity: 0.65, marginLeft: "4px" } },
+                file.split('/').pop()
+              )
+            );
+          })
+        ),
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
           "button",
@@ -3922,6 +4309,50 @@ var MbeditorApp = function MbeditorApp() {
         )
       )
     ),
+    collabHover && (function () {
+      var isMe = collabHover.cid === '__me__';
+      var peer = isMe ? null : collabRoster[collabHover.cid];
+      // The peer can leave between hover and paint — the roster is the authority.
+      if (!isMe && !peer) return null;
+
+      var stats = isMe ? { rtt: ownRttRef.current } : (peerStatsRef.current[collabHover.cid] || {});
+      var name = isMe ? collabIdentity.name : (peer.name || 'Anonymous');
+      var colour = isMe ? collabIdentity.color : (peer.colour || '#888888');
+      var file = isMe ? presenceFile : peer.current_file;
+      // Server-measured against a monotonic clock, so it is not our arrival time
+      // and no clock skew enters into it.
+      var idle = typeof stats.idle === 'number' ? stats.idle : null;
+
+      return React.createElement(
+        'div',
+        { className: 'collab-hovercard', style: { top: collabHover.top + 'px', right: collabHover.right + 'px' } },
+        React.createElement(
+          'div',
+          { className: 'collab-hovercard-name' },
+          React.createElement('span', { className: 'collab-hovercard-swatch', style: { background: colour } }),
+          name,
+          isMe && React.createElement('span', { style: { opacity: 0.6, fontWeight: 400 } }, ' (you)')
+        ),
+        React.createElement('div', { className: 'collab-hovercard-row' }, file || 'No file open'),
+        typeof stats.rtt === 'number' && React.createElement(
+          'div', { className: 'collab-hovercard-row' }, 'Latency ' + Math.round(stats.rtt) + ' ms'
+        ),
+        // Everyone in the roster is connected — the server evicts on disconnect —
+        // so this is not a liveness warning. It says their heartbeat has slowed,
+        // which is what a browser does to a backgrounded tab's timers, and is why
+        // their caret may be behind. Silent under 20s, where it would only ever
+        // read "5s ago".
+        idle !== null && idle >= 20 && React.createElement(
+          'div', { className: 'collab-hovercard-row' }, 'Idle ' + idle + 's'
+        ),
+        React.createElement(
+          'div',
+          { className: 'collab-hovercard-hint' },
+          isMe ? 'Click to change your name'
+               : (followedClientId === collabHover.cid ? 'Click to stop following' : 'Click to follow')
+        )
+      );
+    })(),
     showHelp && React.createElement(ShortcutHelp, { onClose: function () { return setShowHelp(false); } }),
     React.createElement(
       "div",

@@ -25,6 +25,14 @@ Mbeditor exposes read and write access to your Rails application directory over 
 - Always keep it in the development group in your Gemfile.
 - The engine enforces environment restrictions at runtime, and Gemfile scoping is a second line of defense that keeps the gem out of deploy builds.
 
+> **Pairing crosses the localhost-only boundary by design.** Realtime collaborative
+> editing (see [Collaborative pairing](#collaborative-pairing-optional)) is meant to
+> be reached by a second person, so it necessarily exposes the editor beyond your own
+> machine. Treat that as an explicit, deliberate exception to the rules above — confine
+> exposure to a trusted tunnel or LAN, set an authentication hook, and tear it down when
+> you finish pairing. It does not change the core rule: mbeditor is development-only and
+> must never be reachable by untrusted users.
+
 ## Installation
 1. Add the gem to the host app Gemfile in development only:
 
@@ -114,7 +122,7 @@ end
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `authenticate_with` | `nil` | Proc run as a `before_action` in all engine controllers. Executed via `instance_exec` inside the controller, so it has access to `session`, `cookies`, `redirect_to`, and auth-library class methods (e.g. Authlogic's `UserSession.find`) — but not helper methods from the host's `ApplicationController`. |
+| `authenticate_with` | `nil` | Proc run as a `before_action` in all engine controllers. Executed via `instance_exec` inside the controller, so it has access to `session`, `cookies`, `redirect_to`, and auth-library class methods (e.g. Authlogic's `UserSession.find`) — but not helper methods from the host's `ApplicationController`. The same hook is also evaluated when the collaboration / editor **WebSocket** subscribes (see [Collaborative pairing](#collaborative-pairing-optional)); if it halts or raises, that subscription is rejected (fail-closed). Over the cable the proc runs against a request-derived probe, so request-scoped state may be narrower than over HTTP. |
 | `authentication_cache_ttl` | `0` | Seconds to cache the auth result in the session (`0` = no caching). Set e.g. `300` to avoid calling `authenticate_with` on every request when the proc is expensive. Trade-off: after host logout, mbeditor stays accessible for up to TTL seconds. |
 
 ### Test runner
@@ -149,6 +157,12 @@ See [Resilient Routing](#resilient-routing) for details.
 |--------|---------|-------------|
 | `mount_path` | `nil` | Explicit URL prefix to serve resilient routing from. When `nil`, auto-detected from your `mount Mbeditor::Engine, at: "..."` line on every healthy boot. Set only to override detection. |
 | `resilient_routing` | `true` | Keeps mbeditor reachable when the host's `config/routes.rb` is broken, by serving its traffic from middleware that dispatches to a private route set. Set to `false` as an escape hatch: no middleware is inserted and the private set is never built. |
+
+### Collaboration
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `user_name_callback` | `nil` | Proc resolving the display name shown on your caret during realtime collaboration. Executed via `instance_exec` inside the controller (like `authenticate_with`), so it can read `session`, `cookies`, `current_user`, etc. — e.g. `proc { current_user&.name }`. When `nil` or it returns a blank value, each browser falls back to a generated, locally-persisted, user-editable name. Collaboration activates once another participant actually connects, not merely when Action Cable is up (see [Collaborative pairing](#collaborative-pairing-optional)). |
 
 ## JavaScript intelligence
 
@@ -282,6 +296,86 @@ The gem keeps host/tooling responsibilities in the host app:
 
 All lint and test tools are auto-detected at runtime. The engine gracefully disables features if the tools are not available. Neither `rubocop`, `haml_lint`, nor any test framework are runtime dependencies of the gem itself — they are discovered from the host app's environment.
 
+### Realtime via Action Cable (Optional)
+
+Mbeditor works without Action Cable. If Action Cable is unavailable, unreachable, or returns transient errors, the editor automatically falls back to polling.
+
+To enable realtime features in a host app:
+
+1. Ensure Action Cable is enabled in the host app (for apps that do not load it by default, add the framework/gem explicitly).
+2. Mount cable in host routes:
+
+```ruby
+mount ActionCable.server => '/cable'
+```
+
+3. Make Action Cable JavaScript available to the page (for asset-pipeline apps, `actioncable.js` is typically sufficient).
+
+If any of these are missing, mbeditor still runs in polling mode.
+
+### Collaborative pairing (Optional)
+
+When Action Cable is available, mbeditor supports **realtime collaborative editing** —
+live cursors and content sync over a WebSocket, so a second person can join the same
+files. This is the one feature intended to be reached from another machine, so exposing
+it is a **deliberate exception** to the localhost-only [Security Warning](#security-warning)
+above. Expose it narrowly and only while you are actively pairing.
+
+Collaboration activates only once **another participant is actually connected**, not
+merely because Action Cable is up. On your own the editor behaves exactly as it does
+without cable — persistent undo history and external-change detection stay in force,
+both of which defer to the shared document while a session is live.
+
+**1. Restrict the network exposure to a trusted path.**
+Put the editor behind a **trusted tunnel** (e.g. an authenticated `ngrok`/Tailscale/
+Cloudflare tunnel, or SSH port-forward) or keep it on a **trusted LAN**. Never bind it to
+a public interface or an untrusted network. The person you pair with is the only one who
+should be able to reach the port.
+
+**2. Set an authentication hook — it runs on the WebSocket handshake.**
+Configure `authenticate_with` (see the [Authentication](#authentication) options).
+The same hook that gates the HTTP editor is now also evaluated when the collaboration /
+editor WebSocket subscribes: if it halts (e.g. `redirect_to`/`render`/`head`) — or raises —
+the socket subscription is **rejected (fail-closed)**, so pairing cannot bypass your auth.
+
+```ruby
+Mbeditor.configure do |c|
+  # Runs as a controller before_action AND on the cable subscribe.
+  c.authenticate_with = proc { head :forbidden unless UserSession.find }
+end
+```
+
+Because the cable mount can bypass parts of the host middleware stack, a hook that leans on
+request-scoped state (full `session`, encrypted `cookies`) may see less over the WebSocket
+than it does over HTTP. For defence in depth, also authenticate at your host app's
+`ApplicationCable::Connection` (the standard `identified_by` / `reject_unauthorized_connection`
+pattern) — mbeditor's hook is an additional gate, not a replacement for securing the cable
+connection itself.
+
+**3. Configure Action Cable allowed request origins.**
+Action Cable rejects cross-origin WebSocket connections. When you reach the editor through a
+tunnel or LAN host, that origin must be allowed, or the socket silently fails and pairing
+falls back to single-user mode. Allow exactly the origin(s) you pair through — never `/.*/`:
+
+```ruby
+# config/environments/development.rb
+config.action_cable.allowed_request_origins = [
+  "https://your-pairing-tunnel.example.com",
+  %r{https://.*\.trusted-lan\.local}
+]
+```
+
+When you finish pairing, close the tunnel / stop the forward so the editor is local-only again.
+
+**4. Run a single web process.**
+The shared document buffer is held in process memory and relayed over Action Cable's
+default in-process (`async`) adapter, so collaboration state is **per-process**. If your
+server runs multiple workers (e.g. Puma with `workers > 0` / `WEB_CONCURRENCY`), two
+browsers can land on different workers and each see an empty or stale document — the most
+common cause of *"the other person's edits never show up."* For pairing, run a single
+worker (`WEB_CONCURRENCY=0`, or `bundle exec rails server` which is single-process by
+default). A multi-worker setup would additionally need a cross-process cable adapter, but
+the in-memory buffer still would not be shared — single-process is the supported mode.
 ## Search performance
 
 Project search and JS definition lookups pick a backend per call:
@@ -323,6 +417,32 @@ cd test/dummy && rails server
 ```
 
 Then visit http://localhost:3000/mbeditor.
+
+### Vendored JavaScript (no consumer build step)
+
+All third-party JS is **prebuilt and committed** under `vendor/assets/javascripts/`
+and served as-is by Sprockets. Installing the gem needs **zero JS tooling** — no
+Node, npm, or bundler — which is the contract recorded in
+[ADR-0001](docs/adr/0001-no-frontend-build-step.md). `package.json` exists only as
+a dependency manifest for `npm audit`.
+
+Most vendored libs are committed verbatim from npm. The one exception is the
+collaborative-editing bundle, `vendor/assets/javascripts/yjs-collab.js`, which
+combines Yjs + y-monaco + y-protocols (awareness) into a single IIFE exposing
+`window.Y`, `window.MonacoBinding`, and `window.awarenessProtocol`. It is produced
+by a **maintainer-only** build script. Monaco itself is not bundled — the binding
+forwards to the page's runtime `window.monaco`.
+
+To regenerate it after bumping any of those pinned versions in `package.json`:
+
+```bash
+npm install          # installs yjs / y-monaco / y-protocols + esbuild (maintainer-only)
+npm run build:yjs    # === node script/build-yjs-bundle.mjs
+```
+
+then commit the regenerated `vendor/assets/javascripts/yjs-collab.js`. The build is
+deterministic: rebuilding from the same pinned versions reproduces identical bytes.
+This step is for maintainers only; it never runs on a consumer's machine.
 
 ## Testing
 

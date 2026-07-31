@@ -11,6 +11,8 @@ var WebSocketService = (function () {
   var _subscription = null;
   var _connected = false;
   var _filesChangedCallbacks = [];
+  var _fileSavedCallbacks = [];
+  var _presenceCallbacks = [];
   var _logLinesCallbacks = [];
   var _serverSupportsWs = false;
   var _reconnectTimer = null;
@@ -117,6 +119,10 @@ var WebSocketService = (function () {
             if (!data) return;
             if (data.type === 'files_changed') {
               _emitFilesChanged(data);
+            } else if (data.type === 'file_saved') {
+              _emitFileSaved(data);
+            } else if (data.type === 'presence') {
+              _emitPresence(data);
             } else if (data.type === 'log') {
               _emitLogLines(data);
             } else if (data.type === 'exception') {
@@ -134,6 +140,18 @@ var WebSocketService = (function () {
 
   function _emitFilesChanged(data) {
     _filesChangedCallbacks.forEach(function (fn) {
+      try { fn(data); } catch (e) { /* ignore */ }
+    });
+  }
+
+  function _emitFileSaved(data) {
+    _fileSavedCallbacks.forEach(function (fn) {
+      try { fn(data); } catch (e) { /* ignore */ }
+    });
+  }
+
+  function _emitPresence(data) {
+    _presenceCallbacks.forEach(function (fn) {
       try { fn(data); } catch (e) { /* ignore */ }
     });
   }
@@ -183,6 +201,38 @@ var WebSocketService = (function () {
     return _connected;
   }
 
+  // Returns true when ActionCable is loaded and the server advertised cable
+  // support. Collaboration uses this as its up-front "is the feature available?"
+  // gate, independent of whether the EditorChannel handshake has completed yet.
+  function isCableAvailable() {
+    return _serverSupportsWs && _isActionCableAvailable();
+  }
+
+  // Open a CollaborationChannel subscription for one file on the SHARED consumer
+  // (the same connection the EditorChannel uses).  Returns the subscription, or
+  // null when cable is unavailable so callers can stay in single-user mode.
+  // handlers: { connected, received, rejected, disconnected } — all optional.
+  function subscribeCollaboration(path, handlers) {
+    if (!isCableAvailable()) return null;
+    handlers = handlers || {};
+    try {
+      if (!_consumer) {
+        _consumer = _getConsumer();
+      }
+      return _consumer.subscriptions.create(
+        { channel: 'Mbeditor::CollaborationChannel', path: path },
+        {
+          connected: function () { if (handlers.connected) handlers.connected(); },
+          disconnected: function () { if (handlers.disconnected) handlers.disconnected(); },
+          rejected: function () { if (handlers.rejected) handlers.rejected(); },
+          received: function (data) { if (handlers.received) handlers.received(data); }
+        }
+      );
+    } catch (e) {
+      return null;
+    }
+  }
+
   // Register a callback to be invoked when the server broadcasts files_changed.
   function onFilesChanged(fn) {
     _filesChangedCallbacks.push(fn);
@@ -191,6 +241,28 @@ var WebSocketService = (function () {
   // Remove a previously registered callback.
   function offFilesChanged(fn) {
     _filesChangedCallbacks = _filesChangedCallbacks.filter(function (f) { return f !== fn; });
+  }
+
+  // Register a callback to be invoked when a peer saves a file (file_saved).
+  // The callback receives the broadcast data, including the relative `path`.
+  function onFileSaved(fn) {
+    _fileSavedCallbacks.push(fn);
+  }
+
+  // Remove a previously registered file_saved callback.
+  function offFileSaved(fn) {
+    _fileSavedCallbacks = _fileSavedCallbacks.filter(function (f) { return f !== fn; });
+  }
+
+  // Register a callback for presence heartbeats/leaves relayed on the global
+  // stream. The callback receives {type:'presence', status, client_id, ...}.
+  function onPresence(fn) {
+    _presenceCallbacks.push(fn);
+  }
+
+  // Remove a previously registered presence callback.
+  function offPresence(fn) {
+    _presenceCallbacks = _presenceCallbacks.filter(function (f) { return f !== fn; });
   }
 
   // Register a callback invoked when the server transmits a { type: 'log' } message.
@@ -218,9 +290,15 @@ var WebSocketService = (function () {
     connect: connect,
     disconnect: disconnect,
     isConnected: isConnected,
+    isCableAvailable: isCableAvailable,
+    subscribeCollaboration: subscribeCollaboration,
     perform: perform,
     onFilesChanged: onFilesChanged,
     offFilesChanged: offFilesChanged,
+    onFileSaved: onFileSaved,
+    offFileSaved: offFileSaved,
+    onPresence: onPresence,
+    offPresence: offPresence,
     onLogLines: onLogLines,
     offLogLines: offLogLines
   };

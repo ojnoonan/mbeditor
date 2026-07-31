@@ -326,6 +326,7 @@ module Mbeditor
 
       result = FileOperationService.new(workspace_root).save(path, params[:code].to_s)
       broadcast_files_changed([path])
+      broadcast_file_saved(path)
       render json: result
     rescue FileOperationService::FileTooLargeError
       render_file_too_large(params[:code].to_s.bytesize)
@@ -1066,7 +1067,8 @@ module Mbeditor
     # GET /mbeditor/client_config — returns client-side configuration values
     def client_config
       render json: {
-        related_files_custom_paths: Array(Mbeditor.configuration.related_files_custom_paths)
+        related_files_custom_paths: Array(Mbeditor.configuration.related_files_custom_paths),
+        user_name: resolved_user_name
       }
     end
 
@@ -1139,6 +1141,21 @@ module Mbeditor
 
     private
 
+    # Resolve the optional user_name_callback in controller context (like
+    # authenticate_with) so the host app can supply a collaboration display name.
+    # nil — including any failure or a blank result — falls through to the
+    # client-generated name.
+    def resolved_user_name
+      cb = Mbeditor.configuration.user_name_callback
+      return nil unless cb
+
+      name = instance_exec(&cb)
+      name = name.to_s.strip
+      name.empty? ? nil : name
+    rescue StandardError
+      nil
+    end
+
     # Normalized base prefix mbeditor renders URLs against. Sourced from
     # MountPath (not the engine `root_path` helper) so it still resolves when a
     # broken host config/routes.rb has wiped Mbeditor::Engine.routes — the exact
@@ -1196,6 +1213,18 @@ module Mbeditor
       rel = Array(changed_paths).compact.map { |p| relative_path(p.to_s) }.reject(&:empty?)
       payload[:paths] = rel if rel.any?
       ActionCable.server.broadcast("mbeditor_editor", payload)
+    rescue StandardError
+      # Never let a broadcast failure affect the HTTP response
+    end
+
+    # Tells every peer that this file's shared buffer was just saved to disk so
+    # they can reset that tab's clean baseline and clear its dirty indicator.
+    # Rides the same global stream as broadcast_files_changed and is equally
+    # resilient: a relay failure must never affect the HTTP response.
+    def broadcast_file_saved(path)
+      return unless defined?(ActionCable.server)
+
+      ActionCable.server.broadcast("mbeditor_editor", { type: "file_saved", path: relative_path(path) })
     rescue StandardError
       # Never let a broadcast failure affect the HTTP response
     end

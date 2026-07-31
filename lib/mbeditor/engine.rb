@@ -112,6 +112,7 @@ module Mbeditor
         react-dom.min.js
         axios.min.js
         lodash.min.js
+        yjs-collab.js
         minisearch.min.js
         marked.min.js
         prettier-standalone.js
