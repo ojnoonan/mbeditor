@@ -268,7 +268,10 @@ html, body, #mbeditor-root {
 .tree-item.drag-over { background: rgba(100, 160, 220, 0.25); box-shadow: inset 0 0 0 1px rgba(100, 160, 220, 0.7); }
 /* External file drop (import) — green, to read as "add" rather than "move" */
 .tree-item.drag-over-external { background: rgba(120, 200, 140, 0.22); box-shadow: inset 0 0 0 1px rgba(120, 200, 140, 0.75); }
-.file-tree-root.drag-over-external-root { box-shadow: inset 0 0 0 2px rgba(120, 200, 140, 0.6); }
+/* Goes on the whole scrollable explorer panel, not just .file-tree-root: that
+   element stops at its last row, so outlining it would mark only part of the
+   area that actually accepts the drop. */
+.drag-over-external-root { box-shadow: inset 0 0 0 2px rgba(120, 200, 140, 0.6); }
 .tree-item.modified { color: var(--ide-warning); }
 
 /* Inline create row (VS Code-style new file/folder input) */

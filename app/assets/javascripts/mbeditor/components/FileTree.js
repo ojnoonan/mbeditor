@@ -443,6 +443,58 @@ var FileTree = function FileTree(_ref) {
     return !!(e.target && e.target.closest && e.target.closest('.tree-item'));
   };
 
+  // The root drop zone is the whole scrollable panel, not just .file-tree-root.
+  // That element is only as tall as its rows, so on a short tree everything
+  // below the last row looks like the explorer but belongs to the scroll
+  // parent — dropping there did nothing, which is the "can't drop into the
+  // root area" report.
+  //
+  // Attached natively rather than through React because the panel is rendered
+  // by MbeditorApp, not here. React 17 delegates from its own root, which is
+  // an ancestor of this element, so these fire before any row handler and the
+  // isRowTarget guard — not stopPropagation — is what keeps rows in charge.
+  var externalImportRef = useRef(startExternalImport);
+  externalImportRef.current = startExternalImport;
+
+  useEffect(function() {
+    if (!containerRef.current) return;
+    var panel = containerRef.current.closest('.ide-sidebar-scrollable');
+    if (!panel) return;
+
+    var HIGHLIGHT = 'drag-over-external-root';
+    var accepts = function(e) {
+      return FileImport.hasExternalFiles(e.dataTransfer) && !isRowTarget(e);
+    };
+    var over = function(e) {
+      if (!accepts(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      panel.classList.add(HIGHLIGHT);
+    };
+    var leave = function(e) {
+      if (e.relatedTarget && panel.contains(e.relatedTarget)) return;
+      panel.classList.remove(HIGHLIGHT);
+    };
+    var drop = function(e) {
+      panel.classList.remove(HIGHLIGHT);
+      if (!accepts(e)) return;
+      e.preventDefault();
+      externalImportRef.current(e.dataTransfer, '');
+    };
+
+    panel.addEventListener('dragenter', over);
+    panel.addEventListener('dragover', over);
+    panel.addEventListener('dragleave', leave);
+    panel.addEventListener('drop', drop);
+    return function() {
+      panel.classList.remove(HIGHLIGHT);
+      panel.removeEventListener('dragenter', over);
+      panel.removeEventListener('dragover', over);
+      panel.removeEventListener('dragleave', leave);
+      panel.removeEventListener('drop', drop);
+    };
+  }, []);
+
   var renderRow = function renderRow(item, idx) {
     var indentPx = 8 + item.depth * 12;
 
@@ -626,36 +678,15 @@ var FileTree = function FileTree(_ref) {
   return React.createElement(
     'div',
     {
-      className: 'file-tree file-tree-root' + (externalDragOver === '' ? ' drag-over-external-root' : ''),
+      className: 'file-tree file-tree-root',
       ref: containerRef,
       tabIndex: 0,
-      style: { outline: 'none', padding: 0 },
-      // Empty space below the last row imports into the workspace root.
-      // Folder rows stop propagation, so only genuine misses reach here; the
-      // isRowTarget guard covers file rows, which accept nothing.
-      // Cancelled for the same reason as the row handler above: without a
-      // cancelled dragenter, Firefox and Safari never fire the drop.
-      onDragEnter: function(e) {
-        if (!FileImport.hasExternalFiles(e.dataTransfer) || isRowTarget(e)) return;
-        e.preventDefault();
-      },
-      onDragOver: function(e) {
-        if (!FileImport.hasExternalFiles(e.dataTransfer) || isRowTarget(e)) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'copy';
-        if (externalDragOver !== '') setExternalDragOver('');
-      },
-      onDragLeave: function(e) {
-        if (e.currentTarget.contains(e.relatedTarget)) return;
-        setExternalDragOver(null);
-      },
-      onDrop: function(e) {
-        if (!FileImport.hasExternalFiles(e.dataTransfer)) return;
-        setExternalDragOver(null);
-        if (isRowTarget(e)) return;
-        e.preventDefault();
-        startExternalImport(e.dataTransfer, '');
-      }
+      // No root drag handlers here. This element is only as tall as its rows,
+      // so it can't cover the empty space users actually aim at; the whole
+      // scrollable panel handles the root drop instead (see the effect above).
+      // A copy here too would import twice — the panel's native listener and
+      // this React one would both fire for a single drop.
+      style: { outline: 'none', padding: 0 }
     },
     React.createElement(
       'div',
