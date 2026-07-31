@@ -391,12 +391,37 @@ module Mbeditor
                                               use_regex: false, match_case: true, whole_word: false,
                                               excluded_paths: [], paths: nil)
         assert_equal "git", args.first
-        assert_equal "C", env["LC_ALL"]
+        # No LC_ALL override: the C locale is neutral for the -F -i default and
+        # measurably slower for -E, so the tier inherits the process locale.
+        assert_nil env["LC_ALL"]
 
         results = search("User")
         assert_equal 1, results.length
         assert_equal "app/models/user.rb", results.first[:file]
         assert_equal 1, results.first[:line]
+      end
+    end
+
+    # An excluded directory must be kept out of git's own traversal, not merely
+    # filtered out of the results afterwards. Post-filtering still pays for git
+    # walking node_modules in full, which is what made search unusable on real
+    # host apps; assert the pathspecs are actually on the command line.
+    test "the git tier passes excluded paths to git as :(exclude) pathspecs" do
+      _env, args = SearchReplaceService.send(:build_command, :git, @workspace, "x",
+                                             use_regex: false, match_case: true, whole_word: false,
+                                             excluded_paths: ["node_modules", "vendor/bundle"], paths: nil)
+      assert_includes args, ":(exclude)node_modules"
+      assert_includes args, ":(exclude)vendor/bundle"
+    end
+
+    test "the git tier excludes configured paths from the results it returns" do
+      system("git", "-C", @workspace, "init", "-q", exception: true)
+      write_file("app/models/user.rb", "class User\nend\n")
+      write_file("node_modules/pkg/user.js", "var User = 1;\n")
+
+      with_rg_available(false) do
+        results = search("User", excluded_paths: ["node_modules"])
+        assert_equal ["app/models/user.rb"], results.map { |r| r[:file] }
       end
     end
 

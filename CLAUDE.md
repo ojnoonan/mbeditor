@@ -14,13 +14,13 @@ cd test/dummy && rails server  # http://localhost:3000/mbeditor
 
 **Backend:** Rails engine. Controllers are thin renderers; business logic lives in `app/services/mbeditor/`. Key services:
 - `GitInfoService` — concurrent git metadata fetch (wave orchestration, 5 s TTL cache)
-- `SearchReplaceService` — rg/grep subprocess execution, ReDoS guards, replace-in-files (supersedes `CodeSearchService`)
+- `SearchReplaceService` — rg/grep subprocess execution, ReDoS guards, replace-in-files (supersedes `CodeSearchService`). Three tiers: rg > `git grep` > grep. **Every tier must put `excluded_paths` on the subprocess command line** — as `--glob=!`, `:(exclude)` pathspecs and `--exclude-dir` respectively. Post-filtering the results is not equivalent: the walk has already happened, and the git tier silently omitted them for a long time, which is what made search unusable on host apps without ripgrep. `GET /workspace` reports `searchBackend` so the live tier is visible. No `LC_ALL=C` on the git tier — measured neutral for `-F -i` and 2.2x *slower* for `-E`.
 - `EditorStateService` — JSON state persistence with file locking; used by both `EditorsController` and `EditorChannel`
 - `ExclusionMatcher` — unified path exclusion predicate
 - `FileOperationService` — all file mutations (save, create, rename, delete) with path-safety invariants
 - `FileImportService` — writes files dropped in from outside the browser; owns the ask/overwrite/rename conflict protocol
 - `ProcessRunner` — subprocess-with-timeout (used by `GitService`, `TestRunnerService`, lint path)
-- `AvailabilityProbe` — checks tool availability (rg, rubocop, haml_lint, etc.)
+- `AvailabilityProbe` — checks tool availability (rg, rubocop, haml_lint, etc.). Probes run **outside** the mutex: they spawn subprocesses, and a missing tool re-probes every 60 s, so holding the lock serialised every other check. `rg_command` resolves `PATH` *and* the usual install prefixes — a server started from launchd/systemd/an IDE has a stripped `PATH`, which silently dropped search to the 10-30x slower tier.
 - `FileTreeService` — builds the directory tree response
 - `RubyDefinitionService` — AST-based definition search with self-warming disk cache
 - `JsProgramService` — the workspace's own JS source, fed to Monaco's TypeScript program (see below)
@@ -244,6 +244,28 @@ only, and `config.exception_capture = false` disables it. Exceptions are not
 turned into Monaco markers: markers are per-model and the next lint wipes them.
 
 **No filesystem watcher, deliberately.** External changes are picked up by polling: the file tree every 10 s (`MbeditorApp.js`), git status every 5 s, and the git line-number tint every 10 s (`EditorPanel.js`). An earlier `listen`-based watcher was removed in 0.10.1 — inotify watches are a per-user kernel budget shared with the host app's own reloader, so the watcher could exhaust it and break the host. The WebSocket `files_changed` push remains the instant path for mbeditor's own writes; polling covers everything else. Don't reintroduce a watcher without re-reading that trade-off.
+
+**A poll that finds nothing must not re-render.** Every one of these fires
+forever, so any state write on an unchanged tick is a permanent idle re-render
+of the whole app — `MbeditorApp` subscribes to the entire store, so a new
+`treeData` array costs a full tree reconciliation. Two rules, both learned the
+hard way:
+
+- Fetched JSON is always a *fresh* object. Returning it from a functional
+  setState updater unconditionally defeats every `React.memo` downstream
+  (`FileTreeMemo` compares `prev.items === next.items`). Compare and return the
+  previous value — `_treeUpdater` in `MbeditorApp.js` is the shared helper, and
+  a full `JSON.stringify` of a ~1600-node tree costs 0.33 ms, far less than the
+  render it prevents. A cheap partial hash is not enough: an earlier version
+  compared only top-level entry names, so it re-rendered anyway *and* never
+  rebuilt the quick-open index for files added inside a directory.
+- The same applies to any handler that builds a fresh object literal per tick.
+  The ruby-lsp health chip called `setLspHealth(readLspHealth())` on a 10 s
+  interval; React bails on `Object.is`, and two object literals never are, so
+  it re-rendered the app every 10 s regardless of health. Compare the fields.
+
+Verified by counting `React.createElement` calls over an idle minute: 5 tree
+polls and 5 health ticks now produce zero re-renders.
 
 ## Release workflow
 

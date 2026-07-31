@@ -75,7 +75,11 @@ module Mbeditor
         testAvailable: test_available?,
         actionCableEnabled: action_cable_enabled?,
         jsSyntaxCheckAvailable: JsSyntaxCheckService.available?,
-        rubyLspAvailable: AvailabilityProbe.ruby_lsp(workspace_root)
+        rubyLspAvailable: AvailabilityProbe.ruby_lsp(workspace_root),
+        # "rg" | "git" | "grep". The tiers differ by 10-30x, and the usual
+        # reason for a slow search is ripgrep being installed but absent from
+        # the server process's PATH — which is invisible without this.
+        searchBackend: SearchReplaceService.backend(workspace_root)
       }
     end
 

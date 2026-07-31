@@ -117,11 +117,55 @@ module Mbeditor
     # installing e.g. rubocop or ripgrep while the server runs is picked up.
     NEGATIVE_PROBE_TTL = 60
 
-    def self.rg
-      probe_cached("rg") do
-        _out, _err, status = Open3.capture3("rg", "--version")
-        status.success?
+    # "Not found" is false for the boolean probes and nil for rg_command, which
+    # answers with a path instead. Both have to expire, or a tool installed
+    # after boot would never be picked up.
+    def self.negative_probe?(value)
+      value == false || value.nil?
+    end
+    private_class_method :negative_probe?
+
+    # Install prefixes checked when a bare "rg" isn't on the server's PATH.
+    # Homebrew (arm64 and intel), Linux distro packages, linuxbrew, cargo.
+    RG_FALLBACK_PATHS = [
+      "/opt/homebrew/bin/rg",
+      "/usr/local/bin/rg",
+      "/usr/bin/rg",
+      "/home/linuxbrew/.linuxbrew/bin/rg",
+      "~/.cargo/bin/rg"
+    ].freeze
+
+    # The ripgrep executable to run, or nil when there is none.
+    #
+    # Resolution order: config.ripgrep_command, then a bare "rg" on PATH, then
+    # the usual install prefixes. That last step is the point — see the note on
+    # config.ripgrep_command. Falling back to git grep costs 10-30x, and
+    # without this it happened silently whenever the server's PATH differed
+    # from the shell's.
+    def self.rg_command
+      probe_cached("rg_command") do
+        configured = Mbeditor.configuration.ripgrep_command.to_s.strip
+        candidates = configured.empty? ? ["rg", *RG_FALLBACK_PATHS] : [configured]
+
+        candidates.filter_map { |c| c.include?("/") ? File.expand_path(c) : c }
+                  .find { |path| runnable_rg?(path) }
       end
+    end
+
+    def self.runnable_rg?(path)
+      # A bare name is left to PATH resolution; an explicit path that isn't
+      # there is skipped without paying for a failed spawn.
+      return false if path.include?("/") && !File.executable?(path)
+
+      _out, _err, status = Open3.capture3(path, "--version")
+      status.success?
+    rescue StandardError
+      false
+    end
+    private_class_method :runnable_rg?
+
+    def self.rg
+      !rg_command.nil?
     end
 
     def self.reset!
@@ -129,23 +173,38 @@ module Mbeditor
       nil
     end
 
+    # The probe itself runs OUTSIDE the lock. Every probe here spawns a
+    # subprocess, and a missing tool is re-probed once a minute forever
+    # (NEGATIVE_PROBE_TTL) — holding MUTEX across that spawn made one absent
+    # tool serialise every other availability check in the process, on a path
+    # that ruby-lsp and every search request go through.
+    #
+    # Racing threads may now run the same probe concurrently. That is fine:
+    # probes are read-only and idempotent, so the loser just overwrites an
+    # identical answer.
     def self.probe_cached(key)
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      cached = MUTEX.synchronize do
+        @cache ||= {}
+        @cache[key]
+      end
+
+      if cached && !(negative_probe?(cached[:value]) && (now - cached[:ts]) > NEGATIVE_PROBE_TTL)
+        return cached[:value]
+      end
+
+      value = begin
+        yield
+      rescue StandardError
+        false
+      end
+
       MUTEX.synchronize do
         @cache ||= {}
-        entry = @cache[key]
-        now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-
-        if entry.nil? || (entry[:value] == false && (now - entry[:ts]) > NEGATIVE_PROBE_TTL)
-          value = begin
-            yield
-          rescue StandardError
-            false
-          end
-          entry = @cache[key] = { value: value, ts: now }
-        end
-
-        entry[:value]
+        @cache[key] = { value: value, ts: Process.clock_gettime(Process::CLOCK_MONOTONIC) }
       end
+
+      value
     end
     private_class_method :probe_cached
   end

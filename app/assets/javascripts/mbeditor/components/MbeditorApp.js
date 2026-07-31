@@ -11,6 +11,27 @@ var useState = _React.useState;
 var useEffect = _React.useEffect;
 var useRef = _React.useRef;
 
+// Functional setTreeData updater shared by every path that re-fetches the tree
+// (WebSocket push, the 10s poll, the manual refresh button).
+//
+// Returning prevData when nothing changed is the whole point: the fetched array
+// is always a fresh object, so returning it unconditionally makes React commit
+// on every tick and defeats FileTreeMemo's `prev.items === next.items` check —
+// a full app re-render every 10 seconds, forever, with the tree untouched.
+//
+// The comparison is a deep one. An earlier version hashed only the top-level
+// entry names, which missed every file added or removed inside a directory:
+// the re-render happened anyway, and the quick-open index was never rebuilt.
+// JSON.stringify over the whole tree measures 0.33 ms for ~1600 nodes, well
+// under the render it saves.
+function _treeUpdater(newData) {
+  return function (prevData) {
+    if (JSON.stringify(newData) === JSON.stringify(prevData)) return prevData;
+    SearchService.buildIndex(newData);
+    return newData;
+  };
+}
+
 var SIDEBAR_MIN_WIDTH = 280;
 var SIDEBAR_MAX_WIDTH = 560;
 var EDITOR_MIN_WIDTH = 320;
@@ -841,8 +862,20 @@ var MbeditorApp = function MbeditorApp() {
   // The backoff expires on a wall-clock deadline rather than a timer, so the
   // chip also re-reads on a slow interval — otherwise it would sit on
   // 'degraded' until the next failure or restart click.
+  //
+  // readLspHealth() builds a fresh object every call, so handing it straight to
+  // setLspHealth re-rendered the whole app every 10 seconds whether or not the
+  // health had changed — React bails on Object.is, and two object literals are
+  // never identical. Compare the fields and keep the previous object when they
+  // match. (Same shape of bug as the file-tree poll; see _treeUpdater.)
   useEffect(function () {
-    var sync = function () { setLspHealth(readLspHealth()); };
+    var sync = function () {
+      setLspHealth(function (prev) {
+        var next = readLspHealth();
+        if (prev && prev.status === next.status && prev.reason === next.reason) return prev;
+        return next;
+      });
+    };
     sync();
     window.addEventListener('mbeditor:lsp-health', sync);
     var tick = setInterval(sync, 10000);
@@ -1586,12 +1619,7 @@ var MbeditorApp = function MbeditorApp() {
       if (document.hidden) return;
       GitService.fetchStatus()["catch"](function () {});
       FileService.getTree().then(function (data) {
-        var newData = data || [];
-        setTreeData(function (prevData) {
-          var sig = function(d) { return d.length + ':' + d.map(function(n) { return n.name; }).join(','); };
-          if (sig(newData) !== sig(prevData)) SearchService.buildIndex(newData);
-          return newData;
-        });
+        setTreeData(_treeUpdater(data || []));
         checkOpenTabsForExternalChanges();
       })["catch"](function () {});
       if (payload && payload.paths && searchQueryRef.current && searchPanelVisibleRef.current) {
@@ -1691,17 +1719,13 @@ var MbeditorApp = function MbeditorApp() {
   // broadcasts from mbeditor's own mutation endpoints, so a connected socket
   // meant external changes were never picked up at all. The push remains the
   // instant path for our own writes; this is what catches everything else.
-  // Uses functional setTreeData to skip the re-render when nothing has changed.
+  // _treeUpdater keeps the previous array when nothing changed, so a quiet
+  // workspace costs one fetch and no re-render at all.
   useEffect(function () {
     var intervalId = setInterval(function () {
       if (document.hidden) return;
       FileService.getTree().then(function (data) {
-        var newData = data || [];
-        setTreeData(function (prevData) {
-          var sig = function(d) { return d.length + ':' + d.map(function(n) { return n.name; }).join(','); };
-          if (sig(newData) !== sig(prevData)) SearchService.buildIndex(newData);
-          return newData;
-        });
+        setTreeData(_treeUpdater(data || []));
       }).catch(function () {}); // silently ignore auto-refresh errors
     }, 10000);
     return function () { clearInterval(intervalId); };
@@ -2580,12 +2604,7 @@ var MbeditorApp = function MbeditorApp() {
     });
     GitService.fetchStatus()["catch"](function () {});
     FileService.getTree().then(function (data) {
-      var newData = data || [];
-      setTreeData(function (prevData) {
-        if (JSON.stringify(newData) === JSON.stringify(prevData)) return prevData;
-        SearchService.buildIndex(newData);
-        return newData;
-      });
+      setTreeData(_treeUpdater(data || []));
       checkOpenTabsForExternalChanges();
       EditorStore.setStatus("Workspace refreshed", "success");
     })["catch"](function (err) {

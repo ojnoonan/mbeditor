@@ -97,7 +97,8 @@ end
 | `rubocop_command` | `"rubocop"` | Command used for inline Ruby linting and formatting. |
 | `git_timeout` | `10` | Seconds each git subprocess may run; a timed-out call degrades its own field of the git panel instead of failing the request. `nil` disables the bound. |
 | `search_timeout` | `15` | Wall-clock bound on project-search subprocesses; a tripped deadline returns the partial results collected so far. `nil` disables. |
-| `search_respect_gitignore` | `false` | When `true`, project search and definition lookups skip files ignored by `.gitignore`. The default searches them, matching the editor's "show me everything on disk" behaviour. |
+| `search_respect_gitignore` | `true` | Project search and definition lookups skip files ignored by `.gitignore`, matching VS Code and ripgrep. Set to `false` to search ignored files too — expect it to be slow without ripgrep installed, since git then has to walk `node_modules`, `public/packs`, build output and caches. |
+| `ripgrep_command` | `nil` | Path to the `rg` binary. `nil` auto-resolves: `PATH` first, then the usual install prefixes (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, linuxbrew, cargo). Set this if ripgrep lives somewhere unusual. See [Search performance](#search-performance). |
 | `js_global_identifiers` | `[]` | Extra JS names declared as ambient globals in the editor — for runtime-only globals the static workspace scan can't see (e.g. `%w[Routes I18n]`). |
 | `js_program` | `true` | Load the workspace's own JS source into Monaco's TypeScript program, so cross-file references get real inferred types instead of ambient `any`. See [JavaScript intelligence](#javascript-intelligence). `false` falls back to ambient declarations alone. |
 | `js_program_exclude` | `%w[vendor]` | Directories excluded from that program, on top of `excluded_paths`. Point this at any third-party or generated JS — vendored libraries are UMD-wrapped, so their source costs parse time and contributes no globals. |
@@ -281,6 +282,33 @@ The gem keeps host/tooling responsibilities in the host app:
 
 All lint and test tools are auto-detected at runtime. The engine gracefully disables features if the tools are not available. Neither `rubocop`, `haml_lint`, nor any test framework are runtime dependencies of the gem itself — they are discovered from the host app's environment.
 
+## Search performance
+
+Project search and JS definition lookups pick a backend per call:
+**ripgrep → `git grep` → `grep`**. ripgrep is 10–30× faster than the fallbacks,
+so installing it is the single biggest thing you can do for search speed:
+
+```bash
+brew install ripgrep      # macOS
+apt install ripgrep       # Debian/Ubuntu
+```
+
+`GET /mbeditor/workspace` reports `searchBackend` (`"rg"`, `"git"` or `"grep"`)
+so you can check which tier is actually in use. Two things commonly make it
+`"git"` when you expected `"rg"`:
+
+- **ripgrep isn't on the server process's `PATH`.** A Rails server started from
+  launchd, systemd, foreman or an IDE inherits a stripped `PATH` that often
+  omits `/opt/homebrew/bin`. Mbeditor probes the usual install prefixes as well
+  as `PATH`; if yours is elsewhere, set `config.ripgrep_command`.
+- **ripgrep genuinely isn't installed.** The `git grep` tier is then used. It
+  honours `excluded_paths` and `.gitignore`, so it stays usable — but it is
+  still far slower than ripgrep on a large workspace.
+
+If search is slow, check `searchBackend` first, then confirm your build output
+(`public/packs`, `app/assets/builds`, bundler/npm caches) is either gitignored
+or listed in `excluded_paths`. Setting `search_respect_gitignore = false` makes
+git walk every ignored tree and will be slow without ripgrep.
 
 ## Asset Pipeline
 
