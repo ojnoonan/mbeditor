@@ -105,15 +105,18 @@ end
 | `rubocop_command` | `"rubocop"` | Command used for inline Ruby linting and formatting. |
 | `git_timeout` | `10` | Seconds each git subprocess may run; a timed-out call degrades its own field of the git panel instead of failing the request. `nil` disables the bound. |
 | `search_timeout` | `15` | Wall-clock bound on project-search subprocesses; a tripped deadline returns the partial results collected so far. `nil` disables. |
-| `search_respect_gitignore` | `false` | When `true`, project search and definition lookups skip files ignored by `.gitignore`. The default searches them, matching the editor's "show me everything on disk" behaviour. |
+| `search_respect_gitignore` | `true` | Project search and definition lookups skip files ignored by `.gitignore`, matching VS Code and ripgrep. Set to `false` to search ignored files too — expect it to be slow without ripgrep installed, since git then has to walk `node_modules`, `public/packs`, build output and caches. |
+| `ripgrep_command` | `nil` | Path to the `rg` binary. `nil` auto-resolves: `PATH` first, then the usual install prefixes (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, linuxbrew, cargo). Set this if ripgrep lives somewhere unusual. See [Search performance](#search-performance). |
 | `js_global_identifiers` | `[]` | Extra JS names declared as ambient globals in the editor — for runtime-only globals the static workspace scan can't see (e.g. `%w[Routes I18n]`). |
 | `js_program` | `true` | Load the workspace's own JS source into Monaco's TypeScript program, so cross-file references get real inferred types instead of ambient `any`. See [JavaScript intelligence](#javascript-intelligence). `false` falls back to ambient declarations alone. |
 | `js_program_exclude` | `%w[vendor]` | Directories excluded from that program, on top of `excluded_paths`. Point this at any third-party or generated JS — vendored libraries are UMD-wrapped, so their source costs parse time and contributes no globals. |
 | `js_syntax_check` | `:auto` | Save-time babel parse check for JS/JSX using the host's `mini_racer` + babel-standalone (auto-detected; no-op when either is absent). `false` disables. |
 | `babel_standalone_path` | `nil` | Explicit path to the babel-standalone bundle for the syntax check; `nil` looks up `babel.min.js`/`babel.js` in the host's asset pipeline. |
-| `ruby_lsp` | `:auto` | Use the host's [ruby-lsp](https://github.com/Shopify/ruby-lsp) for Ruby go-to-definition, hover, completion, and diagnostics when it's installed (a persistent process is managed per workspace). `false` disables. Without ruby-lsp everything degrades to the built-in grep/Ripper services — no behavior change. |
+| `ruby_lsp` | `:auto` | Use the host's [ruby-lsp](https://github.com/Shopify/ruby-lsp) for Ruby go-to-definition (with peek), find-references, hover, completion, diagnostics, document symbols, folding, formatting, signature help, smart-select, and constant rename when it's installed (a persistent process is managed per workspace). `false` disables. Without ruby-lsp everything degrades to the built-in grep/Ripper services — no behavior change. Adding `ruby-lsp-rails` to your Gemfile needs no configuration here: ruby-lsp loads it as an addon and its Rails-aware results come through automatically. |
 | `ruby_lsp_command` | `nil` | Override the ruby-lsp launch command (String or Array). `nil` auto-resolves `bin/ruby-lsp` → installed gem → `bundle exec ruby-lsp`. |
 | `ruby_lsp_timeout` | `3` | Seconds per LSP request; on timeout (e.g. during initial indexing) the editor falls back to the built-in services for that request. |
+| `model_graph` | *(no setting)* | The Models sidebar tab draws an entity diagram of your ActiveRecord models and their associations, read by reflection when the tab is opened. Pan by dragging, zoom by scrolling, click a model for its schema. Also writes `tmp/mbeditor_model_graph.mmd`, a Mermaid ER diagram that GitHub and VS Code render natively. Needs no configuration; apps without ActiveRecord simply see a message. |
+| `exception_capture` | `:auto` | Record exceptions raised by your controllers and list them in the Problems panel, with clickable backtrace frames. Development only; backtraces are trimmed to frames inside the workspace. `false` disables. Note exception messages can include request params — the same exposure the log panel already has. |
 
 ### Authentication
 
@@ -368,6 +371,33 @@ common cause of *"the other person's edits never show up."* For pairing, run a s
 worker (`WEB_CONCURRENCY=0`, or `bundle exec rails server` which is single-process by
 default). A multi-worker setup would additionally need a cross-process cable adapter, but
 the in-memory buffer still would not be shared — single-process is the supported mode.
+## Search performance
+
+Project search and JS definition lookups pick a backend per call:
+**ripgrep → `git grep` → `grep`**. ripgrep is 10–30× faster than the fallbacks,
+so installing it is the single biggest thing you can do for search speed:
+
+```bash
+brew install ripgrep      # macOS
+apt install ripgrep       # Debian/Ubuntu
+```
+
+`GET /mbeditor/workspace` reports `searchBackend` (`"rg"`, `"git"` or `"grep"`)
+so you can check which tier is actually in use. Two things commonly make it
+`"git"` when you expected `"rg"`:
+
+- **ripgrep isn't on the server process's `PATH`.** A Rails server started from
+  launchd, systemd, foreman or an IDE inherits a stripped `PATH` that often
+  omits `/opt/homebrew/bin`. Mbeditor probes the usual install prefixes as well
+  as `PATH`; if yours is elsewhere, set `config.ripgrep_command`.
+- **ripgrep genuinely isn't installed.** The `git grep` tier is then used. It
+  honours `excluded_paths` and `.gitignore`, so it stays usable — but it is
+  still far slower than ripgrep on a large workspace.
+
+If search is slow, check `searchBackend` first, then confirm your build output
+(`public/packs`, `app/assets/builds`, bundler/npm caches) is either gitignored
+or listed in `excluded_paths`. Setting `search_respect_gitignore = false` makes
+git walk every ignored tree and will be slow without ripgrep.
 
 ## Asset Pipeline
 

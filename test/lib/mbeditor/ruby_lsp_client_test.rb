@@ -163,6 +163,49 @@ module Mbeditor
       assert_raises(RubyLspClient::NotReadyError) { definition_request }
     end
 
+    test "health reports the state without booting the server" do
+      assert_equal :stopped, client.health[:state], "asking how you are must not start you"
+      assert_equal 0, client.health[:restarts]
+      assert_nil client.health[:error]
+
+      definition_request
+      assert_equal :ready, client.health[:state]
+    end
+
+    test "health surfaces the reason a start failed" do
+      Mbeditor.configuration.ruby_lsp_command = ["/nonexistent/ruby-lsp-binary"]
+      RubyLspClient.reset!
+
+      assert_raises(RubyLspClient::NotReadyError) { definition_request }
+
+      health = client.health
+      assert_equal 1, health[:restarts]
+      assert_match(/nonexistent/, health[:error].to_s, "the chip needs something to show the user")
+    end
+
+    test "reset! revives a client latched at :failed" do
+      Mbeditor.configuration.ruby_lsp_command = ["/nonexistent/ruby-lsp-binary"]
+      RubyLspClient.reset!
+
+      # Exhaust the crash budget: RESTART_BACKOFFS gates retries by elapsed
+      # time, so drive the counter directly rather than sleeping 31 seconds.
+      RubyLspClient::MAX_RESTARTS.times { client.send(:ensure_started) }
+      client.instance_variable_set(:@crash_times, Array.new(RubyLspClient::MAX_RESTARTS) do
+        Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      end)
+      client.send(:ensure_started)
+
+      assert_equal :failed, client.state, "budget exhausted should latch"
+      assert_raises(RubyLspClient::NotReadyError) { definition_request }
+
+      use_fake_server
+      assert client.reset!, "reset! should clear the latch and come back ready"
+      assert_equal :ready, client.state
+      assert_equal 0, client.health[:restarts]
+      assert_nil client.health[:error]
+      assert_kind_of Array, definition_request
+    end
+
     test "server-initiated requests during initialize are answered and don't wedge the handshake" do
       use_fake_server("FAKE_LSP_SEND_SERVER_REQUEST" => "1")
       RubyLspClient.reset!

@@ -39,6 +39,7 @@ module Mbeditor
     end
 
     def teardown
+      FileUtils.rm_rf(@upload_dir) if @upload_dir
       FileUtils.rm_rf(@workspace)
       Mbeditor.configure do |c|
         c.authenticate_with = nil
@@ -168,11 +169,26 @@ module Mbeditor
         assert_equal 5, rubocop["startCol"]
         assert_includes rubocop["message"], "[Layout/SpaceAroundOperators]"
 
+        assert_equal "https://docs.rubocop.org/rubocop/cops_layout.html#layoutspacearoundoperators",
+                     rubocop["codeHref"], "the cop name links out to its docs"
+
+        # ruby-lsp embeds the fix edits in the diagnostic, so the lightbulb
+        # applies them with no second request.
+        fixes = rubocop["fixes"]
+        assert_equal ["Autocorrect Layout/SpaceAroundOperators",
+                      "Disable Layout/SpaceAroundOperators for this line"],
+                     fixes.map { |f| f["title"] }
+        edit = fixes.first["edits"].first
+        assert_equal 3, edit["startLine"], "0-based LSP line 2 becomes 1-based 3"
+        assert_equal 5, edit["startCol"]
+        assert_equal " = ", edit["text"]
+
         prism = markers.last
         assert_equal "error", prism["severity"]
         assert_equal "prism", prism["source"], "non-RuboCop sources must not claim a lightbulb"
         assert_equal "", prism["copName"]
         assert_equal false, prism["correctable"]
+        assert_nil prism["fixes"], "a diagnostic with no code actions carries no fixes key"
       end
     ensure
       Mbeditor::RubyLspClient.reset!
@@ -180,8 +196,242 @@ module Mbeditor
     end
 
     test "ruby_lsp rejects an unknown lsp_method" do
-      post "/mbeditor/ruby_lsp", params: { lsp_method: "rename", path: "a.rb", content: "", line: 1, character: 1 }
+      post "/mbeditor/ruby_lsp", params: { lsp_method: "workspace/executeCommand", path: "a.rb",
+                                           content: "", line: 1, character: 1 }
       assert_response :bad_request
+    end
+
+    test "ruby_lsp passes raw methods through and rewrites their URIs" do
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "references", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        refs = json["result"]
+        assert_equal 1, refs.length, "the gem location has no place in this editor and must be dropped"
+        assert_equal "app/models/user.rb", refs.first["uri"], "absolute file:// URIs never reach the browser"
+        refute_includes response.body, "file://"
+        # Raw passthrough keeps LSP's own 0-based ranges; the JS provider converts.
+        assert_equal 6, refs.first.dig("range", "start", "line")
+
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "document_symbol", path: "app/models/user.rb",
+                                             content: "class User; end" }
+        assert_response :ok
+        assert_equal "User", json["result"].first["name"]
+        assert_equal "full_name", json["result"].first["children"].first["name"]
+
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "folding_range", path: "app/models/user.rb",
+                                             content: "class User; end" }
+        assert_response :ok
+        assert_equal [0, 2], json["result"].map { |r| r["startLine"] }
+
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "document_highlight", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        assert_equal [1, 2], json["result"].map { |h| h["kind"] }
+      end
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
+    end
+
+    test "ruby_lsp forwards formatting options and selection-range positions" do
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "formatting", path: "app/models/user.rb",
+                                             content: "class User; end", tab_size: 4, insert_spaces: false }
+        assert_response :ok
+        assert_includes json["result"].first["newText"], "tabSize=4"
+        assert_includes json["result"].first["newText"], "insertSpaces=false"
+
+        # Defaults when the editor sends nothing.
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "formatting", path: "app/models/user.rb",
+                                             content: "class User; end" }
+        assert_response :ok
+        assert_includes json["result"].first["newText"], "tabSize=2"
+        assert_includes json["result"].first["newText"], "insertSpaces=true"
+
+        # selectionRange takes a list of positions, not the single `position`
+        # every other positional method uses.
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "selection_range", path: "app/models/user.rb",
+                                             content: "class User; end", line: 3, character: 5 }
+        assert_response :ok
+        chain = json["result"].first
+        assert_equal 2, chain.dig("range", "start", "line")
+        assert_equal 0, chain.dig("parent", "range", "start", "character")
+        assert_equal 0, chain.dig("parent", "parent", "range", "start", "line"), "the chain survives intact"
+
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "signature_help", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        assert_equal "full_name(first, last)", json.dig("result", "signatures", 0, "label")
+        assert_equal 1, json.dig("result", "activeParameter")
+
+        # ruby-lsp embeds file:// links in signature documentation. They must
+        # get the same treatment as hover's: no absolute host path reaches the
+        # browser, in-workspace links become openable, gem links go inert.
+        docs = json.dig("result", "signatures", 0, "documentation", "value")
+        refute_includes docs, "file://"
+        refute_includes response.body, Rails.root.to_s
+        assert_includes docs, "command:mbeditor.openDefinition"
+        assert_includes docs, "`set.rb`", "a gem this editor cannot open must not look like a link"
+      end
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
+    end
+
+    # ── exceptions ───────────────────────────────────────────────────────────
+
+    test "exceptions returns recorded host-app failures newest first" do
+      Mbeditor::ExceptionLog.clear!
+      error = RuntimeError.new("kaboom")
+      error.set_backtrace(["#{@workspace}/app/models/user.rb:3:in 'go'",
+                           "/gems/actionpack/lib/metal.rb:1:in 'dispatch'"])
+      Mbeditor::ExceptionLog.record(error, { controller: "UsersController", action: "show" },
+                                    workspace_root: @workspace)
+
+      get "/mbeditor/exceptions"
+      assert_response :ok
+
+      entry = json["exceptions"].first
+      assert_equal "RuntimeError", entry["klass"]
+      assert_equal "UsersController", entry["controller"]
+      assert_equal [{ "file" => "app/models/user.rb", "line" => 3 }], entry["frames"],
+                   "gem frames are dropped and the workspace root stripped"
+      refute_includes response.body, @workspace, "no absolute host path in the payload"
+    ensure
+      Mbeditor::ExceptionLog.clear!
+    end
+
+    test "exceptions can be cleared" do
+      Mbeditor::ExceptionLog.record(RuntimeError.new("x"), {}, workspace_root: @workspace)
+
+      delete "/mbeditor/exceptions"
+      assert_response :ok
+
+      get "/mbeditor/exceptions"
+      assert_empty json["exceptions"]
+    ensure
+      Mbeditor::ExceptionLog.clear!
+    end
+
+    test "clearing exceptions requires the client header" do
+      ActionDispatch::Integration::Session.new(Rails.application).tap do |sess|
+        sess.delete "/mbeditor/exceptions", as: :json
+        assert_equal 403, sess.response.status
+      end
+    end
+
+    # ── ruby_rename ──────────────────────────────────────────────────────────
+
+    def with_fake_lsp
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+      with_ruby_lsp_available(true) { yield }
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
+    end
+
+    def sibling_path
+      File.join(@workspace, "app", "models", "rename_sibling.rb")
+    end
+
+    test "ruby_rename rejects anything that is not a Ruby constant" do
+      ["lower_case", "9Bad", "With Space", "", "Foo::bar"].each do |name|
+        post "/mbeditor/ruby_rename", params: { path: "app/models/user.rb", content: "class User; end",
+                                                line: 1, character: 7, new_name: name }
+        assert_response :unprocessable_content, "#{name.inspect} should be refused"
+        assert_includes json["error"], "constants"
+      end
+    end
+
+    test "ruby_rename writes closed files and returns edits for open ones" do
+      File.write(sibling_path, "class User\n  def x(User); end\nend\n")
+
+      with_fake_lsp do
+        post "/mbeditor/ruby_rename", params: {
+          path: "app/models/user.rb", content: "class User; end", line: 1, character: 7,
+          new_name: "Account", open_paths: ["app/models/user.rb"]
+        }
+        assert_response :ok
+
+        # The open file is never written; its edits come back for Monaco.
+        assert_equal ["app/models/user.rb"], json["edits"].keys
+        assert_equal "class User; end\n", File.read(File.join(@workspace, "app/models/user.rb")),
+                     "an open buffer must not be overwritten behind the editor's back"
+        edit = json["edits"]["app/models/user.rb"].first
+        assert_equal [1, 7, 1, 11], edit.values_at("startLine", "startCol", "endLine", "endCol")
+        assert_equal "Account", edit["text"]
+
+        # The closed sibling is written, with both of its edits applied.
+        assert_equal ["app/models/rename_sibling.rb"], json["written"]
+        assert_equal "class Account\n  def x(Account); end\nend\n", File.read(sibling_path)
+
+        # And the out-of-workspace target is refused, visibly.
+        assert_equal 1, json["rejected"].length
+        assert_equal "class User; end\n", File.read(File.join(@workspace, "app/models/user.rb"))
+      end
+    end
+
+    test "ruby_rename writes a file the editor did not declare as open" do
+      File.write(sibling_path, "class User\n  def x(User); end\nend\n")
+
+      with_fake_lsp do
+        post "/mbeditor/ruby_rename", params: {
+          path: "app/models/user.rb", content: "class User; end", line: 1, character: 7,
+          new_name: "Account", open_paths: []
+        }
+        assert_response :ok
+        assert_empty json["edits"], "nothing is open, so nothing comes back for Monaco"
+        assert_equal %w[app/models/user.rb app/models/rename_sibling.rb].sort, json["written"].sort
+        assert_equal "class Account; end\n", File.read(File.join(@workspace, "app/models/user.rb"))
+      end
+    end
+
+    test "ruby_rename returns 422 when ruby-lsp is unavailable" do
+      with_ruby_lsp_available(false) do
+        post "/mbeditor/ruby_rename", params: { path: "app/models/user.rb", content: "class User; end",
+                                                line: 1, character: 7, new_name: "Account" }
+        assert_response :unprocessable_content
+        assert_equal false, json["rubyLspAvailable"]
+      end
+    end
+
+    test "ruby_rename requires the client header" do
+      ActionDispatch::Integration::Session.new(Rails.application).tap do |sess|
+        sess.post "/mbeditor/ruby_rename",
+                  params: { path: "app/models/user.rb", new_name: "Account" }, as: :json
+        assert_equal 403, sess.response.status
+      end
+    end
+
+    test "definition results carry a full range so peek has something to show" do
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "app/models/user.rb",
+                                             content: "class User; end", line: 1, character: 7 }
+        assert_response :ok
+        first = json["results"].first
+        assert_equal 5, first["line"]
+        assert_equal 3, first["col"], "0-based character 2 becomes 1-based 3"
+        assert_equal 5, first["endLine"]
+        assert_equal 11, first["endCol"]
+      end
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
     end
 
     test "ruby_lsp rejects a traversal path" do
@@ -200,12 +450,67 @@ module Mbeditor
       end
     end
 
-    test "ruby_lsp returns 422 with the availability flag when the probe fails" do
+    test "ruby_lsp returns 422 with the availability flag and a reason when the probe fails" do
       with_ruby_lsp_available(false) do
         post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "app/models/user.rb",
                                              content: "class User; end", line: 1, character: 1 }
         assert_response :unprocessable_content
         assert_equal false, json["rubyLspAvailable"]
+        assert_predicate json["reason"].to_s, :present?, "the status chip needs something to show"
+      end
+    end
+
+    test "ruby_lsp health needs no path and does not start the server" do
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "health" }
+        assert_response :ok
+        assert_equal true, json["available"]
+        assert_equal false, json["disabled"]
+        assert_equal "stopped", json["state"], "health must not boot the process"
+        assert_equal 0, json["restarts"]
+      end
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
+    end
+
+    test "ruby_lsp health reports unavailability with a reason instead of 422" do
+      with_ruby_lsp_available(false) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "health" }
+        assert_response :ok, "the indicator must be able to ask even when ruby-lsp is gone"
+        assert_equal false, json["available"]
+        assert_predicate json["reason"].to_s, :present?
+      end
+    end
+
+    test "ruby_lsp restart brings the client back to ready" do
+      original_cmd = Mbeditor.configuration.ruby_lsp_command
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
+      Mbeditor::RubyLspClient.reset!
+
+      with_ruby_lsp_available(true) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "restart" }
+        assert_response :ok
+        assert_equal true, json["available"]
+        assert_equal "ready", json["state"]
+        assert_nil json["error"]
+      end
+    ensure
+      Mbeditor::RubyLspClient.reset!
+      Mbeditor.configuration.ruby_lsp_command = original_cmd
+      Mbeditor::AvailabilityProbe.reset!
+    end
+
+    test "ruby_lsp health never leaks the resolved command" do
+      with_ruby_lsp_available(false) do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "health" }
+        assert_response :ok
+        refute_includes json.keys, "command"
+        refute_includes response.body, Rails.root.to_s
       end
     end
 
@@ -233,6 +538,12 @@ module Mbeditor
                         "[user.rb](command:mbeditor.openDefinition?" \
                         "#{ERB::Util.url_encode(%(["app/models/user.rb",3]))})"
         assert_includes json["markdown"], "`set.rb`"
+        # ruby-lsp strips one "# " per comment line, so a ##-opened doc block
+        # arrives as "# Title" and would render as an <h1> filling the hover.
+        assert_includes json["markdown"], "\\# Doc comment opened with ## in the source"
+        refute_match(/^# /, json["markdown"], "no comment line may render as a heading")
+        # The Ruby code fence is untouched — # in there is source, not a heading.
+        assert_includes json["markdown"], "```ruby\nUser\n```"
 
         post "/mbeditor/ruby_lsp", params: { lsp_method: "completion", path: "app/models/user.rb",
                                              content: "class User; end", line: 1, character: 7 }
@@ -2185,6 +2496,197 @@ module Mbeditor
            as: :json
       assert_response :ok
       assert_equal true, json["ok"]
+    end
+
+    # ---------------------------------------------------------------------------
+    # import
+    # ---------------------------------------------------------------------------
+
+    # Rack::Test::UploadedFile needs a file on disk; @upload_dir holds the
+    # sources so they are never confused with workspace contents.
+    def uploaded(name, content)
+      @upload_dir ||= Dir.mktmpdir("mbeditor_uploads_")
+      source = File.join(@upload_dir, name)
+      FileUtils.mkdir_p(File.dirname(source))
+      File.binwrite(source, content)
+      ::Rack::Test::UploadedFile.new(source, "application/octet-stream", true)
+    end
+
+    test "import writes a dropped file into the workspace" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("notes.txt", "hello")],
+        paths: ["notes.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_equal ["notes.txt"], json["imported"].map { |e| e["path"] }
+      assert_empty json["conflicts"]
+      assert_empty json["errors"]
+      assert_equal "hello", File.read(File.join(@workspace, "notes.txt"))
+    end
+
+    test "import preserves binary content byte for byte" do
+      bytes = "\x89PNG\r\n\x1a\n\x00\x01\x02\xff".dup.force_encoding(Encoding::BINARY)
+
+      post "/mbeditor/import", params: {
+        files: [uploaded("logo.png", bytes)],
+        paths: ["app/assets/logo.png"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_equal bytes, File.binread(File.join(@workspace, "app/assets/logo.png"))
+    end
+
+    test "import reports an existing target as a conflict without writing it" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("README.md", "replacement")],
+        paths: ["README.md"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_equal ["README.md"], json["conflicts"].map { |e| e["path"] }
+      assert_equal "# Hello\n", File.read(File.join(@workspace, "README.md"))
+    end
+
+    test "import overwrites when asked to" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("README.md", "replacement")],
+        paths: ["README.md"],
+        on_conflict: "overwrite"
+      }
+
+      assert_response :ok
+      assert_equal ["README.md"], json["imported"].map { |e| e["path"] }
+      assert_equal "replacement", File.read(File.join(@workspace, "README.md"))
+    end
+
+    test "import rejects a path outside the workspace as an entry error" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("evil.txt", "x")],
+        paths: ["../evil.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_empty json["imported"]
+      assert_equal ["../evil.txt"], json["errors"].map { |e| e["path"] }
+    end
+
+    test "import rejects an excluded path as an entry error" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("cache.txt", "x")],
+        paths: ["tmp/cache.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_empty json["imported"]
+      assert_equal ["tmp/cache.txt"], json["errors"].map { |e| e["path"] }
+      refute File.exist?(File.join(@workspace, "tmp", "cache.txt"))
+    end
+
+    # File.expand_path raises ArgumentError on a null byte. Before resolve_path
+    # rescued it, that escaped the per-entry loop and the blanket rescue turned
+    # the whole drop into a 422 — one malformed name losing every good file.
+    test "import isolates a null-byte path to its own entry error" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("good.txt", "kept"), uploaded("weird.txt", "x")],
+        paths: ["good.txt", "we\0ird.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :ok
+      assert_equal ["good.txt"], json["imported"].map { |e| e["path"] }
+      assert_equal ["we\0ird.txt"], json["errors"].map { |e| e["path"] }
+      assert_equal "kept", File.read(File.join(@workspace, "good.txt"))
+    end
+
+    test "import without the client header is forbidden" do
+      # Bypass the header-injecting override defined at the top of this class.
+      # Going straight to the session skips the copy-back that populates
+      # @response for assert_response, so assert on the session's own response.
+      integration_session.post "/mbeditor/import", params: {
+        files: [uploaded("notes.txt", "hello")],
+        paths: ["notes.txt"]
+      }
+
+      assert_equal 403, integration_session.response.status
+      refute File.exist?(File.join(@workspace, "notes.txt"))
+    end
+
+    test "import rejects a batch whose files and paths lengths differ" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("a.txt", "a")],
+        paths: ["a.txt", "b.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :unprocessable_content
+      assert_match(/same length/, json["error"])
+    end
+
+    test "import rejects an unknown conflict mode" do
+      post "/mbeditor/import", params: {
+        files: [uploaded("a.txt", "a")],
+        paths: ["a.txt"],
+        on_conflict: "clobber"
+      }
+
+      assert_response :unprocessable_content
+      assert_equal "Unknown on_conflict: clobber", json["error"]
+      refute File.exist?(File.join(@workspace, "a.txt"))
+    end
+
+    test "import rejects values that are not uploaded files" do
+      post "/mbeditor/import", params: {
+        files: ["not-an-upload"],
+        paths: ["a.txt"],
+        on_conflict: "ask"
+      }
+
+      assert_response :unprocessable_content
+      assert_equal "files must be uploaded files", json["error"]
+      refute File.exist?(File.join(@workspace, "a.txt"))
+    end
+
+    # 101 file parts stays under Rack's multipart_part_limit of 128, so the
+    # request reaches the action and the guard answers with a real 422. Raising
+    # IMPORT_MAX_FILES to 128 or beyond would make this a 500 instead.
+    test "import rejects a batch over the file count limit" do
+      count = EditorsController::IMPORT_MAX_FILES + 1
+      files = Array.new(count) { |i| uploaded("f#{i}.txt", "x") }
+      paths = Array.new(count) { |i| "f#{i}.txt" }
+
+      post "/mbeditor/import", params: { files: files, paths: paths, on_conflict: "ask" }
+
+      assert_response :unprocessable_content
+      assert_match(/Too many files/, json["error"])
+      refute File.exist?(File.join(@workspace, "f0.txt"))
+    end
+
+    test "import rejects a batch over the total size limit" do
+      # Two files of 30 MB each clear the per-file 5 MB check only because the
+      # batch guard runs first — this asserts the batch guard, not the entry one.
+      chunk = "x" * (30 * 1024 * 1024)
+
+      post "/mbeditor/import", params: {
+        files: [uploaded("big1.bin", chunk), uploaded("big2.bin", chunk)],
+        paths: ["big1.bin", "big2.bin"],
+        on_conflict: "ask"
+      }
+
+      assert_response :unprocessable_content
+      assert_match(/too large/i, json["error"])
+    end
+
+    test "import rejects an empty batch" do
+      post "/mbeditor/import", params: { on_conflict: "ask" }
+
+      assert_response :unprocessable_content
+      assert_match(/Nothing to import/, json["error"])
     end
 
     private

@@ -14,12 +14,13 @@ cd test/dummy && rails server  # http://localhost:3000/mbeditor
 
 **Backend:** Rails engine. Controllers are thin renderers; business logic lives in `app/services/mbeditor/`. Key services:
 - `GitInfoService` — concurrent git metadata fetch (wave orchestration, 5 s TTL cache)
-- `SearchReplaceService` — rg/grep subprocess execution, ReDoS guards, replace-in-files (supersedes `CodeSearchService`)
+- `SearchReplaceService` — rg/grep subprocess execution, ReDoS guards, replace-in-files (supersedes `CodeSearchService`). Three tiers: rg > `git grep` > grep. **Every tier must put `excluded_paths` on the subprocess command line** — as `--glob=!`, `:(exclude)` pathspecs and `--exclude-dir` respectively. Post-filtering the results is not equivalent: the walk has already happened, and the git tier silently omitted them for a long time, which is what made search unusable on host apps without ripgrep. `GET /workspace` reports `searchBackend` so the live tier is visible. No `LC_ALL=C` on the git tier — measured neutral for `-F -i` and 2.2x *slower* for `-E`.
 - `EditorStateService` — JSON state persistence with file locking; used by both `EditorsController` and `EditorChannel`
 - `ExclusionMatcher` — unified path exclusion predicate
 - `FileOperationService` — all file mutations (save, create, rename, delete) with path-safety invariants
+- `FileImportService` — writes files dropped in from outside the browser; owns the ask/overwrite/rename conflict protocol
 - `ProcessRunner` — subprocess-with-timeout (used by `GitService`, `TestRunnerService`, lint path)
-- `AvailabilityProbe` — checks tool availability (rg, rubocop, haml_lint, etc.)
+- `AvailabilityProbe` — checks tool availability (rg, rubocop, haml_lint, etc.). Probes run **outside** the mutex: they spawn subprocesses, and a missing tool re-probes every 60 s, so holding the lock serialised every other check. `rg_command` resolves `PATH` *and* the usual install prefixes — a server started from launchd/systemd/an IDE has a stripped `PATH`, which silently dropped search to the 10-30x slower tier.
 - `FileTreeService` — builds the directory tree response
 - `RubyDefinitionService` — AST-based definition search with self-warming disk cache
 - `JsProgramService` — the workspace's own JS source, fed to Monaco's TypeScript program (see below)
@@ -88,7 +89,183 @@ parse time and contributes nothing, since it is UMD-wrapped.
 Nothing truncates silently: `/js_program` reports `skipped` with a reason per
 file, and `/js_globals` reports `truncated`.
 
+## Ruby intelligence: ruby-lsp, and what it does not cover
+
+`lib/mbeditor/ruby_lsp_client.rb` runs one ruby-lsp per workspace and speaks LSP
+over stdio. The handshake sends `initializationOptions: {}` — an absent
+`enabledFeatures` means ruby-lsp enables **every** feature (`server.rb`
+`run_initialize`), so nothing needs turning on server-side; the only limit is
+what `RUBY_LSP_METHODS` asks for.
+
+`RUBY_LSP_METHODS` in `editors_controller.rb` is the trust boundary and the
+single place a new capability is added. Two conventions live side by side:
+
+- **The original four** (`definition`, `hover`, `completion`, `diagnostics`)
+  have bespoke translators producing 1-based, editor-shaped payloads. Their
+  consumers depend on those shapes — don't "unify" them.
+- **`RUBY_LSP_RAW`** passes raw LSP JSON through, ranges staying **0-based on
+  the wire**, converted by `lspRange()` at the Monaco provider. Eight more
+  hand-written translators would be ~200 lines restating shapes Monaco already
+  understands.
+- Symbol-valued entries (`:health`, `:restart`) are answered locally, before
+  `resolve_path` — they carry no document.
+
+`sanitize_lsp_uris` is the one boundary every raw method crosses: in-workspace
+`file://` URIs become relative paths, anything else is **dropped**. It also
+rewrites URIs embedded in markdown strings — ruby-lsp puts absolute `file://`
+links inside hover and signatureHelp documentation, which both leak host paths
+and render as links that go nowhere.
+
+**Provider registration is chosen by trigger frequency.** Gesture-triggered
+providers (definition, references, rename, format, signature help, selection
+range) are free. `documentSymbol` and `foldingRange` fire on content change but
+are one Prism parse. `documentHighlight` fires per cursor move — the one to
+watch. There is deliberately no batch endpoint or client-side cache: this is
+dev-only localhost and `sync_document` is already digest-guarded.
+
+**Things that look redundant and are not:**
+
+- **`ruby_outline.js` stays** even though a `documentSymbol` provider is
+  registered. ruby-lsp's `document_symbol.rb` emits no method visibility and no
+  `describe`/`it`/`test` entries, and the outline panel groups on both. The
+  provider is *additive*, lighting up breadcrumbs, sticky scroll and
+  Ctrl+Shift+O; it is not a replacement. The lexer also covers ERB/HAML and the
+  ruby-lsp-is-down case.
+- **`/quick_fix` and `/format` stay** as fallbacks for when diagnostics came
+  from the plain-rubocop path rather than ruby-lsp.
+- **ERB never goes to ruby-lsp** (Prism cannot parse it) — every provider gates
+  on `isInsideErbTag` and takes the grep/Ripper path.
+
+**Code actions cost nothing.** ruby-lsp's `textDocument/codeAction` handler only
+echoes back `diagnostic.data.code_actions`, so the fixes are lifted straight off
+the diagnostics response and applied as a native Monaco workspace edit — no
+codeAction call, no `rubocop -A` subprocess. That payload is also the only
+source of "Disable <cop> for this line". Because those edits arrive from a
+subprocess and go straight into the buffer, `sanitize_code_actions` keeps an
+action only when every edit in it targets the document we asked about.
+
+**Rename is constants-only** — `Rename#perform` locates
+`ConstantReadNode | ConstantPathNode | ConstantPathTargetNode` and nothing else.
+`resourceOperations` is deliberately **not** declared: without it ruby-lsp
+returns a plain `changes` map and never emits a `RenameFile`, so it cannot move
+a file out from under an open tab. `/ruby_rename` splits the edit by whether a
+file is open — open files get edits back for Monaco to apply (undoable, marks
+dirty), closed files are written server-side. That split is what keeps unsaved
+work safe: anything dirty is by definition open.
+
+**Diagnostics rendering.** Severity is graded Error/Warning/Info/Hint (all
+non-errors were previously one yellow warning). `LspDiagnosticsTranslator.unnecessary?`
+decides what Monaco fades via `MarkerTag.Unnecessary`, and is shared by the
+ruby-lsp and `/lint` paths. It matches Prism's cop-less duplicates too —
+otherwise an un-faded parser squiggle draws over the faded RuboCop one and
+nothing appears greyed out. Hover markdown escapes a leading `#` outside code
+fences: ruby-lsp strips one `# ` per comment line, so a `##`-opened doc block
+would render as an `<h1>`.
+
+**Health.** A failure sets a 60 s backoff (`MBEDITOR_RUBY_LSP_DISABLED_UNTIL`),
+not the old permanent flag flip; `noteLspFailure` in `editor_plugins.js` is the
+only writer. `RubyLspClient#reset!` clears the crash budget — it must clear
+`@crash_times` or `restart_allowed?` re-latches `:failed` immediately.
+
+**ruby-lsp-rails needs no code here.** It is a ruby-lsp *addon*: if the host has
+it, ruby-lsp loads it and its Rails-aware hover/definition/codeLens flow through
+this bridge unchanged. Its model hover overlaps the existing `SchemaService` /
+`model_schema` endpoint.
+
+**Debuggers freeze the editor.** `byebug`/`debug` suspend every thread, and the
+editor is served by the app being debugged. Use `rdbg --open` (socket-based, so
+other threads keep serving), or run mbeditor from a second process.
+
+## Model graph
+
+`app/services/mbeditor/model_graph_service.rb` reads the host app's
+ActiveRecord models by **reflection**, not by parsing model files: mbeditor
+runs inside the host app, so `reflect_on_all_associations` is right there and
+resolves `class_name:`, `through:`, polymorphic and inverse sides correctly —
+all of which regex or AST parsing of `has_many` lines silently gets wrong.
+ruby-lsp cannot help here; its index models constants and methods, not
+associations.
+
+Never touches the database connection for the graph itself. Reflections are
+pure metadata, so it works against a database that isn't running or migrated;
+`columns` is attempted and degrades to an empty list. Only the first
+`MAX_COLUMNS_SENT` columns travel — the box shows those, the schema modal
+fetches the rest from `/model_schema`.
+
+Cached on a fingerprint of `app/models` and `db/migrate` mtimes plus file
+count, so saving a model or adding a migration invalidates it with **no
+file-change hook to keep in sync**. `?refresh=1` forces a rebuild.
+`Rails.application.eager_load!` is the expensive step, which is why the graph
+is only built when the tab is opened. Also writes
+`tmp/mbeditor_model_graph.{json,mmd}`; the `.mmd` is a Mermaid erDiagram that
+GitHub and VS Code render natively.
+
+The diagram is a **view, not a panel**: the activity-bar button opens it as an
+editor tab that takes over the central area. There is no sidebar half — a graph
+is inherently wide and a ~300px panel only ever shows its first column. Layout
+is radial: the most-connected model
+is the hub, everything else sits in rings by hop count, ordered within a ring
+by a barycentre sweep to cut edge crossings. Three things that look like
+over-caution and are not: the hub is positioned by its **centre** like every
+other node (placing it by its top-left shifts it half a box into the ring
+around it), ring radius must grow monotonically (a busy inner ring gets a large
+circumference-derived radius and the next ring would otherwise land inside it),
+and each node claims arc proportional to its own footprint (spacing evenly by
+count makes tall boxes collide).
+
+Each edge is drawn twice: the visible 1.2px line, and a transparent 14px twin
+beneath it that carries the hover. A thin stroke is its own hit area, so
+without the twin the association lines are effectively un-hoverable.
+
+Pan/zoom is wired through a **callback ref**, not `useRef` + `useEffect`. The
+SVG mounts on a render where the graph data has not changed — `loading` flips
+false separately from the data arriving — so an effect keyed on the data never
+re-runs once the element exists and the listener is never attached. The wheel
+listener is also manual and non-passive; React's `onWheel` is passive, so
+`preventDefault` is ignored and the editor scrolls instead of the diagram
+zooming.
+
+## Runtime exceptions
+
+`lib/mbeditor/exception_log.rb` — a 50-entry ring of host-app exceptions, in
+`lib/` (not autoloaded) so a Zeitwerk reload can't wipe what you're reading.
+Fed by an `ActiveSupport::Notifications` subscriber on
+`process_action.action_controller` (`Engine.subscribe_to_exceptions`), broadcast
+over the existing cable channel and shown in the Problems panel.
+
+A Rack middleware **cannot** be used: `ActionDispatch::DebugExceptions` rescues
+and renders the error, so nothing outside it sees the raise.
+`Rails.error.subscribe` is a nicer API but only carries unhandled request errors
+reliably on newer Rails, and this gem supports 7.1.
+
+Backtraces are filtered to frames under the workspace root, root stripped,
+capped at 10 — absolute host paths are both a leak and unopenable. Development
+only, and `config.exception_capture = false` disables it. Exceptions are not
+turned into Monaco markers: markers are per-model and the next lint wipes them.
+
 **No filesystem watcher, deliberately.** External changes are picked up by polling: the file tree every 10 s (`MbeditorApp.js`), git status every 5 s, and the git line-number tint every 10 s (`EditorPanel.js`). An earlier `listen`-based watcher was removed in 0.10.1 — inotify watches are a per-user kernel budget shared with the host app's own reloader, so the watcher could exhaust it and break the host. The WebSocket `files_changed` push remains the instant path for mbeditor's own writes; polling covers everything else. Don't reintroduce a watcher without re-reading that trade-off.
+
+**A poll that finds nothing must not re-render.** Every one of these fires
+forever, so any state write on an unchanged tick is a permanent idle re-render
+of the whole app — `MbeditorApp` subscribes to the entire store, so a new
+`treeData` array costs a full tree reconciliation. Two rules, both learned the
+hard way:
+
+- Fetched JSON is always a *fresh* object. Returning it from a functional
+  setState updater unconditionally defeats every `React.memo` downstream
+  (`FileTreeMemo` compares `prev.items === next.items`). Compare and return the
+  previous value — `_treeUpdater` in `MbeditorApp.js` is the shared helper, and
+  a full `JSON.stringify` of a ~1600-node tree costs 0.33 ms, far less than the
+  render it prevents. A cheap partial hash is not enough: an earlier version
+  compared only top-level entry names, so it re-rendered anyway *and* never
+  rebuilt the quick-open index for files added inside a directory.
+- The same applies to any handler that builds a fresh object literal per tick.
+  The ruby-lsp health chip called `setLspHealth(readLspHealth())` on a 10 s
+  interval; React bails on `Object.is`, and two object literals never are, so
+  it re-rendered the app every 10 s regardless of health. Compare the fields.
+
+Verified by counting `React.createElement` calls over an idle minute: 5 tree
+polls and 5 health ticks now produce zero re-renders.
 
 ## Release workflow
 

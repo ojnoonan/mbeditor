@@ -4,8 +4,9 @@
     {
       "name": "Dummy App (Rails)",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "export RBENV_ROOT=$HOME/.rbenv && export PATH=$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH && rm -f test/dummy/tmp/pids/server.pid && cd test/dummy && bundle exec rails server -p 3789"],
-      "port": 3789
+      "runtimeArgs": ["-c", "export RBENV_ROOT=$HOME/.rbenv && export PATH=$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH && rm -f test/dummy/tmp/pids/server.pid && cd test/dummy && bundle exec rails server -p ${PORT:-3789}"],
+      "port": 3789,
+      "autoPort": true
     }
   ]
 }

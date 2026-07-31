@@ -11,6 +11,27 @@ var useState = _React.useState;
 var useEffect = _React.useEffect;
 var useRef = _React.useRef;
 
+// Functional setTreeData updater shared by every path that re-fetches the tree
+// (WebSocket push, the 10s poll, the manual refresh button).
+//
+// Returning prevData when nothing changed is the whole point: the fetched array
+// is always a fresh object, so returning it unconditionally makes React commit
+// on every tick and defeats FileTreeMemo's `prev.items === next.items` check —
+// a full app re-render every 10 seconds, forever, with the tree untouched.
+//
+// The comparison is a deep one. An earlier version hashed only the top-level
+// entry names, which missed every file added or removed inside a directory:
+// the re-render happened anyway, and the quick-open index was never rebuilt.
+// JSON.stringify over the whole tree measures 0.33 ms for ~1600 nodes, well
+// under the render it saves.
+function _treeUpdater(newData) {
+  return function (prevData) {
+    if (JSON.stringify(newData) === JSON.stringify(prevData)) return prevData;
+    SearchService.buildIndex(newData);
+    return newData;
+  };
+}
+
 var SIDEBAR_MIN_WIDTH = 280;
 var SIDEBAR_MAX_WIDTH = 560;
 var EDITOR_MIN_WIDTH = 320;
@@ -356,6 +377,11 @@ var MbeditorApp = function MbeditorApp() {
   var schemaModal = _useStateSchemaModal2[0];
   var setSchemaModal = _useStateSchemaModal2[1];
 
+  var _useStateImportConflict = useState(null);
+  var _useStateImportConflict2 = _slicedToArray(_useStateImportConflict, 2);
+  var importConflict = _useStateImportConflict2[0];
+  var setImportConflict = _useStateImportConflict2[1];
+
   var _useStateSchemaLoading = useState(null);
   var _useStateSchemaLoading2 = _slicedToArray(_useStateSchemaLoading, 2);
   var schemaLoadingLabel = _useStateSchemaLoading2[0];
@@ -451,6 +477,54 @@ var MbeditorApp = function MbeditorApp() {
   var problemCounts = _useStateProblemCounts2[0];
   var setProblemCounts = _useStateProblemCounts2[1];
 
+  // Below this the toolbar's labelled buttons no longer fit beside the title
+  // and the file search, and start pushing each other out of the bar.
+  var TOOLBAR_LABEL_MIN_WIDTH = 1180;
+
+  // matchMedia rather than a resize listener: the browser only tells us when
+  // the answer actually changes, so there is nothing to throttle.
+  var _useStateNarrow = useState(function () {
+    return typeof window.matchMedia === 'function' &&
+      window.matchMedia('(max-width: ' + TOOLBAR_LABEL_MIN_WIDTH + 'px)').matches;
+  });
+  var _useStateNarrow2 = _slicedToArray(_useStateNarrow, 2);
+  var narrowToolbar = _useStateNarrow2[0];
+  var setNarrowToolbar = _useStateNarrow2[1];
+
+  useEffect(function () {
+    if (typeof window.matchMedia !== 'function') return;
+    var mq = window.matchMedia('(max-width: ' + TOOLBAR_LABEL_MIN_WIDTH + 'px)');
+    var onChange = function (e) { setNarrowToolbar(e.matches); };
+    setNarrowToolbar(mq.matches);
+    // addEventListener on MediaQueryList is the modern spelling; addListener
+    // is kept for older Safari, which mbeditor still runs in.
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    else mq.addListener(onChange);
+    return function () {
+      if (mq.removeEventListener) mq.removeEventListener('change', onChange);
+      else mq.removeListener(onChange);
+    };
+  }, []);
+
+  // Model graph. Built lazily — generating it eager-loads the host app — and
+  // only when the Models tab is opened.
+  var _useStateModelGraph = useState(null);
+  var _useStateModelGraph2 = _slicedToArray(_useStateModelGraph, 2);
+  var modelGraph = _useStateModelGraph2[0];
+  var setModelGraph = _useStateModelGraph2[1];
+
+  var _useStateModelGraphLoading = useState(false);
+  var _useStateModelGraphLoading2 = _slicedToArray(_useStateModelGraphLoading, 2);
+  var modelGraphLoading = _useStateModelGraphLoading2[0];
+  var setModelGraphLoading = _useStateModelGraphLoading2[1];
+
+  // ruby-lsp status for the status-bar chip. 'off' means never available here,
+  // 'degraded' means we backed off after a failure, 'ok' means it's answering.
+  var _useStateLspHealth = useState({ status: 'off', reason: null });
+  var _useStateLspHealth2 = _slicedToArray(_useStateLspHealth, 2);
+  var lspHealth = _useStateLspHealth2[0];
+  var setLspHealth = _useStateLspHealth2[1];
+
   var _useState18g = useState(320);
   var _useState18g2 = _slicedToArray(_useState18g, 2);
   var gitPanelWidth = _useState18g2[0];
@@ -541,6 +615,10 @@ var MbeditorApp = function MbeditorApp() {
   var editorPrefs = _useState18p2[0];
   var setEditorPrefs = _useState18p2[1];
 
+  // Icon-only toolbar: on by preference, or automatically once the window is
+  // too narrow for the labels to fit beside the title and file search.
+  var toolbarIconOnly = editorPrefs.toolbarIconOnly || narrowToolbar;
+
   var _useState19 = useState({
     openEditors: false,
     projects: false
@@ -627,6 +705,13 @@ var MbeditorApp = function MbeditorApp() {
   var setFollowedClientId = _useStateFollow2[1];
   var recentSavesRef = useRef({});
   var isSavingRef = useRef(false);
+  // True once the saved session has finished loading into the panes. Anything
+  // that opens a tab on startup must wait for this, or the restore overwrites it.
+  var _useStateSR = useState(false);
+  var _useStateSR2 = _slicedToArray(_useStateSR, 2);
+  var sessionRestored = _useStateSR2[0];
+  var setSessionRestored = _useStateSR2[1];
+  var pendingChangelogRef = useRef(false);
   // path -> the file's content as last seen ON DISK (newline-normalised).
   // External-change detection compares disk-to-disk; comparing disk to the
   // buffer flags every dirty tab, which is just the definition of "dirty".
@@ -744,6 +829,112 @@ var MbeditorApp = function MbeditorApp() {
     return path && (path.endsWith('.rb') || path.endsWith('.gemspec') || path.endsWith('Rakefile') || path.endsWith('Gemfile'));
   };
 
+  // editor_plugins.js owns the ruby-lsp health flags; this app never writes
+  // them directly. Tolerates the plugins file not having loaded yet.
+  var noteLspFailure = function noteLspFailure(err) {
+    if (window.MbeditorEditorPlugins && MbeditorEditorPlugins.noteLspFailure) {
+      MbeditorEditorPlugins.noteLspFailure(err);
+    }
+  };
+
+  // Opens the schema modal for a model. Shared by the Rails panel's schema
+  // button and the model diagram, so both show the same thing.
+  var openSchemaModal = function openSchemaModal(label) {
+    if (schemaLoadingLabel === label) return;
+    setSchemaLoadingLabel(label);
+    FileService.getModelSchema(label.replace(/\s+/g, '')).then(function (data) {
+      setSchemaLoadingLabel(null);
+      setSchemaModal(data && data.columns
+        ? { label: label, data: data }
+        : { label: label, error: 'No schema found for ' + label });
+    })["catch"](function (err) {
+      setSchemaLoadingLabel(null);
+      var msg = (err && err.response && err.response.data && err.response.data.error) ||
+        'No db/schema.rb found or table not defined';
+      setSchemaModal({ label: label, error: msg });
+    });
+  };
+
+  // The server caches on a fingerprint of app/models and db/migrate mtimes, so
+  // re-requesting on every tab visit is cheap and picks up a saved model or a
+  // new migration without any invalidation wiring here.
+  var loadModelGraph = function loadModelGraph(force) {
+    if (!FileService.getModelGraph) return;
+    setModelGraphLoading(true);
+    FileService.getModelGraph(force).then(function (data) {
+      setModelGraph(data);
+    })["catch"](function (err) {
+      setModelGraph({
+        ok: false,
+        error: (err && err.response && err.response.data && err.response.data.error) ||
+          'Could not load the model graph.'
+      });
+    })["finally"](function () { setModelGraphLoading(false); });
+  };
+
+  useEffect(function () {
+    if (activeSidebarTab !== 'models' || sidebarCollapsed) return;
+    loadModelGraph(false);
+  }, [activeSidebarTab, sidebarCollapsed]);
+
+  var readLspHealth = function readLspHealth() {
+    if (!window.MBEDITOR_RUBY_LSP_AVAILABLE) {
+      return { status: 'off', reason: window.MBEDITOR_RUBY_LSP_REASON || null };
+    }
+    if (window.MbeditorEditorPlugins && MbeditorEditorPlugins.lspBackedOff()) {
+      return { status: 'degraded', reason: window.MBEDITOR_RUBY_LSP_REASON || null };
+    }
+    return { status: 'ok', reason: null };
+  };
+
+  // The backoff expires on a wall-clock deadline rather than a timer, so the
+  // chip also re-reads on a slow interval — otherwise it would sit on
+  // 'degraded' until the next failure or restart click.
+  //
+  // readLspHealth() builds a fresh object every call, so handing it straight to
+  // setLspHealth re-rendered the whole app every 10 seconds whether or not the
+  // health had changed — React bails on Object.is, and two object literals are
+  // never identical. Compare the fields and keep the previous object when they
+  // match. (Same shape of bug as the file-tree poll; see _treeUpdater.)
+  useEffect(function () {
+    var sync = function () {
+      setLspHealth(function (prev) {
+        var next = readLspHealth();
+        if (prev && prev.status === next.status && prev.reason === next.reason) return prev;
+        return next;
+      });
+    };
+    sync();
+    window.addEventListener('mbeditor:lsp-health', sync);
+    var tick = setInterval(sync, 10000);
+    return function () {
+      window.removeEventListener('mbeditor:lsp-health', sync);
+      clearInterval(tick);
+    };
+  }, []);
+
+  var restartRubyLsp = function restartRubyLsp() {
+    if (!FileService.rubyLspRequest) return;
+    EditorStore.setStatus('Restarting ruby-lsp…', 'info');
+    FileService.rubyLspRequest('restart', '', '', 1, 1).then(function (data) {
+      var ok = data && data.available && data.state !== 'failed';
+      if (ok) {
+        window.MBEDITOR_RUBY_LSP_AVAILABLE = true;
+        window.MBEDITOR_RUBY_LSP_DISABLED_UNTIL = 0;
+        window.MBEDITOR_RUBY_LSP_REASON = null;
+      } else {
+        window.MBEDITOR_RUBY_LSP_REASON =
+          (data && (data.reason || data.error)) || 'ruby-lsp did not come back';
+      }
+      EditorStore.setStatus(ok ? 'ruby-lsp restarted' : 'ruby-lsp unavailable', ok ? 'success' : 'warning');
+      setLspHealth(readLspHealth());
+    })["catch"](function (err) {
+      noteLspFailure(err);
+      EditorStore.setStatus('Could not restart ruby-lsp', 'error');
+      setLspHealth(readLspHealth());
+    });
+  };
+
   var applyMarkersForTab = function applyMarkersForTab(paneId, tabId, nextMarkers) {
     var currentPane = EditorStore.getState().panes.find(function (p) {
       return p.id === paneId;
@@ -776,14 +967,15 @@ var MbeditorApp = function MbeditorApp() {
     // Anything short of a usable answer falls through to the HTTP lint for
     // this call, so behaviour without ruby-lsp is unchanged.
     var lintRequest;
-    if (window.MBEDITOR_RUBY_LSP_AVAILABLE && isRubyPath(tab.path) && FileService.lspDiagnostics) {
+    var lspUsable = window.MBEDITOR_RUBY_LSP_AVAILABLE &&
+      !(window.MbeditorEditorPlugins && MbeditorEditorPlugins.lspBackedOff());
+    if (lspUsable && isRubyPath(tab.path) && FileService.lspDiagnostics) {
       lintRequest = FileService.lspDiagnostics(tab.path, tab.content).then(function (res) {
         if (res && res.markers && !res.fallback && !res.error) return res;
+        noteLspFailure({ lspData: res || {} });
         return FileService.lintFile(tab.path, tab.content);
       })["catch"](function (err) {
-        if (err && err.response && err.response.status === 422) {
-          window.MBEDITOR_RUBY_LSP_AVAILABLE = false;
-        }
+        noteLspFailure(err);
         return FileService.lintFile(tab.path, tab.content);
       });
     } else {
@@ -971,6 +1163,9 @@ var MbeditorApp = function MbeditorApp() {
         if (t.isCombinedDiff || (t.path || '').startsWith('combined-diff://') || (t.path || '').startsWith('diff://')) {
           return Promise.resolve({ content: '' });
         }
+        if (t.isModelGraph || t.path === 'mbeditor://model-graph') {
+          return Promise.resolve({ content: '' });
+        }
         var sourcePath = t.isPreview || /::preview$/.test(t.path || '') ? t.previewFor || (t.path || '').replace(/::preview$/, '') : t.path;
         return FileService.getFile(sourcePath, { allowMissing: true }).then(function (data) {
           return {
@@ -994,7 +1189,7 @@ var MbeditorApp = function MbeditorApp() {
           p.tabs.forEach(function (t) {
             var res = results[resIdx++];
             var isPlainFile = t.path && !t.isDiff && !t.isCombinedDiff && !t.isSettings &&
-              !t.isChangelog && !t.isPreview &&
+              !t.isChangelog && !t.isPreview && !t.isModelGraph &&
               !/^(diff|combined-diff):\/\//.test(t.path) && !/::preview$/.test(t.path);
             if (isPlainFile) {
               if (seenPaths[t.path]) return;
@@ -1003,7 +1198,11 @@ var MbeditorApp = function MbeditorApp() {
             tabs.push(_extends({}, t, {
               content: res.content,
               externalContentVersion: (t.externalContentVersion || 0) + 1
-            }, res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {},
+            },
+            // A state saved before this tab type existed carries the path but
+            // not the flag, and would restore as a missing file.
+            t.path === 'mbeditor://model-graph' ? { isModelGraph: true } : {},
+            res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {},
             typeof res.fileNotFound === 'boolean' ? { fileNotFound: res.fileNotFound, dirty: res.fileNotFound ? false : t.dirty } : {},
             res.image === true ? { isImage: true } : {}));
           });
@@ -1077,7 +1276,8 @@ var MbeditorApp = function MbeditorApp() {
         }
         return loadPaneState(panesToLoad, focusedPaneId);
       });
-    });
+    })["catch"](function () { /* fall through to marking restore done */ })
+      .then(function () { setSessionRestored(true); });
 
     // Watch for git branch changes and swap per-branch tab state
     var unsubBranch = EditorStore.subscribeToSlice(['gitBranch'], function (st) {
@@ -1113,7 +1313,7 @@ var MbeditorApp = function MbeditorApp() {
           return {
             id: p.id,
             activeTabId: p.activeTabId,
-            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff; }).map(function (t) {
+            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff && !t.isModelGraph; }).map(function (t) {
               return {
                 id: t.id, path: t.path, name: t.name, dirty: t.dirty, viewState: t.viewState,
                 isSettings: !!t.isSettings, isPreview: !!t.isPreview, previewFor: t.previewFor || null,
@@ -1451,12 +1651,7 @@ var MbeditorApp = function MbeditorApp() {
       if (document.hidden) return;
       GitService.fetchStatus()["catch"](function () {});
       FileService.getTree().then(function (data) {
-        var newData = data || [];
-        setTreeData(function (prevData) {
-          var sig = function(d) { return d.length + ':' + d.map(function(n) { return n.name; }).join(','); };
-          if (sig(newData) !== sig(prevData)) SearchService.buildIndex(newData);
-          return newData;
-        });
+        setTreeData(_treeUpdater(data || []));
         checkOpenTabsForExternalChanges();
       })["catch"](function () {});
       if (payload && payload.paths && searchQueryRef.current && searchPanelVisibleRef.current) {
@@ -1601,17 +1796,13 @@ var MbeditorApp = function MbeditorApp() {
   // broadcasts from mbeditor's own mutation endpoints, so a connected socket
   // meant external changes were never picked up at all. The push remains the
   // instant path for our own writes; this is what catches everything else.
-  // Uses functional setTreeData to skip the re-render when nothing has changed.
+  // _treeUpdater keeps the previous array when nothing changed, so a quiet
+  // workspace costs one fetch and no re-render at all.
   useEffect(function () {
     var intervalId = setInterval(function () {
       if (document.hidden) return;
       FileService.getTree().then(function (data) {
-        var newData = data || [];
-        setTreeData(function (prevData) {
-          var sig = function(d) { return d.length + ':' + d.map(function(n) { return n.name; }).join(','); };
-          if (sig(newData) !== sig(prevData)) SearchService.buildIndex(newData);
-          return newData;
-        });
+        setTreeData(_treeUpdater(data || []));
       }).catch(function () {}); // silently ignore auto-refresh errors
     }, 10000);
     return function () { clearInterval(intervalId); };
@@ -1873,7 +2064,7 @@ var MbeditorApp = function MbeditorApp() {
         return {
           id: p.id,
           activeTabId: p.activeTabId,
-          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff; }).map(function (t) {
+          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff && !t.isModelGraph; }).map(function (t) {
             return {
               id: t.id,
               path: t.path,
@@ -1942,16 +2133,32 @@ var MbeditorApp = function MbeditorApp() {
 
   // Version-update detection: open the changelog tab automatically when the
   // gem version has changed since last time the editor was opened.
+  //
+  // Gated on sessionRestored rather than a timer. Restoring the saved session
+  // replaces every pane wholesale, so a changelog tab opened before that lands
+  // is silently thrown away — which is exactly what happened whenever the
+  // restore took longer than the old 800 ms guess (a big session, a slow or
+  // remote host). Sequencing after the restore removes the race instead of
+  // making the guess bigger.
+  //
+  // The seen-version write is deliberately NOT gated: it records that this
+  // build has been seen, and re-showing the changelog on every reload until
+  // the restore happens to succeed would be worse than missing it once.
   useEffect(function() {
     var SEEN_KEY = 'mbeditor_seen_version';
     var current = document.body.dataset.mbeditorVersion || '';
+    if (!current) return;
     var seen = localStorage.getItem(SEEN_KEY) || '';
-    if (current && seen && seen !== current) {
-      // Delay slightly so the editor finishes restoring saved tabs first
-      setTimeout(function() { openChangelogTab(); }, 800);
-    }
-    if (current) localStorage.setItem(SEEN_KEY, current);
+    localStorage.setItem(SEEN_KEY, current);
+    if (!seen || seen === current) return;
+    pendingChangelogRef.current = true;
   }, []);
+
+  useEffect(function() {
+    if (!sessionRestored || !pendingChangelogRef.current) return;
+    pendingChangelogRef.current = false;
+    openChangelogTab();
+  }, [sessionRestored]);
 
   var resourceLabelFromPath = function(p) {
     if (!p) return null;
@@ -2611,12 +2818,7 @@ var MbeditorApp = function MbeditorApp() {
     });
     GitService.fetchStatus()["catch"](function () {});
     FileService.getTree().then(function (data) {
-      var newData = data || [];
-      setTreeData(function (prevData) {
-        if (JSON.stringify(newData) === JSON.stringify(prevData)) return prevData;
-        SearchService.buildIndex(newData);
-        return newData;
-      });
+      setTreeData(_treeUpdater(data || []));
       checkOpenTabsForExternalChanges();
       EditorStore.setStatus("Workspace refreshed", "success");
     })["catch"](function (err) {
@@ -2626,6 +2828,34 @@ var MbeditorApp = function MbeditorApp() {
         return _extends({}, prev, { refreshWorkspace: false });
       });
     });
+  };
+
+  // The toolbar button and Monaco's own Format Document must not disagree
+  // about what "formatted" means, so both go through ruby-lsp when it can
+  // answer and fall back to /format when it can't — the same order the
+  // formatting provider uses. Returns { content: } either way, since the
+  // button also wants to diff the result and flash the changed lines.
+  var formatRubySource = function formatRubySource(path, code) {
+    var viaLsp = window.MBEDITOR_RUBY_LSP_AVAILABLE &&
+      !(window.MbeditorEditorPlugins && MbeditorEditorPlugins.lspBackedOff()) &&
+      isRubyPath(path);
+    if (!viaLsp) return FileService.formatFile(path, code);
+
+    return FileService.rubyLspRequest('formatting', path, code, 1, 1, { timeout: 15000 })
+      .then(function (data) {
+        var edits = data && data.result;
+        // ruby-lsp answers a whole-document replacement, or null when RuboCop's
+        // autocorrect cannot converge — in which case /format's `rubocop -A`
+        // pass still gets a turn.
+        if (Array.isArray(edits) && edits.length === 1 && typeof edits[0].newText === 'string') {
+          return { content: edits[0].newText };
+        }
+        if (data) noteLspFailure({ lspData: data });
+        return FileService.formatFile(path, code);
+      })["catch"](function (err) {
+        noteLspFailure(err);
+        return FileService.formatFile(path, code);
+      });
   };
 
   var handleFormat = function handleFormat() {
@@ -2649,7 +2879,7 @@ var MbeditorApp = function MbeditorApp() {
         var detectedWidth = detectIndentWidth(originalContent);
         if (detectedWidth > 0) codeToFormat = spacesToTabs(originalContent, detectedWidth);
       }
-      FileService.formatFile(activeTab.path, codeToFormat).then(function (res) {
+      formatRubySource(activeTab.path, codeToFormat).then(function (res) {
         if (res.content) {
           // Update content and mark dirty — user decides when to save.
           // The executeEdits path in EditorPanel preserves the undo stack.
@@ -3105,6 +3335,98 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
+  var finishImport = function finishImport(result) {
+    var imported = (result.imported || []).length;
+    var skipped  = (result.conflicts || []).length;
+    var failed   = (result.errors || []).length;
+
+    var parts = [imported + ' file' + (imported === 1 ? '' : 's') + ' imported'];
+    if (skipped > 0) parts.push(skipped + ' skipped');
+    if (failed > 0) parts.push(failed + ' failed');
+
+    var level = failed === 0 ? 'success' : (imported === 0 ? 'error' : 'warning');
+    EditorStore.setStatus(parts.join(', ') + '.', level);
+
+    if (imported > 0) {
+      refreshProjectTree().then(function() { GitService.fetchStatus(); });
+    }
+  };
+
+  // A file dropped anywhere that isn't a drop target makes the browser
+  // navigate away and open it, which loses the editor and every unsaved
+  // buffer with it. Swallow those at the window so a near-miss is a no-op
+  // rather than a disaster. Real targets stopPropagation before this runs.
+  useEffect(function () {
+    var swallow = function (e) {
+      var types = (e.dataTransfer && e.dataTransfer.types) || [];
+      if (Array.prototype.indexOf.call(types, 'Files') === -1) return;
+      e.preventDefault();
+      // dragover is left alone beyond preventDefault: setting dropEffect here
+      // would override the 'copy' cursor the tree sets on a valid folder.
+      if (e.type === 'drop') e.dataTransfer.dropEffect = 'none';
+    };
+    window.addEventListener('dragover', swallow);
+    window.addEventListener('drop', swallow);
+    return function () {
+      window.removeEventListener('dragover', swallow);
+      window.removeEventListener('drop', swallow);
+    };
+  }, []);
+
+  // Files dragged in from outside the browser. Pass one reports conflicts
+  // without touching them; if there are any, the modal collects a resolution
+  // and pass two re-sends just those entries.
+  var handleImportFiles = function handleImportFiles(entries, targetFolderPath, meta) {
+    if (meta && meta.truncated) {
+      EditorStore.setStatus('That drop holds more than ' + FileImport.MAX_ENTRIES +
+        ' files — only the first ' + FileImport.MAX_ENTRIES + ' will be imported.', 'warning');
+    } else if (meta && meta.foldersSkipped) {
+      EditorStore.setStatus('This browser cannot read dropped folders — only loose files were imported.', 'warning');
+    } else {
+      EditorStore.setStatus('Importing ' + entries.length + ' file' +
+        (entries.length === 1 ? '' : 's') + '...', 'info');
+    }
+
+    return FileService.importFiles(FileImport.buildFormData(entries, targetFolderPath, 'ask'))
+      .then(function(result) {
+        if (result.conflicts && result.conflicts.length > 0) {
+          setImportConflict({ result: result, entries: entries, targetFolderPath: targetFolderPath });
+        } else {
+          finishImport(result);
+        }
+      })['catch'](function(err) {
+        var message = err && err.response && err.response.data && err.response.data.error || err.message;
+        EditorStore.setStatus('Import failed: ' + message, 'error');
+      });
+  };
+
+  var resolveImportConflict = function resolveImportConflict(mode) {
+    var pending = importConflict;
+    setImportConflict(null);
+    if (!pending) return;
+
+    if (mode === 'skip') { finishImport(pending.result); return; }
+
+    var retry = FileImport.conflictedEntries(
+      pending.entries,
+      pending.targetFolderPath,
+      pending.result.conflicts
+    );
+    if (retry.length === 0) { finishImport(pending.result); return; }
+
+    FileService.importFiles(FileImport.buildFormData(retry, pending.targetFolderPath, mode))
+      .then(function(second) {
+        finishImport({
+          imported: (pending.result.imported || []).concat(second.imported || []),
+          conflicts: [],
+          errors: (pending.result.errors || []).concat(second.errors || [])
+        });
+      })['catch'](function(err) {
+        var message = err && err.response && err.response.data && err.response.data.error || err.message;
+        EditorStore.setStatus('Import failed: ' + message, 'error');
+      });
+  };
+
   var openContextMenu = function openContextMenu(e, node) {
     setContextMenu({ x: e.clientX, y: e.clientY, node: node });
     handleNodeSelect(node);
@@ -3169,6 +3491,12 @@ var MbeditorApp = function MbeditorApp() {
   var handleActivityBarClick = function handleActivityBarClick(tab) {
     if (tab === 'settings') {
       openSettingsTab();
+      return;
+    }
+    // The model graph is a view, not a panel: it takes over the central area
+    // and needs the width. There is no sidebar half to show.
+    if (tab === 'models') {
+      openModelGraphTab();
       return;
     }
     if (!sidebarCollapsed && activeSidebarTab === tab) {
@@ -3596,6 +3924,48 @@ var MbeditorApp = function MbeditorApp() {
     EditorStore.setState({ panes: newPanes2, focusedPaneId: paneId, activeTabId: '__settings__' });
   }
 
+  // The diagram lives in an editor tab, not the sidebar: a layered graph is
+  // inherently wide and a ~300px panel can only ever show its first column.
+  // The sidebar tab is the entry point and the searchable model list.
+  var MODEL_GRAPH_TAB_ID = 'mbeditor://model-graph';
+  function openModelGraphTab() {
+    var st = EditorStore.getState();
+    var paneId = st.focusedPaneId;
+
+    var existing = null;
+    st.panes.forEach(function (p) {
+      if (!existing && p.tabs.some(function (t) { return t.id === MODEL_GRAPH_TAB_ID; })) {
+        existing = p.id;
+      }
+    });
+    if (existing) {
+      EditorStore.setState({
+        panes: st.panes.map(function (p) {
+          return p.id === existing ? Object.assign({}, p, { activeTabId: MODEL_GRAPH_TAB_ID }) : p;
+        }),
+        focusedPaneId: existing
+      });
+      return;
+    }
+
+    var pane = st.panes.find(function (p) { return p.id === paneId; }) || st.panes[0];
+    if (!pane) return;
+
+    var newTab = {
+      id: MODEL_GRAPH_TAB_ID, path: MODEL_GRAPH_TAB_ID, name: 'Model Graph',
+      dirty: false, content: '', isModelGraph: true
+    };
+    EditorStore.setState({
+      panes: st.panes.map(function (p) {
+        return p.id === pane.id
+          ? Object.assign({}, p, { tabs: p.tabs.concat(newTab), activeTabId: MODEL_GRAPH_TAB_ID })
+          : p;
+      }),
+      focusedPaneId: pane.id
+    });
+    loadModelGraph(false);
+  }
+
   var CHANGELOG_TAB_ID = 'mbeditor://changelog';
   function openChangelogTab() {
     var st = EditorStore.getState();
@@ -3686,7 +4056,7 @@ var MbeditorApp = function MbeditorApp() {
               return activeTab && handleSave(focusedPane.id, activeTab);
             }, disabled: loading.save || !activeTab || !activeTab.dirty, 'aria-busy': !!loading.save },
           !loading.save && React.createElement("i", { className: "fas fa-save" }),
-          !editorPrefs.toolbarIconOnly && !loading.save && " Save",
+          !toolbarIconOnly && !loading.save && " Save",
           !loading.save && activeTab && activeTab.dirty ? " ●" : ""
         ),
         React.createElement(
@@ -3701,7 +4071,7 @@ var MbeditorApp = function MbeditorApp() {
             { className: "fas fa-save", style: { position: 'relative' } },
             React.createElement("i", { className: "fas fa-save", style: { position: 'absolute', top: '-2px', left: '3px', fontSize: '9px', opacity: 0.8 } })
           ),
-          !editorPrefs.toolbarIconOnly && !loading.saveAll && " Save All"
+          !toolbarIconOnly && !loading.saveAll && " Save All"
         ),
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
@@ -3711,13 +4081,13 @@ var MbeditorApp = function MbeditorApp() {
             "button",
             { className: "statusbar-btn", onClick: function() { var ed = window.__mbeditorActiveEditor; if (ed) ed.trigger('keyboard', 'undo', null); }, disabled: !activeTab || !state.canUndo, title: "Undo (Ctrl+Z)" },
             React.createElement("i", { className: "fas fa-undo" }),
-            !editorPrefs.toolbarIconOnly && " Undo"
+            !toolbarIconOnly && " Undo"
           ),
           React.createElement(
             "button",
             { className: "statusbar-btn", onClick: function() { var ed = window.__mbeditorActiveEditor; if (ed) ed.trigger('keyboard', 'redo', null); }, disabled: !activeTab || !state.canRedo, title: "Redo (Ctrl+Y)" },
             React.createElement("i", { className: "fas fa-redo" }),
-            !editorPrefs.toolbarIconOnly && " Redo"
+            !toolbarIconOnly && " Redo"
           )
         ),
         React.createElement("div", { className: "statusbar-sep" }),
@@ -3725,7 +4095,7 @@ var MbeditorApp = function MbeditorApp() {
           "button",
           { className: "statusbar-btn", onClick: handleFormat, disabled: loading.format || !canLintAndFormat, 'aria-busy': !!loading.format },
           !loading.format && React.createElement("i", { className: "fas fa-magic" }),
-          !editorPrefs.toolbarIconOnly && !loading.format && " Format"
+          !toolbarIconOnly && !loading.format && " Format"
         ),
         hasGitBranch && React.createElement(
           React.Fragment,
@@ -3735,7 +4105,7 @@ var MbeditorApp = function MbeditorApp() {
             "button",
             { type: "button", className: "statusbar-btn", onClick: toggleGitPanel },
             React.createElement("i", { className: "fas fa-code-branch" }),
-            !editorPrefs.toolbarIconOnly && " Git"
+            !toolbarIconOnly && " Git"
           )
         ),
         collabEnabled && collabIdentity && React.createElement(
@@ -3793,7 +4163,7 @@ var MbeditorApp = function MbeditorApp() {
           "button",
           { type: "button", className: "statusbar-btn", onClick: function () { return setShowHelp(true); }, title: "Keyboard shortcuts & help" },
           React.createElement("i", { className: "fas fa-keyboard" }),
-          !editorPrefs.toolbarIconOnly && " Help"
+          !toolbarIconOnly && " Help"
         ),
         pwaInstallPrompt && React.createElement(
           React.Fragment,
@@ -3811,7 +4181,7 @@ var MbeditorApp = function MbeditorApp() {
               }
             },
             React.createElement("i", { className: "fas fa-download" }),
-            !editorPrefs.toolbarIconOnly && " Install"
+            !toolbarIconOnly && " Install"
           )
         )
       )
@@ -3856,6 +4226,16 @@ var MbeditorApp = function MbeditorApp() {
               onClick: function() { handleActivityBarClick('rails'); }
             },
             React.createElement("i", { className: "far fa-gem" })
+          ),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "ide-activity-btn" + (activeTab && activeTab.isModelGraph ? ' active' : ''),
+              title: "Model graph",
+              onClick: function() { handleActivityBarClick('models'); }
+            },
+            React.createElement("i", { className: "fas fa-project-diagram" })
           )
         ),
         React.createElement(
@@ -4075,6 +4455,7 @@ var MbeditorApp = function MbeditorApp() {
               onNodeSelect: handleNodeSelect,
               onMultiSelect: handleMultiSelect,
               onMove: handleMoveNodes,
+              onImportFiles: handleImportFiles,
               gitFiles: state.gitFiles,
               expandedDirs: expandedDirs,
               onExpandedDirsChange: setExpandedDirs,
@@ -4296,25 +4677,7 @@ var MbeditorApp = function MbeditorApp() {
                   title: 'View database schema for ' + label,
                   onClick: (function(lbl) { return function(e) {
                     e.stopPropagation();
-                    if (schemaLoadingLabel === lbl) return;
-                    setSchemaLoadingLabel(lbl);
-                    var modelName = lbl.replace(/\s+/g, '');
-                    FileService.getModelSchema(modelName)
-                      .then(function(data) {
-                        setSchemaLoadingLabel(null);
-                        if (data && data.columns) {
-                          setSchemaModal({ label: lbl, data: data });
-                        } else {
-                          setSchemaModal({ label: lbl, error: 'No schema found for ' + lbl });
-                        }
-                      })
-                      ['catch'](function(err) {
-                        setSchemaLoadingLabel(null);
-                        var msg = (err && err.response && err.response.data && err.response.data.error)
-                          ? err.response.data.error
-                          : 'No db/schema.rb found or table not defined';
-                        setSchemaModal({ label: lbl, error: msg });
-                      });
+                    openSchemaModal(lbl);
                   }; })(label)
                 },
                 React.createElement('i', {
@@ -4376,12 +4739,18 @@ var MbeditorApp = function MbeditorApp() {
         "aria-orientation": "vertical",
         "aria-label": "Resize explorer panel"
       }),
+      // Column wrapping the split panes and the bottom drawers. ide-main is a
+      // row of panes, so the drawers need a vertical parent to push against;
+      // as absolute overlays they covered the editor instead.
+      React.createElement(
+      "div",
+      { className: "ide-center-column" },
       React.createElement(
         "div",
         {
           id: "ide-main-split-container",
           className: "ide-main",
-          style: { position: 'relative', display: 'flex', flexDirection: 'row', width: '100%', height: '100%', cursor: activeResizeMode === 'pane' ? 'col-resize' : 'default', userSelect: activeResizeMode ? 'none' : 'auto' },
+          style: { position: 'relative', display: 'flex', flexDirection: 'row', width: '100%', flex: '1 1 auto', minHeight: 0, cursor: activeResizeMode === 'pane' ? 'col-resize' : 'default', userSelect: activeResizeMode ? 'none' : 'auto' },
           onDragOverCapture: function (e) {
             if (!draggedTab) return;
             e.preventDefault();
@@ -4470,6 +4839,13 @@ var MbeditorApp = function MbeditorApp() {
                 content = React.createElement(window.CommitGraph || CommitGraph, {
                   commits: pActiveTab.commits || [],
                   onSelectCommit: handleSelectCommit
+                });
+              } else if (pActiveTab.isModelGraph) {
+                content = React.createElement(ModelGraph, {
+                  graph: modelGraph,
+                  loading: modelGraphLoading,
+                  onRefresh: function () { loadModelGraph(true); },
+                  onOpenModel: function (model) { openSchemaModal(model.name); }
                 });
               } else if (pActiveTab.isChangelog) {
                 content = React.createElement(ChangelogView, {
@@ -5005,6 +5381,9 @@ var MbeditorApp = function MbeditorApp() {
                       React.createElement('input', {
                         type: 'checkbox',
                         className: 'ide-settings-checkbox',
+                        // The stored preference, not the derived value: at a
+                        // narrow width the box would otherwise show as checked
+                        // and unchecking it would appear to do nothing.
                         checked: !!(editorPrefs.toolbarIconOnly),
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { toolbarIconOnly: v }); }); }
                       })
@@ -5275,6 +5654,16 @@ var MbeditorApp = function MbeditorApp() {
           );
         })
       ),
+      showLogPanel && !zenMode && React.createElement(window.LogPanel || LogPanel, {
+        onClose: function () { setShowLogPanel(false); }
+      }),
+      showProblemsPanel && !zenMode && React.createElement(window.ProblemsPanel || ProblemsPanel, {
+        onClose: function () { setShowProblemsPanel(false); },
+        onOpenFile: function (path, line, col) {
+          handleSelectFile(path, path.split('/').pop(), line, col);
+        }
+      })
+      ),
 
       // Right-side Git panel (children of ide-body, alongside sidebar and ide-main)
       showGitPanel && !zenMode && React.createElement("div", {
@@ -5299,15 +5688,6 @@ var MbeditorApp = function MbeditorApp() {
           onSelectCommit: handleSelectCommit
         })
       ),
-      showLogPanel && !zenMode && React.createElement(window.LogPanel || LogPanel, {
-        onClose: function () { setShowLogPanel(false); }
-      }),
-      showProblemsPanel && !zenMode && React.createElement(window.ProblemsPanel || ProblemsPanel, {
-        onClose: function () { setShowProblemsPanel(false); },
-        onOpenFile: function (path, line, col) {
-          handleSelectFile(path, path.split('/').pop(), line, col);
-        }
-      })
     ),
     React.createElement(
       "div",
@@ -5347,6 +5727,27 @@ var MbeditorApp = function MbeditorApp() {
           style: { marginLeft: "8px" }
         }),
         React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.warnings)
+      ),
+      // ruby-lsp indicator. Hidden entirely when ruby-lsp was never available
+      // and nothing has gone wrong — a permanent "off" badge in a project with
+      // no Ruby is noise. A healthy server gets a quiet icon; a degraded one
+      // gets an amber chip you can click to restart.
+      (lspHealth.status !== 'off' || lspHealth.reason) && React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "statusbar-btn statusbar-lsp statusbar-lsp-" + lspHealth.status,
+          onClick: restartRubyLsp,
+          title: lspHealth.status === 'ok'
+            ? 'ruby-lsp is running — click to restart'
+            : 'ruby-lsp unavailable' + (lspHealth.reason ? ': ' + lspHealth.reason : '') +
+              '. Falling back to search-based lookups. Click to retry.'
+        },
+        React.createElement("i", {
+          className: "fas " + (lspHealth.status === 'ok' ? 'fa-gem' : 'fa-plug'),
+          "aria-hidden": "true"
+        }),
+        lspHealth.status !== 'ok' && React.createElement("span", null, " ruby-lsp")
       ),
       !serverOnline && (function () {
         var dirtyCount = state.panes.reduce(function (acc, p) {
@@ -5740,6 +6141,13 @@ var MbeditorApp = function MbeditorApp() {
         )
       )
     ),
+
+    /* ── Import conflict modal ─────────────────────────────────────────── */
+    importConflict && React.createElement(ImportConflictModal, {
+      conflicts: importConflict.result.conflicts,
+      errors: importConflict.result.errors,
+      onResolve: resolveImportConflict
+    }),
 
     /* ── Schema modal ──────────────────────────────────────────────────── */
     schemaModal && React.createElement(

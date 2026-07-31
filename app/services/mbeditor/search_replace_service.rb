@@ -39,6 +39,19 @@ module Mbeditor
         AvailabilityProbe.rg
       end
 
+      # The resolved ripgrep executable, shared with CodeSearchService so both
+      # search paths run the same binary.
+      def rg_command
+        AvailabilityProbe.rg_command || "rg"
+      end
+
+      # Which backend a search on this workspace will actually use. Reported by
+      # GET /workspace: the difference between the tiers is 10-30x, so "why is
+      # search slow" needs to be answerable without reading the source.
+      def backend(workspace_root)
+        pick_tier(workspace_root.to_s)
+      end
+
       # Returns up to +limit+ result rows. When +paths+ is given the scan is
       # restricted to those files (used by the live result-refresh) and the
       # result cache is bypassed.
@@ -242,7 +255,7 @@ module Mbeditor
 
         case tier
         when :rg
-          args = ["rg", "--json"]
+          args = [rg_command, "--json"]
           args << "--no-ignore" unless respect_gitignore?
           args << "-F" unless use_regex
           args << "--ignore-case" unless match_case
@@ -264,9 +277,16 @@ module Mbeditor
           args << "-w" if whole_word
           args += ["-e", query, "--"]
           args += paths.map { |p| relative_path(File.expand_path(p, root), root) } if paths
-          # C locale restores fast byte-wise case folding for -i (non-ASCII
-          # characters simply don't case-fold, which is acceptable here).
-          [{ "LC_ALL" => "C" }, args]
+          # Exclusions have to reach git as pathspecs, not just be dropped from
+          # the results by the matcher below: otherwise git walks node_modules
+          # and every other excluded tree in full before we discard the matches.
+          # A pathspec list of nothing but :(exclude) entries means
+          # "everything except these", which is exactly what the unscoped
+          # search wants.
+          args += exclusions.map { |p| ":(exclude)#{p}" }
+          # No LC_ALL=C: measured neutral for the -F -i default and 2.2x slower
+          # for -E, and the UTF-8 locale case-folds non-ASCII correctly.
+          [{}, args]
         else
           base_flags = use_regex ? "-E" : "-F"
           args = ["grep", "-I", "-Hn", base_flags]

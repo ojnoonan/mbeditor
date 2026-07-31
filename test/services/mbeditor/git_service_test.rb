@@ -277,5 +277,91 @@ module Mbeditor
       assert_equal 1, result.length
       assert_equal "app/foo.rb", result[0][:path]
     end
+
+    # ── find_branch_base / base_branch? ──────────────────────────────────────
+    # These had no coverage at all, which is how the base-selection bugs
+    # survived: every existing test re-derived its expectation from this method.
+
+    def make_repo(dir)
+      [["git", "-C", dir, "init", "-b", "develop"],
+       ["git", "-C", dir, "config", "user.email", "t@example.com"],
+       ["git", "-C", dir, "config", "user.name", "T"]].each do |cmd|
+        system(*cmd, out: File::NULL, err: File::NULL)
+      end
+      commit(dir, "base.txt", "base")
+    end
+
+    def commit(dir, file, content)
+      File.write(File.join(dir, file), "#{content}\n")
+      system("git", "-C", dir, "add", ".", out: File::NULL, err: File::NULL)
+      system("git", "-C", dir, "commit", "-m", content, out: File::NULL, err: File::NULL)
+    end
+
+    def test_find_branch_base_prefers_the_earliest_verifiable_candidate
+      Dir.mktmpdir("mbeditor_fbb_") do |dir|
+        make_repo(dir)
+        system("git", "-C", dir, "checkout", "-b", "feature", out: File::NULL, err: File::NULL)
+        commit(dir, "feature.txt", "work")
+
+        sha, ref = GitService.find_branch_base(dir, "feature",
+                                              candidates: %w[origin/develop develop main])
+
+        assert_equal "develop", ref, "origin/develop does not exist; develop does"
+        assert_match(/\A[0-9a-f]{40}\z/, sha)
+      end
+    end
+
+    def test_find_branch_base_skips_a_candidate_naming_the_current_branch
+      Dir.mktmpdir("mbeditor_fbb_self_") do |dir|
+        make_repo(dir)
+
+        # On `develop`, neither `origin/develop` nor `develop` is its own base.
+        _sha, ref = GitService.find_branch_base(dir, "develop", candidates: %w[origin/develop develop])
+        assert_nil ref
+
+        assert GitService.base_branch?("develop", candidates: %w[origin/develop main]),
+               "the caller needs to know this is a base branch so it can use the upstream instead"
+      end
+    end
+
+    # Regression: a branch fully contained in its base used to be *skipped*
+    # (merge-base == HEAD), so resolution fell through to a lower-preference
+    # candidate and reported a larger, wrong diff. An empty diff is the truth.
+    def test_find_branch_base_keeps_a_base_that_already_contains_this_branch
+      Dir.mktmpdir("mbeditor_fbb_merged_") do |dir|
+        make_repo(dir)
+        commit(dir, "more.txt", "more")
+        system("git", "-C", dir, "branch", "release", out: File::NULL, err: File::NULL)
+        # Move develop back so `release` is an ancestor of nothing and HEAD is
+        # an ancestor of develop.
+        system("git", "-C", dir, "checkout", "-b", "topic", "HEAD~1", out: File::NULL, err: File::NULL)
+
+        sha, ref = GitService.find_branch_base(dir, "topic", candidates: %w[develop release])
+        head, = Open3.capture2("git", "-C", dir, "rev-parse", "HEAD")
+
+        assert_equal "develop", ref, "the first verifiable candidate wins"
+        assert_equal head.strip, sha, "HEAD is an ancestor of develop, so the merge-base IS HEAD"
+      end
+    end
+
+    def test_find_branch_base_returns_nils_when_no_candidate_exists
+      Dir.mktmpdir("mbeditor_fbb_none_") do |dir|
+        make_repo(dir)
+        system("git", "-C", dir, "checkout", "-b", "feature", out: File::NULL, err: File::NULL)
+
+        assert_equal [nil, nil], GitService.find_branch_base(dir, "feature", candidates: %w[origin/nope nope])
+      end
+    end
+
+    def test_base_branch_recognises_both_bare_and_origin_prefixed_candidates
+      candidates = %w[origin/develop origin/main develop main]
+
+      assert GitService.base_branch?("develop", candidates: candidates)
+      assert GitService.base_branch?("main", candidates: candidates)
+      refute GitService.base_branch?("feature/x", candidates: candidates)
+      refute GitService.base_branch?("HEAD", candidates: candidates), "detached HEAD is not a base branch"
+      refute GitService.base_branch?("", candidates: candidates)
+      refute GitService.base_branch?(nil, candidates: candidates)
+    end
   end
 end

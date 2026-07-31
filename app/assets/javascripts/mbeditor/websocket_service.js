@@ -125,6 +125,8 @@ var WebSocketService = (function () {
               _emitPresence(data);
             } else if (data.type === 'log') {
               _emitLogLines(data);
+            } else if (data.type === 'exception') {
+              _emitException(data);
             }
           }
         }
@@ -158,6 +160,15 @@ var WebSocketService = (function () {
     _logLinesCallbacks.forEach(function (fn) {
       try { fn(data); } catch (e) { /* ignore */ }
     });
+  }
+
+  // Host-app exceptions go out as a DOM event rather than a callback list:
+  // the Problems panel mounts and unmounts, so it subscribes and unsubscribes
+  // with its own lifecycle rather than registering here at boot.
+  function _emitException(data) {
+    try {
+      window.dispatchEvent(new CustomEvent('mbeditor:exception', { detail: data }));
+    } catch (e) { /* CustomEvent unavailable; the panel still polls on open */ }
   }
 
   // ---------------------------------------------------------------------------

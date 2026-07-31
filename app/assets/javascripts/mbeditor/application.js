@@ -2,6 +2,7 @@
 //= require mbeditor/editor_store
 //= require mbeditor/file_icon
 //= require mbeditor/file_service
+//= require mbeditor/file_import
 //= require mbeditor/history_service
 //= require mbeditor/websocket_service
 //= require mbeditor/git_service
@@ -20,6 +21,7 @@
 //= require mbeditor/components/DiffViewer
 //= require mbeditor/components/CombinedDiffViewer
 //= require mbeditor/components/CommitGraph
+//= require mbeditor/components/ModelGraph
 //= require mbeditor/components/ChangelogView
 //= require mbeditor/components/FileHistoryPanel
 //= require mbeditor/components/TestResultsPanel
@@ -33,3 +35,4 @@
 //= require mbeditor/components/TabBar
 //= require mbeditor/components/MbeditorApp
 //= require mbeditor/application_iife_tail
+//= require mbeditor/components/ImportConflictModal

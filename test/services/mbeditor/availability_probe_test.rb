@@ -75,15 +75,46 @@ module Mbeditor
       assert_includes [true, false], AvailabilityProbe.rg
     end
 
-    def test_rg_returns_false_when_not_on_path
-      Dir.mktmpdir do |empty_bin|
-        original_path = ENV["PATH"]
-        ENV["PATH"] = empty_bin
+    # Deliberately driven through config.ripgrep_command rather than by
+    # emptying PATH: rg_command now also probes RG_FALLBACK_PATHS, so a bare
+    # "PATH is empty" test would pass or fail depending on whether the machine
+    # running the suite happens to have ripgrep in /opt/homebrew/bin.
+    def test_rg_is_false_when_the_configured_ripgrep_does_not_exist
+      with_ripgrep_command("/nonexistent/bin/rg") do
+        assert_nil AvailabilityProbe.rg_command
+        assert_equal false, AvailabilityProbe.rg
+      end
+    end
+
+    def test_rg_command_honours_an_explicit_configured_path
+      with_ripgrep_command("/bin/echo") do
+        assert_equal "/bin/echo", AvailabilityProbe.rg_command
+        assert_equal true, AvailabilityProbe.rg
+      end
+    end
+
+    def test_rg_command_resolves_a_bare_name_from_path
+      with_fake_rg_on_path do
         AvailabilityProbe.reset!
 
-        assert_equal false, AvailabilityProbe.rg
-      ensure
-        ENV["PATH"] = original_path
+        assert_equal "rg", AvailabilityProbe.rg_command
+        assert_equal true, AvailabilityProbe.rg
+      end
+    end
+
+    # A missing tool answers nil here rather than false, so the negative-result
+    # TTL has to treat nil as negative too — otherwise installing ripgrep after
+    # boot would never be picked up.
+    def test_nil_rg_command_is_reprobed_after_the_negative_ttl
+      with_ripgrep_command("/nonexistent/bin/rg") do
+        assert_nil AvailabilityProbe.rg_command
+
+        cache = AvailabilityProbe.instance_variable_get(:@cache)
+        cache["rg_command"][:ts] -= AvailabilityProbe::NEGATIVE_PROBE_TTL + 1
+
+        Mbeditor.configuration.ripgrep_command = "/bin/echo"
+
+        assert_equal "/bin/echo", AvailabilityProbe.rg_command
       end
     end
 
@@ -236,6 +267,16 @@ module Mbeditor
     end
 
     private
+
+    def with_ripgrep_command(value)
+      original = Mbeditor.configuration.ripgrep_command
+      Mbeditor.configuration.ripgrep_command = value
+      AvailabilityProbe.reset!
+      yield
+    ensure
+      Mbeditor.configuration.ripgrep_command = original
+      AvailabilityProbe.reset!
+    end
 
     # Puts a fake, counting `rg` executable first on PATH for the block's
     # duration, yielding the path to its invocation-counter file.

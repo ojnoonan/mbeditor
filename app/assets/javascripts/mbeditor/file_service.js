@@ -70,6 +70,15 @@ var FileService = (function () {
     return axios.post(window.mbeditorBasePath() + '/create_file', { path: path, code: code || '' }).then(function(res) { return res.data; });
   }
 
+  // Multipart import of files dragged in from outside the browser. The
+  // default 30 s axios timeout is too tight for a large drop on a slow disk,
+  // so this one call gets a longer leash.
+  function importFiles(formData) {
+    return axios.post(window.mbeditorBasePath() + '/import', formData, {
+      timeout: 120000
+    }).then(function (res) { return res.data; });
+  }
+
   function createDir(path) {
     return axios.post(window.mbeditorBasePath() + '/create_dir', { path: path }).then(function(res) { return res.data; });
   }
@@ -224,15 +233,50 @@ var FileService = (function () {
   // | 'completion'; line/character are Monaco 1-based. The server answers in
   // provider-ready shapes, or { fallback: true } when the LSP can't answer in
   // time (caller then uses the legacy grep/Ripper path).
-  function rubyLspRequest(lspMethod, path, content, line, character, extraOptions) {
+  // extraBody carries per-method request params (e.g. formatting's tab_size);
+  // extraOptions is axios config (e.g. a longer timeout).
+  function rubyLspRequest(lspMethod, path, content, line, character, extraOptions, extraBody) {
     var config = Object.assign({ timeout: 6000 }, extraOptions || {});
-    return axios.post(window.mbeditorBasePath() + '/ruby_lsp', {
+    var body = Object.assign({
       lsp_method: lspMethod,
       path: path,
       content: content,
       line: line,
       character: character
-    }, config).then(function(res) { return res.data; });
+    }, extraBody || {});
+    return axios.post(window.mbeditorBasePath() + '/ruby_lsp', body, config)
+      .then(function(res) { return res.data; });
+  }
+
+  // ActiveRecord models and their associations. Generating this eager-loads the
+  // host app, so the timeout is generous and it is only requested on demand.
+  function getModelGraph(force) {
+    return axios.get(window.mbeditorBasePath() + '/model_graph', {
+      params: force ? { refresh: 1 } : {},
+      timeout: 60000
+    }).then(function (res) { return res.data; });
+  }
+
+  // Exceptions raised by the host app, newest first. The cable push is the
+  // live path; this seeds the panel and covers hosts without ActionCable.
+  function getExceptions() {
+    return axios.get(window.mbeditorBasePath() + '/exceptions')
+      .then(function (res) { return res.data; });
+  }
+
+  function clearExceptions() {
+    return axios["delete"](window.mbeditorBasePath() + '/exceptions')
+      .then(function (res) { return res.data; });
+  }
+
+  // Rename a Ruby constant across the workspace. openPaths lists every file
+  // with a live editor model: the server returns their edits for Monaco to
+  // apply (undoable, marks the tab dirty) and writes the rest to disk itself.
+  function rubyRename(path, content, line, character, newName, openPaths) {
+    return axios.post(window.mbeditorBasePath() + '/ruby_rename', {
+      path: path, content: content, line: line, character: character,
+      new_name: newName, open_paths: openPaths || []
+    }, { timeout: 35000 }).then(function (res) { return res.data; });
   }
 
   // Whole-document Ruby diagnostics from ruby-lsp (RuboCop offenses + Prism
@@ -283,6 +327,7 @@ var FileService = (function () {
     getFileChunk: getFileChunk,
     saveFile: saveFile,
     createFile: createFile,
+    importFiles: importFiles,
     createDir: createDir,
     renamePath: renamePath,
     deletePath: deletePath,
@@ -310,6 +355,10 @@ var FileService = (function () {
     getJsProgramFile: getJsProgramFile,
     rubyLspRequest: rubyLspRequest,
     lspDiagnostics: lspDiagnostics,
+    rubyRename: rubyRename,
+    getModelGraph: getModelGraph,
+    getExceptions: getExceptions,
+    clearExceptions: clearExceptions,
     getRelatedFiles: getRelatedFiles,
     getModelSchema: getModelSchema,
     getChangelog: getChangelog

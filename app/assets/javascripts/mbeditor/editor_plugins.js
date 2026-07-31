@@ -275,24 +275,110 @@
   // error, server-side fallback signal, or an empty result. A 422 means the
   // server has decided ruby-lsp is unavailable — flip the flag off so we stop
   // asking.
-  function tryRubyLsp(lspMethod, model, position) {
+  // A Monaco marker's `code` is either a plain string or, when the backend
+  // supplied a docs URL, a { value, target } object. Everything that compares
+  // or displays a cop name has to go through this.
+  function codeValue(code) {
+    if (code && typeof code === 'object') return code.value || '';
+    return code || '';
+  }
+
+  // Identifies a marker across both the backend shape (copName/startLine) and
+  // the Monaco shape (code/startLineNumber), so the code-action provider can
+  // find the fixes belonging to the marker it was handed. Cop name alone won't
+  // do — the same cop fires many times in a file.
+  function markerFixKey(m) {
+    var cop = m.copName !== undefined ? m.copName : codeValue(m.code);
+    var line = m.startLine !== undefined ? m.startLine : m.startLineNumber;
+    var col = m.startCol !== undefined ? m.startCol : m.startColumn;
+    return cop + ':' + line + ':' + col;
+  }
+
+  // How long a failure keeps us off ruby-lsp. Long enough that a dead server
+  // isn't hammered on every keystroke, short enough that a server which comes
+  // back on its own is picked up without a page reload — which is what the old
+  // permanent flag flip cost you.
+  var LSP_BACKOFF_MS = 60000;
+
+  // Single owner of the "ruby-lsp is unwell" state. Everything that talks to
+  // the bridge routes its failures here so the status indicator and the
+  // request guard can never disagree.
+  function noteLspFailure(err) {
+    var status = err && err.response && err.response.status;
+    var data = (err && err.response && err.response.data) || (err && err.lspData) || {};
+    // A 422 means the server has decided ruby-lsp isn't there at all; a
+    // 'failed' state means it crashed past its restart budget. Both are worth
+    // backing off from. An ordinary timeout is not.
+    if (status !== 422 && data.lspState !== 'failed') return;
+
+    window.MBEDITOR_RUBY_LSP_DISABLED_UNTIL = Date.now() + LSP_BACKOFF_MS;
+    window.MBEDITOR_RUBY_LSP_REASON = data.reason || data.error ||
+      (data.lspState === 'failed' ? 'ruby-lsp crashed repeatedly' : 'ruby-lsp is unavailable');
     try {
-      if (!window.MBEDITOR_RUBY_LSP_AVAILABLE) return Promise.resolve(null);
+      window.dispatchEvent(new CustomEvent('mbeditor:lsp-health'));
+    } catch (e) { /* CustomEvent unavailable — the guard still works */ }
+  }
+
+  function lspBackedOff() {
+    return Date.now() < (window.MBEDITOR_RUBY_LSP_DISABLED_UNTIL || 0);
+  }
+
+  // Raw-passthrough LSP methods keep their 0-based ranges on the wire; these
+  // two put them back into Monaco's 1-based world at the provider.
+  function lspRange(r) {
+    if (!r) return new window.monaco.Range(1, 1, 1, 1);
+    return new window.monaco.Range(
+      (r.start && r.start.line || 0) + 1,
+      (r.start && r.start.character || 0) + 1,
+      (r.end && r.end.line || r.start && r.start.line || 0) + 1,
+      (r.end && r.end.character || r.start && r.start.character || 0) + 1
+    );
+  }
+
+  // The backend rewrites every in-workspace file:// URI to a relative path and
+  // drops the rest, so what arrives here is always workspace-relative. Monaco
+  // needs an absolute-looking URI, and registerEditorOpener maps it back.
+  function lspUri(relativePath) {
+    return window.monaco.Uri.parse('file:///' + String(relativePath).replace(/^\/+/, ''));
+  }
+
+  // Send a raw-passthrough request and hand back result.result, or null when
+  // the legacy path should run instead.
+  function rawRubyLsp(lspMethod, model, position) {
+    return tryRubyLsp(lspMethod, model, position || { lineNumber: 1, column: 1 });
+  }
+
+  // Requests that go through RuboCop rather than just Prism need more than the
+  // 6s default: the server's own budget for them is 10s.
+  var LSP_SLOW_METHODS = { diagnostics: 15000, formatting: 15000 };
+
+  function tryRubyLsp(lspMethod, model, position, extraBody) {
+    try {
+      if (!window.MBEDITOR_RUBY_LSP_AVAILABLE || lspBackedOff()) return Promise.resolve(null);
       if (typeof FileService === 'undefined' || !FileService.rubyLspRequest) return Promise.resolve(null);
       if (!model || !model._mbeditorPath || !position) return Promise.resolve(null);
       if (model.getValueLength() > 5 * 1024 * 1024) return Promise.resolve(null);
-      return FileService.rubyLspRequest(lspMethod, model._mbeditorPath, model.getValue(), position.lineNumber, position.column)
+      var config = LSP_SLOW_METHODS[lspMethod] ? { timeout: LSP_SLOW_METHODS[lspMethod] } : null;
+      return FileService.rubyLspRequest(lspMethod, model._mbeditorPath, model.getValue(),
+                                        position.lineNumber, position.column, config, extraBody)
         .then(function (data) {
-          if (!data || data.fallback || data.error) return null;
+          if (!data || data.fallback || data.error) {
+            // A 200 can still carry lspState: 'failed' — the server answered,
+            // the language server did not.
+            if (data) noteLspFailure({ lspData: data });
+            return null;
+          }
           if (lspMethod === 'definition') return (data.results && data.results.length) ? data : null;
           if (lspMethod === 'hover') return data.markdown ? data : null;
           if (lspMethod === 'completion') return (data.suggestions && data.suggestions.length) ? data : null;
+          // Raw-passthrough methods answer with { result: <LSP JSON> }. An
+          // empty array is a real answer ("no references here"), not a reason
+          // to fall back, so only a missing key counts as nothing.
+          if (data.result !== undefined) return data.result;
           return null;
         })
         .catch(function (err) {
-          if (err && err.response && err.response.status === 422) {
-            window.MBEDITOR_RUBY_LSP_AVAILABLE = false;
-          }
+          noteLspFailure(err);
           return null;
         });
     } catch (e) {
@@ -563,8 +649,6 @@
     var suppressInternalEdit = false;
     var keydownDisposable = null;
     var emmetTabDisposable = null;
-    var gotoMouseDisposable = null;
-    var gotoActionDisposable = null;
     var jsGotoMouseDisposable = null;
     var jsGotoActionDisposable = null;
 
@@ -665,84 +749,9 @@
         event.stopPropagation();
       });
 
-      // Navigate to a Ruby symbol: ruby-lsp first when available (accurate,
-      // position-aware), else modules/classes go to their definition file and
-      // lowercase symbols go to their def line via the grep/Ripper services.
-      function legacyNavigateToWord(word) {
-        if (/^[A-Z]/.test(word) && typeof FileService !== 'undefined' && FileService.getModuleMembers) {
-          FileService.getModuleMembers(word).then(function(data) {
-            if (!data || !data.file) return;
-            var filename = data.file.split('/').pop();
-            if (typeof TabManager !== 'undefined' && TabManager.openTab) {
-              TabManager.openTab(data.file, filename, 1);
-            }
-          }).catch(function() {});
-          return;
-        }
-        if (typeof FileService === 'undefined' || !FileService.getDefinition) return;
-        FileService.getDefinition(word, 'ruby').then(function(data) {
-          var results = data && Array.isArray(data.results) ? data.results : [];
-          if (results.length === 0) return;
-          var r = results[0];
-          if (typeof TabManager !== 'undefined' && TabManager.openTab) {
-            TabManager.openTab(r.file, r.file.split('/').pop(), r.line);
-          }
-        }).catch(function() {});
-      }
-
-      function navigateToWord(word, position) {
-        if (isErbDoc) return legacyNavigateToWord(word);
-
-        tryRubyLsp('definition', model, position).then(function (lsp) {
-          if (lsp && lsp.results && lsp.results.length) {
-            var r = lsp.results[0];
-            if (typeof TabManager !== 'undefined' && TabManager.openTab) {
-              TabManager.openTab(r.file, r.file.split('/').pop(), r.line);
-            }
-            return;
-          }
-          legacyNavigateToWord(word);
-        });
-      }
-
-      // Ctrl/Cmd+click — navigate to definition
-      gotoMouseDisposable = editor.onMouseDown(function(event) {
-        var ctrlOrCmd = event.event.ctrlKey || event.event.metaKey;
-        if (!ctrlOrCmd) return;
-        // Target type 6 = CONTENT_TEXT in Monaco's MouseTargetType enum
-        if (!event.target || event.target.type !== 6) return;
-
-        var position = event.target.position;
-        if (!position) return;
-
-        var wordInfo = model.getWordAtPosition(position);
-        if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
-        if (RUBY_KEYWORDS[wordInfo.word]) return;
-        if (RUBY_CORE_METHODS[wordInfo.word]) return;
-        if (isErbDoc && (!rubyContextAt(position) || RAILS_VIEW_HELPERS[wordInfo.word])) return;
-
-        event.event.preventDefault();
-        navigateToWord(wordInfo.word, position);
-      });
-
-      // F12 — go to definition from keyboard
-      gotoActionDisposable = editor.addAction({
-        id: 'mbeditor.gotoRubyDefinition',
-        label: 'Go to Ruby Definition',
-        keybindings: [window.monaco.KeyCode.F12],
-        contextMenuGroupId: 'navigation',
-        contextMenuOrder: 1.5,
-        run: function(ed) {
-          var pos = ed.getPosition();
-          if (!pos) return;
-          var wordInfo = model.getWordAtPosition(pos);
-          if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return;
-          if (RUBY_KEYWORDS[wordInfo.word]) return;
-          if (RUBY_CORE_METHODS[wordInfo.word]) return;
-          if (isErbDoc && (!rubyContextAt(pos) || RAILS_VIEW_HELPERS[wordInfo.word])) return;
-          navigateToWord(wordInfo.word, pos);
-        }
-      });
+      // Go-to-definition is a global DefinitionProvider (registered in
+      // registerGlobalExtensions), not wired per editor. Monaco owns Ctrl+click,
+      // F12, Alt+F12 peek and the Ctrl+hover preview from that one registration.
     }
 
     if (language === 'javascript') {
@@ -811,8 +820,6 @@
       dispose: function dispose() {
         if (keydownDisposable) keydownDisposable.dispose();
         if (emmetTabDisposable) emmetTabDisposable.dispose();
-        if (gotoMouseDisposable) gotoMouseDisposable.dispose();
-        if (gotoActionDisposable) gotoActionDisposable.dispose();
         if (jsGotoMouseDisposable) jsGotoMouseDisposable.dispose();
         if (jsGotoActionDisposable) jsGotoActionDisposable.dispose();
         contentDisposable.dispose();
@@ -1033,6 +1040,24 @@
         return JS_KEEP_CODES[code] === true || JS_SYNTAX_CODE.test(code);
       }
 
+      // A 2304 whose span is an assignment TARGET (`foo = 1` with no
+      // declaration anywhere) is an implicit global — code the host's babel
+      // pipeline rejects — so it stays an Error, while read-side 2304s
+      // downgrade to Warning (those are usually host globals the language
+      // service can't see). Matches `=` (not `==`/`=>`) and compound
+      // assignment operators after the flagged identifier.
+      var JS_ASSIGN_AFTER = /^\s*(=(?![=>])|(\*\*|<<|>>>?|[+\-*/%&|^]|&&|\|\||\?\?)=)/;
+      var JS_IMPLICIT_GLOBAL_HINT = ' This assignment creates an implicit global — declare the variable with var, let, or const.';
+      function isUndeclaredAssignment(model, marker) {
+        var rest = model.getValueInRange({
+          startLineNumber: marker.endLineNumber,
+          startColumn: marker.endColumn,
+          endLineNumber: marker.endLineNumber,
+          endColumn: model.getLineMaxColumn(marker.endLineNumber)
+        });
+        return JS_ASSIGN_AFTER.test(rest);
+      }
+
       var _severityPatchActive = false;
       monaco.editor.onDidChangeMarkers(function(uris) {
         if (_severityPatchActive) return;
@@ -1049,14 +1074,17 @@
               var patched = markers.filter(function(m) {
                 return entry.keep ? entry.keep(m) : true;
               }).map(function(m) {
-                return (m.severity === monaco.MarkerSeverity.Error && entry.warn[String(m.code)])
-                  ? Object.assign({}, m, { severity: monaco.MarkerSeverity.Warning })
-                  : m;
+                if (m.severity !== monaco.MarkerSeverity.Error || !entry.warn[String(m.code)]) return m;
+                if (String(m.code) === '2304' && isUndeclaredAssignment(model, m)) {
+                  return m.message.indexOf(JS_IMPLICIT_GLOBAL_HINT) !== -1 ? m
+                    : Object.assign({}, m, { message: m.message + JS_IMPLICIT_GLOBAL_HINT });
+                }
+                return Object.assign({}, m, { severity: monaco.MarkerSeverity.Warning });
               });
               // Re-applying an unchanged set would re-enter this handler
               // forever, so only write when the patch actually changed something.
               var changed = patched.length !== markers.length || patched.some(function(m, i) {
-                return m.severity !== markers[i].severity;
+                return m.severity !== markers[i].severity || m.message !== markers[i].message;
               });
               if (changed) monaco.editor.setModelMarkers(model, entry.owner, patched);
             });
@@ -1450,44 +1478,87 @@
 
     // RuboCop quick-fix code-action provider for Ruby files.
     // Only registers when RuboCop is available in the workspace.
+    //
+    // Two sources of fixes, preferred in this order:
+    //
+    //  1. Edits ruby-lsp embedded in the diagnostic itself. Applied directly as
+    //     a Monaco workspace edit — no request, no subprocess. This is also the
+    //     only source of the "Disable <cop> for this line" action, which
+    //     ruby-lsp offers even for cops that can never be autocorrected.
+    //  2. The /quick_fix endpoint, which runs `rubocop -A` over the buffer.
+    //     Still needed whenever diagnostics came from the plain rubocop path
+    //     rather than ruby-lsp.
     monaco.languages.registerCodeActionProvider('ruby', {
       provideCodeActions: function provideCodeActions(model, _range, context) {
         if (!window.MBEDITOR_RUBOCOP_AVAILABLE) return { actions: [], dispose: function() {} };
 
         var correctableCops = model._mbeditorCorrectableCops || new Set();
-        var rubocopMarkers = context.markers.filter(function(m) {
-          return m.source === 'rubocop' && m.code && correctableCops.has(m.code);
-        });
-
-        if (rubocopMarkers.length === 0) return { actions: [], dispose: function() {} };
-
+        var embedded = model._mbeditorFixes || {};
         var modelPath = model._mbeditorPath || null;
-        if (!modelPath) return { actions: [], dispose: function() {} };
+        var actions = [];
 
-        var code = model.getValue();
+        context.markers.forEach(function (marker) {
+          if (marker.source !== 'rubocop') return;
 
-        var actions = rubocopMarkers.map(function(marker) {
-          return {
-            title: 'Fix: ' + marker.code,
+          var cop = codeValue(marker.code);
+          var fixes = embedded[markerFixKey(marker)];
+
+          if (fixes && fixes.length) {
+            fixes.forEach(function (fix) {
+              actions.push({
+                title: fix.title,
+                kind: 'quickfix',
+                autocorrect: /^Autocorrect/.test(fix.title),
+                diagnostics: [marker],
+                edit: {
+                  edits: fix.edits.map(function (e) {
+                    return {
+                      resource: model.uri,
+                      versionId: model.getVersionId(),
+                      textEdit: {
+                        range: new monaco.Range(e.startLine, e.startCol, e.endLine, e.endCol),
+                        text: e.text
+                      }
+                    };
+                  })
+                }
+              });
+            });
+            return;
+          }
+
+          if (!cop || !correctableCops.has(cop) || !modelPath) return;
+          actions.push({
+            title: 'Fix: ' + cop,
             kind: 'quickfix',
-            isPreferred: rubocopMarkers.length === 1,
             diagnostics: [marker],
             command: {
               id: 'mbeditor.applyRubocopFix',
-              title: 'Apply RuboCop fix for ' + marker.code,
-              arguments: [model, marker, code, modelPath]
+              title: 'Apply RuboCop fix for ' + cop,
+              arguments: [model, cop, model.getValue(), modelPath]
             }
-          };
+          });
         });
+
+        // Mark the autocorrect as preferred when it is the only one on offer,
+        // matching what this provider did before embedded fixes existed. With
+        // several offenses under the cursor there is no single obvious fix, so
+        // nothing is preferred and the user picks from the list.
+        // (Note: monaco's `editor.action.autoFix` ignores isPreferred in this
+        // standalone build — verified against a bare probe provider — so this
+        // only affects ordering in the lightbulb menu.)
+        var autocorrects = actions.filter(function (a) { return a.autocorrect; });
+        if (autocorrects.length === 1) autocorrects[0].isPreferred = true;
+        actions.forEach(function (a) { delete a.autocorrect; });
 
         return { actions: actions, dispose: function() {} };
       }
     });
 
     // Command handler that fetches the fix from the backend and applies it.
-    monaco.editor.registerCommand('mbeditor.applyRubocopFix', function(_accessor, model, marker, code, modelPath) {
+    monaco.editor.registerCommand('mbeditor.applyRubocopFix', function(_accessor, model, copName, code, modelPath) {
       if (typeof FileService === 'undefined' || !FileService.quickFixOffense) return;
-      FileService.quickFixOffense(modelPath, code, marker.code).then(function(data) {
+      FileService.quickFixOffense(modelPath, code, copName).then(function(data) {
         if (!data || !data.fix) return;
         var fix = data.fix;
         model.pushEditOperations([], [{
@@ -1503,6 +1574,333 @@
       if (!path) return;
       if (typeof TabManager === 'undefined' || !TabManager.openTab) return;
       TabManager.openTab(path, String(path).split('/').pop(), line || 1);
+    });
+
+    // ── ruby-lsp navigation ──────────────────────────────────────────────────
+
+    // Teaches Monaco how to open a file:// resource in this editor. Without it
+    // every provider below can find a location but nothing can go there:
+    // peek-definition, the references widget and Ctrl+hover previews all route
+    // their "open this" through here.
+    monaco.editor.registerEditorOpener({
+      openCodeEditor: function (_source, resource, selectionOrPosition) {
+        var path = String(resource.path || '').replace(/^\/+/, '');
+        if (!path || typeof TabManager === 'undefined' || !TabManager.openTab) return false;
+
+        var pos = selectionOrPosition || {};
+        var line = pos.startLineNumber || pos.lineNumber || 1;
+        var col = pos.startColumn || pos.column || 1;
+        TabManager.openTab(path, path.split('/').pop(), line, null, false, col);
+        return true;
+      }
+    });
+
+    // Words never worth a definition lookup: language keywords, core methods,
+    // and (in ERB) Rails view helpers that live in the framework rather than
+    // the workspace. Guarding here rather than in the request means Ctrl+hover
+    // over `end` doesn't light up as a link.
+    function rubyNavigableWord(model, position, isErb) {
+      var info = model.getWordAtPosition(position);
+      if (!info || !info.word || info.word.length < 2) return null;
+      if (RUBY_KEYWORDS[info.word] || RUBY_CORE_METHODS[info.word]) return null;
+      if (isErb) {
+        if (!isInsideErbTag(model, position)) return null;
+        if (RAILS_VIEW_HELPERS[info.word]) return null;
+      }
+      return info.word;
+    }
+
+    // Definition: ruby-lsp when it can answer, else the grep/Ripper services.
+    // ERB always takes the legacy path — Prism cannot parse ERB.
+    ['ruby', 'erb'].forEach(function (languageId) {
+      var isErb = languageId === 'erb';
+
+      monaco.languages.registerDefinitionProvider(languageId, {
+        provideDefinition: function provideDefinition(model, position) {
+          var word = rubyNavigableWord(model, position, isErb);
+          if (!word) return null;
+
+          var lsp = isErb ? Promise.resolve(null) : tryRubyLsp('definition', model, position);
+          return lsp.then(function (data) {
+            if (data && data.results && data.results.length) {
+              return data.results.map(function (r) {
+                var line = r.line || 1;
+                return {
+                  uri: lspUri(r.file),
+                  range: new monaco.Range(line, r.col || 1, r.endLine || line, r.endCol || 1)
+                };
+              });
+            }
+            return legacyRubyDefinition(word);
+          });
+        }
+      });
+    });
+
+    // The pre-ruby-lsp lookup, now expressed as locations rather than as a
+    // side-effecting "open a tab": constants resolve through /module_members,
+    // everything else through the Ripper-backed /definition index.
+    function legacyRubyDefinition(word) {
+      if (typeof FileService === 'undefined') return null;
+
+      if (/^[A-Z]/.test(word) && FileService.getModuleMembers) {
+        return FileService.getModuleMembers(word).then(function (data) {
+          if (!data || !data.file) return null;
+          return [{ uri: lspUri(data.file), range: new monaco.Range(1, 1, 1, 1) }];
+        }).catch(function () { return null; });
+      }
+
+      if (!FileService.getDefinition) return null;
+      return FileService.getDefinition(word, 'ruby').then(function (data) {
+        var results = (data && Array.isArray(data.results)) ? data.results : [];
+        return results.map(function (r) {
+          return { uri: lspUri(r.file), range: new monaco.Range(r.line || 1, 1, r.line || 1, 1) };
+        });
+      }).catch(function () { return null; });
+    }
+
+    // References. No legacy equivalent exists — the workspace search panel is a
+    // text grep, not a reference index — so an empty list is the honest answer
+    // when ruby-lsp can't help.
+    monaco.languages.registerReferenceProvider('ruby', {
+      provideReferences: function provideReferences(model, position) {
+        if (!rubyNavigableWord(model, position, false)) return null;
+
+        return rawRubyLsp('references', model, position).then(function (locations) {
+          if (!Array.isArray(locations)) return null;
+          return locations.filter(function (loc) { return loc && loc.uri; }).map(function (loc) {
+            return { uri: lspUri(loc.uri), range: lspRange(loc.range) };
+          });
+        });
+      }
+    });
+
+    // Occurrences of the symbol under the cursor. Monaco has a built-in
+    // word-match highlighter, but it cannot tell a local named `id` from a
+    // method named `id`; ruby-lsp resolves the actual symbol.
+    monaco.languages.registerDocumentHighlightProvider('ruby', {
+      provideDocumentHighlights: function provideDocumentHighlights(model, position) {
+        return rawRubyLsp('document_highlight', model, position).then(function (highlights) {
+          if (!Array.isArray(highlights)) return null;
+          return highlights.filter(Boolean).map(function (h) {
+            return { range: lspRange(h.range), kind: h.kind };
+          });
+        });
+      }
+    });
+
+    // Document symbols feed Monaco's breadcrumbs, sticky scroll and
+    // Ctrl+Shift+O — all of which are dark for Ruby today.
+    //
+    // This deliberately does NOT replace ruby_outline.js. That lexer supplies
+    // method visibility and test-block (describe/it/test) entries which
+    // ruby-lsp's documentSymbol does not emit, and the outline panel groups on
+    // both. It also still has to cover ERB, HAML, and the case where ruby-lsp
+    // isn't running.
+    var LSP_SYMBOL_KINDS = {
+      1: 'File', 2: 'Module', 3: 'Namespace', 4: 'Package', 5: 'Class',
+      6: 'Method', 7: 'Property', 8: 'Field', 9: 'Constructor', 10: 'Enum',
+      11: 'Interface', 12: 'Function', 13: 'Variable', 14: 'Constant',
+      15: 'String', 16: 'Number', 17: 'Boolean', 18: 'Array', 19: 'Object',
+      20: 'Key', 21: 'Null', 22: 'EnumMember', 23: 'Struct', 24: 'Event',
+      25: 'Operator', 26: 'TypeParameter'
+    };
+
+    function toMonacoSymbols(symbols, depth) {
+      if (!Array.isArray(symbols) || depth > 16) return [];
+      return symbols.filter(Boolean).map(function (s) {
+        var full = lspRange(s.range);
+        return {
+          name: String(s.name || ''),
+          detail: s.detail || '',
+          kind: monaco.languages.SymbolKind[LSP_SYMBOL_KINDS[s.kind] || 'Variable'],
+          tags: [],
+          range: full,
+          selectionRange: s.selectionRange ? lspRange(s.selectionRange) : full,
+          children: toMonacoSymbols(s.children, depth + 1)
+        };
+      });
+    }
+
+    monaco.languages.registerDocumentSymbolProvider('ruby', {
+      displayName: 'Ruby',
+      provideDocumentSymbols: function provideDocumentSymbols(model) {
+        return rawRubyLsp('document_symbol', model).then(function (symbols) {
+          if (!Array.isArray(symbols)) return null;
+          return toMonacoSymbols(symbols, 0);
+        });
+      }
+    });
+
+    // Formatting. Until now Ruby had no formatting provider at all, so
+    // Shift+Alt+F and format-on-save silently did nothing — formatting was
+    // reachable only through the toolbar button. /format stays as the fallback
+    // for when ruby-lsp is unavailable.
+    monaco.languages.registerDocumentFormattingEditProvider('ruby', {
+      displayName: 'RuboCop',
+      provideDocumentFormattingEdits: function provideDocumentFormattingEdits(model, options) {
+        var opts = { tab_size: (options && options.tabSize) || 2,
+                     insert_spaces: !options || options.insertSpaces !== false };
+
+        return tryRubyLsp('formatting', model, { lineNumber: 1, column: 1 }, opts)
+          .then(function (edits) {
+            if (Array.isArray(edits)) {
+              return edits.map(function (e) {
+                return { range: lspRange(e.range), text: e.newText || '' };
+              });
+            }
+            return legacyRubyFormat(model);
+          });
+      }
+    });
+
+    // Pre-provider path: /format returns the whole corrected file, so it
+    // becomes one replacement spanning the buffer.
+    function legacyRubyFormat(model) {
+      if (typeof FileService === 'undefined' || !FileService.formatFile) return [];
+      if (!model._mbeditorPath) return [];
+
+      return FileService.formatFile(model._mbeditorPath, model.getValue()).then(function (data) {
+        var formatted = data && data.content;
+        if (typeof formatted !== 'string' || formatted === model.getValue()) return [];
+        return [{ range: model.getFullModelRange(), text: formatted }];
+      }).catch(function () { return []; });
+    }
+
+    // Parameter hints while typing a call's arguments.
+    monaco.languages.registerSignatureHelpProvider('ruby', {
+      signatureHelpTriggerCharacters: ['(', ','],
+      provideSignatureHelp: function provideSignatureHelp(model, position) {
+        return rawRubyLsp('signature_help', model, position).then(function (help) {
+          if (!help || !Array.isArray(help.signatures) || !help.signatures.length) return null;
+          // LSP's SignatureHelp is structurally identical to Monaco's, and
+          // MarkupContent {kind, value} is accepted where an IMarkdownString is.
+          return { value: help, dispose: function () {} };
+        });
+      }
+    });
+
+    // Smart expand/shrink selection (Shift+Alt+Right / Left).
+    monaco.languages.registerSelectionRangeProvider('ruby', {
+      provideSelectionRanges: function provideSelectionRanges(model, positions) {
+        // LSP takes a list of positions and answers one linked list per
+        // position; the bridge sends a single position, so ask per position and
+        // flatten each chain into the array Monaco wants.
+        return Promise.all(positions.map(function (position) {
+          return rawRubyLsp('selection_range', model, position).then(function (result) {
+            var node = Array.isArray(result) ? result[0] : null;
+            var ranges = [];
+            // Bounded: the chain comes from a subprocess and a cycle would spin.
+            while (node && node.range && ranges.length < 64) {
+              ranges.push({ range: lspRange(node.range) });
+              node = node.parent;
+            }
+            return ranges;
+          });
+        })).then(function (perPosition) {
+          return perPosition.some(function (r) { return r.length; }) ? perPosition : null;
+        });
+      }
+    });
+
+    // F2 rename. ruby-lsp renames *constants only*, so resolveRenameLocation
+    // declines anything else up front — otherwise F2 on a method name would
+    // open the input box and then fail after you'd typed a new name.
+    monaco.languages.registerRenameProvider('ruby', {
+      resolveRenameLocation: function resolveRenameLocation(model, position) {
+        return rawRubyLsp('prepare_rename', model, position).then(function (result) {
+          if (!result) {
+            return { rejectReason: 'Only Ruby constants can be renamed here.' };
+          }
+          // prepareRename answers either a bare Range or { range, placeholder }.
+          var range = result.range || result;
+          var wordInfo = model.getWordAtPosition(position);
+          return {
+            range: lspRange(range),
+            text: result.placeholder || (wordInfo && wordInfo.word) || ''
+          };
+        });
+      },
+
+      provideRenameEdits: function provideRenameEdits(model, position, newName) {
+        if (typeof FileService === 'undefined' || !FileService.rubyRename) return null;
+
+        // Every path with a live model. The server returns their edits for us
+        // to apply rather than writing them, so unsaved buffers survive.
+        var openPaths = monaco.editor.getModels()
+          .filter(function (m) { return m._mbeditorPath && !m.isDisposed(); })
+          .map(function (m) { return m._mbeditorPath; });
+
+        return FileService.rubyRename(model._mbeditorPath, model.getValue(),
+                                      position.lineNumber, position.column, newName, openPaths)
+          .then(function (data) {
+            var edits = [];
+            Object.keys((data && data.edits) || {}).forEach(function (relPath) {
+              var target = modelForPath(relPath) || null;
+              data.edits[relPath].forEach(function (e) {
+                edits.push({
+                  resource: target ? target.uri : lspUri(relPath),
+                  versionId: target ? target.getVersionId() : undefined,
+                  textEdit: {
+                    range: new monaco.Range(e.startLine, e.startCol, e.endLine, e.endCol),
+                    text: e.text
+                  }
+                });
+              });
+            });
+
+            reportRenameOutcome(data);
+            return { edits: edits };
+          })
+          .catch(function (err) {
+            var message = (err && err.response && err.response.data && err.response.data.error) ||
+              'Rename failed.';
+            return { edits: [], rejectReason: message };
+          });
+      }
+    });
+
+    function modelForPath(relPath) {
+      return monaco.editor.getModels().filter(function (m) {
+        return m._mbeditorPath === relPath && !m.isDisposed();
+      })[0];
+    }
+
+    // Files written straight to disk leave no dirty tab and no undo entry, so
+    // say how many were touched — otherwise a workspace-wide rename looks like
+    // it only changed the file you were looking at.
+    function reportRenameOutcome(data) {
+      if (typeof EditorStore === 'undefined' || !EditorStore.setStatus) return;
+
+      var written = (data && data.written) || [];
+      var rejected = (data && data.rejected) || [];
+      var parts = [];
+      if (written.length) parts.push(written.length + ' file' + (written.length === 1 ? '' : 's') + ' saved');
+      if (rejected.length) parts.push(rejected.length + ' skipped (outside the workspace)');
+      if (!parts.length) return;
+
+      EditorStore.setStatus('Renamed — ' + parts.join(', '), rejected.length ? 'warning' : 'success');
+    }
+
+    // Real class/def/block/heredoc folding. Monaco merges the results of every
+    // folding provider, so the vim-marker provider registered further down
+    // keeps working alongside this one.
+    monaco.languages.registerFoldingRangeProvider('ruby', {
+      provideFoldingRanges: function provideFoldingRanges(model) {
+        return rawRubyLsp('folding_range', model).then(function (ranges) {
+          if (!Array.isArray(ranges)) return null;
+          return ranges.filter(Boolean).map(function (r) {
+            return {
+              start: (r.startLine || 0) + 1,
+              end: (r.endLine || 0) + 1,
+              kind: r.kind === 'comment' ? monaco.languages.FoldingRangeKind.Comment
+                : r.kind === 'imports' ? monaco.languages.FoldingRangeKind.Imports
+                : r.kind === 'region' ? monaco.languages.FoldingRangeKind.Region
+                : undefined
+            };
+          });
+        });
+      }
     });
 
     // Ruby method definition hover provider.
@@ -1943,6 +2341,14 @@
   window.MbeditorEditorPlugins = {
     registerGlobalExtensions: registerGlobalExtensions,
     attachEditorFeatures: attachEditorFeatures,
+    // The one place that decides ruby-lsp is unwell. Anything outside this file
+    // that talks to the bridge reports its failures here rather than writing
+    // the window flags itself.
+    noteLspFailure: noteLspFailure,
+    lspBackedOff: lspBackedOff,
+    // EditorPanel keys the embedded-fix side map with this; the code-action
+    // provider reads it back. One definition so the two cannot drift.
+    markerFixKey: markerFixKey,
     // Exposed so the ERB gating can be asserted directly in system tests.
     isInsideErbTag: isInsideErbTag,
     runRubyEnter: function runRubyEnter(editor) {

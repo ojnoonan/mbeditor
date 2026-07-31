@@ -47,6 +47,9 @@ var GitPanel = function GitPanel(_ref) {
   unpushedCommits.forEach(function (c) { if (c && c.hash) localHashes[c.hash] = true; });
 
   var branchBaseRef    = gitInfo && gitInfo.branchBaseRef;
+  // The exact baseline unpushedFiles was computed against — a merge-base sha,
+  // or the upstream when this branch is itself a base branch.
+  var branchBaseSha    = gitInfo && gitInfo.branchBaseSha;
   var rawBranchCommits = gitInfo && gitInfo.branchCommits || [];
   var branchCommits = rawBranchCommits.map(function (c) {
     return Object.assign({}, c, { isLocal: !!localHashes[c.hash] });
@@ -469,13 +472,19 @@ var GitPanel = function GitPanel(_ref) {
           ? React.createElement('div', { className: 'git-hint' }, 'Compared to ', React.createElement('code', null, branchBaseRef))
           : upstreamBranch
             ? React.createElement('div', { className: 'git-hint' }, 'All files changed vs ', React.createElement('code', null, upstreamBranch))
-            : React.createElement('div', { className: 'git-hint' }, 'No upstream branch tracked.'),
+            : React.createElement('div', { className: 'git-hint git-hint-warn' },
+                'No base branch found to compare against — fetch develop, or set base_branch_candidates.'),
         React.createElement(
           'div',
           { className: 'git-list' },
           unpushedFiles.length === 0
-            ? React.createElement('div', { className: 'git-empty' }, 'No changes vs upstream.')
-            : unpushedFiles.map(function (item) { return renderFileRow(item, upstreamBranch, 'HEAD', true); })
+            ? React.createElement('div', { className: 'git-empty' },
+                branchBaseRef ? 'No changes vs ' + branchBaseRef + '.' : 'No changes vs upstream.')
+            // branchBaseSha, not upstreamBranch: the row must diff against the
+            // same baseline the list was built from, or a file listed as
+            // changed vs develop opens a diff of the branch against itself and
+            // shows nothing.
+            : unpushedFiles.map(function (item) { return renderFileRow(item, branchBaseSha || upstreamBranch, 'HEAD', true); })
         )
       )
     ),

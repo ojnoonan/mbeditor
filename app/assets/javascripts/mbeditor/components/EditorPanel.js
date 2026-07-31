@@ -13,6 +13,10 @@ var _hamlLangRegistered = false;
 var _erbLangRegistered = false;
 var _jsErbLangRegistered = false;
 
+// Backend marker severity -> monaco.MarkerSeverity. Literals rather than a
+// reference to window.monaco, which does not exist when this file is parsed.
+var MARKER_SEVERITY = { hint: 1, info: 2, warning: 4, error: 8 };
+
 var EditorPanel = function EditorPanel(_ref) {
   var tab = _ref.tab;
   var paneId = _ref.paneId;
@@ -756,15 +760,11 @@ var EditorPanel = function EditorPanel(_ref) {
       }
     });
 
-    var formatActionDisposable = editor.addAction({
-      id: 'mbeditor.formatDocument',
-      label: 'Format Document',
-      contextMenuGroupId: '1_modification',
-      contextMenuOrder: 1.5,
-      run: function() {
-        if (onFormatRef.current) onFormatRef.current();
-      }
-    });
+    // No custom "Format Document" action: Ruby now has a real formatting
+    // provider, so Monaco contributes that context-menu entry itself, and a
+    // second one of our own showed up as a duplicate. Languages with no
+    // provider keep reaching formatting through the toolbar button.
+    var formatActionDisposable = null;
 
     // Ctrl/Cmd+P → quick-open. Bound at the Monaco level (not just the window
     // listener) so the editor intercepts the key while it has focus; otherwise
@@ -772,6 +772,16 @@ var EditorPanel = function EditorPanel(_ref) {
     // can preventDefault. The vim-mode mapping handles this separately.
     editor.addCommand(window.monaco.KeyMod.CtrlCmd | window.monaco.KeyCode.KeyP, function() {
       EditorStore.setState({ isQuickOpenVisible: true });
+    });
+
+    // PageUp/PageDown cycle between the current cursor position and where the
+    // cursor was before the last jump (go-to-definition, search result, etc.),
+    // replacing the default page-scroll behaviour.
+    editor.addCommand(window.monaco.KeyCode.PageUp, function() {
+      TabManager.toggleJumpOrigin();
+    });
+    editor.addCommand(window.monaco.KeyCode.PageDown, function() {
+      TabManager.toggleJumpOrigin();
     });
 
     var editorPluginDisposable = null;
@@ -1053,7 +1063,7 @@ var EditorPanel = function EditorPanel(_ref) {
         window.__mbeditorActiveEditor = null;
       }
       if (editorPluginDisposable) editorPluginDisposable.dispose();
-      formatActionDisposable.dispose();
+      if (formatActionDisposable) formatActionDisposable.dispose();
       runTestAtCursorDisposable.dispose();
       columnSelectDisposable.dispose();
       contentDisposable.dispose();
@@ -1314,16 +1324,25 @@ var EditorPanel = function EditorPanel(_ref) {
       var model = monacoRef.current.getModel();
       if (model) {
         var monacoMarkers = markers.map(function (m) {
-          var sev = m.severity === 'error'
-            ? window.monaco.MarkerSeverity.Error
-            : window.monaco.MarkerSeverity.Warning;
+          // Backend severities map 1:1 onto MarkerSeverity. Grading them
+          // properly is what stops RuboCop's convention offenses — the bulk of
+          // any lint run — from rendering as a wall of yellow warnings.
+          var sev = MARKER_SEVERITY[m.severity];
           return {
-            severity: sev,
+            severity: sev != null ? sev : window.monaco.MarkerSeverity.Warning,
             // RuboCop-sourced markers keep the 'rubocop' source so the quick-fix
         // code action provider offers a lightbulb; other sources (e.g. Prism
         // syntax errors from ruby-lsp) correctly get none.
         source: m.source || 'rubocop',
-            code: m.copName || '',
+            // An object code renders the cop name as a link to its docs page.
+            // Readers must cope with both shapes — see codeValue() in
+            // editor_plugins.js.
+            code: m.codeHref
+              ? { value: m.copName || '', target: window.monaco.Uri.parse(m.codeHref) }
+              : (m.copName || ''),
+            // Fades the range instead of squiggling it: dead code reads as
+            // absent rather than as a problem.
+            tags: m.unnecessary ? [window.monaco.MarkerTag.Unnecessary] : undefined,
             message: m.message,
             startLineNumber: m.startLine,
             startColumn: m.startCol,
@@ -1337,6 +1356,17 @@ var EditorPanel = function EditorPanel(_ref) {
         model._mbeditorCorrectableCops = new Set(
           markers.filter(function(m) { return m.correctable && m.copName; }).map(function(m) { return m.copName; })
         );
+        // ruby-lsp ships the complete edits for each fix inside the diagnostic,
+        // so the code-action provider can apply one without any request at all.
+        // They ride a side map rather than the marker because setModelMarkers
+        // normalises marker objects and drops unknown properties.
+        var fixes = {};
+        markers.forEach(function (m) {
+          if (m.fixes && m.fixes.length) {
+            fixes[MbeditorEditorPlugins.markerFixKey(m)] = m.fixes;
+          }
+        });
+        model._mbeditorFixes = fixes;
       }
     }
   }, [markers, tab.id]);

@@ -60,9 +60,11 @@ var TabBar = function TabBar(_ref) {
     });
     if (hasError) return 'tab-has-error';
 
+    // Only real warnings tint the tab. Convention and refactor offenses grade
+    // as info/hint and are far too common to be worth an amber tab — a tint
+    // that's always on tells you nothing.
     var hasWarning = tabMarkers.some(function (marker) {
-      var severity = String(marker && marker.severity || '').toLowerCase();
-      return severity !== 'error' && severity !== 'fatal';
+      return String(marker && marker.severity || '').toLowerCase() === 'warning';
     });
     if (hasWarning) return 'tab-has-warning';
 

@@ -112,21 +112,146 @@ loop do
         **Definitions**: [user.rb](#{uri}#L3,1-9,4) | [set.rb](file:///gems/set/lib/set.rb#L2,1-2,3)
 
         **fake hover** — snowman ☃
+
+        # Doc comment opened with ## in the source
+        Body of the comment.
       MD
+    when "textDocument/references"
+      # One in-workspace hit and one in a gem: the gem location must be dropped
+      # by the controller's URI sanitizer before it reaches the browser.
+      uri = msg.dig("params", "textDocument", "uri")
+      [{ "uri" => uri,
+         "range" => { "start" => { "line" => 6, "character" => 4 },
+                      "end" => { "line" => 6, "character" => 8 } } },
+       { "uri" => "file:///gems/activesupport/lib/thing.rb",
+         "range" => { "start" => { "line" => 1, "character" => 0 },
+                      "end" => { "line" => 1, "character" => 4 } } }]
+    when "textDocument/documentHighlight"
+      [{ "range" => { "start" => { "line" => 2, "character" => 4 },
+                      "end" => { "line" => 2, "character" => 8 } }, "kind" => 1 },
+       { "range" => { "start" => { "line" => 5, "character" => 2 },
+                      "end" => { "line" => 5, "character" => 6 } }, "kind" => 2 }]
+    when "textDocument/documentSymbol"
+      [{ "name" => "User", "kind" => 5,
+         "range" => { "start" => { "line" => 0, "character" => 0 },
+                      "end" => { "line" => 8, "character" => 3 } },
+         "selectionRange" => { "start" => { "line" => 0, "character" => 6 },
+                               "end" => { "line" => 0, "character" => 10 } },
+         "children" => [
+           { "name" => "full_name", "kind" => 6,
+             "range" => { "start" => { "line" => 2, "character" => 2 },
+                          "end" => { "line" => 4, "character" => 5 } },
+             "selectionRange" => { "start" => { "line" => 2, "character" => 6 },
+                                   "end" => { "line" => 2, "character" => 15 } },
+             "children" => [] }
+         ] }]
+    when "textDocument/foldingRange"
+      [{ "startLine" => 0, "endLine" => 8 },
+       { "startLine" => 2, "endLine" => 4, "kind" => "comment" }]
+    when "textDocument/formatting"
+      # Echo the options back in the replacement so tests can assert they were
+      # forwarded, alongside a normal whole-document edit.
+      opts = msg.dig("params", "options") || {}
+      [{ "range" => { "start" => { "line" => 0, "character" => 0 },
+                      "end" => { "line" => 1, "character" => 0 } },
+         "newText" => "# formatted tabSize=#{opts['tabSize']} insertSpaces=#{opts['insertSpaces']}\n" }]
+    when "textDocument/signatureHelp"
+      # Documentation embeds a file:// "Definitions" line, exactly as ruby-lsp's
+      # does — the controller must not let that absolute path reach the browser.
+      uri = msg.dig("params", "textDocument", "uri")
+      { "signatures" => [
+          { "label" => "full_name(first, last)",
+            "documentation" => { "kind" => "markdown",
+                                 "value" => "Joins the two names.\n\n**Definitions**: " \
+                                            "[user.rb](#{uri}#L2,3-4,6) | " \
+                                            "[set.rb](file:///gems/set/lib/set.rb#L2,1-2,3)" },
+            "parameters" => [{ "label" => "first" }, { "label" => "last" }] }
+        ],
+        "activeSignature" => 0, "activeParameter" => 1 }
+    when "textDocument/prepareRename"
+      { "range" => { "start" => { "line" => 0, "character" => 6 },
+                     "end" => { "line" => 0, "character" => 10 } },
+        "placeholder" => "User" }
+    when "textDocument/rename"
+      # Three targets: the requested document, a sibling the client did not
+      # open, and one outside the workspace that must be refused.
+      uri = msg.dig("params", "textDocument", "uri")
+      name = msg.dig("params", "newName")
+      root = File.dirname(uri.delete_prefix("file://"))
+      { "changes" => {
+          uri => [{ "range" => { "start" => { "line" => 0, "character" => 6 },
+                                 "end" => { "line" => 0, "character" => 10 } },
+                    "newText" => name }],
+          "file://#{root}/rename_sibling.rb" =>
+            [{ "range" => { "start" => { "line" => 1, "character" => 8 },
+                            "end" => { "line" => 1, "character" => 12 } },
+               "newText" => name },
+             { "range" => { "start" => { "line" => 0, "character" => 6 },
+                            "end" => { "line" => 0, "character" => 10 } },
+               "newText" => name }],
+          "file:///etc/passwd" =>
+            [{ "range" => { "start" => { "line" => 0, "character" => 0 },
+                            "end" => { "line" => 0, "character" => 1 } },
+               "newText" => "x" }]
+        } }
+    when "textDocument/selectionRange"
+      # A linked list: innermost range first, widening through `parent`.
+      [{ "range" => { "start" => { "line" => 2, "character" => 4 },
+                      "end" => { "line" => 2, "character" => 8 } },
+         "parent" => {
+           "range" => { "start" => { "line" => 2, "character" => 0 },
+                        "end" => { "line" => 2, "character" => 20 } },
+           "parent" => {
+             "range" => { "start" => { "line" => 0, "character" => 0 },
+                          "end" => { "line" => 5, "character" => 3 } }
+           }
+         } }]
     when "textDocument/completion"
       { "items" => [{ "label" => "fake_method", "kind" => 2,
                       "insertText" => "fake_method", "detail" => "FakeClass#fake_method" }] }
     when "textDocument/diagnostic"
       # One RuboCop-shaped (correctable, carries a cop name) and one
       # Prism-shaped (syntax error, no cop name) diagnostic.
+      uri = msg.dig("params", "textDocument", "uri")
       { "kind" => "full", "items" => [
         { "source" => "RuboCop",
           "code" => "Layout/SpaceAroundOperators",
+          # camelCase: this is the LSP wire key, not the Ruby keyword argument.
+          "codeDescription" => {
+            "href" => "https://docs.rubocop.org/rubocop/cops_layout.html#layoutspacearoundoperators"
+          },
           "severity" => 3,
           "message" => "Surrounding space missing for operator `=`.",
           "range" => { "start" => { "line" => 2, "character" => 4 },
                        "end" => { "line" => 2, "character" => 5 } },
-          "data" => { "correctable" => true } },
+          # ruby-lsp embeds the complete fix edits here; its codeAction handler
+          # only echoes them back, so the editor applies them with no request.
+          "data" => {
+            "correctable" => true,
+            "code_actions" => [
+              { "title" => "Autocorrect Layout/SpaceAroundOperators",
+                "kind" => "quickfix",
+                "isPreferred" => true,
+                "edit" => { "documentChanges" => [
+                  { "textDocument" => { "version" => nil, "uri" => uri },
+                    "edits" => [
+                      { "range" => { "start" => { "line" => 2, "character" => 4 },
+                                     "end" => { "line" => 2, "character" => 5 } },
+                        "newText" => " = " }
+                    ] }
+                ] } },
+              { "title" => "Disable Layout/SpaceAroundOperators for this line",
+                "kind" => "quickfix",
+                "edit" => { "documentChanges" => [
+                  { "textDocument" => { "version" => nil, "uri" => uri },
+                    "edits" => [
+                      { "range" => { "start" => { "line" => 2, "character" => 8 },
+                                     "end" => { "line" => 2, "character" => 8 } },
+                        "newText" => " # rubocop:disable Layout/SpaceAroundOperators" }
+                    ] }
+                ] } }
+            ]
+          } },
         { "source" => "Prism",
           "severity" => 1,
           "message" => "unexpected end-of-input",

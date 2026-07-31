@@ -10,6 +10,19 @@
 var ProblemsPanel = (function () {
   var SEVERITY_ERROR = 8;
   var SEVERITY_WARNING = 4;
+  var SEVERITY_INFO = 2;
+  var SEVERITY_HINT = 1;
+
+  // Info and Hint share a row style: both mean "worth knowing, not worth
+  // stopping for", and two shades of grey would be a distinction without a
+  // difference in a list this dense.
+  var SEVERITY_KIND = { 8: 'error', 4: 'warning', 2: 'info', 1: 'info' };
+  var SEVERITY_ICON = {
+    error: 'fa-bug',
+    warning: 'fa-exclamation-triangle',
+    info: 'fa-info-circle'
+  };
+  var SEVERITY_LABEL = { error: 'Error', warning: 'Warning', info: 'Info' };
   // Long enough to recognise the statement, short enough not to push the
   // location off the end of the row.
   var CODE_PREVIEW_LIMIT = 120;
@@ -28,10 +41,14 @@ var ProblemsPanel = (function () {
   // counts share this one pass. Exposed on the component for the status bar.
   function collect() {
     var monaco = window.monaco;
-    if (!monaco || !monaco.editor) return { errors: [], warnings: [], byFile: [] };
+    if (!monaco || !monaco.editor) return { errors: [], warnings: [], infos: [], byFile: [] };
 
     var errors = [];
     var warnings = [];
+    // RuboCop's convention and refactor offenses grade as Info, and its own
+    // `info` level as Hint. Listing only errors and warnings would hide the
+    // majority of a lint run.
+    var infos = [];
     var byFile = [];
 
     monaco.editor.getModels().forEach(function (model) {
@@ -39,7 +56,8 @@ var ProblemsPanel = (function () {
       if (!path || model.isDisposed()) return;
 
       var markers = monaco.editor.getModelMarkers({ resource: model.uri }).filter(function (m) {
-        return m.severity === SEVERITY_ERROR || m.severity === SEVERITY_WARNING;
+        return m.severity === SEVERITY_ERROR || m.severity === SEVERITY_WARNING ||
+               m.severity === SEVERITY_INFO || m.severity === SEVERITY_HINT;
       });
       if (markers.length === 0) return;
 
@@ -48,7 +66,10 @@ var ProblemsPanel = (function () {
       // Carry the source line alongside the marker: read here, while the model
       // is in hand, rather than looking the model up again at render time.
       var entries = markers.map(function (m) {
-        (m.severity === SEVERITY_ERROR ? errors : warnings).push(m);
+        var bucket = m.severity === SEVERITY_ERROR ? errors
+          : m.severity === SEVERITY_WARNING ? warnings
+          : infos;
+        bucket.push(m);
         return { marker: m, code: codePreview(model, m.startLineNumber) };
       });
 
@@ -56,9 +77,11 @@ var ProblemsPanel = (function () {
     });
 
     byFile.sort(function (a, b) { return a.path < b.path ? -1 : a.path > b.path ? 1 : 0; });
-    return { errors: errors, warnings: warnings, byFile: byFile };
+    return { errors: errors, warnings: warnings, infos: infos, byFile: byFile };
   }
 
+  // The status bar deliberately tallies only errors and warnings: a count that
+  // included every convention offense would be a number nobody acts on.
   function counts() {
     var all = collect();
     return { errors: all.errors.length, warnings: all.warnings.length };
@@ -72,6 +95,38 @@ var ProblemsPanel = (function () {
     var problems = _problems[0], setProblems = _problems[1];
     var _filter = React.useState('');
     var filter = _filter[0], setFilter = _filter[1];
+
+    // Exceptions raised by the host app. Unlike markers these are not per-model
+    // — a runtime failure isn't a property of a file you happen to have open —
+    // so they live in their own section above the marker list.
+    var _exceptions = React.useState([]);
+    var exceptions = _exceptions[0], setExceptions = _exceptions[1];
+
+    React.useEffect(function () {
+      var cancelled = false;
+      if (FileService.getExceptions) {
+        FileService.getExceptions().then(function (data) {
+          if (!cancelled) setExceptions((data && data.exceptions) || []);
+        })["catch"](function () { /* older host, or capture disabled */ });
+      }
+
+      // Live push while the panel is open.
+      var onException = function (e) {
+        setExceptions(function (prev) {
+          return [e.detail].concat(prev).slice(0, 50);
+        });
+      };
+      window.addEventListener('mbeditor:exception', onException);
+      return function () {
+        cancelled = true;
+        window.removeEventListener('mbeditor:exception', onException);
+      };
+    }, []);
+
+    var clearExceptions = function () {
+      setExceptions([]);
+      if (FileService.clearExceptions) FileService.clearExceptions()["catch"](function () {});
+    };
 
     var MIN_HEIGHT = 120;
     var _height = React.useState(function () {
@@ -122,7 +177,7 @@ var ProblemsPanel = (function () {
         }).filter(function (entry) { return entry.markers.length > 0; })
       : problems.byFile;
 
-    var total = problems.errors.length + problems.warnings.length;
+    var total = problems.errors.length + problems.warnings.length + problems.infos.length;
 
     return React.createElement(
       'div',
@@ -142,6 +197,7 @@ var ProblemsPanel = (function () {
           { className: 'ide-problems-summary' },
           problems.errors.length + ' error' + (problems.errors.length === 1 ? '' : 's') +
             ', ' + problems.warnings.length + ' warning' + (problems.warnings.length === 1 ? '' : 's') +
+            ', ' + problems.infos.length + ' info' +
             ' in open files'
         ),
         React.createElement('input', {
@@ -159,7 +215,57 @@ var ProblemsPanel = (function () {
       React.createElement(
         'div',
         { className: 'ide-problems-body' },
-        total === 0
+        exceptions.length > 0 && React.createElement(
+          'div',
+          { className: 'ide-problems-file ide-problems-exceptions' },
+          React.createElement(
+            'div',
+            { className: 'ide-problems-file-name' },
+            React.createElement('i', { className: 'fas fa-bolt', 'aria-hidden': 'true' }),
+            ' Exceptions',
+            React.createElement('span', { className: 'ide-problems-file-count' }, exceptions.length),
+            React.createElement('button', {
+              type: 'button', className: 'ide-problems-btn ide-problems-clear',
+              title: 'Clear recorded exceptions', onClick: clearExceptions
+            }, React.createElement('i', { className: 'fas fa-times' }))
+          ),
+          exceptions.map(function (ex) {
+            return React.createElement(
+              'div',
+              { className: 'ide-problems-exception', key: ex.id },
+              React.createElement(
+                'div',
+                { className: 'ide-problems-item ide-problems-item-error ide-problems-exception-head' },
+                React.createElement('i', { className: 'fas fa-bolt ide-problems-icon', 'aria-hidden': 'true' }),
+                React.createElement('span', { className: 'ide-problems-msg' }, ex.klass + ': ' + ex.message),
+                (ex.controller || ex.path) && React.createElement(
+                  'span',
+                  { className: 'ide-problems-source' },
+                  ex.controller ? ex.controller + '#' + ex.action : ex.path
+                )
+              ),
+              // Only workspace frames survive the server side, so every one of
+              // these is a file this editor can actually open.
+              (ex.frames || []).map(function (f, i) {
+                return React.createElement(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'ide-problems-item ide-problems-frame',
+                    key: ex.id + ':' + i,
+                    'aria-label': 'Open ' + f.file + ' line ' + f.line,
+                    onClick: function () { if (onOpenFile) onOpenFile(f.file, f.line, 1); }
+                  },
+                  React.createElement('span', { className: 'ide-problems-code' }, f.file),
+                  React.createElement('span', { className: 'ide-problems-loc' }, '[' + f.line + ']')
+                );
+              })
+            );
+          })
+        ),
+        total === 0 && exceptions.length > 0
+          ? null
+          : total === 0
           ? React.createElement('div', { className: 'ide-problems-empty' }, 'No problems in the open files')
           : shown.length === 0
             ? React.createElement('div', { className: 'ide-problems-empty' }, 'No problems match the filter')
@@ -175,14 +281,17 @@ var ProblemsPanel = (function () {
                   ),
                   entry.markers.map(function (item, index) {
                     var marker = item.marker;
-                    var isError = marker.severity === SEVERITY_ERROR;
+                    var kind = SEVERITY_KIND[marker.severity] || 'info';
+                    var docsHref = marker.code && marker.code.target
+                      ? String(marker.code.target)
+                      : null;
                     return React.createElement(
                       'button',
                       {
                         type: 'button',
-                        className: 'ide-problems-item ide-problems-item-' + (isError ? 'error' : 'warning'),
+                        className: 'ide-problems-item ide-problems-item-' + kind,
                         key: entry.path + ':' + marker.startLineNumber + ':' + index,
-                        'aria-label': (isError ? 'Error' : 'Warning') + ': ' + marker.message +
+                        'aria-label': SEVERITY_LABEL[kind] + ': ' + marker.message +
                           ', ' + entry.path + ' line ' + marker.startLineNumber +
                           (item.code ? ', source: ' + item.code : ''),
                         onClick: function () {
@@ -190,11 +299,22 @@ var ProblemsPanel = (function () {
                         }
                       },
                       React.createElement('i', {
-                        className: 'fas ' + (isError ? 'fa-bug' : 'fa-exclamation-triangle') + ' ide-problems-icon',
+                        className: 'fas ' + SEVERITY_ICON[kind] + ' ide-problems-icon',
                         'aria-hidden': 'true'
                       }),
                       React.createElement('span', { className: 'ide-problems-msg' }, marker.message),
                       item.code && React.createElement('code', { className: 'ide-problems-code' }, item.code),
+                      // RuboCop ships a docs URL per cop; when the marker carries
+                      // one, the cop name becomes a link out to it. stopPropagation
+                      // so following it doesn't also jump the editor to the offense.
+                      docsHref && React.createElement('a', {
+                        className: 'ide-problems-docs',
+                        href: docsHref,
+                        target: '_blank',
+                        rel: 'noopener noreferrer',
+                        title: 'Documentation for ' + marker.code.value,
+                        onClick: function (e) { e.stopPropagation(); }
+                      }, marker.code.value),
                       marker.source && React.createElement('span', { className: 'ide-problems-source' }, marker.source),
                       React.createElement(
                         'span',

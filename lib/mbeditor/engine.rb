@@ -77,6 +77,8 @@ module Mbeditor
 
       cfg = Mbeditor.configuration
 
+      subscribe_to_exceptions if Rails.env.development? && cfg.exception_capture != false
+
       if cfg.workspace_root.present? && !File.directory?(cfg.workspace_root.to_s)
         raise ArgumentError, "[mbeditor] config.workspace_root is set to '#{cfg.workspace_root}' but that path is not a directory"
       end
@@ -125,6 +127,37 @@ module Mbeditor
         fa-regular-400.woff2
         fa-solid-900.woff2
       ]
+    end
+
+    # Records controller exceptions into ExceptionLog and pushes them to any
+    # open editor over the existing cable channel.
+    #
+    # process_action.action_controller rather than a Rack middleware:
+    # ActionDispatch::DebugExceptions rescues and renders the error, so nothing
+    # outside it ever sees the raise. Rails.error.subscribe would be a cleaner
+    # API but only carries unhandled request errors reliably on newer Rails,
+    # and this gem supports 7.1.
+    def self.subscribe_to_exceptions
+      return if @exception_subscriber
+
+      @exception_subscriber = ActiveSupport::Notifications.subscribe(
+        "process_action.action_controller"
+      ) do |*args|
+        payload = ActiveSupport::Notifications::Event.new(*args).payload
+        exception = payload[:exception_object]
+        next unless exception
+
+        entry = Mbeditor::ExceptionLog.record(
+          exception, payload,
+          workspace_root: Mbeditor::WorkspaceRootResolver.call
+        )
+        next unless entry && defined?(ActionCable.server)
+
+        ActionCable.server.broadcast("mbeditor_editor", entry)
+      rescue StandardError => e
+        # A monitoring hook must never be able to break the request it observes.
+        Rails.logger.debug("[mbeditor] exception capture failed: #{e.class}: #{e.message}")
+      end
     end
   end
 end

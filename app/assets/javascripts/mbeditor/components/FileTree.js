@@ -28,6 +28,7 @@ var FileTree = function FileTree(_ref) {
   var onNodeSelect = _ref.onNodeSelect;     // fn(node) — single select (also clears multi)
   var onMultiSelect = _ref.onMultiSelect;   // fn(Set<string>) — multi-select update
   var onMove = _ref.onMove;                 // fn(srcPaths[], destFolderPath) — DnD move
+  var onImportFiles = _ref.onImportFiles; // fn(entries[], destFolderPath, meta) — external file drop
   var gitFiles = _ref.gitFiles;
   var expandedDirs = _ref.expandedDirs;
   var onExpandedDirsChange = _ref.onExpandedDirsChange;
@@ -52,6 +53,14 @@ var FileTree = function FileTree(_ref) {
   var _useStateDnD2 = _slicedToArray(_useStateDnD, 2);
   var dragOverFolder = _useStateDnD2[0];
   var setDragOverFolder = _useStateDnD2[1];
+
+  // Target of an in-flight *external* drag: a folder path, '' for the tree
+  // root, or null when no external drag is over the tree. Kept separate from
+  // dragOverFolder so the two drop kinds highlight differently.
+  var _useStateExt = useState(null);
+  var _useStateExt2 = _slicedToArray(_useStateExt, 2);
+  var externalDragOver = _useStateExt2[0];
+  var setExternalDragOver = _useStateExt2[1];
 
   var inlineRef = useRef(null);
   var committedRef = useRef(false);
@@ -421,6 +430,71 @@ var FileTree = function FileTree(_ref) {
   var startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER);
   var endIdx = Math.min(flatItems.length - 1, Math.ceil((scrollTop + containerHeight) / ROW_HEIGHT) + BUFFER);
 
+  // collectEntries must be kicked off synchronously inside the drop handler —
+  // see the note in file_import.js.
+  var startExternalImport = function(dataTransfer, targetFolderPath) {
+    if (!onImportFiles) return;
+    FileImport.collectEntries(dataTransfer).then(function(res) {
+      if (res.entries.length > 0) onImportFiles(res.entries, targetFolderPath, res);
+    });
+  };
+
+  var isRowTarget = function(e) {
+    return !!(e.target && e.target.closest && e.target.closest('.tree-item'));
+  };
+
+  // The root drop zone is the whole scrollable panel, not just .file-tree-root.
+  // That element is only as tall as its rows, so on a short tree everything
+  // below the last row looks like the explorer but belongs to the scroll
+  // parent — dropping there did nothing, which is the "can't drop into the
+  // root area" report.
+  //
+  // Attached natively rather than through React because the panel is rendered
+  // by MbeditorApp, not here. React 17 delegates from its own root, which is
+  // an ancestor of this element, so these fire before any row handler and the
+  // isRowTarget guard — not stopPropagation — is what keeps rows in charge.
+  var externalImportRef = useRef(startExternalImport);
+  externalImportRef.current = startExternalImport;
+
+  useEffect(function() {
+    if (!containerRef.current) return;
+    var panel = containerRef.current.closest('.ide-sidebar-scrollable');
+    if (!panel) return;
+
+    var HIGHLIGHT = 'drag-over-external-root';
+    var accepts = function(e) {
+      return FileImport.hasExternalFiles(e.dataTransfer) && !isRowTarget(e);
+    };
+    var over = function(e) {
+      if (!accepts(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      panel.classList.add(HIGHLIGHT);
+    };
+    var leave = function(e) {
+      if (e.relatedTarget && panel.contains(e.relatedTarget)) return;
+      panel.classList.remove(HIGHLIGHT);
+    };
+    var drop = function(e) {
+      panel.classList.remove(HIGHLIGHT);
+      if (!accepts(e)) return;
+      e.preventDefault();
+      externalImportRef.current(e.dataTransfer, '');
+    };
+
+    panel.addEventListener('dragenter', over);
+    panel.addEventListener('dragover', over);
+    panel.addEventListener('dragleave', leave);
+    panel.addEventListener('drop', drop);
+    return function() {
+      panel.classList.remove(HIGHLIGHT);
+      panel.removeEventListener('dragenter', over);
+      panel.removeEventListener('dragover', over);
+      panel.removeEventListener('dragleave', leave);
+      panel.removeEventListener('drop', drop);
+    };
+  }, []);
+
   var renderRow = function renderRow(item, idx) {
     var indentPx = 8 + item.depth * 12;
 
@@ -439,6 +513,7 @@ var FileTree = function FileTree(_ref) {
     var isOpenFile = activePath === node.path;
     var isSelected = !!(selectedPaths && selectedPaths.has(node.path));
     var isDragOver = isFolder && dragOverFolder === node.path;
+    var isDragOverExternal = isFolder && externalDragOver === node.path;
     var status = getGitStatus(node.path);
     var statusMeta = getTreeStatusMeta(status);
     var isModified = statusMeta && (statusMeta.cssKey === 'M' || statusMeta.cssKey === 'A');
@@ -447,7 +522,8 @@ var FileTree = function FileTree(_ref) {
       (isOpenFile ? ' active' : '') +
       (isSelected ? ' selected' : '') +
       (isModified ? ' modified' : '') +
-      (isDragOver ? ' drag-over' : '');
+      (isDragOver ? ' drag-over' : '') +
+      (isDragOverExternal ? ' drag-over-external' : '');
 
     return React.createElement(
       'div',
@@ -470,27 +546,60 @@ var FileTree = function FileTree(_ref) {
               e.dataTransfer.setData('text/plain', JSON.stringify(srcPaths));
               e.dataTransfer.effectAllowed = 'move';
             },
-            onDragOver: function(e) {
+            // An element only counts as a drop target if it cancels dragenter
+            // as well as dragover. Chrome is happy with dragover alone, but
+            // Firefox and Safari are not — without this the highlight appears
+            // (dragover still runs) while the browser refuses the drop, so
+            // nothing happens on release.
+            onDragEnter: function(e) {
               if (!isFolder) return;
               e.preventDefault();
               e.stopPropagation();
-              e.dataTransfer.dropEffect = 'move';
-              if (dragOverFolder !== node.path) setDragOverFolder(node.path);
             },
-            onDragLeave: function() {
+            onDragOver: function(e) {
+              var external = FileImport.hasExternalFiles(e.dataTransfer);
+              if (!isFolder) {
+                // Cancel the browser's default external-file action (usually
+                // navigating away to open the file) without accepting it.
+                if (external) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = 'none';
+                }
+                return;
+              }
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = external ? 'copy' : 'move';
+              if (external) {
+                if (externalDragOver !== node.path) setExternalDragOver(node.path);
+                if (dragOverFolder !== null) setDragOverFolder(null);
+              } else if (dragOverFolder !== node.path) {
+                if (externalDragOver !== null) setExternalDragOver(null);
+                setDragOverFolder(node.path);
+              }
+            },
+            onDragLeave: function(e) {
+              if (e.currentTarget.contains(e.relatedTarget)) return;
               if (dragOverFolder === node.path) setDragOverFolder(null);
+              if (externalDragOver === node.path) setExternalDragOver(null);
             },
             onDrop: function(e) {
               e.preventDefault();
               e.stopPropagation();
               setDragOverFolder(null);
+              setExternalDragOver(null);
               if (!isFolder) return;
+              if (FileImport.hasExternalFiles(e.dataTransfer)) {
+                startExternalImport(e.dataTransfer, node.path);
+                return;
+              }
               try {
                 var srcPaths = JSON.parse(e.dataTransfer.getData('text/plain'));
                 if (onMove && srcPaths && srcPaths.length > 0) onMove(srcPaths, node.path);
               } catch (err) {}
             },
-            onDragEnd: function() { setDragOverFolder(null); },
+            onDragEnd: function() { setDragOverFolder(null); setExternalDragOver(null); },
             onClick: function(e) {
               if (e.ctrlKey || e.metaKey) {
                 if (onMultiSelect) {
@@ -568,7 +677,17 @@ var FileTree = function FileTree(_ref) {
 
   return React.createElement(
     'div',
-    { className: 'file-tree file-tree-root', ref: containerRef, tabIndex: 0, style: { outline: 'none', padding: 0 } },
+    {
+      className: 'file-tree file-tree-root',
+      ref: containerRef,
+      tabIndex: 0,
+      // No root drag handlers here. This element is only as tall as its rows,
+      // so it can't cover the empty space users actually aim at; the whole
+      // scrollable panel handles the root drop instead (see the effect above).
+      // A copy here too would import twice — the panel's native listener and
+      // this React one would both fire for a single drop.
+      style: { outline: 'none', padding: 0 }
+    },
     React.createElement(
       'div',
       { style: { height: totalHeight, position: 'relative' } },

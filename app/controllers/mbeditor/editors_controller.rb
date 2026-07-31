@@ -21,6 +21,13 @@ module Mbeditor
     RUBY_DEFS_WARM_MUTEX = Mutex.new
     TOTAL_LINES_CACHE_MAX = 50
     TOTAL_LINES_MUTEX = Mutex.new
+    # Kept below Rack's multipart_part_limit (128 file parts in Rack 3.2), which
+    # is enforced during param parsing — outside the action, where this
+    # controller's rescue cannot turn it into a clean 422. A batch larger than
+    # the Rack limit raises MultipartPartLimitError and surfaces as a 500, so
+    # this guard is only reachable if it trips first.
+    IMPORT_MAX_FILES = 100
+    IMPORT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
 
     class << self
       # Small (path, mtime) => total-line-count cache so windowed reads of big
@@ -68,7 +75,11 @@ module Mbeditor
         testAvailable: test_available?,
         actionCableEnabled: action_cable_enabled?,
         jsSyntaxCheckAvailable: JsSyntaxCheckService.available?,
-        rubyLspAvailable: AvailabilityProbe.ruby_lsp(workspace_root)
+        rubyLspAvailable: AvailabilityProbe.ruby_lsp(workspace_root),
+        # "rg" | "git" | "grep". The tiers differ by 10-30x, and the usual
+        # reason for a slow search is ripgrep being installed but absent from
+        # the server process's PATH — which is invisible without this.
+        searchBackend: SearchReplaceService.backend(workspace_root)
       }
     end
 
@@ -355,6 +366,42 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
+    # POST /mbeditor/import — write files dragged in from outside the browser.
+    #
+    # Multipart: files[] carries the bodies, paths[] the parallel list of
+    # workspace-relative targets, on_conflict one of ask/overwrite/rename.
+    # A structurally invalid batch is a 422; per-entry problems come back in
+    # the :errors array so one bad path never sinks the whole drop.
+    def import
+      files = Array(params[:files])
+      paths = Array(params[:paths]).map(&:to_s)
+      mode  = params[:on_conflict].presence || "ask"
+
+      error = import_batch_error(files, paths, mode)
+      return render json: { error: error }, status: :unprocessable_content if error
+
+      entries = []
+      errors  = []
+      files.each_with_index do |file, i|
+        full = resolve_path(paths[i])
+        if full.nil? || path_blocked_for_operations?(full)
+          errors << { path: paths[i], error: "Cannot write to this path" }
+        else
+          entries << { target_path: full, io: file }
+        end
+      end
+
+      result = FileImportService.new(workspace_root).import(entries, on_conflict: mode.to_sym)
+      result[:errors] = errors + result[:errors]
+
+      written = result[:imported].map { |e| File.join(workspace_root.to_s, e[:path]) }
+      broadcast_files_changed(written) if written.any?
+
+      render json: result
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
     # PATCH /mbeditor/rename — rename file or directory
     def rename
       old_path = resolve_path(params[:path])
@@ -478,19 +525,67 @@ module Mbeditor
       render json: { ok: false, error: e.message }, status: :unprocessable_content
     end
 
+    # The whitelist is the trust boundary: only these reach the language server.
+    # Symbol values are handled locally instead of being forwarded; they need no
+    # path, no document and no running process.
+    #
+    # The first four have bespoke translators producing 1-based, editor-shaped
+    # payloads, kept for their existing consumers. Everything added since is in
+    # RUBY_LSP_RAW below: raw LSP JSON, 0-based, through one URI sanitizer. Eight
+    # more hand-written translators would be ~200 lines restating shapes Monaco
+    # already understands.
     RUBY_LSP_METHODS = {
-      "definition"  => "textDocument/definition",
-      "hover"       => "textDocument/hover",
-      "completion"  => "textDocument/completion",
-      "diagnostics" => "textDocument/diagnostic"
+      "definition"       => "textDocument/definition",
+      "hover"            => "textDocument/hover",
+      "completion"       => "textDocument/completion",
+      "diagnostics"      => "textDocument/diagnostic",
+      "references"       => "textDocument/references",
+      "document_highlight" => "textDocument/documentHighlight",
+      "document_symbol"  => "textDocument/documentSymbol",
+      "folding_range"    => "textDocument/foldingRange",
+      "formatting"       => "textDocument/formatting",
+      "signature_help"   => "textDocument/signatureHelp",
+      "selection_range"  => "textDocument/selectionRange",
+      "prepare_rename"   => "textDocument/prepareRename",
+      "health"           => :health,
+      "restart"          => :restart
     }.freeze
 
-    # Diagnostics are whole-document, not positional.
-    RUBY_LSP_POSITIONLESS = %w[textDocument/diagnostic].freeze
+    # Passed through as raw LSP JSON rather than translated. Ranges stay 0-based
+    # on the wire and are converted by one helper at the Monaco provider.
+    RUBY_LSP_RAW = %w[
+      references document_highlight document_symbol folding_range
+      formatting signature_help selection_range prepare_rename
+    ].freeze
+
+    # Whole-document requests, which carry no cursor position.
+    RUBY_LSP_POSITIONLESS = %w[
+      textDocument/diagnostic textDocument/documentSymbol textDocument/foldingRange
+      textDocument/formatting
+    ].freeze
+
+    # Extra params per method, merged into the request alongside the position.
+    # Values may be a hash or a callable taking the params hash.
+    RUBY_LSP_EXTRA_PARAMS = {
+      "textDocument/references" => { context: { includeDeclaration: true } },
+      # selectionRange takes a list of positions, not the single `position` the
+      # positional branch supplies, so it builds its own from the same params.
+      "textDocument/selectionRange" => lambda { |p|
+        { positions: [{ line: [p[:line].to_i - 1, 0].max,
+                        character: [p[:character].to_i - 1, 0].max }] }
+      },
+      "textDocument/formatting" => lambda { |p|
+        { options: { tabSize: (p[:tab_size].presence || 2).to_i,
+                     insertSpaces: p[:insert_spaces].to_s != "false" } }
+      }
+    }.freeze
 
     # RuboCop's first run inside a freshly booted ruby-lsp is far slower than a
-    # hover/definition lookup, so diagnostics get their own budget.
+    # hover/definition lookup, so the requests that go through RuboCop —
+    # diagnostics and formatting — get their own budget.
     RUBY_LSP_DIAGNOSTICS_TIMEOUT = 10
+
+    RUBY_LSP_RUBOCOP_METHODS = %w[textDocument/diagnostic textDocument/formatting].freeze
 
     # POST /mbeditor/ruby_lsp — bridge to the host's ruby-lsp process.
     # Body: { path:, content:, line: (1-based), character: (1-based), lsp_method: }
@@ -499,6 +594,9 @@ module Mbeditor
     def ruby_lsp
       lsp_method = RUBY_LSP_METHODS[params[:lsp_method].to_s]
       return render json: { error: "Invalid lsp_method" }, status: :bad_request unless lsp_method
+
+      # Before resolve_path: health and restart carry no document.
+      return render json: ruby_lsp_health(restart: lsp_method == :restart) if lsp_method.is_a?(Symbol)
 
       path = resolve_path(params[:path])
       return render json: { error: "Invalid path" }, status: :bad_request unless path
@@ -509,25 +607,127 @@ module Mbeditor
       end
 
       unless AvailabilityProbe.ruby_lsp(workspace_root)
-        return render json: { error: "ruby-lsp unavailable", rubyLspAvailable: false }, status: :unprocessable_content
+        return render json: { error: "ruby-lsp unavailable",
+                              reason: ruby_lsp_unavailable_reason,
+                              rubyLspAvailable: false }, status: :unprocessable_content
       end
 
-      extra = if RUBY_LSP_POSITIONLESS.include?(lsp_method)
+      positionless = RUBY_LSP_POSITIONLESS.include?(lsp_method)
+      extra = if positionless
         {}
       else
         # Monaco positions are 1-based; LSP positions are 0-based.
         { position: { line: [params[:line].to_i - 1, 0].max,
                       character: [params[:character].to_i - 1, 0].max } }
       end
-      timeout = RUBY_LSP_POSITIONLESS.include?(lsp_method) ? RUBY_LSP_DIAGNOSTICS_TIMEOUT : nil
+      per_method = RUBY_LSP_EXTRA_PARAMS[lsp_method]
+      per_method = per_method.call(params) if per_method.respond_to?(:call)
+      extra = extra.merge(per_method || {})
+      # Only the two RuboCop-backed requests pay its boot cost; documentSymbol,
+      # foldingRange and the rest are a single Prism parse and want the normal
+      # budget.
+      timeout = RUBY_LSP_RUBOCOP_METHODS.include?(lsp_method) ? RUBY_LSP_DIAGNOSTICS_TIMEOUT : nil
 
       client = RubyLspClient.for(workspace_root.to_s)
       result = client.request_with_document(lsp_method, path, content, extra, timeout: timeout)
-      render json: translate_ruby_lsp_result(params[:lsp_method].to_s, result)
+      # The URI is what the diagnostics translator checks embedded code-action
+      # edits against, so it must be the same string the client sent.
+      render json: translate_ruby_lsp_result(params[:lsp_method].to_s, result, "file://#{path}")
     rescue RubyLspClient::TimeoutError, RubyLspClient::NotReadyError
-      render json: { fallback: true }
+      # lspState lets the frontend tell "this one request was slow" from "the
+      # server is dead", and stop asking in the latter case.
+      render json: { fallback: true, lspState: RubyLspClient.for(workspace_root.to_s).state }
     rescue StandardError => e
       render json: { error: e.message, fallback: true }
+    end
+
+    # ruby-lsp renames constants only (Rename#perform locates
+    # ConstantReadNode | ConstantPathNode | ConstantPathTargetNode and nothing
+    # else), so anything that isn't a constant path is rejected before we ask.
+    RUBY_CONSTANT_PATH = /\A[A-Z][A-Za-z0-9_]*(::[A-Z][A-Za-z0-9_]*)*\z/
+
+    # Rename#collect_text_edits globs **/*.rb and Prism-parses every hit, which
+    # is seconds on a large app rather than the usual milliseconds.
+    RUBY_LSP_RENAME_TIMEOUT = 30
+
+    # POST /mbeditor/ruby_rename — rename a Ruby constant across the workspace.
+    #
+    # Body: { path:, content:, line:, character:, new_name:, open_paths: [] }
+    #
+    # The workspace edit is split by whether the file is open in the editor:
+    #
+    #   - open files    -> edits returned for Monaco to apply, so the change is
+    #                      undoable, marks the tab dirty, and respects the
+    #                      buffer the user is actually looking at
+    #   - closed files  -> written here, then announced over the cable
+    #
+    # That split is what makes unsaved work safe: anything dirty is by
+    # definition open, and open files are never written by the server.
+    def ruby_rename
+      path = resolve_path(params[:path])
+      return render json: { error: "Invalid path" }, status: :bad_request unless path
+
+      new_name = params[:new_name].to_s.strip
+      unless new_name.match?(RUBY_CONSTANT_PATH)
+        return render json: { error: "Only Ruby constants can be renamed, and #{new_name.inspect} is not one." },
+                      status: :unprocessable_content
+      end
+
+      content = params[:content].to_s
+      if content.bytesize > FileOperationService::MAX_FILE_SIZE_BYTES
+        return render json: { error: "Content too large" }, status: :content_too_large
+      end
+
+      unless AvailabilityProbe.ruby_lsp(workspace_root)
+        return render json: { error: "ruby-lsp unavailable", reason: ruby_lsp_unavailable_reason,
+                              rubyLspAvailable: false }, status: :unprocessable_content
+      end
+
+      result = RubyLspClient.for(workspace_root.to_s).request_with_document(
+        "textDocument/rename", path, content,
+        { position: { line: [params[:line].to_i - 1, 0].max,
+                      character: [params[:character].to_i - 1, 0].max },
+          newName: new_name },
+        timeout: RUBY_LSP_RENAME_TIMEOUT
+      )
+
+      render json: apply_rename_changes(result, Array(params[:open_paths]).map(&:to_s))
+    rescue RubyLspClient::TimeoutError, RubyLspClient::NotReadyError
+      render json: { error: "ruby-lsp did not answer in time", fallback: true,
+                     lspState: RubyLspClient.for(workspace_root.to_s).state },
+             status: :unprocessable_content
+    rescue StandardError => e
+      # ruby-lsp raises InvalidNameError ("already in use by X") for a clash;
+      # its message is the most useful thing we can show.
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
+    # GET /mbeditor/model_graph — ActiveRecord models and their associations.
+    #
+    # Cached until a model or migration file changes; `refresh=1` forces a
+    # rebuild. Generating it eager-loads the host app, which is why this is
+    # only requested when the Models tab is opened.
+    def model_graph
+      ModelGraphService.invalidate(workspace_root) if params[:refresh].present?
+      render json: ModelGraphService.call(workspace_root)
+    rescue StandardError => e
+      render json: { ok: false, error: e.message, models: [], edges: [] },
+             status: :unprocessable_content
+    end
+
+    # GET /mbeditor/exceptions — recorded host-app exceptions, newest first.
+    #
+    # The cable push is the live path; this seeds the panel on load and covers
+    # hosts where ActionCable isn't available.
+    def exceptions
+      render json: { exceptions: ExceptionLog.entries,
+                     enabled: Mbeditor.configuration.exception_capture != false }
+    end
+
+    # DELETE /mbeditor/exceptions — clear the recorded exceptions.
+    def clear_exceptions
+      ExceptionLog.clear!
+      render json: { ok: true }
     end
 
     # GET /mbeditor/module_members?name=ArticlesHelper
@@ -763,7 +963,11 @@ module Mbeditor
           startLine: offense.dig("location", "start_line") || offense.dig("location", "line"),
           startCol: offense.dig("location", "start_column") || offense.dig("location", "column") || 1,
           endLine: offense.dig("location", "last_line") || offense.dig("location", "line"),
-          endCol: offense.dig("location", "last_column") || offense.dig("location", "column") || 1
+          endCol: offense.dig("location", "last_column") || offense.dig("location", "column") || 1,
+          # Same predicate the ruby-lsp path uses, so dead code fades whichever
+          # linter produced the offense. Plain rubocop JSON carries no
+          # code_description, so there's no codeHref to pass on here.
+          unnecessary: LspDiagnosticsTranslator.unnecessary?(offense["cop_name"])
         }
       end
 
@@ -1146,6 +1350,29 @@ module Mbeditor
       ExclusionMatcher.new(Mbeditor.configuration.excluded_paths, root: workspace_root).excluded?(rel)
     end
 
+    # Returns a message when the import batch is structurally unusable, nil
+    # when it is worth handing to FileImportService.
+    def import_batch_error(files, paths, mode)
+      return "Nothing to import" if files.empty?
+      return "files and paths must be the same length" unless files.length == paths.length
+      unless FileImportService::CONFLICT_MODES.include?(mode.to_s.to_sym)
+        return "Unknown on_conflict: #{mode}"
+      end
+      # A String responds to #size but not #read, so this also rejects a batch
+      # that smuggles plain params in through files[].
+      unless files.all? { |f| f.respond_to?(:read) && f.respond_to?(:size) }
+        return "files must be uploaded files"
+      end
+      return "Too many files — #{IMPORT_MAX_FILES} maximum per drop." if files.length > IMPORT_MAX_FILES
+
+      total = files.sum { |f| f.size.to_i }
+      if total > IMPORT_MAX_TOTAL_BYTES
+        return "Drop is too large (#{human_size(total)}). Limit is #{human_size(IMPORT_MAX_TOTAL_BYTES)}."
+      end
+
+      nil
+    end
+
     def ruby_def_include_dirs
       Array(Mbeditor.configuration.ruby_def_include_dirs).map(&:to_s).reject(&:blank?)
     end
@@ -1157,13 +1384,167 @@ module Mbeditor
       result[:stdout]
     end
 
-    def translate_ruby_lsp_result(kind, result)
+    def apply_rename_changes(result, open_paths)
+      changes = result.is_a?(Hash) ? (result["changes"] || {}) : {}
+      open = open_paths.to_set
+      written = []
+      rejected = []
+      edits_for_open = {}
+
+      changes.each do |uri, raw_edits|
+        rel = workspace_relative_uri(uri.to_s)
+        # Outside the workspace, or a path we refuse to write: record it so a
+        # partial rename is visibly partial rather than silently so.
+        target = rel && resolve_path(rel)
+        if rel.nil? || target.nil? || path_blocked_for_operations?(target)
+          rejected << (rel || uri.to_s)
+          next
+        end
+
+        edits = Array(raw_edits).filter_map { |e| LspDiagnosticsTranslator.sanitize_edit(e) }
+        next if edits.empty?
+
+        if open.include?(rel)
+          edits_for_open[rel] = edits
+        else
+          # ponytail: no transaction. A failure part-way leaves some files
+          # renamed and some not; `written` says which. Upgrade path is
+          # write-to-temp then rename-all if that ever bites.
+          FileOperationService.new(workspace_root).save(target, apply_edits(File.read(target), edits))
+          written << rel
+        end
+      end
+
+      broadcast_files_changed(written.map { |rel| File.join(workspace_root, rel) }) if written.any?
+      { ok: true, written: written, rejected: rejected, edits: edits_for_open }
+    end
+
+    # Applies 1-based text edits to a source string. Sorted descending so an
+    # earlier edit never invalidates a later one's offsets.
+    def apply_edits(source, edits)
+      lines = source.split("\n", -1)
+      edits.sort_by { |e| [-e[:startLine], -e[:startCol]] }.each do |edit|
+        next unless edit[:startLine] == edit[:endLine] # ruby-lsp's renames are single-line
+
+        line = lines[edit[:startLine] - 1]
+        next if line.nil?
+
+        lines[edit[:startLine] - 1] =
+          line[0, edit[:startCol] - 1].to_s + edit[:text].to_s + line[(edit[:endCol] - 1)..].to_s
+      end
+      lines.join("\n")
+    end
+
+    def ruby_lsp_unavailable_reason
+      return "Disabled by configuration (config.mbeditor.ruby_lsp = false)" if Mbeditor.configuration.ruby_lsp == false
+
+      "ruby-lsp is not installed in this workspace"
+    end
+
+    # Status for the editor's ruby-lsp indicator, and the recovery path behind
+    # clicking it. Never returns the resolved command — that would leak absolute
+    # host paths to the browser.
+    def ruby_lsp_health(restart: false)
+      if restart
+        # ponytail: reset! clears every probe, not just ruby-lsp. Harmless (they
+        # all re-probe on next use) and the alternative is a per-key API nothing
+        # else wants.
+        AvailabilityProbe.reset!
+        RubyLspClient.for(workspace_root.to_s).reset!
+      end
+
+      available = AvailabilityProbe.ruby_lsp(workspace_root)
+      health = available ? RubyLspClient.for(workspace_root.to_s).health : {}
+
+      payload = {
+        available: available,
+        disabled: Mbeditor.configuration.ruby_lsp == false,
+        state: health[:state] || :stopped,
+        restarts: health[:restarts] || 0,
+        error: health[:error]
+      }
+      payload[:reason] = ruby_lsp_unavailable_reason unless available
+      payload
+    rescue StandardError => e
+      { available: false, disabled: false, state: :failed, restarts: 0, error: e.message }
+    end
+
+    def translate_ruby_lsp_result(kind, result, uri = nil)
       case kind
       when "definition"  then { results: translate_lsp_locations(result) }
       when "hover"       then { markdown: translate_lsp_hover(result) }
       when "completion"  then { suggestions: translate_lsp_completions(result) }
-      when "diagnostics" then LspDiagnosticsTranslator.call(result)
+      when "diagnostics" then LspDiagnosticsTranslator.call(result, uri)
+      when *RUBY_LSP_RAW then { result: sanitize_lsp_uris(result) }
       end
+    end
+
+    # The one trust boundary for every raw-passthrough method. Walks the LSP
+    # response and rewrites each file:// URI to a workspace-relative path,
+    # dropping any object that points outside the workspace — a reference in a
+    # gem is not something this editor can open, and a path outside the root is
+    # not something it should hand to the browser at all.
+    #
+    # Recursion is bounded by MAX_LSP_DEPTH: the payload comes from a
+    # subprocess, and a cyclic or pathologically nested one must not take the
+    # request thread down with it.
+    MAX_LSP_DEPTH = 32
+
+    URI_KEYS = %w[uri targetUri].freeze
+
+    def sanitize_lsp_uris(node, depth = 0)
+      return nil if depth > MAX_LSP_DEPTH
+
+      case node
+      when Array
+        node.filter_map { |child| sanitize_lsp_uris(child, depth + 1) }
+      when Hash
+        sanitized = {}
+        node.each do |key, value|
+          if URI_KEYS.include?(key) && value.is_a?(String)
+            rel = workspace_relative_uri(value)
+            # A URI we can't place inside the workspace disqualifies its object.
+            return nil unless rel
+
+            sanitized[key] = rel
+          else
+            child = sanitize_lsp_uris(value, depth + 1)
+            sanitized[key] = child unless child.nil? && !value.nil?
+          end
+        end
+        sanitized
+      when String
+        sanitize_lsp_markdown(node)
+      else
+        node
+      end
+    end
+
+    # URIs also turn up *inside* strings: ruby-lsp's signatureHelp and hover
+    # documentation embed a "Definitions" line of file:// markdown links. Those
+    # would leak absolute host paths and render as links that go nowhere, so
+    # they get the same treatment hover already gives them.
+    def sanitize_lsp_markdown(text)
+      return text unless text.include?("file://")
+
+      rewritten = rewrite_lsp_hover_links(text)
+      return rewritten unless rewritten.include?("file://")
+
+      # Backstop for any file:// URI that wasn't in markdown-link form. An
+      # absolute host path must never reach the browser, linkable or not.
+      rewritten.gsub(%r{file://\S*}) do |raw|
+        workspace_relative_uri(raw.sub(/[)\]\s].*\z/m, "")) || "(external)"
+      end
+    end
+
+    def workspace_relative_uri(uri)
+      return nil unless uri.start_with?("file://")
+
+      path = uri.delete_prefix("file://")
+      prefix = "#{workspace_root}/"
+      return nil unless path.start_with?(prefix)
+
+      path.delete_prefix(prefix)
     end
 
     def translate_lsp_locations(result)
@@ -1181,7 +1562,17 @@ module Mbeditor
         # the frontend fall back to the legacy services (ri covers stdlib).
         next unless fpath.start_with?("#{root}/")
 
-        { file: fpath.delete_prefix("#{root}/"), line: (range&.dig("start", "line") || 0) + 1 }
+        start_line = (range&.dig("start", "line") || 0) + 1
+        {
+          file: fpath.delete_prefix("#{root}/"),
+          line: start_line,
+          # Columns and the end of the range are additive: existing consumers
+          # only read :file and :line, but peek-definition needs a real range
+          # to highlight rather than the start of the line.
+          col: (range&.dig("start", "character") || 0) + 1,
+          endLine: (range&.dig("end", "line") || range&.dig("start", "line") || 0) + 1,
+          endCol: (range&.dig("end", "character") || range&.dig("start", "character") || 0) + 1
+        }
       end
     end
 
@@ -1196,7 +1587,28 @@ module Mbeditor
         else contents.to_s
         end
 
-      rewrite_lsp_hover_links(markdown)
+      neutralize_comment_headings(rewrite_lsp_hover_links(markdown))
+    end
+
+    # ruby-lsp renders a doc comment by stripping exactly one leading "# " from
+    # each line, then hands the result to the editor as markdown. A `##`-opened
+    # doc block — a very common Ruby convention — therefore arrives as
+    # "# Title" and renders as an <h1> filling the hover.
+    #
+    # Ruby comments are not markdown, so escape a `#` that opens a line and let
+    # it render as the text it is. Fenced code blocks are left alone: `#` inside
+    # them is Ruby source, not a heading, and needs no escaping.
+    #
+    # This deliberately diverges from other ruby-lsp clients, which show the
+    # heading.
+    def neutralize_comment_headings(markdown)
+      in_fence = false
+      markdown.lines.map do |line|
+        in_fence = !in_fence if line.start_with?("```")
+        next line if in_fence || line.start_with?("```")
+
+        line.sub(/\A(\s*)(#+)(?=\s|\z)/) { "#{Regexp.last_match(1)}\\#{Regexp.last_match(2)}" }
+      end.join
     end
 
     # ruby-lsp renders its "Definitions" line as VS Code file links, e.g.
@@ -1250,10 +1662,15 @@ module Mbeditor
       LSP_COMPLETION_KINDS[kind] || "Text"
     end
 
+    # Kept in step with LspDiagnosticsTranslator::SEVERITIES so a file linted
+    # through ruby-lsp and the same file linted through `rubocop --stdin` grade
+    # their offenses identically. rubocop's own `info` is the weakest level and
+    # maps to hint; convention/refactor fall through to info.
     def cop_severity(severity)
       case severity
       when "error", "fatal" then "error"
       when "warning" then "warning"
+      when "info" then "hint"
       else "info"
       end
     end

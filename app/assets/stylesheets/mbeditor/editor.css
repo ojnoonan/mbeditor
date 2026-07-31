@@ -266,6 +266,12 @@ html, body, #mbeditor-root {
 .tree-item.selected { box-shadow: inset 0 0 0 1px rgba(120, 180, 224, 0.5); background: rgba(120, 180, 224, 0.08); }
 .tree-item.active.selected { box-shadow: inset 0 0 0 1px rgba(140, 210, 255, 0.8); }
 .tree-item.drag-over { background: rgba(100, 160, 220, 0.25); box-shadow: inset 0 0 0 1px rgba(100, 160, 220, 0.7); }
+/* External file drop (import) — green, to read as "add" rather than "move" */
+.tree-item.drag-over-external { background: rgba(120, 200, 140, 0.22); box-shadow: inset 0 0 0 1px rgba(120, 200, 140, 0.75); }
+/* Goes on the whole scrollable explorer panel, not just .file-tree-root: that
+   element stops at its last row, so outlining it would mark only part of the
+   area that actually accepts the drop. */
+.drag-over-external-root { box-shadow: inset 0 0 0 2px rgba(120, 200, 140, 0.6); }
 .tree-item.modified { color: var(--ide-warning); }
 
 /* Inline create row (VS Code-style new file/folder input) */
@@ -315,6 +321,16 @@ html, body, #mbeditor-root {
 .yml-icon { color: #cb171e !important; }
 
 /* ── Main Editor Area ────────────────────────────────────── */
+/* Editor column: the split panes on top, any open bottom drawers beneath. */
+.ide-center-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .ide-main {
   flex: 1;
   display: flex;
@@ -1298,6 +1314,49 @@ html, body, #mbeditor-root {
   padding: 0 0 12px;
   flex: 1;
 }
+/* Import conflict modal — reuses the schema-modal shell */
+.import-conflict-modal { min-width: 380px; }
+.import-conflict-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  font-family: var(--ide-mono-font, monospace);
+  font-size: 12px;
+}
+.import-conflict-list li {
+  padding: 3px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.import-conflict-errors {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ide-border, #3c3c3c);
+  color: var(--ide-error, #f48771);
+}
+.import-conflict-errors-title { font-size: 12px; margin-bottom: 4px; }
+.import-conflict-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--ide-border, #3c3c3c);
+  flex-shrink: 0;
+}
+.import-conflict-btn {
+  background: var(--ide-input-bg, #3c3c3c);
+  color: var(--ide-text, #d4d4d4);
+  border: 1px solid var(--ide-border, #3c3c3c);
+  border-radius: 3px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.import-conflict-btn:hover { background: var(--ide-hover-bg, #4a4a4a); }
+.import-conflict-btn-danger { border-color: var(--ide-error, #f48771); color: var(--ide-error, #f48771); }
 .schema-table {
   width: 100%;
   border-collapse: collapse;
@@ -2779,17 +2838,16 @@ button:not(.pico-btn) { margin-bottom: 0; }
 }
 
 /* ── Rails log drawer ─────────────────────────────────────────────────────── */
+/* Flow siblings of the editor inside .ide-center-column, not overlays: an
+   open drawer shrinks the editor rather than covering the code you are
+   reading. Both can be open at once and simply stack. */
 .ide-log-drawer {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 22px; /* sit above the status bar */
+  flex: none;
   height: 240px; /* default; overridden by the drag-resized inline height */
   display: flex;
   flex-direction: column;
   background: var(--ide-panel-bg, #1e1e1e);
   border-top: 1px solid var(--ide-border, #333);
-  z-index: 40;
 }
 .ide-log-resize {
   flex: 0 0 auto;
@@ -2860,16 +2918,12 @@ button:not(.pico-btn) { margin-bottom: 0; }
    Same geometry as the log drawer so the two read as one family; only the
    body differs, being a list of clickable diagnostics rather than raw text. */
 .ide-problems-drawer {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 22px; /* sit above the status bar */
+  flex: none;
   height: 240px; /* default; overridden by the drag-resized inline height */
   display: flex;
   flex-direction: column;
   background: var(--ide-panel-bg, #1e1e1e);
   border-top: 1px solid var(--ide-border, #333);
-  z-index: 41; /* above the log drawer when both are open */
 }
 .ide-problems-resize {
   flex: 0 0 auto;
@@ -2948,6 +3002,7 @@ button:not(.pico-btn) { margin-bottom: 0; }
 .ide-problems-icon { flex-shrink: 0; }
 .ide-problems-item-error .ide-problems-icon { color: var(--ide-danger); }
 .ide-problems-item-warning .ide-problems-icon { color: var(--ide-warning); }
+.ide-problems-item-info .ide-problems-icon { color: var(--ide-accent, #3794ff); }
 .ide-problems-msg { flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The offending source line, dimmed so it reads as context rather than as part
    of the message. It is the one part of the row allowed to shrink, so a long
@@ -2968,12 +3023,175 @@ button:not(.pico-btn) { margin-bottom: 0; }
   font-size: 10px;
   text-transform: lowercase;
 }
+/* The cop name, linking out to its RuboCop docs page. Underlined only on hover
+   so a list of rows doesn't read as a wall of links. */
+.ide-problems-docs {
+  flex-shrink: 0;
+  color: var(--ide-text-muted, #858585);
+  font-size: 11px;
+  font-family: var(--ide-mono, monospace);
+  text-decoration: none;
+}
+.ide-problems-docs:hover,
+.ide-problems-docs:focus-visible {
+  color: var(--ide-accent, #3794ff);
+  text-decoration: underline;
+}
 .ide-problems-loc {
   flex-shrink: 0;
   margin-left: auto;
   color: var(--ide-text-muted, #858585);
   font-size: 11px;
 }
+
+/* ── Model graph ──────────────────────────────────────────────────────────
+   An SVG ER diagram of the app's ActiveRecord models. The panel is narrow, so
+   the SVG scrolls in both directions rather than being scaled down to
+   illegibility. */
+.ide-model-graph { display: flex; flex-direction: column; height: 100%; min-height: 0; position: relative; }
+.ide-model-graph-empty {
+  padding: 16px;
+  color: var(--ide-text-muted, #858585);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.ide-model-graph-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--ide-border, #333);
+  color: var(--ide-text-muted, #858585);
+  font-size: 11px;
+}
+.ide-model-graph-warn { color: var(--ide-warning); }
+/* One `margin-left: auto` on the group, not on each button — putting it on
+   every button pushes each one to the far right independently and strands them
+   at opposite ends of the toolbar. */
+.ide-model-graph-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.ide-model-graph-search {
+  width: 150px;
+  padding: 3px 6px;
+  background: var(--ide-input-bg, #3c3c3c);
+  border: 1px solid var(--ide-border, #3c3c3c);
+  border-radius: 3px;
+  color: var(--ide-fg, #d4d4d4);
+  font-size: 11px;
+}
+.ide-model-graph-search:focus { outline: none; border-color: var(--ide-accent, #3794ff); }
+.ide-model-graph-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.ide-model-graph-btn:hover { color: var(--ide-fg, #d4d4d4); }
+/* The SVG fills the pane; panning and zooming happen on an inner <g>, so
+   there is no scroll container to fight with the drag. */
+.ide-model-graph-svg {
+  display: block;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  cursor: grab;
+  user-select: none;
+}
+.ide-model-graph-svg.mg-dragging { cursor: grabbing; }
+.ide-model-graph-hint {
+  margin-left: 12px;
+  opacity: 0.7;
+  font-size: 10px;
+}
+
+.mg-node { cursor: pointer; }
+.mg-node .mg-box {
+  fill: var(--ide-panel-bg, #252526);
+  stroke: var(--ide-border, #3c3c3c);
+  stroke-width: 1;
+}
+.mg-box-header { fill: var(--ide-hover-bg, #2d2d2d); stroke: none; }
+.mg-node:hover .mg-box { stroke: var(--ide-accent, #3794ff); }
+/* The model the search just centred on — findable once it gets there. */
+.mg-focused .mg-box { stroke: var(--ide-accent, #3794ff); stroke-width: 2; }
+.mg-name {
+  fill: var(--ide-fg, #d4d4d4);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--ide-mono, monospace);
+}
+.mg-table { fill: var(--ide-text-muted, #858585); font-size: 9px; }
+.mg-field {
+  fill: var(--ide-fg, #d4d4d4);
+  font-size: 10px;
+  font-family: var(--ide-mono, monospace);
+}
+.mg-field-type { fill: var(--ide-text-muted, #858585); font-size: 9px; font-family: var(--ide-mono, monospace); }
+.mg-field-more { fill: var(--ide-text-muted, #858585); font-size: 9px; font-style: italic; }
+
+.mg-edge { fill: none; stroke-width: 1.2; pointer-events: none; }
+/* The hover target. A 1.2px stroke is its own hit area, so without this wider
+   transparent twin the lines are effectively un-hoverable. */
+.mg-edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: help;
+}
+.mg-edge-hovered { stroke-width: 2.5; stroke: var(--ide-accent, #3794ff); }
+
+/* Relation tooltip. Rendered rather than using SVG <title> so it appears at
+   once and can show cardinality and the through: hop on separate lines. */
+.mg-tooltip {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  max-width: 240px;
+  padding: 6px 9px;
+  background: var(--ide-panel-bg, #252526);
+  border: 1px solid var(--ide-accent, #3794ff);
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.mg-tooltip-title { color: var(--ide-fg, #d4d4d4); font-weight: 600; }
+.mg-tooltip-macro { color: var(--ide-accent, #3794ff); font-family: var(--ide-mono, monospace); }
+.mg-tooltip-meta { color: var(--ide-text-muted, #858585); }
+.mg-arrow-head { fill: var(--ide-text-muted, #858585); }
+/* belongs_to is the edge that gives the graph its direction, so it reads
+   strongest; the rest are the same relationship seen from the other side. */
+.mg-edge-belongs  { stroke: var(--ide-accent, #3794ff); }
+.mg-edge-has-many { stroke: var(--ide-text-muted, #858585); stroke-dasharray: 4 3; }
+.mg-edge-has-one  { stroke: var(--ide-text-muted, #858585); }
+.mg-edge-habtm    { stroke: var(--ide-warning); stroke-dasharray: 2 3; }
+
+/* A git hint that reports a problem rather than context. */
+.git-hint-warn { color: var(--ide-warning); }
+
+/* Host-app exceptions, above the marker list. Each backtrace frame is a button
+   that opens the file — only in-workspace frames ever reach the client. */
+.ide-problems-exceptions .ide-problems-file-name { color: var(--ide-danger); }
+.ide-problems-clear { margin-left: auto; }
+.ide-problems-exception { margin-bottom: 6px; }
+.ide-problems-exception-head { cursor: default; }
+.ide-problems-exception-head .ide-problems-msg { white-space: normal; }
+.ide-problems-frame { padding-left: 28px; }
+.ide-problems-frame .ide-problems-code { opacity: 1; }
+
+/* Status-bar ruby-lsp indicator. Healthy is a dim icon you can ignore;
+   degraded/off is amber with a label, because that one you should read. */
+.statusbar-lsp { display: inline-flex; align-items: center; gap: 4px; }
+.statusbar-lsp-ok { opacity: 0.45; }
+.statusbar-lsp-ok:hover { opacity: 1; }
+.statusbar-lsp-degraded,
+.statusbar-lsp-off { color: var(--ide-warning); }
 
 /* Status-bar problems indicator: bug count then warning count, VS Code style. */
 .statusbar-problems { display: inline-flex; align-items: center; gap: 4px; }
