@@ -80,15 +80,21 @@ module Mbeditor
 
       assert_equal "erb", page.evaluate_script("window.__mbeditorActiveEditor.getModel().getLanguageId()")
 
-      # Put the cursor on `theme_badge` inside <%= %> and run the Ruby
-      # go-to-definition action. A tab opening for the helper is a
-      # deterministic DOM change (unlike hover-tooltip timing) and proves the
-      # ERB document reached the workspace definition services.
+      # Put the cursor on `theme_badge` inside <%= %> and ask Monaco to reveal
+      # the definition. A tab opening for the helper is a deterministic DOM
+      # change (unlike hover-tooltip timing) and proves the ERB document
+      # reached the workspace definition services.
+      #
+      # Driven through monaco's own action rather than a bespoke one, because
+      # that is what Ctrl+click and F12 invoke — the editor now registers a
+      # real DefinitionProvider instead of wiring those keys per editor.
+      # `trigger` rather than `getAction(...).run()`: this action is internal
+      # to monaco's standalone build and getAction returns null for it.
       page.execute_script(<<~'JS')
         var ed = window.__mbeditorActiveEditor;
         ed.setPosition({ lineNumber: 3, column: 9 });
         ed.focus();
-        ed.getAction('mbeditor.gotoRubyDefinition').run();
+        ed.trigger('system-test', 'editor.action.revealDefinition', null);
       JS
 
       assert_selector ".tab-item", text: "theme_helper.rb", wait: 10
