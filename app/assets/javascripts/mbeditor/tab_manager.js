@@ -141,7 +141,32 @@ var TabManager = (function () {
     });
   }
 
+  // Single slot holding "where the cursor was before the last jump".
+  // PageUp/PageDown swap the cursor between this slot and its current spot.
+  // ponytail: two-position cycle, upgrade to a real back/forward stack if asked
+  var _jumpOrigin = null;
+
+  function _snapshotPosition() {
+    var editor = window.__mbeditorActiveEditor;
+    var pos = editor && editor.getPosition ? editor.getPosition() : null;
+    if (!pos) return null;
+    var state = EditorStore.getState();
+    var pane = state.panes.find(function(p) { return p.id === state.focusedPaneId; });
+    var tab = pane && pane.tabs.find(function(t) { return t.id === pane.activeTabId; });
+    if (!tab || !tab.path) return null;
+    return { path: tab.path, name: tab.name, line: pos.lineNumber, col: pos.column };
+  }
+
+  function toggleJumpOrigin() {
+    var target = _jumpOrigin;
+    if (!target) return;
+    // openTab re-snapshots the current position into _jumpOrigin below,
+    // which is exactly the swap we want.
+    openTab(target.path, target.name, target.line, null, false, target.col);
+  }
+
   function openTab(path, name, line, forcePaneId, isSoftOpen, col) {
+    if (line) _jumpOrigin = _snapshotPosition() || _jumpOrigin;
     var state = EditorStore.getState();
     var paneId = forcePaneId || state.focusedPaneId;
     var pane = state.panes.find(function(p) { return p.id === paneId; });
@@ -632,6 +657,7 @@ var TabManager = (function () {
     reorderTabInPane: reorderTabInPane,
     moveTabToPane: moveTabToPane,
     clearGotoLine: clearGotoLine,
+    toggleJumpOrigin: toggleJumpOrigin,
     closeAllTabsInPane: closeAllTabsInPane,
     closeOtherTabsInPane: closeOtherTabsInPane,
     closeSavedTabsInPane: closeSavedTabsInPane,

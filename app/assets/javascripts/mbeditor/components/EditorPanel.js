@@ -701,6 +701,16 @@ var EditorPanel = function EditorPanel(_ref) {
       EditorStore.setState({ isQuickOpenVisible: true });
     });
 
+    // PageUp/PageDown cycle between the current cursor position and where the
+    // cursor was before the last jump (go-to-definition, search result, etc.),
+    // replacing the default page-scroll behaviour.
+    editor.addCommand(window.monaco.KeyCode.PageUp, function() {
+      TabManager.toggleJumpOrigin();
+    });
+    editor.addCommand(window.monaco.KeyCode.PageDown, function() {
+      TabManager.toggleJumpOrigin();
+    });
+
     var editorPluginDisposable = null;
     if (window.MbeditorEditorPlugins && window.MbeditorEditorPlugins.attachEditorFeatures) {
       editorPluginDisposable = window.MbeditorEditorPlugins.attachEditorFeatures(editor, language);

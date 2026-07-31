@@ -102,6 +102,7 @@ var ShortcutHelp = function ShortcutHelp(_ref) {
                   'tbody',
                   null,
                   React.createElement(Row, { keys: 'Ctrl+P', desc: 'Quick-open any file by name' }),
+                  React.createElement(Row, { keys: 'PgUp/PgDn', desc: 'Cycle between cursor position and last jump origin' }),
                   React.createElement(Row, { keys: 'Ctrl+S', desc: 'Save the active file' }),
                   React.createElement(Row, { keys: 'Ctrl+Shift+G', desc: 'Toggle git panel' }),
                   React.createElement(Row, { keys: 'Ctrl+Shift+L', desc: 'Toggle Rails log panel' }),
