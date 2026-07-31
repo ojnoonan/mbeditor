@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-31
+
 ### Added
 - **Realtime collaborative editing (pair programming).** When Action Cable is
   available, two or more people can open the same file and edit it together —
@@ -45,6 +47,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes `name 2.ext` beside the original), or Skip. Imports are capped at 100
   files and 50 MB per drop, and 5 MB per file, and every target path goes
   through the same sandbox checks as every other file operation.
+
+- **A model graph — an entity diagram of the host app's ActiveRecord models.**
+  The activity-bar button opens it as a full-width editor tab, drawing each
+  model with its fields and laying them out radially around whichever model has
+  the most associations. Search centres the view on a model; hovering an edge
+  names the relation.
+
+  Associations are read by **reflection, not by parsing model files**. mbeditor
+  runs inside the host app, so `reflect_on_all_associations` is right there and
+  resolves `class_name:`, `through:`, polymorphic and inverse sides correctly —
+  all of which regex or AST parsing of `has_many` lines silently gets wrong.
+  The graph never touches the database connection, so it works against a
+  database that isn't running or migrated. It is built only when the tab is
+  opened (it eager-loads the host app) and cached on a fingerprint of
+  `app/models` and `db/migrate`, so saving a model invalidates it. It also
+  writes `tmp/mbeditor_model_graph.mmd`, a Mermaid `erDiagram` that GitHub and
+  VS Code render natively.
+
+- **Ruby navigation through real Monaco providers.** Go-to-definition was
+  hand-wired per editor with an `onMouseDown` and an `addAction`, so Monaco
+  never knew Ruby had definitions and peek-definition, Ctrl+hover previews and
+  the references widget all did nothing. Definition, references, document
+  symbols, folding, highlights, rename, formatting, signature help and
+  selection ranges are now registered providers, fed by a raw ruby-lsp
+  passthrough instead of a bespoke translator per method.
+
+  - **F2 renames a Ruby constant across the workspace.** Open files get their
+    edits back for Monaco to apply, so the change is undoable and marks the tab
+    dirty; closed files are written server-side. That split is what keeps
+    unsaved work safe — anything dirty is by definition open.
+  - **Shift+Alt+F and format-on-save now work for Ruby.**
+  - **RuboCop fixes apply straight from the diagnostic.** The edits are already
+    in the diagnostics response, so the lightbulb no longer makes a second
+    request or spawns a `rubocop -A` over the buffer on every click. "Disable
+    <cop> for this line" comes from the same payload.
+  - **Diagnostics are graded Error / Warning / Info / Hint** instead of
+    everything non-error being one yellow warning, and unnecessary code is
+    faded rather than squiggled. A status-bar chip shows ruby-lsp health.
+
+- **Host-app exceptions appear in the Problems panel.** A failed request used to
+  show up only in the log. Controller exceptions are now listed with clickable
+  backtrace frames and pushed live over the existing cable channel. Backtraces
+  are filtered to frames under the workspace root and capped, since absolute
+  host paths are both a leak and unopenable. Development only, and
+  `config.exception_capture = false` disables it.
+
+- **PageUp/PageDown cycle between the cursor and the last jump origin.**
+  Opening a file at a line — go-to-definition, a search result, a hover link —
+  snapshots where you came from, and PageUp/PageDown swap between the two.
+  Replaces the default page-scroll binding.
+
+### Changed
+- **Search is dramatically faster on host apps without ripgrep**, where it was
+  effectively unusable. Three separate causes, all on the `git grep` tier:
+  the exclusion list was computed and then never put on the command line, so
+  git walked `node_modules` in full and the results were discarded afterwards;
+  `search_respect_gitignore` defaulted to `false`, which asks git to search
+  every ignored tree the app has; and `LC_ALL=C` was set, measured neutral for
+  the default and 2.2× *slower* for regex. Measured 3714 files walked → 253.
+  `search_respect_gitignore` now defaults to `true`, matching VS Code and
+  ripgrep. `GET /workspace` reports `searchBackend` so the live tier is visible,
+  and `ripgrep_command` now resolves the usual install prefixes as well as
+  `PATH` — a server started from launchd, systemd or an IDE has a stripped
+  `PATH`, which silently dropped search to the 10–30× slower tier.
+
+- **Assignments to undeclared variables are reported as errors.** `foo = 1`
+  with no declaration anywhere is an implicit global the host's Babel pipeline
+  rejects, so it keeps Error severity with an explanatory hint. Read-side
+  unknowns still downgrade to a warning, since those are usually host globals
+  the language service cannot see.
+
+### Fixed
+- **The bottom drawers covered the code instead of making room for it.** The
+  log and problems drawers were absolutely positioned, so they sat on top of
+  what you were reading. They are now ordinary flow siblings of the split
+  panes, so opening one shrinks the editor.
+- **"Changes in Branch" showed nothing on a branch well ahead of the base.**
+  With no base branch resolved it fell back to diffing against the branch's
+  upstream — which for a feature branch is its own remote copy, reliably empty.
+  Every layer then degraded to empty rather than erroring, so it looked like
+  there were no changes.
+- **The What's New tab was wiped by the session restore** when it opened on a
+  version change.
+- **An idle editor no longer re-renders.** Polls that found nothing changed were
+  still writing fresh objects into state — the file tree every 10 s and the
+  ruby-lsp health chip every 10 s — each costing a full reconciliation of a
+  tree that had not changed. Verified by counting React renders over an idle
+  minute: now zero.
 
 ## [0.11.0] - 2026-07-29
 
