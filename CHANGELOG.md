@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-08-03
+
+### Fixed
+- **Rejected-subscription logging flooded the console.** 0.12.3 made a silent
+  failure visible, which was right, but logged every occurrence — and a
+  rejection is not a one-off: the client retries every 30 seconds, every open
+  tab retries independently, and both the editor channel and every per-file
+  collaboration room authenticate. One message per distinct reason per five
+  minutes now, which says the same thing without drowning the log.
+
+
 ## [0.12.3] - 2026-08-03
 
 ### Added

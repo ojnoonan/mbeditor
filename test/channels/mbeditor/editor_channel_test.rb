@@ -49,6 +49,7 @@ module Mbeditor
     test "a hook denying on the cable is logged with a diagnosable reason" do
       previous = Mbeditor.configuration.authenticate_with
       Mbeditor.configuration.authenticate_with = proc { head :forbidden }
+      Mbeditor::ChannelAuthentication.last_logged.clear
       captured = StringIO.new
       prev_logger = Rails.logger
       Rails.logger = ActiveSupport::Logger.new(captured)
@@ -66,6 +67,7 @@ module Mbeditor
     test "a hook raising on the cable is logged with the exception" do
       previous = Mbeditor.configuration.authenticate_with
       Mbeditor.configuration.authenticate_with = proc { Current.user.super_admin_access? }
+      Mbeditor::ChannelAuthentication.last_logged.clear
       captured = StringIO.new
       prev_logger = Rails.logger
       Rails.logger = ActiveSupport::Logger.new(captured)
@@ -78,6 +80,46 @@ module Mbeditor
     ensure
       Rails.logger = prev_logger if prev_logger
       Mbeditor.configuration.authenticate_with = previous
+    end
+
+    # The first version of this logging flooded the console: the client retries
+    # every 30s, every tab retries independently, and both channels authenticate.
+    test "repeated identical rejections are logged once, not once per retry" do
+      Mbeditor.configuration.cable_authenticate_with = proc { head :forbidden }
+      Mbeditor::ChannelAuthentication.last_logged.clear
+      Mbeditor::ChannelAuthentication.last_logged.clear
+      captured = StringIO.new
+      prev_logger = Rails.logger
+      Rails.logger = ActiveSupport::Logger.new(captured)
+
+      5.times { subscribe }
+
+      occurrences = captured.string.scan("WebSocket subscription rejected").length
+      assert_equal 1, occurrences,
+                   "expected one message for five identical rejections, got #{occurrences}"
+    ensure
+      Rails.logger = prev_logger if prev_logger
+      Mbeditor.configuration.cable_authenticate_with = nil
+      Mbeditor::ChannelAuthentication.last_logged.clear
+    end
+
+    test "a different rejection reason is still reported" do
+      Mbeditor::ChannelAuthentication.last_logged.clear
+      Mbeditor::ChannelAuthentication.last_logged.clear
+      captured = StringIO.new
+      prev_logger = Rails.logger
+      Rails.logger = ActiveSupport::Logger.new(captured)
+
+      Mbeditor.configuration.cable_authenticate_with = proc { head :forbidden }
+      subscribe
+      Mbeditor.configuration.cable_authenticate_with = proc { Current.user.super_admin_access? }
+      subscribe
+
+      assert_equal 2, captured.string.scan("WebSocket subscription rejected").length
+    ensure
+      Rails.logger = prev_logger if prev_logger
+      Mbeditor.configuration.cable_authenticate_with = nil
+      Mbeditor::ChannelAuthentication.last_logged.clear
     end
 
     test "cable_authenticate_with takes precedence over the HTTP hook" do

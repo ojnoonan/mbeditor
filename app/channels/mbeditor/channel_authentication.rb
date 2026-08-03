@@ -50,13 +50,40 @@ module Mbeditor
         Mbeditor.configuration.authenticate_with
     end
 
+    # Throttled hard, because a rejection is not a one-off event: the client
+    # retries every 30s, every open tab retries independently, and both the
+    # editor channel and every per-file collaboration room authenticate. Logging
+    # each one turned a silent failure into a flooded console, which is no more
+    # usable. One message per distinct reason per interval says the same thing.
+    LOG_THROTTLE_SECONDS = 300
+    LOG_MUTEX = Mutex.new
+    private_constant :LOG_MUTEX
+
+    def self.last_logged
+      @last_logged ||= {}
+    end
+
     def mbeditor_log_denial(reason)
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      should_log = LOG_MUTEX.synchronize do
+        seen = ChannelAuthentication.last_logged
+        previous = seen[reason]
+        if previous.nil? || (now - previous) > LOG_THROTTLE_SECONDS
+          seen[reason] = now
+          true
+        else
+          false
+        end
+      end
+      return unless should_log
+
       Rails.logger&.warn(
         "[mbeditor] WebSocket subscription rejected: #{reason}. " \
         "Realtime collaboration will not work. A WebSocket subscribe runs no " \
         "controller, so Current.*, Authlogic sessions and other request-scoped " \
         "state set by before_actions are unavailable here — resolve the user " \
-        "from `session` instead, or set config.cable_authenticate_with."
+        "from `session` instead, or set config.cable_authenticate_with. " \
+        "(Further identical rejections suppressed for #{LOG_THROTTLE_SECONDS}s.)"
       )
     rescue StandardError
       # Logging must never be the thing that breaks the socket.
