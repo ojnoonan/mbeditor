@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Inline route hints in controllers.** Every action in a controller file is
+  annotated with the verb and path that reach it — `GET /orders/:id` beside
+  `def show` — and a public action nothing routes to is flagged `no route`.
+  Hovering adds the named-route helper. Answering "is this actually reachable?"
+  previously meant reading `config/routes.rb` and expanding `resources` in your
+  head.
+
+  Routes come from the host app's own route set rather than by parsing
+  `config/routes.rb`. mbeditor runs inside the app, so the routes are already
+  built — and they are the only source that accounts for `resources` expansion,
+  `member`/`collection` blocks, scopes, constraints and mounted engines.
+
+- **`config.model_graph_max_models`** (default 1000, was a hard-coded 300).
+  A schema over the cap silently lost models and only said "(truncated)".
+
+### Changed
+- **Model boxes are sized to their contents** rather than all being one width,
+  so a long model or column name is no longer truncated while a model called
+  `Tag` wastes most of its box. Layer positions accumulate per layer, since a
+  fixed stride would let a wide box overlap the next layer.
+- **Cluster blocks are packed in two dimensions** instead of stacked in a single
+  column, which left a schema with one big core and several small islands
+  running off the bottom with the right-hand side empty.
+- **The dummy app now carries a real ActiveRecord schema** — 20 models and 44
+  associations covering a hub, a chain, a self-reference, a join table, a
+  polymorphic association and unconnected islands — so the model graph can be
+  demonstrated and tested against something representative.
+
+### Fixed
+- **mbeditor could stop a host app from booting.** The pending-migrations
+  middleware was installed whenever `ActiveRecord::Migration::CheckPending` was
+  defined, but Rails only puts that middleware in the stack when
+  `config.active_record.migration_error` is `:page_load`. Any app loading
+  ActiveRecord with a different setting raised "No such middleware to insert
+  before" during boot. It now tests the same condition Rails does.
+- **Long labels drew straight out past the edge of their model box.** SVG text
+  neither wraps nor ellipsises; labels are now measured against the font the
+  theme actually resolves and cut to fit.
+- **"no database connection" hung below the box it belonged to** — the box
+  height did not count that placeholder line.
+- **The model search is a real dropdown.** The native `<datalist>` rendered in
+  the browser's own chrome: unstyleable, and unable to show the table name and
+  column count beside each model. Arrow keys and Enter work as before.
+- **The titlebar wrapped to two lines in a narrow window**, pushing the toolbar
+  out of its 32px row. It no longer wraps, and below the width where the toolbar
+  drops its button labels the title gives way to the icon alone.
+
 ## [0.12.1] - 2026-08-03
 
 ### Added

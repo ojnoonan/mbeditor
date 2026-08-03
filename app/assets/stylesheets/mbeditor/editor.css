@@ -61,6 +61,17 @@ html, body, #mbeditor-root {
   font-size: 13px;
   color: var(--ide-text);
   font-weight: 500;
+  /* Never wrap: the titlebar is a fixed 32px row, so a second line pushed the
+     toolbar buttons out of it. */
+  white-space: nowrap;
+}
+
+/* Below the width where the toolbar drops its button labels, drop the title
+   too. The layers icon beside it already identifies the editor, and the host
+   and port are in the browser's own address bar. */
+@media (max-width: 1180px) {
+  .ide-titlebar-title { display: none; }
+  .ide-titlebar-icon { margin-right: 0; }
 }
 
 /* Fills the gap between the title and the button cluster. min-width: 0 lets it
@@ -3334,4 +3345,53 @@ button:not(.pico-btn) { margin-bottom: 0; }
 input.ide-model-graph-search[type="search"] {
   background-image: none;
   padding-inline-start: 8px;
+}
+
+/* Model-graph search dropdown. Replaces a native <datalist>, which the browser
+   renders in its own chrome — unstyleable, and unable to show the table name
+   beside each model. */
+.mg-search-wrap { position: relative; display: inline-block; }
+.mg-search-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--ide-panel-bg, #252526);
+  border: 1px solid var(--ide-border, #3c3c3c);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+.mg-search-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--ide-text, #d4d4d4);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mg-search-option-active { background: var(--ide-accent, #3794ff); color: #fff; }
+.mg-search-option-name { font-family: var(--ide-mono, monospace); }
+.mg-search-option-meta { color: var(--ide-text-muted, #858585); font-size: 10px; }
+.mg-search-option-active .mg-search-option-meta { color: rgba(255, 255, 255, 0.75); }
+
+/* Inline route hints beside controller actions. Muted and italic so they read
+   as annotation rather than code — they sit on the same line as the `def`. */
+.mbeditor-route-hint {
+  color: var(--ide-text-muted, #858585) !important;
+  font-style: italic;
+  opacity: 0.85;
+}
+.mbeditor-route-hint-none {
+  color: var(--ide-warning, #cca700) !important;
+  font-style: italic;
+  opacity: 0.8;
 }

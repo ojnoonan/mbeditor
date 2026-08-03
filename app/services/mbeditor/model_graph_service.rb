@@ -22,7 +22,16 @@ module Mbeditor
       SolidQueue SolidCache SolidCable
     ].freeze
 
-    MAX_MODELS = 300
+    # Cap on models drawn. 300 was chosen before the layout could handle that
+    # many; a schema slightly over it silently lost models and only said
+    # "(truncated)". Raised, and configurable for anything larger — the cost of
+    # a bigger graph is now the browser's rendering, not the layout.
+    DEFAULT_MAX_MODELS = 1000
+
+    def self.max_models
+      value = Mbeditor.configuration.model_graph_max_models.to_i
+      value.positive? ? value : DEFAULT_MAX_MODELS
+    end
 
     # Only the first few columns travel: the diagram box shows that many and the
     # full list is a click away in the schema modal, which fetches its own data
@@ -86,7 +95,8 @@ module Mbeditor
         classes = model_classes
         return unavailable("No ActiveRecord models found in this application.") if classes.empty?
 
-        models = classes.first(MAX_MODELS).map { |klass| describe_model(klass, root) }
+        limit = max_models
+        models = classes.first(limit).map { |klass| describe_model(klass, root) }
         known = models.map { |m| m[:name] }.to_set
 
         {
@@ -95,7 +105,7 @@ module Mbeditor
           # Edges to classes outside the graph (a gem's model, or a typo in
           # class_name:) would render as arrows into nowhere.
           edges: models.flat_map { |m| m.delete(:edges) }.select { |e| known.include?(e[:to]) }.uniq,
-          truncated: classes.length > MAX_MODELS,
+          truncated: classes.length > limit,
           generatedAt: Time.now.utc.iso8601
         }
       rescue StandardError => e

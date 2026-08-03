@@ -90,6 +90,7 @@ var EditorPanel = function EditorPanel(_ref) {
 
   var blameDecorationsRef = useRef([]);
   var gitLineDecorationsRef = useRef([]);
+  var routeDecorationsRef = useRef([]);
   // Latest git line-diff refresh, read by the poll effect so its interval does
   // not have to be torn down whenever the active tab changes.
   var gitLineRefreshRef = useRef(null);
@@ -1529,6 +1530,83 @@ var EditorPanel = function EditorPanel(_ref) {
       });
     }
   }, [isBlameVisible, tab.path, blameData, isBlameLoading]);
+
+  // Inline route hints for controllers.
+  //
+  // Every `def` in a controller gets the verb and path that reach it drawn after
+  // the line, and a public action nothing routes to is called out — the question
+  // "is this actually reachable?" otherwise means reading config/routes.rb and
+  // mentally expanding `resources`. Routes come from the host app's own route
+  // set, which is the only thing that knows how those expand.
+  //
+  // Decorations, not view zones: a hint belongs on the line, and a zone would
+  // push the code around every time a file was opened.
+  useEffect(function () {
+    var editor = monacoRef.current;
+    if (!editor || !window.monaco) return;
+
+    var clear = function () {
+      if (!routeDecorationsRef.current.length) return;
+      routeDecorationsRef.current = editor.deltaDecorations(routeDecorationsRef.current, []);
+    };
+
+    if (!tab.path || !/^app\/controllers\/.+_controller\.rb$/.test(tab.path)) {
+      clear();
+      return;
+    }
+
+    var cancelled = false;
+    FileService.getRoutes(tab.path).then(function (data) {
+      if (cancelled) return;
+      var actions = (data && data.actions) || {};
+      var model = editor.getModel();
+      if (!model) return;
+
+      var decorations = [];
+      var text = model.getValue().split('\n');
+      // Only methods above the first `private`/`protected` are candidates for a
+      // route; flagging a helper below it as unrouted would be noise.
+      var visibilityEnded = false;
+
+      text.forEach(function (line, i) {
+        if (/^\s*(private|protected)\s*$/.test(line)) { visibilityEnded = true; return; }
+        var m = line.match(/^\s*def\s+(?:self\.)?([a-zA-Z_][a-zA-Z0-9_]*[?!=]?)/);
+        if (!m) return;
+
+        var name = m[1];
+        var routes = actions[name];
+        var lineNo = i + 1;
+        var col = line.length + 1;
+
+        if (routes && routes.length) {
+          var label = routes.map(function (r) { return r.verb + ' ' + r.path; }).join('  ·  ');
+          decorations.push({
+            range: new window.monaco.Range(lineNo, col, lineNo, col),
+            options: {
+              after: { content: '  ' + label, inlineClassName: 'mbeditor-route-hint' },
+              hoverMessage: routes.map(function (r) {
+                return { value: '`' + r.verb + ' ' + r.path + '`' + (r.name ? ' — `' + r.name + '_path`' : '') };
+              }),
+              showIfCollapsed: true
+            }
+          });
+        } else if (!visibilityEnded && !/[?!=]$/.test(name) && name !== 'initialize') {
+          decorations.push({
+            range: new window.monaco.Range(lineNo, col, lineNo, col),
+            options: {
+              after: { content: '  no route', inlineClassName: 'mbeditor-route-hint-none' },
+              hoverMessage: [{ value: 'No route in this application dispatches to this action.' }],
+              showIfCollapsed: true
+            }
+          });
+        }
+      });
+
+      routeDecorationsRef.current = editor.deltaDecorations(routeDecorationsRef.current, decorations);
+    }).catch(function () { /* hints are additive; a failure just means none */ });
+
+    return function () { cancelled = true; clear(); };
+  }, [tab.path, tab.externalContentVersion, monacoReady]);
 
   // Render Blame block headers (author + summary) above contiguous commit regions.
   useEffect(function () {

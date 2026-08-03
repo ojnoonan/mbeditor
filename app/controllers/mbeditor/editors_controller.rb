@@ -1072,6 +1072,19 @@ module Mbeditor
       }
     end
 
+    # GET /mbeditor/routes?path=app/controllers/users_controller.rb
+    #
+    # Which routes reach each action in a controller, for the inline hints the
+    # editor draws beside every `def`. Returns {} for anything that is not a
+    # controller rather than erroring — the client asks for every Ruby file it
+    # opens and should not have to know the convention.
+    def routes
+      key = RouteService.controller_key(params[:path].to_s)
+      return render json: { controller: nil, actions: {} } unless key
+
+      render json: { controller: key, actions: RouteService.for_controller(key) }
+    end
+
     # GET /mbeditor/related_files?path=...
     def related_files
       path = resolve_path(params[:path])

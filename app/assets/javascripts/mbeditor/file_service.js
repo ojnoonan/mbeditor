@@ -117,6 +117,14 @@ var FileService = (function () {
     return axios.get(window.mbeditorBasePath() + '/ping', { timeout: 4000 }).then(function(res) { return res.data; });
   }
 
+  // Which routes reach each action in a controller. Returns { controller, actions }
+  // with an empty actions map for anything that is not a controller, so the
+  // caller does not have to know the naming convention.
+  function getRoutes(path) {
+    return axios.get(window.mbeditorBasePath() + '/routes?path=' + encodeURIComponent(path))
+      .then(function (res) { return res.data; });
+  }
+
   function getState() {
     return axios.get(window.mbeditorBasePath() + '/state').then(function(res) { return res.data; });
   }
@@ -336,6 +344,7 @@ var FileService = (function () {
     formatFile: formatFile,
     runTests: runTests,
     ping: ping,
+    getRoutes: getRoutes,
     getState: getState,
     saveState: saveState,
     getBranchState: getBranchState,

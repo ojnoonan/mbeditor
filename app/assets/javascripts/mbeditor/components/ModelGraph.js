@@ -14,7 +14,13 @@
 // carried no information at all. Only a layered layout derives position from
 // the associations themselves.
 var ModelGraph = (function () {
-  var NODE_W = 188;
+  // Boxes are sized to their contents rather than all being one width. A fixed
+  // 188px meant a model with a long name or long column names had its labels
+  // truncated while a model called Tag wasted most of its box. Clamped at both
+  // ends so one pathological name cannot stretch a whole layer.
+  var NODE_W_MIN = 168;
+  var NODE_W_MAX = 320;
+  var NODE_W = NODE_W_MIN;   // fallback for anything without a measured model
   var HEADER_H = 34;      // model name + table name
   var FIELD_H = 15;
   var MAX_FIELDS = 8;     // the rest are one click away in the schema modal
@@ -22,14 +28,79 @@ var ModelGraph = (function () {
   var LAYER_GAP = 110;    // horizontal space between layers
   var ORDER_PASSES = 4;   // median sweeps for crossing reduction
   var STRAIGHTEN_PASSES = 3;
-  var MAX_ASSOC_LISTED = 12;  // the card stays readable; the rest are counted
+  var MAX_ASSOC_LISTED = 12;
+  var MAX_SEARCH_RESULTS = 50;  // the card stays readable; the rest are counted
   var BLOCK_PAD = 26;     // breathing room inside a cluster's boundary
   var BLOCK_GAP = 56;     // space between neighbouring clusters
+
+  // SVG text neither wraps nor ellipsises: a long model or column name simply
+  // draws straight out past the edge of its box and over whatever is beside it.
+  // Measure with a cached canvas context and cut to fit — accurate for whatever
+  // font the theme actually resolves, unlike a characters-per-pixel guess.
+  var _measureCtx = null;
+  var _measureCache = {};
+
+  function textWidth(text, font) {
+    var key = font + '\u0000' + text;
+    if (_measureCache[key] !== undefined) return _measureCache[key];
+    if (!_measureCtx) {
+      if (typeof document === 'undefined') return text.length * 6;
+      _measureCtx = document.createElement('canvas').getContext('2d');
+    }
+    _measureCtx.font = font;
+    var w = _measureCtx.measureText(text).width;
+    // Unbounded growth would be a leak on a large schema; the cache only needs
+    // to cover one render's worth of labels.
+    if (Object.keys(_measureCache).length > 4000) _measureCache = {};
+    _measureCache[key] = w;
+    return w;
+  }
+
+  function fitText(text, maxWidth, font) {
+    text = String(text == null ? '' : text);
+    if (!text || textWidth(text, font) <= maxWidth) return text;
+    var lo = 0, hi = text.length;
+    while (lo < hi) {
+      var mid = Math.ceil((lo + hi) / 2);
+      if (textWidth(text.slice(0, mid) + '…', font) <= maxWidth) lo = mid; else hi = mid - 1;
+    }
+    return lo > 0 ? text.slice(0, lo) + '…' : '…';
+  }
+
+  // Must match the .mg-name / .mg-table / .mg-field rules in editor.css.
+  var FONT_NAME  = '600 12px ui-monospace, SFMono-Regular, Menlo, monospace';
+  var FONT_SMALL = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
+  var FONT_FIELD = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+
+  function nodeWidth(model) {
+    if (model && model.__mgWidth) return model.__mgWidth;
+    if (!model) return NODE_W;
+
+    // Header: name plus the open-schema button, and the table/count line.
+    var need = textWidth(String(model.name || ''), FONT_NAME) + 20 + 26;
+    need = Math.max(need, textWidth(
+      (model.table || '—') + (model.columnCount ? ' · ' + model.columnCount + ' cols' : ''),
+      FONT_SMALL) + 20 + 26);
+
+    (model.columns || []).slice(0, MAX_FIELDS).forEach(function (c) {
+      // name on the left, type right-aligned, with a gap between them
+      need = Math.max(need,
+        textWidth(String(c.name || ''), FONT_FIELD) +
+        textWidth(String(c.type || ''), FONT_SMALL) + 32);
+    });
+
+    var w = Math.round(Math.min(NODE_W_MAX, Math.max(NODE_W_MIN, need)));
+    try { model.__mgWidth = w; } catch (e) { /* frozen payload — recompute */ }
+    return w;
+  }
 
   function nodeHeight(model) {
     var shown = Math.min((model.columns || []).length, MAX_FIELDS);
     var more = (model.columnCount || 0) > shown ? FIELD_H : 0;
-    return HEADER_H + shown * FIELD_H + more + 8;
+    // With no columns the box still draws one line — "no database connection" —
+    // and not counting it left that text hanging below the box it belongs to.
+    var placeholder = shown === 0 ? FIELD_H : 0;
+    return HEADER_H + shown * FIELD_H + more + placeholder + 8;
   }
 
   // Undirected adjacency: for placement, "A belongs_to B" and "B has_many A"
@@ -224,15 +295,27 @@ var ModelGraph = (function () {
     Object.keys(y).forEach(function (n) { minY = Math.min(minY, y[n]); });
     if (!isFinite(minY)) minY = 0;
 
+    // Layers are as wide as their widest box, and each starts where the previous
+    // one ended. A fixed stride assumed every box was NODE_W and would overlap
+    // the next layer as soon as one of them grew.
+    var layerX = [];
+    var cursorX = 0;
+    layers.forEach(function (names, li) {
+      layerX[li] = cursorX;
+      var widest = 0;
+      (names || []).forEach(function (n) { widest = Math.max(widest, nodeWidth(byName[n])); });
+      cursorX += (widest || NODE_W_MIN) + LAYER_GAP;
+    });
+
     var positions = {};
     var maxX = 0, maxY = 0;
     layers.forEach(function (names, li) {
       if (!names) return;
       names.forEach(function (n) {
-        var x = li * (NODE_W + LAYER_GAP);
+        var x = layerX[li];
         var yy = y[n] - minY;
         positions[n] = { x: x, y: yy, model: byName[n] };
-        maxX = Math.max(maxX, x + NODE_W);
+        maxX = Math.max(maxX, x + nodeWidth(byName[n]));
         maxY = Math.max(maxY, yy + nodeHeight(byName[n]));
       });
     });
@@ -273,10 +356,13 @@ var ModelGraph = (function () {
     var positions = {};
     var regions = [];
     var pad = 60;
-    var cursorY = pad;
-    var maxRight = pad;
 
-    components(allNames, adj).forEach(function (group) {
+    // Lay each component out first, then pack the finished blocks. Blocks used
+    // to be stacked in a single column, so a schema with a big connected core
+    // and a handful of one-model islands ran off the bottom of the canvas with
+    // the whole right-hand side empty. Shelf packing wraps them instead, which
+    // is both more compact and closer to how the eye scans a page.
+    var blocks = components(allNames, adj).map(function (group) {
       var inGroup = {};
       group.forEach(function (n) { inGroup[n] = true; });
       var groupEdges = dir.filter(function (e) { return inGroup[e.from] && inGroup[e.to]; });
@@ -299,39 +385,67 @@ var ModelGraph = (function () {
       orderLayers(layers, adjIn, adjOut);
       var laid = assignCoords(layers, byName, adjIn, adjOut);
 
-      Object.keys(laid.positions).forEach(function (n) {
-        var p = laid.positions[n];
-        positions[n] = { x: pad + p.x, y: cursorY + p.y, model: p.model };
+      return {
+        laid: laid,
+        group: group,
+        w: laid.width + BLOCK_PAD * 2,
+        h: laid.height + BLOCK_PAD * 2
+      };
+    });
+
+    // Wrap at whichever is wider: a roughly square canvas, or the widest single
+    // block (which can never be split).
+    var totalArea = blocks.reduce(function (a, b) { return a + b.w * b.h; }, 0);
+    var widest = blocks.reduce(function (a, b) { return Math.max(a, b.w); }, 0);
+    var targetW = Math.max(widest, Math.sqrt(totalArea * 1.6));
+
+    var shelfX = pad, shelfY = pad, shelfH = 0, maxRight = pad;
+
+    blocks.forEach(function (b) {
+      if (shelfX > pad && shelfX + b.w > pad + targetW) {
+        shelfX = pad;
+        shelfY += shelfH + BLOCK_GAP;
+        shelfH = 0;
+      }
+
+      Object.keys(b.laid.positions).forEach(function (n) {
+        var q = b.laid.positions[n];
+        positions[n] = {
+          x: shelfX + BLOCK_PAD + q.x,
+          y: shelfY + BLOCK_PAD + q.y,
+          model: q.model
+        };
       });
 
       regions.push({
-        x: pad - BLOCK_PAD, y: cursorY - BLOCK_PAD,
-        w: laid.width + BLOCK_PAD * 2, h: laid.height + BLOCK_PAD * 2,
-        label: group.length > 1 ? group.length + ' related models' : group[0]
+        x: shelfX, y: shelfY, w: b.w, h: b.h,
+        label: b.group.length > 1 ? b.group.length + ' related models' : b.group[0]
       });
 
-      maxRight = Math.max(maxRight, pad + laid.width);
-      cursorY += laid.height + BLOCK_GAP;
+      maxRight = Math.max(maxRight, shelfX + b.w);
+      shelfH = Math.max(shelfH, b.h);
+      shelfX += b.w + BLOCK_GAP;
     });
 
     return {
       positions: positions,
       regions: regions,
       width: maxRight + pad,
-      height: cursorY - BLOCK_GAP + pad
+      height: shelfY + shelfH + pad
     };
   }
 
   function anchors(a, b) {
     var ah = nodeHeight(a.model), bh = nodeHeight(b.model);
-    var acx = a.x + NODE_W / 2, acy = a.y + ah / 2;
-    var bcx = b.x + NODE_W / 2, bcy = b.y + bh / 2;
+    var aw = nodeWidth(a.model), bw = nodeWidth(b.model);
+    var acx = a.x + aw / 2, acy = a.y + ah / 2;
+    var bcx = b.x + bw / 2, bcy = b.y + bh / 2;
     var horizontal = Math.abs(bcx - acx) > Math.abs(bcy - acy);
 
     if (horizontal) {
       return bcx > acx
-        ? { x1: a.x + NODE_W, y1: acy, x2: b.x, y2: bcy, h: true }
-        : { x1: a.x, y1: acy, x2: b.x + NODE_W, y2: bcy, h: true };
+        ? { x1: a.x + aw, y1: acy, x2: b.x, y2: bcy, h: true }
+        : { x1: a.x, y1: acy, x2: b.x + bw, y2: bcy, h: true };
     }
     return bcy > acy
       ? { x1: acx, y1: a.y + ah, x2: bcx, y2: b.y, h: false }
@@ -409,6 +523,10 @@ var ModelGraph = (function () {
 
     var _search = React.useState('');
     var search = _search[0], setSearch = _search[1];
+    var _searchOpen = React.useState(false);
+    var searchOpen = _searchOpen[0], setSearchOpen = _searchOpen[1];
+    var _highlight = React.useState(0);
+    var highlight = _highlight[0], setHighlight = _highlight[1];
     var _focused = React.useState(null);
     var focused = _focused[0], setFocused = _focused[1];
     var _hovered = React.useState(null);
@@ -438,6 +556,21 @@ var ModelGraph = (function () {
       });
       return byModel;
     }, [graph]);
+
+    // Prefix matches first, then anything containing the term — the ordering a
+    // name-completion list is expected to have. Capped so a large schema cannot
+    // render a list taller than the window.
+    var searchMatches = React.useMemo(function () {
+      var all = (graph && graph.models) || [];
+      var q = search.trim().toLowerCase();
+      if (!q) return all.slice(0, MAX_SEARCH_RESULTS);
+      var starts = [], contains = [];
+      all.forEach(function (m) {
+        var i = m.name.toLowerCase().indexOf(q);
+        if (i === 0) starts.push(m); else if (i > 0) contains.push(m);
+      });
+      return starts.concat(contains).slice(0, MAX_SEARCH_RESULTS);
+    }, [graph, search]);
 
     var hoverCardRef = React.useRef(null);
     var _modelHover = React.useState(null);
@@ -535,7 +668,7 @@ var ModelGraph = (function () {
         var k = v.k >= 1 ? v.k : Math.min(MAX_ZOOM, v.k + (1 - v.k) / 2);
         return {
           k: k,
-          x: rect.width / 2 - (pos.x + NODE_W / 2) * k,
+          x: rect.width / 2 - (pos.x + nodeWidth(pos.model) / 2) * k,
           y: rect.height / 2 - (pos.y + h / 2) * k
         };
       });
@@ -661,6 +794,7 @@ var ModelGraph = (function () {
             var fields = (m.columns || []).slice(0, MAX_FIELDS);
             var hidden = (m.columnCount || 0) - fields.length;
             var h = nodeHeight(m);
+            var w = nodeWidth(m);
             return React.createElement(
               'g',
               {
@@ -679,11 +813,14 @@ var ModelGraph = (function () {
                   centreRef.current(m.name);
                 }
               },
-              React.createElement('rect', { className: 'mg-box', width: NODE_W, height: h, rx: 4 }),
-              React.createElement('rect', { className: 'mg-box-header', width: NODE_W, height: HEADER_H, rx: 4 }),
-              React.createElement('text', { className: 'mg-name', x: 10, y: 15 }, m.name),
+              React.createElement('rect', { className: 'mg-box', width: w, height: h, rx: 4 }),
+              React.createElement('rect', { className: 'mg-box-header', width: w, height: HEADER_H, rx: 4 }),
+              // Budget stops short of the header button, which sits at w - 26.
+              React.createElement('text', { className: 'mg-name', x: 10, y: 15 },
+                fitText(m.name, w - 44, FONT_NAME)),
               React.createElement('text', { className: 'mg-table', x: 10, y: 27 },
-                (m.table || '—') + (m.columnCount ? ' · ' + m.columnCount + ' cols' : '')),
+                fitText((m.table || '—') + (m.columnCount ? ' · ' + m.columnCount + ' cols' : ''),
+                        w - 44, FONT_SMALL)),
               // Opening the full schema is now an explicit target rather than
               // anything-anywhere on the box, so clicking around to navigate
               // cannot keep throwing a modal at you.
@@ -699,20 +836,25 @@ var ModelGraph = (function () {
                 },
                 React.createElement('title', null, 'Open the full schema for ' + m.name),
                 React.createElement('rect', {
-                  className: 'mg-open-btn-bg', x: NODE_W - 26, y: 7, width: 19, height: 19, rx: 3
+                  className: 'mg-open-btn-bg', x: w - 26, y: 7, width: 19, height: 19, rx: 3
                 }),
                 // Three stacked bars — a table, matching what the button opens.
-                React.createElement('rect', { className: 'mg-open-btn-bar', x: NODE_W - 22, y: 11, width: 11, height: 2 }),
-                React.createElement('rect', { className: 'mg-open-btn-bar', x: NODE_W - 22, y: 15.5, width: 11, height: 2 }),
-                React.createElement('rect', { className: 'mg-open-btn-bar', x: NODE_W - 22, y: 20, width: 11, height: 2 })
+                React.createElement('rect', { className: 'mg-open-btn-bar', x: w - 22, y: 11, width: 11, height: 2 }),
+                React.createElement('rect', { className: 'mg-open-btn-bar', x: w - 22, y: 15.5, width: 11, height: 2 }),
+                React.createElement('rect', { className: 'mg-open-btn-bar', x: w - 22, y: 20, width: 11, height: 2 })
               ),
               fields.map(function (c, i) {
                 var y = HEADER_H + 11 + i * FIELD_H;
+                var typeW = Math.min(64, textWidth(String(c.type == null ? '' : c.type), FONT_SMALL));
                 return React.createElement(
                   React.Fragment,
                   { key: c.name },
-                  React.createElement('text', { className: 'mg-field', x: 10, y: y }, c.name),
-                  React.createElement('text', { className: 'mg-field-type', x: NODE_W - 10, y: y, textAnchor: 'end' }, c.type)
+                  // The type is right-aligned, so the name's budget is whatever
+                  // the type does not claim — otherwise the two met in the middle.
+                  React.createElement('text', { className: 'mg-field', x: 10, y: y },
+                    fitText(c.name, w - 28 - typeW, FONT_FIELD)),
+                  React.createElement('text', { className: 'mg-field-type', x: w - 10, y: y, textAnchor: 'end' },
+                    fitText(c.type, 64, FONT_SMALL))
                 );
               }),
               hidden > 0 && React.createElement('text', {
@@ -781,34 +923,66 @@ var ModelGraph = (function () {
         React.createElement(
           'div',
           { className: 'ide-model-graph-actions' },
-          // A native datalist rather than a bespoke dropdown: the browser gives
-          // us the filtering and keyboard handling for free.
-          React.createElement('input', {
-            className: 'ide-model-graph-search',
-            type: 'search',
-            list: 'mg-model-names',
-            placeholder: 'Centre on a model…',
-            value: search,
-            onChange: function (e) {
-              setSearch(e.target.value);
-              // Picking from the datalist fires change with the full name, so
-              // an exact hit centres immediately rather than needing Enter.
-              if (placed.positions[e.target.value]) centreOn(e.target.value);
-            },
-            onKeyDown: function (e) {
-              if (e.key !== 'Enter') return;
-              var match = models.filter(function (m) {
-                return m.name.toLowerCase().indexOf(e.target.value.trim().toLowerCase()) === 0;
-              })[0];
-              if (match) { setSearch(match.name); centreOn(match.name); }
-            }
-          }),
+          // A real dropdown rather than a native <datalist>. The datalist was
+          // chosen to get filtering and keyboard handling for free, but the
+          // browser renders it as an unstyleable list in the platform's own
+          // chrome — wrong font, wrong colours, and no way to show which model
+          // is in which cluster. This is a few more lines and looks like the
+          // rest of the editor.
           React.createElement(
-            'datalist',
-            { id: 'mg-model-names' },
-            models.map(function (m) {
-              return React.createElement('option', { key: m.name, value: m.name });
-            })
+            'div',
+            { className: 'mg-search-wrap' },
+            React.createElement('input', {
+              className: 'ide-model-graph-search',
+              type: 'text',
+              placeholder: 'Centre on a model…',
+              value: search,
+              onChange: function (e) { setSearch(e.target.value); setSearchOpen(true); setHighlight(0); },
+              onFocus: function () { setSearchOpen(true); },
+              // A click on an option would otherwise be lost: blur fires first
+              // and unmounts the list before mousedown lands.
+              onBlur: function () { window.setTimeout(function () { setSearchOpen(false); }, 120); },
+              onKeyDown: function (e) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setSearchOpen(true);
+                  setHighlight(function (h) {
+                    var next = h + (e.key === 'ArrowDown' ? 1 : -1);
+                    if (next < 0) return searchMatches.length - 1;
+                    if (next >= searchMatches.length) return 0;
+                    return next;
+                  });
+                  return;
+                }
+                if (e.key === 'Escape') { setSearchOpen(false); return; }
+                if (e.key !== 'Enter') return;
+                var pick = searchMatches[highlight] || searchMatches[0];
+                if (pick) { setSearch(pick.name); setSearchOpen(false); centreOn(pick.name); }
+              }
+            }),
+            searchOpen && searchMatches.length > 0 && React.createElement(
+              'ul',
+              { className: 'mg-search-list' },
+              searchMatches.map(function (m, i) {
+                return React.createElement(
+                  'li',
+                  {
+                    key: m.name,
+                    className: 'mg-search-option' + (i === highlight ? ' mg-search-option-active' : ''),
+                    onMouseEnter: function () { setHighlight(i); },
+                    onMouseDown: function (ev) {
+                      ev.preventDefault();   // keep focus so blur cannot beat us
+                      setSearch(m.name);
+                      setSearchOpen(false);
+                      centreOn(m.name);
+                    }
+                  },
+                  React.createElement('span', { className: 'mg-search-option-name' }, m.name),
+                  React.createElement('span', { className: 'mg-search-option-meta' },
+                    (m.table || '') + (m.columnCount ? ' · ' + m.columnCount + ' cols' : ''))
+                );
+              })
+            )
           ),
           React.createElement('button', {
             type: 'button', className: 'ide-model-graph-btn', title: 'Fit the whole graph',

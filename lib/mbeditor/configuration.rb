@@ -12,7 +12,7 @@ module Mbeditor
                   :js_program, :js_program_exclude,
                   :js_syntax_check, :babel_standalone_path,
                   :ruby_lsp, :ruby_lsp_command, :ruby_lsp_timeout,
-                  :exception_capture,
+                  :exception_capture, :model_graph_max_models,
                   :search_respect_gitignore, :ripgrep_command
 
     def initialize
@@ -84,6 +84,9 @@ module Mbeditor
       # same exposure the log panel already has, since it tails the dev log.
       # Set to false to record nothing.
       @exception_capture = :auto
+      # Models drawn in the model graph before it reports itself truncated.
+      # nil uses ModelGraphService::DEFAULT_MAX_MODELS.
+      @model_graph_max_models = nil
       @mount_path = nil # explicit URL prefix override; nil falls through to detection/"/mbeditor"
       @resilient_routing = true # serve /mbeditor from middleware so the editor survives a broken host routes.rb; false is the escape hatch
     end

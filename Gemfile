@@ -11,6 +11,10 @@ gem 'cuprite',            require: false
 gem 'haml_lint',          require: false
 gem 'minitest-reporters', require: false
 gem 'puma'
+# The dummy app needs a real ActiveRecord connection so the model graph has
+# something to draw: associations come from reflections, but the column lists
+# and the schema modal need a live schema.
+gem 'sqlite3', '>= 1.4'
 gem 'rubocop',            require: false
 gem 'rubocop-rails',      require: false
 gem 'webmock',            require: false
