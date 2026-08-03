@@ -162,7 +162,8 @@ See [Resilient Routing](#resilient-routing) for details.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `user_name_callback` | `nil` | Proc resolving the display name shown on your caret during realtime collaboration. Executed via `instance_exec` inside the controller (like `authenticate_with`), so it can read `session`, `cookies`, `current_user`, etc. — e.g. `proc { current_user&.name }`. When `nil` or it returns a blank value, each browser falls back to a generated, locally-persisted, user-editable name. Collaboration activates once another participant actually connects, not merely when Action Cable is up (see [Collaborative pairing](#collaborative-pairing-optional)). |
+| `user_name_callback` | `nil` | Proc resolving the display name shown on your caret during realtime collaboration. Only needed when the automatic lookup can't reach your user — see `user_name_methods` below. Executed via `instance_exec` inside the engine's controller (like `authenticate_with`), so it can read `session`, `cookies`, `params`, and anything your auth library exposes to an `ActionController::Base` subclass — e.g. `proc { User.find_by(id: session[:user_id])&.name }`. **It cannot see helper methods defined on your own `ApplicationController`**, because the engine's controllers do not inherit from it; a hand-rolled `current_user` living there will raise `NameError`, which is logged as `[mbeditor] user name lookup failed` and falls back to the generated name. |
+| `user_name_methods` | `%w[name full_name display_name username login email]` | Attributes tried on `current_user`, in order, when no `user_name_callback` is set — the first non-blank one becomes your collaboration display name. This is what makes an authenticated editor show real names with no extra wiring, provided your auth library exposes `current_user` to `ActionController::Base` (Devise and Sorcery do; a `current_user` you wrote yourself on `ApplicationController` does not). Set it to your own column instead of writing a callback, e.g. `%w[preferred_name]`. |
 
 ## JavaScript intelligence
 
@@ -376,6 +377,42 @@ common cause of *"the other person's edits never show up."* For pairing, run a s
 worker (`WEB_CONCURRENCY=0`, or `bundle exec rails server` which is single-process by
 default). A multi-worker setup would additionally need a cross-process cable adapter, but
 the in-memory buffer still would not be shared — single-process is the supported mode.
+
+#### Showing real usernames
+
+Each participant's caret and presence chip are labelled. With no configuration
+the label is a generated name like *Witty Operator*, persisted per browser and
+editable by clicking your own chip.
+
+**If your auth library exposes `current_user` to controllers** — Devise and
+Sorcery both do, because they include their helpers into `ActionController::Base`
+— it already works with no configuration at all. mbeditor reads the first
+non-blank of `name`, `full_name`, `display_name`, `username`, `login`, `email`.
+
+To point it at a different column:
+
+```ruby
+Mbeditor.configure do |c|
+  c.user_name_methods = %w[preferred_name email]
+end
+```
+
+**If `current_user` is your own method on `ApplicationController`**, mbeditor
+cannot see it — the engine's controllers inherit from `ActionController::Base`,
+not from your `ApplicationController`. Resolve the user yourself instead; the
+proc runs in the engine's controller, so `session`, `cookies` and `params` are
+all available:
+
+```ruby
+Mbeditor.configure do |c|
+  c.user_name_callback = proc { User.find_by(id: session[:user_id])&.name }
+end
+```
+
+An explicit `user_name_callback` always wins over the automatic lookup. If it
+raises or returns blank you get the generated name, and the reason is logged as
+`[mbeditor] user name lookup failed: …` rather than silently swallowed.
+
 ## Search performance
 
 Project search and JS definition lookups pick a backend per call:

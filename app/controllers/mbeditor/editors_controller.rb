@@ -1145,14 +1145,41 @@ module Mbeditor
     # authenticate_with) so the host app can supply a collaboration display name.
     # nil — including any failure or a blank result — falls through to the
     # client-generated name.
+    # Display name for the collaboration caret. An explicit user_name_callback
+    # wins; otherwise fall back to current_user, when the host's auth library put
+    # it within reach of an ActionController::Base subclass (Devise, Sorcery and
+    # friends do; a current_user hand-written on the host's own
+    # ApplicationController does not — see default_user_name).
     def resolved_user_name
       cb = Mbeditor.configuration.user_name_callback
-      return nil unless cb
-
-      name = instance_exec(&cb)
+      name = cb ? instance_exec(&cb) : default_user_name
       name = name.to_s.strip
       name.empty? ? nil : name
-    rescue StandardError
+    rescue StandardError => e
+      # Was a bare `nil`, which made a broken callback indistinguishable from an
+      # unconfigured one: you got the generated name and no clue why. The usual
+      # cause is a NameError on current_user, and silently swallowing it sent
+      # people looking in the wrong place.
+      Rails.logger.warn("[mbeditor] user name lookup failed: #{e.class}: #{e.message}")
+      nil
+    end
+
+    # Read the display name straight off current_user, trying each configured
+    # attribute in turn. This is what makes an authenticated editor show real
+    # names with no extra wiring; user_name_methods exists so an app whose column
+    # isn't in the default list can name it instead of writing a callback.
+    def default_user_name
+      return nil unless respond_to?(:current_user, true)
+
+      user = current_user
+      return nil unless user
+
+      Array(Mbeditor.configuration.user_name_methods).each do |m|
+        next unless user.respond_to?(m)
+
+        value = user.public_send(m).to_s.strip
+        return value unless value.empty?
+      end
       nil
     end
 

@@ -2,19 +2,29 @@
 
 // ModelGraph — an SVG entity diagram of the host app's ActiveRecord models.
 //
-// Laid out radially rather than left-to-right: the model with the most
-// associations sits at the centre and everything else fans out in rings by how
-// many hops away it is. A Rails schema is usually a hub with satellites, and a
-// column layout turns that into one very wide, very short strip.
+// Laid out by the Sugiyama method — the same one Graphviz `dot` uses, and so
+// the same one Rails ERD produces this picture with. See the layout section
+// below for the phases.
+//
+// Two earlier attempts are worth knowing about, because both looked reasonable
+// on a demo app and failed on a real one. A radial layout put the busiest model
+// at the centre and fanned the rest out in rings; at 300 models that is a single
+// enormous circle, fitted so far out that no box is legible. A clustered grid
+// was scannable but placed models by traversal order, so a box's position
+// carried no information at all. Only a layered layout derives position from
+// the associations themselves.
 var ModelGraph = (function () {
   var NODE_W = 188;
   var HEADER_H = 34;      // model name + table name
   var FIELD_H = 15;
   var MAX_FIELDS = 8;     // the rest are one click away in the schema modal
-  var RING_GAP = 150;
-  var MIN_RADIUS = 210;
-  var NODE_GAP = 56;      // clear space between neighbours on the same ring
-  var BARYCENTRE_PASSES = 4;
+  var ROW_GAP = 36;
+  var LAYER_GAP = 110;    // horizontal space between layers
+  var ORDER_PASSES = 4;   // median sweeps for crossing reduction
+  var STRAIGHTEN_PASSES = 3;
+  var MAX_ASSOC_LISTED = 12;  // the card stays readable; the rest are counted
+  var BLOCK_PAD = 26;     // breathing room inside a cluster's boundary
+  var BLOCK_GAP = 56;     // space between neighbouring clusters
 
   function nodeHeight(model) {
     var shown = Math.min((model.columns || []).length, MAX_FIELDS);
@@ -35,167 +45,283 @@ var ModelGraph = (function () {
     return adj;
   }
 
-  function degreeOf(adj, name) { return Object.keys(adj[name] || {}).length; }
+  // ── Layout: Sugiyama layered, the standard for entity diagrams ────────────
+  //
+  // Associations are directed (belongs_to points a child at its parent), which
+  // is exactly the input a layered layout wants, and it is what Graphviz `dot`
+  // uses — and therefore Rails ERD, the usual tool for drawing this picture.
+  // The four classic phases: break cycles, assign layers, order within layers
+  // to cut crossings, then assign coordinates.
+  //
+  // Earlier attempts placed models by traversal order poured into grid cells.
+  // That put related models near each other only by accident: a box's position
+  // carried no information, so the diagram could not actually be read.
 
-  // Rings by hop count from the busiest model. Disconnected islands are picked
-  // up afterwards by their own local hub, so nothing is silently dropped.
-  function assignRings(models, adj) {
-    var remaining = {};
-    models.forEach(function (m) { remaining[m.name] = true; });
-
-    var ring = {};
-    var order = [];
-
-    while (Object.keys(remaining).length > 0) {
-      var hub = Object.keys(remaining).sort(function (a, b) {
-        var d = degreeOf(adj, b) - degreeOf(adj, a);
-        return d !== 0 ? d : (a < b ? -1 : 1);
-      })[0];
-
-      var queue = [hub];
-      ring[hub] = order.length === 0 ? 0 : 1;
-      delete remaining[hub];
-      order.push(hub);
-
-      while (queue.length) {
-        var current = queue.shift();
-        Object.keys(adj[current] || {}).sort().forEach(function (next) {
-          if (!remaining[next]) return;
-          delete remaining[next];
-          ring[next] = ring[current] + 1;
-          order.push(next);
-          queue.push(next);
-        });
-      }
-    }
-    return ring;
+  // Unique directed edges; self-references are dropped as placement constraints.
+  function directedEdges(models, edges) {
+    var known = {};
+    models.forEach(function (m) { known[m.name] = true; });
+    var seen = {};
+    var out = [];
+    edges.forEach(function (e) {
+      if (!known[e.from] || !known[e.to] || e.from === e.to) return;
+      var key = e.from + ' ' + e.to;
+      if (seen[key]) return;
+      seen[key] = true;
+      out.push({ from: e.from, to: e.to });
+    });
+    return out;
   }
 
-  // Ordering within a ring is what decides how many lines cross. Repeatedly
-  // move each node to the average angle of its already-placed neighbours
-  // (a barycentre sweep) — cheap, and it untangles most of the crossings a
-  // naive alphabetical ring would create.
-  function orderRing(names, angleOf, adj, ringOf, thisRing) {
-    var ordered = names.slice();
-    for (var pass = 0; pass < BARYCENTRE_PASSES; pass++) {
-      var target = {};
-      ordered.forEach(function (name) {
-        var xs = 0, ys = 0, n = 0;
-        Object.keys(adj[name] || {}).forEach(function (nb) {
-          // Only anchor to neighbours already pinned by an inner ring;
-          // same-ring ties would just chase each other.
-          if (ringOf[nb] >= thisRing) return;
-          var a = angleOf[nb];
-          if (a === undefined) return;
-          xs += Math.cos(a); ys += Math.sin(a); n++;
-        });
-        target[name] = n === 0 ? null : Math.atan2(ys, xs);
-      });
+  // Phase 1 — break cycles. Rails schemas are full of them (a belongs_to paired
+  // with a has_many the other way, or a genuine loop), and layering needs a DAG.
+  // Depth-first search, dropping any edge that points back at a node still on
+  // the stack. Those edges are still drawn in their true direction; they just
+  // stop constraining which layer a node lands in.
+  function breakCycles(names, edges) {
+    var out = {}, state = {};   // 0 unvisited, 1 on stack, 2 done
+    names.forEach(function (n) { out[n] = []; state[n] = 0; });
+    edges.forEach(function (e) { out[e.from].push(e.to); });
 
-      var anchored = ordered.filter(function (n) { return target[n] !== null; });
-      var floating = ordered.filter(function (n) { return target[n] === null; });
-      anchored.sort(function (a, b) { return target[a] - target[b]; });
-      ordered = anchored.concat(floating);
+    var acyclic = [];
+    names.forEach(function (root) {
+      if (state[root] !== 0) return;
+      // Iterative: a 300-model schema nests deeper than is comfortable for
+      // recursion.
+      var stack = [{ node: root, i: 0 }];
+      state[root] = 1;
+      while (stack.length) {
+        var top = stack[stack.length - 1];
+        if (top.i < out[top.node].length) {
+          var next = out[top.node][top.i++];
+          if (state[next] === 1) continue;
+          acyclic.push({ from: top.node, to: next });
+          if (state[next] === 0) { state[next] = 1; stack.push({ node: next, i: 0 }); }
+        } else {
+          state[top.node] = 2;
+          stack.pop();
+        }
+      }
+    });
+    return acyclic;
+  }
+
+  // Phase 2 — longest-path layering. A node sits one layer past its deepest
+  // predecessor, so every edge points forwards and depth reads left to right.
+  function assignLayers(names, acyclic) {
+    var incoming = {}, outgoing = {}, indeg = {};
+    names.forEach(function (n) { incoming[n] = []; outgoing[n] = []; indeg[n] = 0; });
+    acyclic.forEach(function (e) {
+      outgoing[e.from].push(e.to);
+      incoming[e.to].push(e.from);
+      indeg[e.to]++;
+    });
+
+    var layer = {};
+    var queue = names.filter(function (n) { return indeg[n] === 0; });
+    queue.forEach(function (n) { layer[n] = 0; });
+
+    var pending = {};
+    names.forEach(function (n) { pending[n] = indeg[n]; });
+
+    while (queue.length) {
+      var n = queue.shift();
+      outgoing[n].forEach(function (m) {
+        layer[m] = Math.max(layer[m] || 0, layer[n] + 1);
+        if (--pending[m] === 0) queue.push(m);
+      });
     }
-    return ordered;
+    // Anything left sits in a knot the cycle-breaker could not fully unwind;
+    // park it past its deepest known predecessor rather than dropping it.
+    names.forEach(function (n) {
+      if (layer[n] !== undefined) return;
+      var base = 0;
+      incoming[n].forEach(function (p) { base = Math.max(base, (layer[p] || 0) + 1); });
+      layer[n] = base;
+    });
+    return layer;
+  }
+
+  // Phase 3 — crossing reduction by the median heuristic, swept down then up.
+  // Each node moves to the median position of its neighbours in the adjacent
+  // layer; repeated sweeps settle into far fewer crossings than any fixed
+  // ordering. This is the same heuristic dot uses.
+  function orderLayers(layers, adjIn, adjOut) {
+    var pos = {};
+    layers.forEach(function (names) {
+      names.forEach(function (n, i) { pos[n] = i; });
+    });
+
+    var medianOf = function (name, neighbours) {
+      var ps = (neighbours[name] || []).map(function (nb) { return pos[nb]; })
+        .filter(function (v) { return v !== undefined; })
+        .sort(function (a, b) { return a - b; });
+      if (!ps.length) return -1;
+      var mid = Math.floor(ps.length / 2);
+      return ps.length % 2 ? ps[mid] : (ps[mid - 1] + ps[mid]) / 2;
+    };
+
+    var sweep = function (from, to, step, neighbours) {
+      for (var li = from; li !== to; li += step) {
+        var names = layers[li];
+        if (!names || !names.length) continue;
+        var keyed = names.map(function (n, i) { return { n: n, m: medianOf(n, neighbours), i: i }; });
+        keyed.sort(function (a, b) {
+          // A node with no neighbour in the reference layer keeps its relative
+          // place rather than being bunched at one end.
+          if (a.m < 0 && b.m < 0) return a.i - b.i;
+          if (a.m < 0) return -1;
+          if (b.m < 0) return 1;
+          return a.m - b.m || a.i - b.i;
+        });
+        layers[li] = keyed.map(function (k) { return k.n; });
+        layers[li].forEach(function (n, i) { pos[n] = i; });
+      }
+    };
+
+    for (var pass = 0; pass < ORDER_PASSES; pass++) {
+      sweep(1, layers.length, 1, adjIn);
+      sweep(layers.length - 2, -1, -1, adjOut);
+    }
+    return layers;
+  }
+
+  // Phase 4 — coordinates. x is the layer; y stacks within a layer, then a few
+  // relaxation passes pull each node toward the average of its neighbours so
+  // chains come out straight instead of stepped. After each pass the layer is
+  // re-separated in order, so relaxation can never overlap two boxes.
+  function assignCoords(layers, byName, adjIn, adjOut) {
+    var y = {};
+    layers.forEach(function (names) {
+      if (!names) return;
+      var cursor = 0;
+      names.forEach(function (n) {
+        y[n] = cursor;
+        cursor += nodeHeight(byName[n]) + ROW_GAP;
+      });
+    });
+
+    for (var pass = 0; pass < STRAIGHTEN_PASSES; pass++) {
+      layers.forEach(function (names) {
+        if (!names || !names.length) return;
+        names.forEach(function (n) {
+          var ns = (adjIn[n] || []).concat(adjOut[n] || []);
+          var vals = ns.map(function (nb) { return y[nb]; })
+            .filter(function (v) { return v !== undefined; });
+          if (!vals.length) return;
+          var want = vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
+          y[n] = y[n] + (want - y[n]) * 0.5;
+        });
+        var cursor = -Infinity;
+        names.forEach(function (n) {
+          if (y[n] < cursor) y[n] = cursor;
+          cursor = y[n] + nodeHeight(byName[n]) + ROW_GAP;
+        });
+      });
+    }
+
+    var minY = Infinity;
+    Object.keys(y).forEach(function (n) { minY = Math.min(minY, y[n]); });
+    if (!isFinite(minY)) minY = 0;
+
+    var positions = {};
+    var maxX = 0, maxY = 0;
+    layers.forEach(function (names, li) {
+      if (!names) return;
+      names.forEach(function (n) {
+        var x = li * (NODE_W + LAYER_GAP);
+        var yy = y[n] - minY;
+        positions[n] = { x: x, y: yy, model: byName[n] };
+        maxX = Math.max(maxX, x + NODE_W);
+        maxY = Math.max(maxY, yy + nodeHeight(byName[n]));
+      });
+    });
+    return { positions: positions, width: maxX, height: maxY };
+  }
+
+  // Connected components are laid out independently and stacked, the way dot
+  // handles a disconnected graph. Packing them together would interleave
+  // unrelated parts of the schema for no reason.
+  function components(names, adj) {
+    var seen = {}, out = [];
+    names.forEach(function (start) {
+      if (seen[start]) return;
+      var group = [], queue = [start];
+      seen[start] = true;
+      while (queue.length) {
+        var cur = queue.shift();
+        group.push(cur);
+        Object.keys(adj[cur] || {}).forEach(function (nb) {
+          if (seen[nb]) return;
+          seen[nb] = true;
+          queue.push(nb);
+        });
+      }
+      out.push(group);
+    });
+    return out.sort(function (a, b) { return b.length - a.length; });
   }
 
   function layout(models, edges) {
     var byName = {};
     models.forEach(function (m) { byName[m.name] = m; });
 
+    var dir = directedEdges(models, edges);
     var adj = adjacency(models, edges);
-    var ringOf = assignRings(models, adj);
-
-    var rings = [];
-    models.forEach(function (m) {
-      var r = ringOf[m.name] || 0;
-      (rings[r] = rings[r] || []).push(m.name);
-    });
+    var allNames = models.map(function (m) { return m.name; });
 
     var positions = {};
-    var angleOf = {};
-    var maxExtent = 0;
-    // Radius and half-footprint of the ring inside this one, so each ring is
-    // pushed clear of it. Without this an inner ring with many nodes gets a
-    // large circumference-derived radius and the next ring lands inside it.
-    var prevRadius = 0;
-    var prevHalf = 0;
-
-    rings.forEach(function (names, ringIndex) {
-      if (!names) return;
-
-      if (ringIndex === 0) {
-        names.forEach(function (name) {
-          // Centred on the origin, like every other node. Placing the hub by
-          // its top-left instead shifts it half a box down and right, straight
-          // into the ring around it.
-          var h = nodeHeight(byName[name]);
-          positions[name] = { x: -NODE_W / 2, y: -h / 2, model: byName[name] };
-          angleOf[name] = 0;
-          prevHalf = Math.max(prevHalf, Math.max(NODE_W, h) / 2);
-        });
-        return;
-      }
-
-      var ordered = orderRing(names, angleOf, adj, ringOf, ringIndex);
-
-      // Boxes vary in height with their field count, so each one claims arc
-      // proportional to its own footprint. Spacing them evenly by count is what
-      // makes a tall box collide with its neighbours.
-      var extents = ordered.map(function (name) {
-        return Math.max(NODE_W, nodeHeight(byName[name])) + NODE_GAP;
-      });
-      var totalExtent = extents.reduce(function (a, b) { return a + b; }, 0);
-      var thisHalf = Math.max.apply(null, extents) / 2;
-      var radius = Math.max(
-        MIN_RADIUS,
-        totalExtent / (2 * Math.PI),           // wide enough that neighbours clear
-        prevRadius + prevHalf + thisHalf + 40  // and outside the ring within
-      );
-      prevRadius = radius;
-      prevHalf = thisHalf;
-
-      var cumulative = 0;
-      ordered.forEach(function (name, i) {
-        var angle = (2 * Math.PI * (cumulative + extents[i] / 2)) / totalExtent - Math.PI / 2;
-        cumulative += extents[i];
-        angleOf[name] = angle;
-        var h = nodeHeight(byName[name]);
-        positions[name] = {
-          x: Math.cos(angle) * radius - NODE_W / 2,
-          y: Math.sin(angle) * radius - h / 2,
-          model: byName[name]
-        };
-        maxExtent = Math.max(maxExtent, radius + NODE_W, radius + h);
-      });
-    });
-
-    // Shift everything positive and size the canvas to what was actually drawn.
+    var regions = [];
     var pad = 60;
-    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    Object.keys(positions).forEach(function (name) {
-      var p = positions[name];
-      var h = nodeHeight(p.model);
-      minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-      maxX = Math.max(maxX, p.x + NODE_W); maxY = Math.max(maxY, p.y + h);
-    });
-    if (!isFinite(minX)) { minX = 0; minY = 0; maxX = NODE_W; maxY = HEADER_H; }
+    var cursorY = pad;
+    var maxRight = pad;
 
-    Object.keys(positions).forEach(function (name) {
-      positions[name].x += pad - minX;
-      positions[name].y += pad - minY;
+    components(allNames, adj).forEach(function (group) {
+      var inGroup = {};
+      group.forEach(function (n) { inGroup[n] = true; });
+      var groupEdges = dir.filter(function (e) { return inGroup[e.from] && inGroup[e.to]; });
+
+      var acyclic = breakCycles(group, groupEdges);
+      var layerOf = assignLayers(group, acyclic);
+
+      var layers = [];
+      group.forEach(function (n) {
+        var l = layerOf[n] || 0;
+        (layers[l] = layers[l] || []).push(n);
+      });
+      for (var i = 0; i < layers.length; i++) if (!layers[i]) layers[i] = [];
+      layers.forEach(function (names) { names.sort(); }); // deterministic start
+
+      var adjIn = {}, adjOut = {};
+      group.forEach(function (n) { adjIn[n] = []; adjOut[n] = []; });
+      acyclic.forEach(function (e) { adjOut[e.from].push(e.to); adjIn[e.to].push(e.from); });
+
+      orderLayers(layers, adjIn, adjOut);
+      var laid = assignCoords(layers, byName, adjIn, adjOut);
+
+      Object.keys(laid.positions).forEach(function (n) {
+        var p = laid.positions[n];
+        positions[n] = { x: pad + p.x, y: cursorY + p.y, model: p.model };
+      });
+
+      regions.push({
+        x: pad - BLOCK_PAD, y: cursorY - BLOCK_PAD,
+        w: laid.width + BLOCK_PAD * 2, h: laid.height + BLOCK_PAD * 2,
+        label: group.length > 1 ? group.length + ' related models' : group[0]
+      });
+
+      maxRight = Math.max(maxRight, pad + laid.width);
+      cursorY += laid.height + BLOCK_GAP;
     });
 
     return {
       positions: positions,
-      width: (maxX - minX) + pad * 2,
-      height: (maxY - minY) + pad * 2
+      regions: regions,
+      width: maxRight + pad,
+      height: cursorY - BLOCK_GAP + pad
     };
   }
 
-  // Anchor on whichever side of each box faces the other, so lines leave and
-  // arrive at the near edge instead of cutting through their own node.
   function anchors(a, b) {
     var ah = nodeHeight(a.model), bh = nodeHeight(b.model);
     var acx = a.x + NODE_W / 2, acy = a.y + ah / 2;
@@ -245,7 +371,10 @@ var ModelGraph = (function () {
     has_and_belongs_to_many: 'many ↔ many'
   };
 
-  var MIN_ZOOM = 0.2;
+  // Low enough that a few hundred models genuinely fit on screen. At the old
+  // 0.2 floor a large app could not be framed at all, so fit-to-pane produced a
+  // view the zoom controls then refused to honour.
+  var MIN_ZOOM = 0.04;
   var MAX_ZOOM = 2.5;
 
   return function ModelGraphComponent(_ref) {
@@ -254,8 +383,30 @@ var ModelGraph = (function () {
     var onRefresh = _ref.onRefresh;
     var loading = _ref.loading;
 
-    var _view = React.useState({ k: 1, x: 0, y: 0 });
-    var view = _view[0], setView = _view[1];
+    // The view is a ref, not state, and is written straight onto the <g>'s
+    // transform. Every pan and zoom tick used to be a setState, which re-ran the
+    // whole layout (it was computed in the render body) and rebuilt every box,
+    // field and edge — around 10,000 SVG elements on a 300-model app. That is
+    // what made the graph unusable at real scale rather than anything about the
+    // drawing itself.
+    var viewRef = React.useRef({ k: 1, x: 0, y: 0 });
+    var sceneRef = React.useRef(null);
+    // Which layout we have already framed, so reopening the tab refits but a
+    // re-render for any other reason does not yank the view back.
+    var fittedForRef = React.useRef(null);
+
+    var applyView = React.useCallback(function () {
+      var g = sceneRef.current;
+      if (!g) return;
+      var v = viewRef.current;
+      g.setAttribute('transform', 'translate(' + v.x + ',' + v.y + ') scale(' + v.k + ')');
+    }, []);
+
+    var setView = React.useCallback(function (next) {
+      viewRef.current = typeof next === 'function' ? next(viewRef.current) : next;
+      applyView();
+    }, [applyView]);
+
     var _search = React.useState('');
     var search = _search[0], setSearch = _search[1];
     var _focused = React.useState(null);
@@ -267,27 +418,104 @@ var ModelGraph = (function () {
     var dragRef = React.useRef(null);
     var svgRef = React.useRef(null);
 
-    // Laid out before the early returns so the fit effect below can see it.
-    var placed = (graph && graph.ok && (graph.models || []).length)
-      ? layout(graph.models, graph.edges || [])
-      : null;
+    // Memoised on the graph payload. This used to run on every render — which,
+    // with the view in state, meant on every wheel tick and every mousemove of a
+    // drag.
+    var placed = React.useMemo(function () {
+      return (graph && graph.ok && (graph.models || []).length)
+        ? layout(graph.models, graph.edges || [])
+        : null;
+    }, [graph]);
+
+    // Every association each model takes part in, both directions, built once.
+    // Scanning the edge list per hover would be 513 comparisons on every
+    // mouseenter across a canvas of 300 boxes.
+    var associationsBy = React.useMemo(function () {
+      var byModel = {};
+      (graph && graph.edges || []).forEach(function (e) {
+        (byModel[e.from] = byModel[e.from] || []).push({ edge: e, outgoing: true });
+        if (e.to !== e.from) (byModel[e.to] = byModel[e.to] || []).push({ edge: e, outgoing: false });
+      });
+      return byModel;
+    }, [graph]);
+
+    var hoverCardRef = React.useRef(null);
+    var _modelHover = React.useState(null);
+    var modelHover = _modelHover[0], setModelHover = _modelHover[1];
+
+    // Highlighting is done by touching the DOM directly. Routing it through
+    // React would rebuild all ~7,000 elements of the scene on every mouseenter,
+    // which is the same trap the pan/zoom transform was in.
+    var litRef = React.useRef([]);
+    var clearLit = React.useCallback(function () {
+      litRef.current.forEach(function (el) { el.classList.remove('mg-lit'); });
+      litRef.current = [];
+      if (sceneRef.current) sceneRef.current.classList.remove('mg-focus-mode');
+    }, []);
+
+    var moveHoverCard = React.useCallback(function (ev) {
+      var card = hoverCardRef.current;
+      var el = svgRef.current;
+      if (!card || !el) return;
+      var rect = el.getBoundingClientRect();
+      var x = ev.clientX - rect.left;
+      var y = ev.clientY - rect.top;
+      // Flip before the card would run off the pane rather than after.
+      card.style.left = (x > rect.width - 300 ? x - 290 : x + 18) + 'px';
+      card.style.top = Math.min(y + 18, Math.max(0, rect.height - 240)) + 'px';
+    }, []);
+
+    var enterModel = React.useCallback(function (name, ev) {
+      if (dragRef.current) return;   // panning, not inspecting
+      clearLit();
+      var scene = sceneRef.current;
+      if (scene) {
+        scene.classList.add('mg-focus-mode');
+        var sel = '[data-from="' + name + '"],[data-to="' + name + '"]';
+        litRef.current = Array.prototype.slice.call(scene.querySelectorAll(sel));
+        litRef.current.forEach(function (el) { el.classList.add('mg-lit'); });
+      }
+      setModelHover(name);
+      moveHoverCard(ev);
+    }, [clearLit, moveHoverCard]);
+
+    var leaveModel = React.useCallback(function () {
+      clearLit();
+      setModelHover(null);
+    }, [clearLit]);
 
     // Frame the whole graph on load. Without this the view starts at the
     // top-left of a canvas much larger than the pane and the diagram looks
     // empty until you go looking for it.
-    var fitToPane = React.useCallback(function () {
+    var fitToPane = React.useCallback(function (attempt) {
       var el = svgRef.current;
       if (!el || !placed) return;
       var rect = el.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
+      // The pane can still be unsized on the commit that mounts the SVG — the
+      // graph tab is opening at the same time. Bailing out here left the view at
+      // its 1:1 default and nothing ever retried, so a 300-model graph opened
+      // showing one corner of itself. Retry on the next frames until it has a
+      // size, then give up rather than spin.
+      if (!rect.width || !rect.height) {
+        if ((attempt || 0) < 10) {
+          window.requestAnimationFrame(function () { fitRef.current((attempt || 0) + 1); });
+        }
+        return;
+      }
 
-      var k = Math.min(1, Math.min(rect.width / placed.width, rect.height / placed.height));
+      // Clamped to the same range the wheel enforces. Without the MIN_ZOOM
+      // clamp a large graph fitted to something like k=0.04, which is below the
+      // floor — so the first scroll snapped it up to MIN_ZOOM, a five-fold jump
+      // anchored on the cursor, and the diagram appeared to leap somewhere
+      // random. The view must never sit outside the range the controls allow.
+      var raw = Math.min(rect.width / placed.width, rect.height / placed.height);
+      var k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min(1, raw)));
       setView({
         k: k,
         x: (rect.width - placed.width * k) / 2,
         y: (rect.height - placed.height * k) / 2
       });
-    }, [placed && placed.width, placed && placed.height]);
+    }, [placed, setView]);
 
     React.useEffect(function () { fitToPane(); }, [fitToPane]);
 
@@ -316,6 +544,11 @@ var ModelGraph = (function () {
     // Same mounting problem as the wheel listener: the fit effect can run
     // before the SVG exists and not again afterwards. Kept current so the
     // callback ref can fit as soon as the element is really there.
+    // Held in a ref so the memoised node elements can call it without listing it
+    // as a dependency — otherwise every centre would rebuild the whole scene.
+    var centreRef = React.useRef(centreOn);
+    centreRef.current = centreOn;
+
     var fitRef = React.useRef(fitToPane);
     fitRef.current = fitToPane;
 
@@ -334,9 +567,25 @@ var ModelGraph = (function () {
       svgRef.current = el;
       if (!el) return;
 
+      // getBoundingClientRect forces a synchronous layout, and we had just
+      // written a new transform onto a <g> holding thousands of elements — so
+      // reading it per wheel tick made the browser re-lay-out the entire scene
+      // before the handler could continue. Measured at 27 ms a tick on a
+      // 300-model graph. The pane's own rect only changes when the window or
+      // the panel layout does, so cache it and refresh once per frame.
+      var rectRef = { current: null };
+      var invalidateRect = function () { rectRef.current = null; };
+      var paneRect = function () {
+        if (!rectRef.current) {
+          rectRef.current = el.getBoundingClientRect();
+          window.requestAnimationFrame(invalidateRect);
+        }
+        return rectRef.current;
+      };
+
       var onWheel = function (e) {
         e.preventDefault();
-        var rect = el.getBoundingClientRect();
+        var rect = paneRect();
         var px = e.clientX - rect.left;
         var py = e.clientY - rect.top;
         setView(function (v) {
@@ -351,6 +600,133 @@ var ModelGraph = (function () {
       // After layout, so the pane has a measurable size to fit into.
       window.requestAnimationFrame(function () { fitRef.current(); });
     }, []);
+
+    // Memoised so hovering a model does not rebuild every box and edge.
+    // The highlight itself is applied by toggling DOM classes; only the
+    // association card is React state, and it lives outside this subtree.
+    var sceneChildren = React.useMemo(function () {
+      if (!placed) return null;
+      var models = (graph && graph.models) || [];
+      var edges = (graph && graph.edges) || [];
+      return [
+          // Behind everything: one soft area per connected cluster, so the
+          // grouping is something you can see rather than infer.
+          (placed.regions || []).map(function (r, i) {
+            return React.createElement(
+              'g',
+              { key: 'r' + i, className: 'mg-region' },
+              React.createElement('rect', {
+                className: 'mg-region-box',
+                x: r.x, y: r.y, width: r.w, height: r.h, rx: 10
+              }),
+              React.createElement('text', {
+                className: 'mg-region-label', x: r.x + 12, y: r.y + 17
+              }, r.label)
+            );
+          }),
+          edges.map(function (e, i) {
+            var a = placed.positions[e.from];
+            var b = placed.positions[e.to];
+            if (!a || !b || e.from === e.to) return null;
+            var d = edgePath(a, b);
+            var isHovered = hovered && hovered.index === i;
+            return React.createElement(
+              'g',
+              // Tagged so a node hover can find its own edges with one DOM query
+              // instead of a React pass over every edge.
+              { key: 'e' + i, 'data-from': e.from, 'data-to': e.to },
+              // A transparent, much thicker copy of the line under the real
+              // one. A 1.2px stroke is its own hit area, which makes hovering
+              // an association essentially impossible without this.
+              React.createElement('path', {
+                d: d,
+                className: 'mg-edge-hit',
+                onMouseEnter: function () { setHovered({ index: i, edge: e }); },
+                onMouseMove: function (ev) {
+                  var rect = svgRef.current.getBoundingClientRect();
+                  setPointer({ x: ev.clientX - rect.left, y: ev.clientY - rect.top });
+                },
+                onMouseLeave: function () { setHovered(null); }
+              }),
+              React.createElement('path', {
+                d: d,
+                className: 'mg-edge ' + (MACRO_CLASS[e.macro] || '') + (isHovered ? ' mg-edge-hovered' : ''),
+                markerEnd: 'url(#mg-arrow)'
+              })
+            );
+          }),
+          models.map(function (m) {
+            var pos = placed.positions[m.name];
+            if (!pos) return null;
+            var fields = (m.columns || []).slice(0, MAX_FIELDS);
+            var hidden = (m.columnCount || 0) - fields.length;
+            var h = nodeHeight(m);
+            return React.createElement(
+              'g',
+              {
+                key: m.name,
+                className: 'mg-node' + (focused === m.name ? ' mg-focused' : ''),
+                transform: 'translate(' + pos.x + ',' + pos.y + ')',
+                onMouseEnter: function (ev) { enterModel(m.name, ev); },
+                onMouseMove: function (ev) { moveHoverCard(ev); },
+                onMouseLeave: function () { leaveModel(); },
+                onClick: function () {
+                  // A drag that ends over a box must not also act on it.
+                  if (dragRef.current && dragRef.current.moved) return;
+                  // Clicking the box navigates: zoom to it. Opening the schema
+                  // is the explicit button in the header, so a stray click while
+                  // exploring no longer throws a modal in your way.
+                  centreRef.current(m.name);
+                }
+              },
+              React.createElement('rect', { className: 'mg-box', width: NODE_W, height: h, rx: 4 }),
+              React.createElement('rect', { className: 'mg-box-header', width: NODE_W, height: HEADER_H, rx: 4 }),
+              React.createElement('text', { className: 'mg-name', x: 10, y: 15 }, m.name),
+              React.createElement('text', { className: 'mg-table', x: 10, y: 27 },
+                (m.table || '—') + (m.columnCount ? ' · ' + m.columnCount + ' cols' : '')),
+              // Opening the full schema is now an explicit target rather than
+              // anything-anywhere on the box, so clicking around to navigate
+              // cannot keep throwing a modal at you.
+              React.createElement(
+                'g',
+                {
+                  className: 'mg-open-btn',
+                  onClick: function (ev) {
+                    ev.stopPropagation();
+                    if (dragRef.current && dragRef.current.moved) return;
+                    if (onOpenModel) onOpenModel(m);
+                  }
+                },
+                React.createElement('title', null, 'Open the full schema for ' + m.name),
+                React.createElement('rect', {
+                  className: 'mg-open-btn-bg', x: NODE_W - 26, y: 7, width: 19, height: 19, rx: 3
+                }),
+                // Three stacked bars — a table, matching what the button opens.
+                React.createElement('rect', { className: 'mg-open-btn-bar', x: NODE_W - 22, y: 11, width: 11, height: 2 }),
+                React.createElement('rect', { className: 'mg-open-btn-bar', x: NODE_W - 22, y: 15.5, width: 11, height: 2 }),
+                React.createElement('rect', { className: 'mg-open-btn-bar', x: NODE_W - 22, y: 20, width: 11, height: 2 })
+              ),
+              fields.map(function (c, i) {
+                var y = HEADER_H + 11 + i * FIELD_H;
+                return React.createElement(
+                  React.Fragment,
+                  { key: c.name },
+                  React.createElement('text', { className: 'mg-field', x: 10, y: y }, c.name),
+                  React.createElement('text', { className: 'mg-field-type', x: NODE_W - 10, y: y, textAnchor: 'end' }, c.type)
+                );
+              }),
+              hidden > 0 && React.createElement('text', {
+                className: 'mg-field-more', x: 10, y: HEADER_H + 11 + fields.length * FIELD_H
+              }, '+' + hidden + ' more…'),
+              // No connection means no columns to show; say so rather than
+              // rendering an empty box that looks like a model with no fields.
+              fields.length === 0 && React.createElement('text', {
+                className: 'mg-field-more', x: 10, y: HEADER_H + 11
+              }, 'no database connection')
+            );
+          })
+      ];
+    }, [placed, graph, focused, onOpenModel]);
 
     if (loading) {
       return React.createElement('div', { className: 'ide-model-graph-empty' }, 'Building the model graph…');
@@ -377,7 +753,9 @@ var ModelGraph = (function () {
 
     var onMouseDown = function (e) {
       if (e.button !== 0) return;
-      dragRef.current = { sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y, moved: false };
+      var v = viewRef.current;
+      dragRef.current = { sx: e.clientX, sy: e.clientY, ox: v.x, oy: v.y, moved: false };
+      if (svgRef.current) svgRef.current.classList.add('mg-dragging');
     };
     var onMouseMove = function (e) {
       var d = dragRef.current;
@@ -386,7 +764,10 @@ var ModelGraph = (function () {
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) d.moved = true;
       setView(function (v) { return { k: v.k, x: d.ox + dx, y: d.oy + dy }; });
     };
-    var endDrag = function () { dragRef.current = null; };
+    var endDrag = function () {
+      dragRef.current = null;
+      if (svgRef.current) svgRef.current.classList.remove('mg-dragging');
+    };
 
     return React.createElement(
       'div',
@@ -396,7 +777,7 @@ var ModelGraph = (function () {
         { className: 'ide-model-graph-toolbar' },
         React.createElement('span', null, models.length + ' models, ' + edges.length + ' associations'),
         graph.truncated && React.createElement('span', { className: 'ide-model-graph-warn' }, ' (truncated)'),
-        React.createElement('span', { className: 'ide-model-graph-hint' }, 'drag to pan · scroll to zoom · click a model for its schema'),
+        React.createElement('span', { className: 'ide-model-graph-hint' }, 'drag to pan · scroll to zoom · click a model to zoom to it · hover for its associations'),
         React.createElement(
           'div',
           { className: 'ide-model-graph-actions' },
@@ -438,6 +819,48 @@ var ModelGraph = (function () {
             title: 'Rebuild from the current code', onClick: onRefresh
           }, React.createElement('i', { className: 'fas fa-sync' }))
         )
+      ),
+      // Every association a hovered model takes part in. The graph shows that a
+      // line exists; this says what it actually is, which is the thing you need
+      // when a model has a dozen of them fanning out.
+      React.createElement(
+        'div',
+        {
+          ref: hoverCardRef,
+          className: 'mg-assoc-card' + (modelHover ? '' : ' mg-assoc-card-hidden')
+        },
+        modelHover && React.createElement('div', { className: 'mg-assoc-title' }, modelHover),
+        modelHover && (function () {
+          var list = associationsBy[modelHover] || [];
+          if (!list.length) {
+            return React.createElement('div', { className: 'mg-assoc-empty' }, 'No associations');
+          }
+          return React.createElement(
+            'div',
+            { className: 'mg-assoc-list' },
+            React.createElement('div', { className: 'mg-assoc-count' },
+              list.length + (list.length === 1 ? ' association' : ' associations')),
+            list.slice(0, MAX_ASSOC_LISTED).map(function (a, i) {
+              var e = a.edge;
+              var other = a.outgoing ? e.to : e.from;
+              return React.createElement(
+                'div',
+                { key: i, className: 'mg-assoc-row' },
+                React.createElement('span', {
+                  className: 'mg-assoc-dot ' + (MACRO_CLASS[e.macro] || '')
+                }),
+                React.createElement('span', { className: 'mg-assoc-macro' }, e.macro),
+                React.createElement('span', { className: 'mg-assoc-name' }, ':' + e.name),
+                React.createElement('span', { className: 'mg-assoc-dir' },
+                  (a.outgoing ? '→ ' : '← ') + other),
+                e.through && React.createElement('span', { className: 'mg-assoc-through' },
+                  'through :' + e.through)
+              );
+            }),
+            list.length > MAX_ASSOC_LISTED && React.createElement('div', { className: 'mg-assoc-more' },
+              '+' + (list.length - MAX_ASSOC_LISTED) + ' more')
+          );
+        })()
       ),
       hovered && React.createElement(
         'div',
@@ -483,79 +906,25 @@ var ModelGraph = (function () {
         ),
         React.createElement(
           'g',
-          { transform: 'translate(' + view.x + ',' + view.y + ') scale(' + view.k + ')' },
-          edges.map(function (e, i) {
-            var a = placed.positions[e.from];
-            var b = placed.positions[e.to];
-            if (!a || !b || e.from === e.to) return null;
-            var d = edgePath(a, b);
-            var isHovered = hovered && hovered.index === i;
-            return React.createElement(
-              'g',
-              { key: 'e' + i },
-              // A transparent, much thicker copy of the line under the real
-              // one. A 1.2px stroke is its own hit area, which makes hovering
-              // an association essentially impossible without this.
-              React.createElement('path', {
-                d: d,
-                className: 'mg-edge-hit',
-                onMouseEnter: function () { setHovered({ index: i, edge: e }); },
-                onMouseMove: function (ev) {
-                  var rect = svgRef.current.getBoundingClientRect();
-                  setPointer({ x: ev.clientX - rect.left, y: ev.clientY - rect.top });
-                },
-                onMouseLeave: function () { setHovered(null); }
-              }),
-              React.createElement('path', {
-                d: d,
-                className: 'mg-edge ' + (MACRO_CLASS[e.macro] || '') + (isHovered ? ' mg-edge-hovered' : ''),
-                markerEnd: 'url(#mg-arrow)'
-              })
-            );
-          }),
-          models.map(function (m) {
-            var pos = placed.positions[m.name];
-            if (!pos) return null;
-            var fields = (m.columns || []).slice(0, MAX_FIELDS);
-            var hidden = (m.columnCount || 0) - fields.length;
-            var h = nodeHeight(m);
-            return React.createElement(
-              'g',
-              {
-                key: m.name,
-                className: 'mg-node' + (focused === m.name ? ' mg-focused' : ''),
-                transform: 'translate(' + pos.x + ',' + pos.y + ')',
-                onClick: function () {
-                  // A drag that ends over a box must not also open it.
-                  if (dragRef.current && dragRef.current.moved) return;
-                  if (onOpenModel) onOpenModel(m);
-                }
-              },
-              React.createElement('title', null, m.name + ' — click for the full schema'),
-              React.createElement('rect', { className: 'mg-box', width: NODE_W, height: h, rx: 4 }),
-              React.createElement('rect', { className: 'mg-box-header', width: NODE_W, height: HEADER_H, rx: 4 }),
-              React.createElement('text', { className: 'mg-name', x: 10, y: 15 }, m.name),
-              React.createElement('text', { className: 'mg-table', x: 10, y: 27 },
-                (m.table || '—') + (m.columnCount ? ' · ' + m.columnCount + ' cols' : '')),
-              fields.map(function (c, i) {
-                var y = HEADER_H + 11 + i * FIELD_H;
-                return React.createElement(
-                  React.Fragment,
-                  { key: c.name },
-                  React.createElement('text', { className: 'mg-field', x: 10, y: y }, c.name),
-                  React.createElement('text', { className: 'mg-field-type', x: NODE_W - 10, y: y, textAnchor: 'end' }, c.type)
-                );
-              }),
-              hidden > 0 && React.createElement('text', {
-                className: 'mg-field-more', x: 10, y: HEADER_H + 11 + fields.length * FIELD_H
-              }, '+' + hidden + ' more…'),
-              // No connection means no columns to show; say so rather than
-              // rendering an empty box that looks like a model with no fields.
-              fields.length === 0 && React.createElement('text', {
-                className: 'mg-field-more', x: 10, y: HEADER_H + 11
-              }, 'no database connection')
-            );
-          })
+          {
+            // No transform prop: applyView writes it directly, so panning and
+            // zooming never touch React.
+            ref: function (el) {
+              sceneRef.current = el;
+              if (!el) return;
+              applyView();
+              // Fit here rather than only from an effect. The effect fires
+              // before the tab has been given its size, so it measured a
+              // zero-width pane and bailed, leaving a 300-model graph opening at
+              // 1:1 showing one corner. This runs once per layout, on the frame
+              // after the scene actually exists.
+              if (fittedForRef.current !== placed) {
+                fittedForRef.current = placed;
+                window.requestAnimationFrame(function () { fitRef.current(); });
+              }
+            }
+          },
+          sceneChildren
         )
       )
     );

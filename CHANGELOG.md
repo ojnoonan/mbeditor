@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The collaboration name now comes from the signed-in user automatically.**
+  Previously it required a `user_name_callback`; with none set the editor fell
+  straight through to a generated name like "Witty Operator" even on an
+  authenticated instance. When no callback is configured, the name is now read
+  off `current_user`, trying `name`, `full_name`, `display_name`, `username`,
+  `login` and `email` in order. New `config.user_name_methods` names your own
+  column instead — `%w[preferred_name]` — so the common case no longer needs a
+  callback at all. An explicit `user_name_callback` still wins.
+
+  This works when your auth library exposes `current_user` to an
+  `ActionController::Base` subclass, which Devise and Sorcery do. A
+  `current_user` written by hand on your own `ApplicationController` is **not**
+  reachable — the engine's controllers do not inherit from it — so that case
+  still needs a callback reading `session` directly.
+
+### Changed
+- **The model graph is laid out by dependency, not by traversal order.** It now
+  uses the Sugiyama layered method — break cycles, layer by longest path, cut
+  crossings with the median heuristic, then straighten — which is what Graphviz
+  `dot`, and so Rails ERD, uses for this picture. The previous radial layout
+  became one enormous circle on a real schema, fitted so far out that no box was
+  legible. A model's position now tells you something: depth reads left to
+  right, and each connected part of the schema is drawn as its own area.
+
+- **Your own presence chip only appears once someone else is connected.** Action
+  Cable is up in any normal dev setup, so it used to sit in the toolbar
+  permanently announcing a session of one.
+
+### Fixed
+- **The model graph was unusable on a large schema.** On 300 models and 513
+  associations a single zoom tick cost 27 ms; it is now 0.2 ms. Three causes,
+  all compounding: the entire layout ran on every render, the pan/zoom transform
+  sat in the render output so each tick rebuilt ~7,000 SVG elements, and the
+  wheel handler read `getBoundingClientRect()` per tick, forcing a synchronous
+  reflow of the whole scene.
+- **Fit-to-pane produced a zoom the controls refused to honour.** It clamped to
+  `min(1, ...)` but not to the minimum zoom, so a large graph fitted at ~0.04
+  against a 0.2 floor — and the first scroll snapped up to the floor, a fivefold
+  jump anchored on the cursor that looked like the diagram leaping somewhere
+  random. The floor is now low enough to frame a few hundred models, and the fit
+  clamps to the same range the wheel enforces. Opening the tab also no longer
+  leaves the graph unfitted when the pane has not been sized yet.
+- **Hovering a model now shows what its associations actually are** — macro,
+  name, direction and `through:` — and dims every unrelated edge, which is the
+  only way to follow one model's relationships among hundreds of lines.
+- **Clicking a model zooms to it** instead of opening its schema; the schema is
+  an explicit button in the model's header, so navigating no longer throws a
+  modal at you.
+- **The model-graph search field drew its text over a magnifier icon.** The icon
+  comes from the vendored Pico stylesheet, whose selector outranks a plain class
+  rule — disabling the browser's own `type="search"` decorations did not touch
+  it.
+- **A failing `user_name_callback` was swallowed silently.** Any exception
+  returned a bare `nil`, which made a broken callback indistinguishable from an
+  unconfigured one: you got the generated name and no clue why. The usual cause
+  is a `NameError` on a `current_user` the engine cannot see. It is now logged
+  as `[mbeditor] user name lookup failed: ...` and still never breaks the
+  request.
+
 ## [0.12.0] - 2026-07-31
 
 ### Added
@@ -50,9 +110,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A model graph — an entity diagram of the host app's ActiveRecord models.**
   The activity-bar button opens it as a full-width editor tab, drawing each
-  model with its fields and laying them out radially around whichever model has
-  the most associations. Search centres the view on a model; hovering an edge
-  names the relation.
+  model with its fields. Search centres the view on a model; hovering an edge
+  names the relation. (Released with a radial layout; replaced by a layered one
+  in the next version — see Unreleased.)
 
   Associations are read by **reflection, not by parsing model files**. mbeditor
   runs inside the host app, so `reflect_on_all_associations` is right there and

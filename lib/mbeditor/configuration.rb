@@ -5,7 +5,7 @@ module Mbeditor
     attr_accessor :allowed_environments, :workspace_root, :excluded_paths, :rubocop_command, :rubocop_server,
                   :redmine_enabled, :redmine_url, :redmine_api_key, :redmine_ticket_source,
                   :test_framework, :test_command, :test_timeout,
-                  :authenticate_with, :authentication_cache_ttl, :user_name_callback,
+                  :authenticate_with, :authentication_cache_ttl, :user_name_callback, :user_name_methods,
                   :lint_timeout, :base_branch_candidates, :git_timeout, :search_timeout,
                   :ruby_def_include_dirs, :related_files_custom_paths,
                   :mount_path, :resilient_routing, :js_global_identifiers,
@@ -58,7 +58,11 @@ module Mbeditor
       @ruby_def_include_dirs  = %w[app/models app/controllers app/helpers app/concerns]
       @related_files_custom_paths = []
       @authentication_cache_ttl = 0
-      @user_name_callback = nil # proc resolved in controller context (instance_exec) → collaboration display name; nil falls through to the client-generated name
+      @user_name_callback = nil # proc resolved in controller context (instance_exec) → collaboration display name; nil falls through to current_user, then to the client-generated name
+      # Attributes tried on current_user, in order, when no user_name_callback
+      # is set. First non-blank one wins. Name your own column here rather than
+      # writing a callback for the common case.
+      @user_name_methods = %w[name full_name display_name username login email]
       @js_global_identifiers = [] # extra ambient JS globals for the editor (runtime-only names invisible to static scan, e.g. %w[Routes I18n])
       # Load the workspace's own JS source into Monaco's TypeScript program, so
       # cross-file references get real inferred types instead of ambient `any`.

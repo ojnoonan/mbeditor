@@ -3120,8 +3120,16 @@ button:not(.pico-btn) { margin-bottom: 0; }
   margin-left: auto;
 }
 .ide-model-graph-search {
-  width: 150px;
-  padding: 3px 6px;
+  width: 170px;
+  /* Two separate things drew over the text here. WebKit renders its own
+     magnifier and clear button inside type="search"; and the vendored Pico
+     stylesheet paints a magnifier as a background-image on every [type=search],
+     positioned at the left, which the 8px padding put the text straight on top
+     of. Disabling the native decorations alone fixed neither — the visible icon
+     was Pico's. Both are off; the placeholder already says what the field is. */
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 3px 8px;
   background: var(--ide-input-bg, #3c3c3c);
   border: 1px solid var(--ide-border, #3c3c3c);
   border-radius: 3px;
@@ -3243,3 +3251,87 @@ button:not(.pico-btn) { margin-bottom: 0; }
 .statusbar-problems-error-icon { color: var(--ide-danger); }
 .statusbar-problems-warning-icon { color: var(--ide-warning); }
 .statusbar-problems-count { font-variant-numeric: tabular-nums; }
+
+/* Search decorations off across engines — Chrome/Safari draw their own
+   magnifier and clear button inside type="search". */
+.ide-model-graph-search::-webkit-search-decoration,
+.ide-model-graph-search::-webkit-search-cancel-button,
+.ide-model-graph-search::-webkit-search-results-button,
+.ide-model-graph-search::-webkit-search-results-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Cluster areas — a connected part of the schema, drawn behind its models so
+   the grouping is visible rather than implied by proximity alone. */
+.mg-region-box {
+  fill: color-mix(in srgb, var(--ide-fg, #d4d4d4) 4%, transparent);
+  stroke: color-mix(in srgb, var(--ide-fg, #d4d4d4) 12%, transparent);
+  stroke-width: 1;
+}
+.mg-region-label {
+  fill: color-mix(in srgb, var(--ide-fg, #d4d4d4) 45%, transparent);
+  font-size: 11px;
+  font-weight: 500;
+  pointer-events: none;
+}
+
+/* Hovering a model dims every association it is not part of. With 500+ edges on
+   screen the lines are otherwise indistinguishable from each other, and picking
+   out one model's relationships is the whole reason to look at the diagram.
+   Applied by toggling classes on the DOM rather than through React — re-rendering
+   thousands of SVG nodes on mouseenter is what made this view unusable before. */
+/* The ~30 ms this costs on a 300-model graph is the browser restyling every
+   edge and box, not anything in our code — toggling the classes themselves
+   measures 1.6 ms. Switching to stroke-opacity/fill-opacity was tried on the
+   theory that opacity stacking contexts were the cost; measured slower (38 ms
+   vs 32 ms), so plain opacity stays. */
+.mg-focus-mode .mg-edge { opacity: 0.08; }
+.mg-focus-mode .mg-lit .mg-edge { opacity: 1; stroke-width: 2; }
+.mg-focus-mode .mg-node { opacity: 0.55; }
+.mg-focus-mode .mg-node:hover { opacity: 1; }
+
+/* The association list shown while a model is hovered. Kept mounted and toggled
+   with a class so moving between boxes doesn't thrash the DOM. */
+.mg-assoc-card {
+  position: absolute;
+  z-index: 30;
+  max-width: 290px;
+  padding: 8px 10px;
+  background: var(--ide-panel-bg, #252526);
+  border: 1px solid var(--ide-border, #3c3c3c);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ide-text, #d4d4d4);
+  pointer-events: none;
+}
+.mg-assoc-card-hidden { display: none; }
+.mg-assoc-title { font-weight: 600; margin-bottom: 4px; }
+.mg-assoc-count { color: var(--ide-text-muted, #858585); margin-bottom: 4px; }
+.mg-assoc-row { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.mg-assoc-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.mg-assoc-macro { color: var(--ide-accent-fg, #4ec9b0); }
+.mg-assoc-name { color: var(--ide-text, #d4d4d4); }
+.mg-assoc-dir { color: var(--ide-text-muted, #858585); overflow: hidden; text-overflow: ellipsis; }
+.mg-assoc-through { color: var(--ide-text-muted, #858585); font-style: italic; }
+.mg-assoc-more, .mg-assoc-empty { color: var(--ide-text-muted, #858585); margin-top: 3px; }
+
+/* Explicit "open the schema" target in each model's header. */
+.mg-open-btn { cursor: pointer; }
+.mg-open-btn-bg { fill: transparent; }
+.mg-open-btn-bar { fill: var(--ide-text-muted, #858585); }
+.mg-open-btn:hover .mg-open-btn-bg { fill: color-mix(in srgb, var(--ide-fg, #d4d4d4) 16%, transparent); }
+.mg-open-btn:hover .mg-open-btn-bar { fill: var(--ide-fg, #d4d4d4); }
+.mg-node { cursor: zoom-in; }
+
+/* Pico paints a magnifier as a background-image on every [type=search], at the
+   left of the field, and our 8px padding put the text straight on top of it.
+   Its selector is input:not([type=checkbox],...)[type=search] — specificity
+   (0,2,1) — so a plain .class rule (0,1,0) loses and the icon stayed. Matching
+   that specificity, and loading later, is what actually removes it. */
+input.ide-model-graph-search[type="search"] {
+  background-image: none;
+  padding-inline-start: 8px;
+}

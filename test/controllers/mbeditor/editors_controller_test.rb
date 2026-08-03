@@ -2434,6 +2434,85 @@ module Mbeditor
       assert_nil json["user_name"]
     end
 
+    # With no callback configured, the name comes off current_user — this is what
+    # makes an authenticated editor show real names without extra wiring.
+    test "client_config falls back to current_user when no callback is configured" do
+      Mbeditor.configure { |c| c.user_name_callback = nil }
+      with_current_user(Struct.new(:name).new("Ada Lovelace")) do
+        get "/mbeditor/client_config"
+        assert_response :ok
+        assert_equal "Ada Lovelace", json["user_name"]
+      end
+    end
+
+    test "user_name_methods names which attribute to read off current_user" do
+      Mbeditor.configure do |c|
+        c.user_name_callback = nil
+        c.user_name_methods  = %w[preferred_handle]
+      end
+      with_current_user(Struct.new(:preferred_handle, :name).new("ada", "ignored")) do
+        get "/mbeditor/client_config"
+        assert_equal "ada", json["user_name"]
+      end
+    ensure
+      Mbeditor.configure { |c| c.user_name_methods = %w[name full_name display_name username login email] }
+    end
+
+    test "user_name_methods skips blank attributes and tries the next" do
+      Mbeditor.configure { |c| c.user_name_callback = nil }
+      with_current_user(Struct.new(:name, :email).new("  ", "ada@example.com")) do
+        get "/mbeditor/client_config"
+        assert_equal "ada@example.com", json["user_name"]
+      end
+    end
+
+    test "an explicit callback still wins over current_user" do
+      Mbeditor.configure { |c| c.user_name_callback = proc { "From callback" } }
+      with_current_user(Struct.new(:name).new("From current_user")) do
+        get "/mbeditor/client_config"
+        assert_equal "From callback", json["user_name"]
+      end
+    ensure
+      Mbeditor.configure { |c| c.user_name_callback = nil }
+    end
+
+    test "a signed-out current_user falls through to the generated name" do
+      Mbeditor.configure { |c| c.user_name_callback = nil }
+      with_current_user(nil) do
+        get "/mbeditor/client_config"
+        assert_nil json["user_name"]
+      end
+    end
+
+    # A callback that raises used to return a bare nil, making a broken callback
+    # look identical to an unconfigured one. It must still not break the request,
+    # but it must say something.
+    test "a raising callback is logged rather than swallowed silently" do
+      Mbeditor.configure { |c| c.user_name_callback = proc { current_user_that_does_not_exist } }
+      captured = StringIO.new
+      previous = Rails.logger
+      Rails.logger = ActiveSupport::Logger.new(captured)
+
+      # Called directly rather than through a request: the integration stack
+      # swaps its own logger in, so the global one never sees the line.
+      assert_nil Mbeditor::EditorsController.new.send(:resolved_user_name)
+
+      assert_includes captured.string, "[mbeditor] user name lookup failed"
+      assert_includes captured.string, "NameError"
+    ensure
+      Rails.logger = previous if previous
+      Mbeditor.configure { |c| c.user_name_callback = nil }
+    end
+
+    test "a raising callback still serves client_config" do
+      Mbeditor.configure { |c| c.user_name_callback = proc { current_user_that_does_not_exist } }
+      get "/mbeditor/client_config"
+      assert_response :ok
+      assert_nil json["user_name"]
+    ensure
+      Mbeditor.configure { |c| c.user_name_callback = nil }
+    end
+
     test "user_name_callback is resolved in controller context (can read request params)" do
       Mbeditor.configure { |c| c.user_name_callback = proc { params[:who] } }
       get "/mbeditor/client_config", params: { who: "Grace" }
@@ -2690,6 +2769,16 @@ module Mbeditor
     end
 
     private
+
+    # Stands in for an auth library that puts current_user within reach of an
+    # ActionController::Base subclass (Devise, Sorcery). Defined on the engine's
+    # own controller so it is reachable exactly the way those libraries make it.
+    def with_current_user(user)
+      Mbeditor::ApplicationController.define_method(:current_user) { user }
+      yield
+    ensure
+      Mbeditor::ApplicationController.remove_method(:current_user)
+    end
 
     def json
       JSON.parse(response.body)

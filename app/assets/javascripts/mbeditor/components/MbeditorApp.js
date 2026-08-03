@@ -4217,7 +4217,12 @@ var MbeditorApp = function MbeditorApp() {
             !toolbarIconOnly && " Git"
           )
         ),
-        collabEnabled && collabIdentity && React.createElement(
+        // Your own chip appears only once someone else is actually connected.
+        // Alone it told you nothing — Action Cable is up in any normal dev setup,
+        // so it sat in the toolbar permanently announcing a session of one. While
+        // pairing it earns its place: it is how your peers see you, and it is the
+        // control for renaming yourself.
+        collabEnabled && collabIdentity && collabPeerIds.length > 0 && React.createElement(
           React.Fragment,
           null,
           React.createElement("div", { className: "statusbar-sep" }),
