@@ -11,10 +11,6 @@ gem 'cuprite',            require: false
 gem 'haml_lint',          require: false
 gem 'minitest-reporters', require: false
 gem 'puma'
-# The dummy app needs a real ActiveRecord connection so the model graph has
-# something to draw: associations come from reflections, but the column lists
-# and the schema modal need a live schema.
-gem 'sqlite3', '>= 1.4'
 gem 'rubocop',            require: false
 gem 'rubocop-rails',      require: false
 gem 'webmock',            require: false
@@ -27,4 +23,9 @@ gem 'webmock',            require: false
 if RUBY_VERSION >= '3.2'
   gem 'mini_racer',       require: false
   gem 'ruby-lsp',         require: false
+  # Same reason: sqlite3 2.x's native extension fails to build on the 3.0/3.1
+  # legs. The dummy app uses it for a real schema behind the model graph, and
+  # boots without ActiveRecord entirely when it is absent — which is also a
+  # case worth exercising, since plenty of host apps have no ActiveRecord.
+  gem 'sqlite3',          '>= 2.0'
 end
