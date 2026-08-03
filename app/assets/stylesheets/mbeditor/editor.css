@@ -3395,3 +3395,31 @@ input.ide-model-graph-search[type="search"] {
   font-style: italic;
   opacity: 0.8;
 }
+
+/* Pair-programming diagnostics. The chip only appears when a condition pairing
+   needs has actually failed — an empty room is silence, not a warning. */
+.mbeditor-collab-trouble { color: var(--ide-warning, #cca700); }
+.mbeditor-modal-backdrop {
+  position: fixed; inset: 0; z-index: 5000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center;
+}
+.mbeditor-collab-diag {
+  width: min(560px, 92vw);
+  max-height: 80vh; overflow-y: auto;
+  padding: 18px 20px;
+  background: var(--ide-panel-bg, #252526);
+  border: 1px solid var(--ide-border, #3c3c3c);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  color: var(--ide-text, #d4d4d4);
+  font-size: 12px;
+}
+.mbeditor-collab-diag-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+.mbeditor-collab-diag-list { list-style: none; margin: 0 0 12px; padding: 0; }
+.mbeditor-collab-diag-row { display: flex; gap: 9px; align-items: flex-start; padding: 6px 0; }
+.mbeditor-collab-diag-row i { margin-top: 2px; color: var(--ide-success, #4ec9b0); }
+.mbeditor-collab-diag-row.is-bad i { color: var(--ide-danger, #f14c4c); }
+.mbeditor-collab-diag-label { font-weight: 500; }
+.mbeditor-collab-diag-detail { color: var(--ide-text-muted, #858585); margin-top: 3px; line-height: 1.5; }
+.mbeditor-collab-diag-foot { color: var(--ide-text-muted, #858585); margin-bottom: 12px; }

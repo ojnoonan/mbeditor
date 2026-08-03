@@ -67,8 +67,12 @@ Mbeditor.configure do |config|
   config.excluded_paths = %w[.git tmp log node_modules .bundle coverage vendor/bundle]
   config.rubocop_command = "bundle exec rubocop"
 
-  # Optional authentication (runs as a before_action in the engine controllers)
-  # config.authenticate_with = proc { redirect_to login_path unless UserSession.find }
+  # Optional authentication (runs as a before_action in the engine controllers,
+  # and on the collaboration WebSocket subscribe). Resolve the user from
+  # `session` — a WebSocket subscribe runs no controller, so Current.user,
+  # UserSession.find and a memoised current_user are all unavailable there.
+  # config.authenticate_with = proc { redirect_to login_path unless User.find_by(id: session[:user_id]) }
+  # config.cable_authenticate_with = proc { ... }  # when one proc cannot serve both
 
   # Optional test runner (Minitest or RSpec)
   # config.test_framework = :minitest   # :minitest or :rspec — auto-detected when nil
@@ -123,6 +127,7 @@ end
 | Option | Default | Description |
 |--------|---------|-------------|
 | `authenticate_with` | `nil` | Proc run as a `before_action` in all engine controllers. Executed via `instance_exec` inside the controller, so it has access to `session`, `cookies`, `redirect_to`, and auth-library class methods (e.g. Authlogic's `UserSession.find`) — but not helper methods from the host's `ApplicationController`. The same hook is also evaluated when the collaboration / editor **WebSocket** subscribes (see [Collaborative pairing](#collaborative-pairing-optional)); if it halts or raises, that subscription is rejected (fail-closed). Over the cable the proc runs against a request-derived probe, so request-scoped state may be narrower than over HTTP. |
+| `cable_authenticate_with` | `nil` | Authentication for the collaboration WebSocket; `nil` falls back to `authenticate_with`. Set this when the HTTP hook cannot work on the cable — a WebSocket subscribe runs no controller, so `Current.*`, an Authlogic `UserSession` and a memoised `current_user` are `nil` or raise, and the hook then denies the socket while working perfectly over HTTP. See [Collaborative pairing](#collaborative-pairing-optional). |
 | `authentication_cache_ttl` | `0` | Seconds to cache the auth result in the session (`0` = no caching). Set e.g. `300` to avoid calling `authenticate_with` on every request when the proc is expensive. Trade-off: after host logout, mbeditor stays accessible for up to TTL seconds. |
 
 ### Test runner
@@ -335,20 +340,45 @@ should be able to reach the port.
 
 **2. Set an authentication hook — it runs on the WebSocket handshake.**
 Configure `authenticate_with` (see the [Authentication](#authentication) options).
-The same hook that gates the HTTP editor is now also evaluated when the collaboration /
+The same hook that gates the HTTP editor is also evaluated when the collaboration /
 editor WebSocket subscribes: if it halts (e.g. `redirect_to`/`render`/`head`) — or raises —
 the socket subscription is **rejected (fail-closed)**, so pairing cannot bypass your auth.
 
+> **A WebSocket subscribe runs no controller.** This is the single most common reason
+> pairing appears to do nothing. Anything a `before_action` populates is unavailable on
+> the cable: `Current.user` (and any other `ActiveSupport::CurrentAttributes`) is `nil`,
+> `UserSession.find` raises because Authlogic's controller adapter was never activated,
+> and a memoised `current_user` is undefined. The hook then denies — correctly, given it
+> was handed nobody — and the socket is rejected. It works perfectly over HTTP the whole
+> time, so nothing looks wrong until you notice collaboration never connects.
+
+The hook is evaluated against a probe exposing `session`, `cookies`, `request`, `params`
+and the halt methods. Resolve the user from `session` so the same hook works in both
+contexts:
+
 ```ruby
 Mbeditor.configure do |c|
-  # Runs as a controller before_action AND on the cable subscribe.
-  c.authenticate_with = proc { head :forbidden unless UserSession.find }
+  c.authenticate_with = proc do
+    user = Current.user || User.find_by(id: session[:user_credentials_id])
+    head :forbidden unless user&.super_admin_access?
+  end
 end
 ```
 
-Because the cable mount can bypass parts of the host middleware stack, a hook that leans on
-request-scoped state (full `session`, encrypted `cookies`) may see less over the WebSocket
-than it does over HTTP. For defence in depth, also authenticate at your host app's
+When one proc genuinely cannot serve both, give the cable its own:
+
+```ruby
+Mbeditor.configure do |c|
+  c.authenticate_with       = proc { head :forbidden unless Current.user&.super_admin_access? }
+  c.cable_authenticate_with = proc do
+    head :forbidden unless User.find_by(id: session[:user_credentials_id])&.super_admin_access?
+  end
+end
+```
+
+Every rejection is logged as `[mbeditor] WebSocket subscription rejected: …` with the
+reason, so a denial is visible rather than silent. The editor also shows a **Pairing off**
+chip when collaboration cannot work, listing each failing condition. For defence in depth, also authenticate at your host app's
 `ApplicationCable::Connection` (the standard `identified_by` / `reject_unauthorized_connection`
 pattern) — mbeditor's hook is an additional gate, not a replacement for securing the cable
 connection itself.

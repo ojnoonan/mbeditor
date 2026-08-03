@@ -10,6 +10,11 @@ var WebSocketService = (function () {
   var _consumer = null;
   var _subscription = null;
   var _connected = false;
+  // Why collaboration is or is not working, so the editor can say so instead of
+  // failing silently. A rejected subscription used to just schedule a reconnect
+  // and tell nobody, which made a blocked cable indistinguishable from an empty
+  // room.
+  var _status = 'idle';   // idle | unsupported | connecting | connected | rejected | dropped
   var _filesChangedCallbacks = [];
   var _fileSavedCallbacks = [];
   var _presenceCallbacks = [];
@@ -98,6 +103,7 @@ var WebSocketService = (function () {
     }
 
     _lastCableAttemptAt = Date.now();
+    if (_status !== 'rejected') _status = 'connecting';
 
     try {
       _consumer = _getConsumer();
@@ -106,12 +112,15 @@ var WebSocketService = (function () {
         {
           connected: function () {
             _connected = true;
+            _status = 'connected';
           },
           disconnected: function () {
+            _status = _status === 'rejected' ? 'rejected' : 'dropped';
             _cleanupConsumer();
             _scheduleReconnect();
           },
           rejected: function () {
+            _status = 'rejected';
             _cleanupConsumer();
             _scheduleReconnect();
           },
@@ -180,6 +189,7 @@ var WebSocketService = (function () {
   function connect(serverSupportsWs) {
     _serverSupportsWs = !!serverSupportsWs;
     if (!_serverSupportsWs || !_isActionCableAvailable()) {
+      _status = 'unsupported';
       return; // polling remains the only refresh mechanism
     }
     _installUnhandledRejectionGuard();
@@ -199,6 +209,12 @@ var WebSocketService = (function () {
   // Returns true only when the WebSocket is currently live.
   function isConnected() {
     return _connected;
+  }
+
+  // Coarse state of the editor's own cable subscription, for the collaboration
+  // diagnostics panel.
+  function cableStatus() {
+    return _status;
   }
 
   // Returns true when ActionCable is loaded and the server advertised cable
@@ -290,6 +306,7 @@ var WebSocketService = (function () {
     connect: connect,
     disconnect: disconnect,
     isConnected: isConnected,
+    cableStatus: cableStatus,
     isCableAvailable: isCableAvailable,
     subscribeCollaboration: subscribeCollaboration,
     perform: perform,

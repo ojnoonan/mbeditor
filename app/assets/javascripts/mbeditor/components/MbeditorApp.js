@@ -2450,6 +2450,30 @@ var MbeditorApp = function MbeditorApp() {
   // external-change detection for solo users. The service is told about the roster
   // from the presence handler above, not from an effect here, so it hears about
   // every message rather than only about a change in the participant count.
+  var _collabDiag = useState(false);
+  var collabDiagOpen = _collabDiag[0], setCollabDiagOpen = _collabDiag[1];
+  var _collabTrouble = useState(null);
+  var collabTrouble = _collabTrouble[0], setCollabTrouble = _collabTrouble[1];
+
+  // Re-checked on a slow interval because the failures worth reporting — a
+  // rejected handshake, a dropped socket — happen asynchronously and nothing
+  // else would notice. Only the first failing check's key is stored, so an
+  // unchanged state is an identical string and React bails rather than
+  // re-rendering the app every tick.
+  useEffect(function () {
+    function check() {
+      if (typeof CollaborationService === 'undefined' ||
+          typeof CollaborationService.diagnostics !== 'function') return;
+      var d = CollaborationService.diagnostics();
+      // "Nobody else is here" is not a fault; everything else is.
+      var problem = d.firstProblem && d.firstProblem.key !== 'peers' ? d.firstProblem.key : null;
+      setCollabTrouble(function (prev) { return prev === problem ? prev : problem; });
+    }
+    check();
+    var id = setInterval(check, 10000);
+    return function () { clearInterval(id); };
+  }, []);
+
   var collabPeerIds = Object.keys(collabRoster);
 
   // A labelled peer chip costs ~110px (name + filename), and the titlebar button
@@ -4217,6 +4241,28 @@ var MbeditorApp = function MbeditorApp() {
             !toolbarIconOnly && " Git"
           )
         ),
+        // Collaboration trouble chip. Deliberately not shown when everything is
+        // healthy and you are simply alone — that was the whole point of hiding
+        // the solo chip. It appears only when a condition pairing needs has
+        // actually failed, so silence means "nobody here" and never "quietly
+        // broken", which is exactly the ambiguity that made a real pairing
+        // failure impossible to diagnose from the other machine.
+        collabTrouble && React.createElement(
+          React.Fragment,
+          null,
+          React.createElement("div", { className: "statusbar-sep" }),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "statusbar-btn mbeditor-collab-trouble",
+              title: "Pairing is not available — click for details",
+              onClick: function () { setCollabDiagOpen(true); }
+            },
+            React.createElement("i", { className: "fas fa-user-slash" }),
+            !toolbarIconOnly && " Pairing off"
+          )
+        ),
         // Your own chip appears only once someone else is actually connected.
         // Alone it told you nothing — Action Cable is up in any normal dev setup,
         // so it sat in the toolbar permanently announcing a session of one. While
@@ -4355,6 +4401,49 @@ var MbeditorApp = function MbeditorApp() {
           { className: 'collab-hovercard-hint' },
           isMe ? 'Click to change your name'
                : (followedClientId === collabHover.cid ? 'Click to stop following' : 'Click to follow')
+        )
+      );
+    })(),
+    // The diagnostics panel. Every condition listed with its own state, because
+    // the person who needs this is usually on the other machine and cannot paste
+    // a console snippet back.
+    collabDiagOpen && (function () {
+      var d = CollaborationService.diagnostics();
+      return React.createElement(
+        'div',
+        { className: 'mbeditor-modal-backdrop', onClick: function () { setCollabDiagOpen(false); } },
+        React.createElement(
+          'div',
+          { className: 'mbeditor-collab-diag', onClick: function (e) { e.stopPropagation(); } },
+          React.createElement('div', { className: 'mbeditor-collab-diag-title' }, 'Pair programming status'),
+          React.createElement(
+            'ul',
+            { className: 'mbeditor-collab-diag-list' },
+            d.checks.map(function (c) {
+              return React.createElement(
+                'li',
+                { key: c.key, className: 'mbeditor-collab-diag-row' + (c.ok ? '' : ' is-bad') },
+                React.createElement('i', { className: c.ok ? 'fas fa-check' : 'fas fa-times' }),
+                React.createElement(
+                  'div',
+                  null,
+                  React.createElement('div', { className: 'mbeditor-collab-diag-label' }, c.label),
+                  !c.ok && React.createElement('div', { className: 'mbeditor-collab-diag-detail' }, c.detail)
+                )
+              );
+            })
+          ),
+          React.createElement(
+            'div',
+            { className: 'mbeditor-collab-diag-foot' },
+            d.ok
+              ? 'Pairing is working.'
+              : 'The first failing item above is the one to fix; the rest follow from it.'
+          ),
+          React.createElement('button', {
+            type: 'button', className: 'ide-model-graph-btn',
+            onClick: function () { setCollabDiagOpen(false); }
+          }, 'Close')
         )
       );
     })(),

@@ -41,6 +41,81 @@ module Mbeditor
       Mbeditor.configuration.authenticate_with = previous
     end
 
+    # ── cable authentication ──────────────────────────────────────────────────
+
+    # The failure that made pairing silently impossible: a hook reading state a
+    # controller before_action populates sees nothing here, denies, and says
+    # nothing about it.
+    test "a hook denying on the cable is logged with a diagnosable reason" do
+      previous = Mbeditor.configuration.authenticate_with
+      Mbeditor.configuration.authenticate_with = proc { head :forbidden }
+      captured = StringIO.new
+      prev_logger = Rails.logger
+      Rails.logger = ActiveSupport::Logger.new(captured)
+
+      subscribe
+
+      assert subscription.rejected?
+      assert_includes captured.string, "WebSocket subscription rejected"
+      assert_includes captured.string, "cable_authenticate_with"
+    ensure
+      Rails.logger = prev_logger if prev_logger
+      Mbeditor.configuration.authenticate_with = previous
+    end
+
+    test "a hook raising on the cable is logged with the exception" do
+      previous = Mbeditor.configuration.authenticate_with
+      Mbeditor.configuration.authenticate_with = proc { Current.user.super_admin_access? }
+      captured = StringIO.new
+      prev_logger = Rails.logger
+      Rails.logger = ActiveSupport::Logger.new(captured)
+
+      subscribe
+
+      assert subscription.rejected?
+      assert_includes captured.string, "raised"
+      assert_includes captured.string, "NameError"
+    ensure
+      Rails.logger = prev_logger if prev_logger
+      Mbeditor.configuration.authenticate_with = previous
+    end
+
+    test "cable_authenticate_with takes precedence over the HTTP hook" do
+      previous = Mbeditor.configuration.authenticate_with
+      # The HTTP hook cannot work here — exactly the real-world case.
+      Mbeditor.configuration.authenticate_with = proc { Current.user.super_admin_access? }
+      Mbeditor.configuration.cable_authenticate_with = proc { true }
+
+      subscribe
+
+      refute subscription.rejected?
+      assert_has_stream "mbeditor_editor"
+    ensure
+      Mbeditor.configuration.authenticate_with = previous
+      Mbeditor.configuration.cable_authenticate_with = nil
+    end
+
+    test "cable_authenticate_with can still deny" do
+      Mbeditor.configuration.cable_authenticate_with = proc { head :forbidden }
+
+      subscribe
+
+      assert subscription.rejected?
+      assert_no_streams
+    ensure
+      Mbeditor.configuration.cable_authenticate_with = nil
+    end
+
+    test "session is reachable from a cable hook, so a session-based check works" do
+      Mbeditor.configuration.cable_authenticate_with = proc { head :forbidden if session.nil? }
+
+      subscribe
+
+      refute subscription.rejected?
+    ensure
+      Mbeditor.configuration.cable_authenticate_with = nil
+    end
+
     # ── presence ─────────────────────────────────────────────────────────────
 
     test "presence broadcasts the whole roster, not just the sender" do

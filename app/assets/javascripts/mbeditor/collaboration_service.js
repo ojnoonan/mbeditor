@@ -120,6 +120,67 @@ var CollaborationService = (function () {
     });
   }
 
+  // Every condition collaboration depends on, reported separately.
+  //
+  // isAvailable() collapses five things into one boolean, which is useless when
+  // pairing does not work: "false" could be a missing vendored library, a cable
+  // the server never advertised, a rejected handshake, or simply nobody else
+  // being here. Someone debugging this on another machine cannot paste a console
+  // snippet back, so the editor has to be able to say which.
+  function diagnostics() {
+    var cableStatus = (typeof WebSocketService !== 'undefined' &&
+                       typeof WebSocketService.cableStatus === 'function')
+      ? WebSocketService.cableStatus() : 'unknown';
+
+    var checks = [
+      {
+        key: 'libraries',
+        label: 'Collaboration libraries loaded',
+        ok: typeof window.Y !== 'undefined' && typeof window.MonacoBinding !== 'undefined',
+        detail: 'vendor/assets/javascripts/yjs-collab.js is served by the asset pipeline. ' +
+                'If this fails, the host app is not serving it — try rails assets:clobber, ' +
+                'or check config.assets.precompile.'
+      },
+      {
+        key: 'actioncable',
+        label: 'Action Cable JavaScript present',
+        ok: typeof window.ActionCable !== 'undefined',
+        detail: 'The host app must make actioncable.js available to the page.'
+      },
+      {
+        key: 'advertised',
+        label: 'Server advertises Action Cable',
+        ok: typeof WebSocketService !== 'undefined' && WebSocketService.isCableAvailable(),
+        detail: 'Action Cable must be enabled and mounted in the host app routes.'
+      },
+      {
+        key: 'connected',
+        label: 'WebSocket connected',
+        ok: cableStatus === 'connected',
+        detail: cableStatus === 'rejected'
+          ? 'The server rejected the subscription. Usually action_cable.allowed_request_origins ' +
+            'not listing the origin you are reaching the editor through, or an authenticate_with ' +
+            'hook halting on the cable (it fails closed). Look for "Request origin not allowed" in the log.'
+          : 'Status: ' + cableStatus + '.'
+      },
+      {
+        key: 'peers',
+        label: 'Another participant connected',
+        ok: _peerPresent,
+        detail: 'Presence is held per web process. If two people are on different Puma workers ' +
+                'they never see each other — run a single worker (WEB_CONCURRENCY=0) while pairing.'
+      }
+    ];
+
+    return {
+      ok: checks.every(function (c) { return c.ok; }),
+      cableStatus: cableStatus,
+      checks: checks,
+      // The first failing check is the one worth acting on; the rest follow from it.
+      firstProblem: checks.filter(function (c) { return !c.ok; })[0] || null
+    };
+  }
+
   // Subscribe to availability transitions. Returns an unsubscribe function.
   function onAvailabilityChange(fn) {
     _availabilityListeners.push(fn);
@@ -674,6 +735,7 @@ var CollaborationService = (function () {
   return {
     isAvailable: isAvailable,
     setPeerPresent: setPeerPresent,
+    diagnostics: diagnostics,
     onAvailabilityChange: onAvailabilityChange,
     isEnabledFor: isEnabledFor,
     ensureRoom: ensureRoom,

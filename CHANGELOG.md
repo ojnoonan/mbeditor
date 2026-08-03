@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-08-03
+
+### Added
+- **`config.cable_authenticate_with`** — authentication for the collaboration
+  WebSocket, falling back to `authenticate_with` when unset.
+- **A "Pairing off" chip and diagnostics panel.** When collaboration cannot
+  work, the editor now says so and lists every condition it depends on — the
+  vendored libraries, Action Cable's JavaScript, whether the server advertises
+  it, whether the socket actually connected, and whether anyone else is here —
+  with the fix written beside each failure. Nothing is shown when everything is
+  healthy and you are simply alone.
+
+### Fixed
+- **A WebSocket subscribe runs no controller, and this made pairing silently
+  impossible for most authenticated apps.** `authenticate_with` is evaluated on
+  the cable against a probe exposing `session`, `cookies`, `request` and
+  `params` — so a hook reading `Current.user`, calling `UserSession.find`, or
+  using a memoised `current_user` gets `nil` or a `NameError`, denies, and the
+  socket is rejected. The hook keeps working perfectly over HTTP, so nothing
+  looks wrong; collaboration simply never connects.
+
+  Rejections are now logged as `[mbeditor] WebSocket subscription rejected: …`
+  naming the cause, `cable_authenticate_with` provides an escape hatch when one
+  proc cannot serve both contexts, and the README says this plainly instead of
+  noting that request-scoped state "may be narrower". The README's own example
+  used `UserSession.find`, which is exactly the pattern that cannot work.
+
 ## [0.12.2] - 2026-08-03
 
 ### Added

@@ -19,18 +19,47 @@ module Mbeditor
     # True when the connection is allowed (or no hook is configured); otherwise
     # rejects the subscription and returns false.
     def mbeditor_authenticated?
-      hook = Mbeditor.configuration.authenticate_with
+      hook = mbeditor_auth_hook
       return true unless hook
 
       probe = AuthProbe.new(mbeditor_connection_env)
       probe.instance_exec(&hook)
       return true unless probe.denied?
 
+      # Both denial paths used to be completely silent, which is what makes this
+      # so hard to diagnose: pairing simply never works and nothing anywhere says
+      # why. The commonest cause is a hook that reads state a controller filter
+      # populates — Current.user, an Authlogic session — because a WebSocket
+      # subscribe runs no controller, so that state is nil or raises here while
+      # working perfectly over HTTP.
+      mbeditor_log_denial("the authenticate_with hook denied the connection")
       mbeditor_reject_subscription
       false
+    rescue StandardError => e
+      mbeditor_log_denial("the authenticate_with hook raised #{e.class}: #{e.message}")
+      mbeditor_reject_subscription
+      false
+    end
+
+    # `cable_authenticate_with` when set, otherwise the HTTP hook. A hook that
+    # depends on controller filters cannot work here at all, and asking people to
+    # write one proc that straddles both contexts is worse than letting them
+    # supply the cable one explicitly.
+    def mbeditor_auth_hook
+      Mbeditor.configuration.cable_authenticate_with ||
+        Mbeditor.configuration.authenticate_with
+    end
+
+    def mbeditor_log_denial(reason)
+      Rails.logger&.warn(
+        "[mbeditor] WebSocket subscription rejected: #{reason}. " \
+        "Realtime collaboration will not work. A WebSocket subscribe runs no " \
+        "controller, so Current.*, Authlogic sessions and other request-scoped " \
+        "state set by before_actions are unavailable here — resolve the user " \
+        "from `session` instead, or set config.cable_authenticate_with."
+      )
     rescue StandardError
-      mbeditor_reject_subscription
-      false
+      # Logging must never be the thing that breaks the socket.
     end
 
     private

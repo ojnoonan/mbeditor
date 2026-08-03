@@ -5,7 +5,7 @@ module Mbeditor
     attr_accessor :allowed_environments, :workspace_root, :excluded_paths, :rubocop_command, :rubocop_server,
                   :redmine_enabled, :redmine_url, :redmine_api_key, :redmine_ticket_source,
                   :test_framework, :test_command, :test_timeout,
-                  :authenticate_with, :authentication_cache_ttl, :user_name_callback, :user_name_methods,
+                  :authenticate_with, :cable_authenticate_with, :authentication_cache_ttl, :user_name_callback, :user_name_methods,
                   :lint_timeout, :base_branch_candidates, :git_timeout, :search_timeout,
                   :ruby_def_include_dirs, :related_files_custom_paths,
                   :mount_path, :resilient_routing, :js_global_identifiers,
@@ -58,6 +58,16 @@ module Mbeditor
       @ruby_def_include_dirs  = %w[app/models app/controllers app/helpers app/concerns]
       @related_files_custom_paths = []
       @authentication_cache_ttl = 0
+      # Authentication for the collaboration WebSocket. nil falls back to
+      # authenticate_with.
+      #
+      # Exists because the two contexts genuinely differ: a WebSocket subscribe
+      # runs no controller, so anything a before_action populates —
+      # ActiveSupport::CurrentAttributes, an Authlogic session, a memoised
+      # current_user — is nil or raises here, and the hook then denies the socket
+      # while working perfectly over HTTP. Set this to a proc that resolves the
+      # user from `session` directly when the HTTP hook cannot.
+      @cable_authenticate_with = nil
       @user_name_callback = nil # proc resolved in controller context (instance_exec) → collaboration display name; nil falls through to current_user, then to the client-generated name
       # Attributes tried on current_user, in order, when no user_name_callback
       # is set. First non-blank one wins. Name your own column here rather than
