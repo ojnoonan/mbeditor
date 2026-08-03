@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-08-03
+
 ### Added
 - **Inline route hints in controllers.** Every action in a controller file is
   annotated with the verb and path that reach it — `GET /orders/:id` beside
