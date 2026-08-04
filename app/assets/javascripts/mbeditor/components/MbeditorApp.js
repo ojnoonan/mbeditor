@@ -1798,7 +1798,7 @@ var MbeditorApp = function MbeditorApp() {
   useEffect(function () {
     var intervalId = setInterval(function () {
       if (document.hidden) return;
-      FileService.getTree().then(function (data) {
+      FileService.getTree({ background: true }).then(function (data) {
         setTreeData(_treeUpdater(data || []));
       }).catch(function () {}); // silently ignore auto-refresh errors
     }, 10000);
@@ -1815,7 +1815,7 @@ var MbeditorApp = function MbeditorApp() {
     // /git_info fan-out on its own when the branch or working tree changed.
     var refresh = function () {
       if (document.hidden) return;
-      GitService.fetchStatusLite()["catch"](function () {});
+      GitService.fetchStatusLite({ background: true })["catch"](function () {});
     };
     // Regaining focus is a strong signal something may have happened in a
     // terminal meanwhile — do a full refresh (server-side cache bounds cost).

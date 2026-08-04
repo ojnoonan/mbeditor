@@ -22,6 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   filter matched `Mbeditor::` and `mbeditor_editor`, but a broadcast line names
   only the stream — `Broadcasting to mbeditor_collab:…` — so every keystroke and
   cursor move was logged with the base64 CRDT payload inlined.
+- **The browser console filled with failed requests when the server became
+  unreachable.** A dropped VPN, a closed lid or a stopped server left the file
+  tree polling every 10s, git status every 5s and the git line tint every 10s,
+  all failing forever — and the browser logs every failed request itself, which
+  no amount of JavaScript can suppress. The only fix is to stop making them.
+
+  Background polls are now skipped before the request is issued once two
+  consecutive *network-level* failures have been seen (an HTTP error does not
+  count — a 500 proves the server is there), and a single probe on a 1s→30s
+  backoff decides when it is back. Requests you initiate are never blocked; they
+  fail fast with a real error rather than hanging until the 30s timeout.
+  Measured with the server down: two failed requests, then silence, instead of
+  an unbounded stream.
 
 ## [0.12.4] - 2026-08-03
 
