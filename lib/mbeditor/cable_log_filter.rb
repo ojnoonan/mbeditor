@@ -8,7 +8,12 @@ module Mbeditor
   # Mbeditor channels so the development console stays readable.
   # Non-Mbeditor ActionCable messages pass through unchanged.
   class CableLogFilter < SimpleDelegator
-    SUPPRESS_PATTERN = /Mbeditor::|mbeditor_editor/
+    # Both stream names, not just the editor one. Action Cable's broadcast line
+    # ("Broadcasting to <stream>: <payload>") names only the stream, so a
+    # channel-class pattern never matches it — and the collaboration stream
+    # broadcasts on every keystroke and every cursor move, with the base64 CRDT
+    # payload inlined. That floods a development log during pairing.
+    SUPPRESS_PATTERN = /Mbeditor::|mbeditor_editor|mbeditor_collab/
     CABLE_WEBSOCKET_REQUEST_PATTERN = /(?:Started|Finished) "\/cable(?:\/[^\"]*)?" \[WebSocket\]/
 
     # Provides no-op tagged logging APIs for plain Ruby formatters.

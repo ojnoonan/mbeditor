@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.5] - 2026-08-03
+
+### Fixed
+- **The cable took up to 30 seconds to reconnect.** The retry was a flat 30s
+  interval, and because a disconnect tears the consumer down, Action Cable's own
+  much faster reconnection monitor was discarded with it. Any transient blip or
+  dev-server restart therefore cost half a minute with no cable at all: no
+  presence, no collaboration, no file-change push. Replaced with a jittered
+  backoff from 1s to a 8s ceiling, reset on a successful connect. Measured
+  against a real server restart: **2.8 seconds** from the server answering again
+  to the cable being back, where the flat interval could take the full 30.
+- **Collaboration broadcasts flooded the development log.** The Action Cable log
+  filter matched `Mbeditor::` and `mbeditor_editor`, but a broadcast line names
+  only the stream — `Broadcasting to mbeditor_collab:…` — so every keystroke and
+  cursor move was logged with the base64 CRDT payload inlined.
+
 ## [0.12.4] - 2026-08-03
 
 ### Fixed
@@ -16,7 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tab retries independently, and both the editor channel and every per-file
   collaboration room authenticate. One message per distinct reason per five
   minutes now, which says the same thing without drowning the log.
-
 
 ## [0.12.3] - 2026-08-03
 

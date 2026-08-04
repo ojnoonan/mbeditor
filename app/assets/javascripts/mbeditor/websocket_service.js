@@ -22,7 +22,29 @@ var WebSocketService = (function () {
   var _serverSupportsWs = false;
   var _reconnectTimer = null;
   var _lastCableAttemptAt = 0;
-  var RECONNECT_INTERVAL_MS = 30000;
+  // Exponential backoff, not a flat interval. This used to wait a fixed 30s
+  // before even attempting a reconnect — and because `disconnected` tears the
+  // consumer down, Action Cable's own much faster reconnection monitor is
+  // discarded too. The result was that any transient blip cost half a minute
+  // with no cable: no presence, no collaboration, no file-change push. Start
+  // near-instant for the common case (a blip, a server restart) and back off
+  // only if the server really is gone.
+  // Growth is gentle and the ceiling low on purpose. The dominant case here is a
+  // development server restarting, which takes several seconds to boot — a
+  // doubling curve spends those seconds growing, so the attempt that finally
+  // lands is a long way out. Measured against a real restart: doubling to a 30s
+  // cap reconnected in 20s, this reconnects within a few. It is a local dev
+  // tool, so retrying every few seconds costs nothing worth saving.
+  var RECONNECT_BASE_MS = 1000;
+  var RECONNECT_MAX_MS = 8000;
+  var RECONNECT_FACTOR = 1.6;
+  var _reconnectAttempts = 0;
+
+  function _reconnectDelay() {
+    var exp = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(RECONNECT_FACTOR, _reconnectAttempts));
+    // Jitter so a server restart doesn't have every open tab retry in lockstep.
+    return Math.round(exp * (0.7 + Math.random() * 0.6));
+  }
 
   // ---------------------------------------------------------------------------
   // Internal helpers
@@ -90,11 +112,17 @@ var WebSocketService = (function () {
   }
 
   function _scheduleReconnect() {
-    if (_reconnectTimer || !_serverSupportsWs) return;
+    if (_reconnectTimer || !_serverSupportsWs || _connected) return;
+    var delay = _reconnectDelay();
+    _reconnectAttempts += 1;
     _reconnectTimer = setTimeout(function () {
       _reconnectTimer = null;
       _attemptConnect();
-    }, RECONNECT_INTERVAL_MS);
+      // Keep trying: _attemptConnect only fires once, so without this a failed
+      // attempt that never reaches `rejected` or `disconnected` would end the
+      // retry chain and leave the editor permanently offline.
+      _scheduleReconnect();
+    }, delay);
   }
 
   function _attemptConnect() {
@@ -113,6 +141,9 @@ var WebSocketService = (function () {
           connected: function () {
             _connected = true;
             _status = 'connected';
+            // Back to fast retries for the next blip.
+            _reconnectAttempts = 0;
+            if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
           },
           disconnected: function () {
             _status = _status === 'rejected' ? 'rejected' : 'dropped';
