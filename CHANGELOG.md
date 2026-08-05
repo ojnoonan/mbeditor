@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.6] - 2026-08-05
+
+### Added
+- **Format All.** A second toolbar button formats every open document. Each tab
+  is formatted independently and failures are collected rather than thrown, so
+  one unparseable file cannot stop the rest; the status line reports how many
+  were formatted, skipped and failed.
+- **Format on paste actually formats.** `formatOnPaste` has been on by default
+  for a long time and did nothing outside Ruby: Monaco acts on a paste only
+  through a *range* formatting provider, and none was registered. Prettier-backed
+  range and document providers now cover JS/JSX, JSON, CSS/SCSS/LESS, HTML and
+  Markdown. A paste that fills the document is formatted as a document — so
+  pasting into a blank file formats the whole thing — while a paste in the middle
+  is formatted as a range, reprinting the smallest enclosing statement and
+  leaving the rest of the file byte-identical. Code copied in from a spaces
+  project therefore lands as tabs (or the reverse), which was previously a manual
+  chore that never converted cleanly.
+- **Files symlinked in from outside the workspace now open.** An app that links a
+  shared config directory or a sibling engine into its tree could see those files
+  in the explorer but not open them — the tab opened and closed itself a moment
+  later. Symlinks are now followed the way a file manager does. Containment is
+  still enforced: `File.expand_path` collapses `..` before a lexical check
+  against the workspace root, so no request can name anything outside it, and
+  git operations stay strictly inside the repo.
+
+### Fixed
+- **Search returned nothing, instantly, on some workspaces without ripgrep.** The
+  git-grep tier was chosen on the mere presence of a `.git` entry, with no check
+  that git could actually open the repo. When it cannot — dubious ownership under
+  Docker, a `.git` file pointing at a gitdir that moved, no git binary on the
+  server's `PATH` — `git grep` fails, its stderr goes to `/dev/null`, and the
+  result is an empty set indistinguishable from "no matches". The tier is now
+  gated on `git rev-parse --is-inside-work-tree`, which fails in exactly those
+  cases, so a bad repo falls through to plain grep. Definition lookups had the
+  same check and were silently broken the same way.
+- **Formatting ignored the tab/space setting.** There were four copies of the
+  Prettier options and they had drifted: two read a `prettierTabWidth` /
+  `prettierUseTabs` pair that no settings screen ever wrote, frozen at two
+  spaces, overriding the `tabSize` / `insertSpaces` actually configured. A JSX
+  file in a tabs workspace came back space-indented. Indentation now comes from
+  the same preferences Monaco itself is given.
+- **One JS file had two formatters that disagreed.** Monaco's TypeScript worker
+  registers its own range formatter for `javascript` and Monaco uses whichever it
+  finds first, so the toolbar button went through Prettier while `Shift+Alt+F`
+  and format-on-paste got the worker's two-space, no-semicolon output. The
+  worker's formatting is switched off; its completions, hovers, diagnostics and
+  rename are untouched.
+- **"Server offline" flashed during ordinary actions.** The reachability check
+  counted any error without a response as a network failure, and a request the
+  editor aborts itself has none either. The editor cancels constantly — each
+  keystroke supersedes the previous search, hover and completion providers abort
+  when the cursor moves on, opening a file aborts its own prefetch — so two in a
+  row declared the server offline until the `/ping` probe a second later put it
+  back. Creating a file reliably triggered it. Cancellations are now ignored; a
+  genuinely unreachable host still marks offline and still recovers.
+- **Warnings logged by the host app from mbeditor's own hooks were swallowed.**
+  Editor requests were silenced at `ERROR`, which hides Rails' own INFO-level
+  request lines but also everything a host app logs from inside
+  `authenticate_with` or `user_name_callback` — those procs run within the
+  request, so a developer debugging their own hook saw nothing and had no way to
+  know why. Silenced at `WARN` now, which still hides the request lines.
+
+### Changed
+- RuboCop's output is taken as-is. Ruby indentation belongs to the project's
+  `.rubocop.yml`, so rewriting it in the editor fought the linter about to run
+  over the same file. The previous code converted the source to tabs *before*
+  handing it to RuboCop, which discarded it. To convert an already-open file,
+  use Monaco's built-in "Convert Indentation to Tabs / to Spaces" (F1).
+
 ## [0.12.5] - 2026-08-03
 
 ### Fixed
