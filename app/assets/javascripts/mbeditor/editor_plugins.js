@@ -816,12 +816,58 @@
       return handled;
     });
 
+    // ── Format on paste ──────────────────────────────────────────────────────
+    //
+    // Driven from onDidPaste rather than Monaco's own `formatOnPaste` option.
+    // That option has been on by default all along and never did anything here:
+    // its contribution is present and the event fires, but it declines to run
+    // the formatter, so pasted code kept whatever indentation it was copied
+    // with. onDidPaste is public API, fires reliably, and hands over the exact
+    // pasted range — which is also what makes the two cases distinguishable:
+    //
+    //   * paste that fills the whole document (a blank file, or replacing all
+    //     of it) is formatted as a document
+    //   * a paste in the middle is formatted as a range, so Prettier reprints
+    //     the smallest enclosing statement and the rest of the file is left
+    //     byte-identical
+    //
+    // Either way the result comes back at the editor's own tab/space setting,
+    // which is the point: code copied in from a spaces project lands as tabs.
+    var pasteDisposable = editor.onDidPaste(function (e) {
+      var prefs = (typeof EditorStore !== 'undefined' && EditorStore.getState().editorPrefs) || {};
+      if (prefs.formatOnPaste === false) return;
+
+      var pasteModel = editor.getModel();
+      if (!pasteModel || pasteModel.isDisposed()) return;
+
+      var full = pasteModel.getFullModelRange();
+      var wholeDocument = e.range.startLineNumber <= full.startLineNumber &&
+                          e.range.endLineNumber >= full.endLineNumber;
+
+      var action = editor.getAction(wholeDocument ? 'editor.action.formatDocument' : 'editor.action.formatSelection');
+      if (!action) return;
+
+      if (wholeDocument) {
+        action.run()["catch"](function () { /* no formatter, or unparseable — leave it */ });
+        return;
+      }
+
+      // formatSelection works on the selection, so point it at the pasted range
+      // and put the cursor back where the paste left it.
+      var restore = editor.getSelections();
+      editor.setSelection(e.range);
+      action.run()["catch"](function () {})["finally"](function () {
+        if (restore && restore.length && !editor.getModel().isDisposed()) editor.setSelections(restore);
+      });
+    });
+
     return {
       dispose: function dispose() {
         if (keydownDisposable) keydownDisposable.dispose();
         if (emmetTabDisposable) emmetTabDisposable.dispose();
         if (jsGotoMouseDisposable) jsGotoMouseDisposable.dispose();
         if (jsGotoActionDisposable) jsGotoActionDisposable.dispose();
+        if (pasteDisposable) pasteDisposable.dispose();
         contentDisposable.dispose();
       }
     };
@@ -853,6 +899,22 @@
         jsx: monaco.languages.typescript.JsxEmit.React,
         noUnusedLocals: true
       });
+      // Hand JS formatting to Prettier alone.
+      //
+      // The TypeScript worker registers its own range formatter for
+      // 'javascript', and Monaco consults whichever provider it finds first.
+      // That gave one file two formatters that disagreed: the toolbar button
+      // went through Prettier and honoured the editor's tab settings, while
+      // Shift+Alt+F and format-on-paste got the TS worker's, which reprints at
+      // two spaces and never adds semicolons, ignoring every preference. Only
+      // formatting is switched off — completions, hovers, diagnostics, rename
+      // and the rest of the JS intelligence still come from the worker.
+      monaco.languages.typescript.javascriptDefaults.setModeConfiguration(
+        Object.assign({}, monaco.languages.typescript.javascriptDefaults.modeConfiguration, {
+          documentRangeFormattingEdits: false,
+          onTypeFormattingEdits: false
+        })
+      );
     }
 
     // ── React mini-UMD type declarations ────────────────────────────────────
@@ -1766,6 +1828,82 @@
         return [{ range: model.getFullModelRange(), text: formatted }];
       }).catch(function () { return []; });
     }
+
+    // ── Prettier formatting providers ────────────────────────────────────────
+    //
+    // `formatOnPaste` has been on by default for a long time and did nothing
+    // outside Ruby: Monaco acts on a paste only through a *range* formatting
+    // provider, and none was registered. Registering one here is what makes
+    // pasted blocks land correctly indented, and what formats the whole thing
+    // when the paste fills an empty file (the pasted range is then the file).
+    //
+    // Prettier's own rangeStart/rangeEnd does the narrowing — it reprints the
+    // smallest enclosing statement and leaves the rest byte-identical, so a
+    // paste in the middle of a file does not reformat the file.
+    var PRETTIER_LANGUAGE_PARSERS = {
+      javascript: 'babel', json: 'json', css: 'css',
+      scss: 'scss', less: 'less', html: 'html', markdown: 'markdown'
+    };
+
+    // One edit spanning only what actually changed. A whole-document
+    // replacement would work but throws away the cursor position and collapses
+    // undo, which on every paste is very noticeable.
+    function minimalEdit(model, oldText, newText) {
+      if (oldText === newText) return [];
+      var start = 0;
+      var maxStart = Math.min(oldText.length, newText.length);
+      while (start < maxStart && oldText.charCodeAt(start) === newText.charCodeAt(start)) start++;
+      var oldEnd = oldText.length;
+      var newEnd = newText.length;
+      while (oldEnd > start && newEnd > start && oldText.charCodeAt(oldEnd - 1) === newText.charCodeAt(newEnd - 1)) {
+        oldEnd--;
+        newEnd--;
+      }
+      return [{
+        range: monaco.Range.fromPositions(model.getPositionAt(start), model.getPositionAt(oldEnd)),
+        text: newText.slice(start, newEnd)
+      }];
+    }
+
+    function prettierEdits(model, range) {
+      var parser = PRETTIER_LANGUAGE_PARSERS[model.getLanguageId()];
+      if (!parser || typeof runPrettier !== 'function') return Promise.resolve([]);
+
+      var text = model.getValue();
+      var prefs = (typeof EditorStore !== 'undefined' && EditorStore.getState().editorPrefs) || {};
+      var extra = null;
+      if (range) {
+        extra = {
+          rangeStart: model.getOffsetAt({ lineNumber: range.startLineNumber, column: range.startColumn }),
+          rangeEnd: model.getOffsetAt({ lineNumber: range.endLineNumber, column: range.endColumn })
+        };
+      }
+
+      return runPrettier(text, prefs, parser, extra)
+        .then(function (formatted) {
+          // The model can have moved on while Prettier was working.
+          if (model.isDisposed() || model.getValue() !== text) return [];
+          return minimalEdit(model, text, formatted);
+        })
+        // A paste of half an expression will not parse. Leaving it alone is the
+        // right answer — the diagnostics path reports the syntax error.
+        ["catch"](function () { return []; });
+    }
+
+    Object.keys(PRETTIER_LANGUAGE_PARSERS).forEach(function (languageId) {
+      monaco.languages.registerDocumentRangeFormattingEditProvider(languageId, {
+        displayName: 'Prettier',
+        provideDocumentRangeFormattingEdits: function (model, range) {
+          return prettierEdits(model, range);
+        }
+      });
+      monaco.languages.registerDocumentFormattingEditProvider(languageId, {
+        displayName: 'Prettier',
+        provideDocumentFormattingEdits: function (model) {
+          return prettierEdits(model, null);
+        }
+      });
+    });
 
     // Parameter hints while typing a call's arguments.
     monaco.languages.registerSignatureHelpProvider('ruby', {

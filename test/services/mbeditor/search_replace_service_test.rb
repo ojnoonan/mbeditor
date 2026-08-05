@@ -608,5 +608,26 @@ module Mbeditor
       assert_equal 1, results.length
       assert_equal "a.rb", results.first[:file]
     end
+
+    # ---------------------------------------------------------------------------
+    # Tier selection
+    # ---------------------------------------------------------------------------
+
+    test "a .git git refuses to open falls back to grep instead of returning nothing" do
+      write_file("a.rb", "BROKEN_REPO_NEEDLE\n")
+      # A gitdir pointer to somewhere that isn't there: `.git` exists, so the
+      # old presence check picked the git tier, git grep failed, and the search
+      # came back instantly empty. Stands in for the field cases — dubious
+      # ownership, a moved worktree, no git binary.
+      File.write(File.join(@workspace, ".git"), "gitdir: /nonexistent/gitdir\n")
+      AvailabilityProbe.reset!
+
+      with_rg_available(false) do
+        assert_equal :grep, SearchReplaceService.backend(@workspace)
+        assert_equal 1, search("BROKEN_REPO_NEEDLE").length
+      end
+    ensure
+      AvailabilityProbe.reset!
+    end
   end
 end

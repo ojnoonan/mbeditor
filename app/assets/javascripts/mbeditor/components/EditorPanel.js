@@ -643,7 +643,10 @@ var EditorPanel = function EditorPanel(_ref) {
       autoClosingBrackets: editorPrefs.autoClosingBrackets || 'always',
       autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
       autoIndent: editorPrefs.autoIndent || 'full',
-      formatOnPaste: editorPrefs.formatOnPaste !== false,
+      // Monaco's own format-on-paste is left off: it never ran the formatter
+      // here. attachEditorFeatures drives it from onDidPaste instead, gated on
+      // the same editorPrefs.formatOnPaste setting.
+      formatOnPaste: false,
       formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
       quickSuggestions: editorPrefs.quickSuggestions !== false,
       wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',
@@ -1206,7 +1209,10 @@ var EditorPanel = function EditorPanel(_ref) {
         autoClosingBrackets: editorPrefs.autoClosingBrackets || 'always',
         autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
         autoIndent: editorPrefs.autoIndent || 'full',
-        formatOnPaste: editorPrefs.formatOnPaste !== false,
+        // Monaco's own format-on-paste is left off: it never ran the formatter
+      // here. attachEditorFeatures drives it from onDidPaste instead, gated on
+      // the same editorPrefs.formatOnPaste setting.
+      formatOnPaste: false,
         formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
         quickSuggestions: editorPrefs.quickSuggestions !== false,
         wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',

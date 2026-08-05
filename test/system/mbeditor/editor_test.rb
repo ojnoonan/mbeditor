@@ -940,6 +940,118 @@ module Mbeditor
                    "Expected no React errors (sprockets global), got: #{react_errors.inspect}"
     end
 
+    # ── Formatting ────────────────────────────────────────────────────────────
+
+    test "formatting a jsx file indents with the editor's tab setting" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      # insertSpaces false is the default: the file must come back tab-indented.
+      # Prettier used to read a separate prettierUseTabs pref that no settings
+      # screen wrote, so this reprinted at two spaces whatever the user chose.
+      page.execute_script(<<~'JS')
+        window.__mbeditorActiveEditor.setValue("const A=()=>{\n  return <div   className='a'>{1}</div>;\n};\n");
+      JS
+
+      click_button "Format"
+
+      formatted = wait_for_formatted_value(matching: /\n\t/)
+      assert_match(/\n\treturn <div className="a">/, formatted,
+                   "Expected tab-indented Prettier output, got: #{formatted.inspect}")
+    end
+
+    test "format all formats every open document and skips ones with no formatter" do
+      File.write(File.join(@workspace, "styles.scss"), ".x{color:red}\n")
+      File.write(File.join(@workspace, "plain.txt"), "no formatter here\n")
+
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      # Double-click pins the tab; a single click opens a preview tab that the
+      # next click replaces, so only the last file would still be open.
+      find(".tree-item-name", text: "component.jsx").double_click
+      assert_selector ".monaco-editor", wait: 10
+      page.execute_script(%(window.__mbeditorActiveEditor.setValue("const A=()=>{return 1};\\n");))
+      find(".tree-item-name", text: "styles.scss").double_click
+      find(".tree-item-name", text: "plain.txt").double_click
+      wait_for_condition("all three files to be open") do
+        page.evaluate_script("EditorStore.getState().panes.reduce(function(n,p){return n+p.tabs.length},0)") >= 3
+      end
+
+      click_button "Format All"
+
+      contents = wait_for_condition("all open documents to settle") do
+        result = page.evaluate_script(<<~'JS')
+          (function () {
+            var out = {};
+            EditorStore.getState().panes.forEach(function (p) {
+              p.tabs.forEach(function (t) { if (t.path) out[t.path] = t.content; });
+            });
+            return out;
+          })()
+        JS
+        result if result["component.jsx"].to_s.include?("=>") && result["styles.scss"].to_s.include?("{\n")
+      end
+
+      assert_match(/const A = \(\) => \{/, contents["component.jsx"])
+      assert_match(/\.x \{\n\tcolor: red;/, contents["styles.scss"])
+      assert_equal "no formatter here\n", contents["plain.txt"],
+                   "A file with no formatter must be left exactly as it was"
+    end
+
+    test "pasting space-indented code into a blank file reformats it to tabs" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      # Monaco's own formatOnPaste never ran the formatter here; the paste is
+      # driven from onDidPaste instead. A paste that fills the document is
+      # formatted as a document, so code copied from a spaces project lands as
+      # tabs.
+      page.execute_script(<<~'JS')
+        (function () {
+          var ed = window.__mbeditorActiveEditor;
+          ed.getModel().setValue("");
+          ed.setPosition({ lineNumber: 1, column: 1 });
+          ed.focus();
+          var dt = new DataTransfer();
+          dt.setData('text/plain', "function greet(name){\n  if(name){\n    console.log('hi',name)\n  }\n}\n");
+          document.querySelector('.monaco-editor textarea')
+            .dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+        })()
+      JS
+
+      formatted = wait_for_formatted_value(matching: /\n\t/)
+      assert_match(/function greet\(name\) \{\n\tif \(name\) \{\n\t\tconsole\.log\("hi", name\);/, formatted,
+                   "Expected the pasted block reformatted with tabs, got: #{formatted.inspect}")
+    end
+
+    test "a cancelled request does not report the server as offline" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      # The editor aborts requests constantly — superseded searches, hover and
+      # completion providers, prefetches. Counting those as unreachable flashed
+      # "Server offline" during ordinary actions like creating a file.
+      still_online = page.evaluate_async_script(<<~'JS')
+        var done = arguments[0];
+        (async function () {
+          for (var i = 0; i < 3; i++) {
+            var c = new AbortController();
+            var p = axios.get('/mbeditor/search', { params: { q: 'zz' + i }, signal: c.signal }).catch(function () {});
+            c.abort();
+            await p;
+          }
+          setTimeout(function () { done(FileService.isServerReachable()); }, 200);
+        })();
+      JS
+
+      assert still_online, "Cancelled requests must not mark the server unreachable"
+      assert_no_selector ".statusbar-offline"
+    end
+
     test "monaco warns about unused local variable in javascript" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
@@ -1098,6 +1210,26 @@ module Mbeditor
         raise "Timed out waiting for editor value to become #{expected.inspect}; got #{value.inspect}" if Time.now >= deadline
 
         sleep 0.05
+      end
+    end
+
+    # Formatting is asynchronous (Prettier is lazy-loaded on first use), so poll
+    # the buffer until it matches rather than guessing at a sleep.
+    def wait_for_formatted_value(matching:, timeout: 20)
+      wait_for_condition("editor content to match #{matching.inspect}") do
+        value = active_editor_value
+        value if value =~ matching
+      end
+    end
+
+    def wait_for_condition(description, timeout: 20)
+      deadline = Time.now + timeout
+      loop do
+        result = yield
+        return result if result
+        raise "Timed out waiting for #{description}" if Time.now >= deadline
+
+        sleep 0.1
       end
     end
 

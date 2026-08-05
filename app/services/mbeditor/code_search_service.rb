@@ -22,7 +22,7 @@ module Mbeditor
         root = workspace_root.to_s
         if SearchReplaceService.rg_available?
           run_rg(pattern, root, globs)
-        elsif File.exist?(File.join(root, ".git"))
+        elsif SearchReplaceService.git_tier?(root)
           run_git_grep(pattern, root, globs)
         else
           run_grep(pattern, root, globs)

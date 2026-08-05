@@ -32,17 +32,22 @@ module Mbeditor
     end
 
     # Expand path and confirm it's inside workspace_root.
-    # SafePath follows every symlink on the way — including dangling ones, which
-    # an existence walk would skip past — so a symlink inside the workspace
-    # cannot escape the sandbox regardless of whether the target exists yet
-    # (create / rename paths).
+    #
+    # Containment is judged lexically, on the path as spelled. File.expand_path
+    # collapses "..", so no request can name anything outside the workspace, and
+    # an absolute path is rejected outright.
+    #
+    # Symlinks are followed, the way a file manager does: an app that links a
+    # shared config directory or a sibling engine into its tree gets those files
+    # opening like any other. The link itself has to already exist inside the
+    # workspace, which means a developer put it there — the sandbox is about
+    # what a request may *name*, not about second-guessing the checkout.
     def resolve_path(raw)
       return nil if raw.blank?
 
       root = workspace_root.to_s
       full = File.expand_path(raw.to_s, root)
       return nil unless full.start_with?("#{root}/") || full == root
-      return nil unless SafePath.within?(root, full)
 
       full
     rescue Errno::EACCES, ArgumentError

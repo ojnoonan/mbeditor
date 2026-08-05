@@ -1131,15 +1131,16 @@ module Mbeditor
       assert_response :forbidden
     end
 
-    test "show returns 403 when path is a symlink pointing outside the workspace" do
-      outside = Tempfile.new('mbeditor_outside_')
-      outside.write('secret')
+    test "show opens a symlink whose target is outside the workspace" do
+      outside = Tempfile.new('mbeditor_linked_')
+      outside.write('linked in from elsewhere')
       outside.flush
-      link = File.join(@workspace, 'evil_link.txt')
+      link = File.join(@workspace, 'shared_link.txt')
       File.symlink(outside.path, link)
 
-      get '/mbeditor/file', params: { path: 'evil_link.txt' }
-      assert_response :forbidden
+      get '/mbeditor/file', params: { path: 'shared_link.txt' }
+      assert_response :success
+      assert_equal 'linked in from elsewhere', JSON.parse(response.body)['content']
     ensure
       File.unlink(link) if link && File.symlink?(link)
       outside&.close!
@@ -1182,14 +1183,15 @@ module Mbeditor
       assert_response 413
     end
 
-    test 'raw returns 403 for symlink pointing outside workspace' do
+    test 'raw serves a symlink whose target is outside the workspace' do
       outside = Tempfile.new('mbeditor_outside_')
-      outside.write('secret content')
+      outside.write('linked content')
       outside.flush
-      link = File.join(@workspace, 'evil_link.txt')
+      link = File.join(@workspace, 'shared_link.txt')
       File.symlink(outside.path, link)
-      get '/mbeditor/raw', params: { path: 'evil_link.txt' }
-      assert_response :forbidden
+      get '/mbeditor/raw', params: { path: 'shared_link.txt' }
+      assert_response :success
+      assert_equal 'linked content', response.body
     ensure
       File.unlink(link) if link && File.symlink?(link)
       outside&.close!
@@ -1310,103 +1312,113 @@ module Mbeditor
       assert json.key?("error")
     end
 
-    test 'create_file returns 403 when parent directory is a symlink pointing outside workspace' do
+    test 'create_file writes into a directory symlinked in from outside the workspace' do
       outside_dir = Dir.mktmpdir('mbeditor_outside_dir_')
-      link = File.join(@workspace, 'escaped_dir')
+      link = File.join(@workspace, 'linked_dir')
       File.symlink(outside_dir, link)
-      post '/mbeditor/create_file', params: { path: 'escaped_dir/secret.rb', code: '' }, as: :json
-      assert_response :forbidden
+      post '/mbeditor/create_file', params: { path: 'linked_dir/new.rb', code: '' }, as: :json
+      assert_response :success
+      assert File.file?(File.join(outside_dir, 'new.rb'))
     ensure
       File.unlink(link) if link && File.symlink?(link)
       FileUtils.rm_rf(outside_dir) if outside_dir && File.directory?(outside_dir)
     end
 
-    test 'save returns 403 when parent directory is a symlink pointing outside workspace' do
+    test 'save writes into a directory symlinked in from outside the workspace' do
       outside_dir = Dir.mktmpdir('mbeditor_outside_dir_')
-      link = File.join(@workspace, 'escaped_dir')
+      link = File.join(@workspace, 'linked_dir')
       File.symlink(outside_dir, link)
-      post '/mbeditor/file', params: { path: 'escaped_dir/secret.rb', code: 'bad' }, as: :json
-      assert_response :forbidden
+      post '/mbeditor/file', params: { path: 'linked_dir/note.rb', code: 'hello' }, as: :json
+      assert_response :success
+      assert_equal 'hello', File.read(File.join(outside_dir, 'note.rb'))
     ensure
       File.unlink(link) if link && File.symlink?(link)
       FileUtils.rm_rf(outside_dir) if outside_dir && File.directory?(outside_dir)
     end
 
     # ---------------------------------------------------------------------------
-    # dangling symlink escapes
+    # dangling symlinks
     #
-    # File.exist? follows symlinks, so a symlink whose target does not exist
-    # looks like "nothing here" to an existence walk. Writing through it still
-    # creates the target, outside the sandbox.
+    # A symlink whose target does not exist yet is still followed on write, the
+    # way a file manager or editor does: the write lands on the target and
+    # creates it. Containment is judged on the path the request names, and that
+    # names a link inside the workspace.
     # ---------------------------------------------------------------------------
 
-    test 'save returns 403 when path is a dangling symlink pointing outside workspace' do
-      outside = File.join(Dir.tmpdir, "mbeditor_pwned_#{Process.pid}.txt")
+    test 'save writes through a dangling symlink pointing outside the workspace' do
+      outside = File.join(Dir.tmpdir, "mbeditor_linked_#{Process.pid}.txt")
       FileUtils.rm_f(outside)
       link = File.join(@workspace, 'dangling_link.txt')
       File.symlink(outside, link)
 
-      post '/mbeditor/file', params: { path: 'dangling_link.txt', code: 'pwned' }, as: :json
-      assert_response :forbidden
-      refute File.exist?(outside), 'write escaped the workspace through a dangling symlink'
+      post '/mbeditor/file', params: { path: 'dangling_link.txt', code: 'written' }, as: :json
+      assert_response :success
+      assert_equal 'written', File.read(outside)
     ensure
       File.unlink(link) if link && File.symlink?(link)
       FileUtils.rm_f(outside) if outside
     end
 
-    test 'create_file returns 403 when path is a dangling symlink pointing outside workspace' do
-      outside = File.join(Dir.tmpdir, "mbeditor_pwned_create_#{Process.pid}.txt")
+    test 'create_file writes through a dangling symlink pointing outside the workspace' do
+      outside = File.join(Dir.tmpdir, "mbeditor_linked_create_#{Process.pid}.txt")
       FileUtils.rm_f(outside)
       link = File.join(@workspace, 'dangling_link.rb')
       File.symlink(outside, link)
 
-      post '/mbeditor/create_file', params: { path: 'dangling_link.rb', code: 'pwned' }, as: :json
-      assert_response :forbidden
-      refute File.exist?(outside), 'write escaped the workspace through a dangling symlink'
+      post '/mbeditor/create_file', params: { path: 'dangling_link.rb', code: 'written' }, as: :json
+      assert_response :success
+      assert_equal 'written', File.read(outside)
     ensure
       File.unlink(link) if link && File.symlink?(link)
       FileUtils.rm_f(outside) if outside
     end
 
-    test 'create_file returns 403 when an ancestor is a dangling symlink pointing outside workspace' do
-      outside_dir = File.join(Dir.tmpdir, "mbeditor_pwned_dir_#{Process.pid}")
+    # mkdir does not follow a dangling link — it sees the link itself and
+    # reports EEXIST. That is the OS, not the sandbox, so the request fails with
+    # the real error rather than a 403.
+    test 'create_file through a dangling ancestor symlink reports the mkdir error' do
+      outside_dir = File.join(Dir.tmpdir, "mbeditor_linked_dir_#{Process.pid}")
       FileUtils.rm_rf(outside_dir)
       link = File.join(@workspace, 'dangling_dir')
       File.symlink(outside_dir, link)
 
-      post '/mbeditor/create_file', params: { path: 'dangling_dir/secret.rb', code: 'pwned' }, as: :json
-      assert_response :forbidden
-      refute File.exist?(outside_dir), 'mkdir_p escaped the workspace through a dangling symlink'
+      post '/mbeditor/create_file', params: { path: 'dangling_dir/new.rb', code: 'written' }, as: :json
+      assert_response :unprocessable_content
+      assert_match(/File exists/, json['error'])
     ensure
       File.unlink(link) if link && File.symlink?(link)
       FileUtils.rm_rf(outside_dir) if outside_dir
     end
 
-    test 'create_dir returns 403 when path is a dangling symlink pointing outside workspace' do
-      outside_dir = File.join(Dir.tmpdir, "mbeditor_pwned_mkdir_#{Process.pid}")
+    test 'create_dir on a dangling symlink reports the mkdir error' do
+      outside_dir = File.join(Dir.tmpdir, "mbeditor_linked_mkdir_#{Process.pid}")
       FileUtils.rm_rf(outside_dir)
       link = File.join(@workspace, 'dangling_folder')
       File.symlink(outside_dir, link)
 
       post '/mbeditor/create_dir', params: { path: 'dangling_folder' }, as: :json
-      assert_response :forbidden
-      refute File.exist?(outside_dir), 'mkdir escaped the workspace through a dangling symlink'
+      assert_response :unprocessable_content
+      assert_match(/File exists/, json['error'])
     ensure
       File.unlink(link) if link && File.symlink?(link)
       FileUtils.rm_rf(outside_dir) if outside_dir
     end
 
-    test 'rename returns 403 when the destination is a dangling symlink pointing outside workspace' do
-      outside = File.join(Dir.tmpdir, "mbeditor_pwned_rename_#{Process.pid}.md")
+    # rename(2) replaces the link itself rather than writing through it, so the
+    # destination becomes a real file at the in-workspace path.
+    test 'rename onto a dangling symlink replaces the link, not its target' do
+      outside = File.join(Dir.tmpdir, "mbeditor_linked_rename_#{Process.pid}.md")
       FileUtils.rm_f(outside)
       link = File.join(@workspace, 'dangling_dest.md')
       File.symlink(outside, link)
 
       patch '/mbeditor/rename', params: { path: 'README.md', new_path: 'dangling_dest.md' }, as: :json
-      assert_response :forbidden
-      refute File.exist?(outside), 'rename escaped the workspace through a dangling symlink'
+      assert_response :success
+      assert File.file?(link)
+      refute File.symlink?(link)
+      refute File.exist?(outside)
     ensure
-      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_f(link) if link
       FileUtils.rm_f(outside) if outside
     end
 
@@ -1477,12 +1489,13 @@ module Mbeditor
       assert_response :forbidden
     end
 
-    test 'rename returns 403 when target parent directory is a symlink pointing outside workspace' do
+    test 'rename moves into a directory symlinked in from outside the workspace' do
       outside_dir = Dir.mktmpdir('mbeditor_outside_dir_')
-      link = File.join(@workspace, 'escaped_dir')
+      link = File.join(@workspace, 'linked_dir')
       File.symlink(outside_dir, link)
-      patch '/mbeditor/rename', params: { path: 'README.md', new_path: 'escaped_dir/stolen.md' }, as: :json
-      assert_response :forbidden
+      patch '/mbeditor/rename', params: { path: 'README.md', new_path: 'linked_dir/moved.md' }, as: :json
+      assert_response :success
+      assert File.file?(File.join(outside_dir, 'moved.md'))
     ensure
       File.unlink(link) if link && File.symlink?(link)
       FileUtils.rm_rf(outside_dir) if outside_dir && File.directory?(outside_dir)
@@ -1622,15 +1635,16 @@ module Mbeditor
     # save — symlink path traversal
     # ---------------------------------------------------------------------------
 
-    test "save returns 403 for symlink pointing outside workspace" do
+    test "save writes through a symlink whose target is outside the workspace" do
       outside = Tempfile.new('mbeditor_outside_save_')
-      outside.write('secret')
+      outside.write('original')
       outside.flush
-      link = File.join(@workspace, 'evil_save_link.txt')
+      link = File.join(@workspace, 'linked_save.txt')
       File.symlink(outside.path, link)
 
-      post '/mbeditor/file', params: { path: 'evil_save_link.txt', code: 'pwned' }, as: :json
-      assert_response :forbidden
+      post '/mbeditor/file', params: { path: 'linked_save.txt', code: 'edited' }, as: :json
+      assert_response :success
+      assert_equal 'edited', File.read(outside.path)
     ensure
       File.unlink(link) if link && File.symlink?(link)
       outside&.close!

@@ -93,11 +93,25 @@ axios.interceptors.request.use(function (config) {
   return config;
 });
 
+// A request we aborted ourselves also arrives here with no response, and the
+// editor cancels constantly — every keystroke supersedes the previous search,
+// every hover and completion provider aborts when the cursor moves on, and
+// opening a file aborts its own prefetch. Counting those as unreachable took
+// two cancellations to declare the server offline, so routine actions (creating
+// a file, typing in search) flashed "Server offline" until the /ping probe
+// one second later put it back. A cancellation says nothing about the server.
+function _isCanceled(error) {
+  if (!error) return false;
+  if (axios.isCancel && axios.isCancel(error)) return true;
+  return error.code === 'ERR_CANCELED' || error.name === 'CanceledError' || error.name === 'AbortError';
+}
+
 axios.interceptors.response.use(function (response) {
   ServerReachability.noteSuccess();
   return response;
 }, function (error) {
   if (error && error.mbeditorSkipped) return Promise.reject(error);
+  if (_isCanceled(error)) return Promise.reject(error);
   // No response object at all means the request never reached the server.
   if (error && !error.response) ServerReachability.noteNetworkFailure();
   else ServerReachability.noteSuccess();
