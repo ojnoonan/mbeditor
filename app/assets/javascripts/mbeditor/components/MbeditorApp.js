@@ -39,7 +39,52 @@ var GIT_PANEL_MIN_WIDTH = 280;
 var PANE_MIN_WIDTH_PERCENT = 20;
 var PANE_MAX_WIDTH_PERCENT = 80;
 var SIDEBAR_COLLAPSED_WIDTH = 48;
-var SUPPORTED_PRETTIER_EXTS = ['js', 'jsx', 'json', 'css', 'scss', 'html', 'md'];
+// Extension -> Prettier parser. Limited to what the vendored plugins actually
+// parse (babel, estree, html, postcss, markdown); anything outside this map
+// falls through to Monaco's re-indent.
+//
+// One map, one options builder, one runner — there were four copies of each,
+// and they had drifted: two read a `prettierTabWidth`/`prettierUseTabs` pair
+// that no settings screen ever wrote, so Prettier reprinted every JS/JSX file
+// at two spaces however the editor was configured.
+var PRETTIER_PARSERS = {
+  js: 'babel', jsx: 'babel', mjs: 'babel', cjs: 'babel',
+  json: 'json', jsonc: 'json', json5: 'json5',
+  css: 'css', scss: 'scss', less: 'less',
+  html: 'html', vue: 'vue',
+  md: 'markdown', markdown: 'markdown'
+};
+var SUPPORTED_PRETTIER_EXTS = Object.keys(PRETTIER_PARSERS);
+
+function prettierParserFor(path) {
+  return PRETTIER_PARSERS[String(path || '').split('.').pop().toLowerCase()] || null;
+}
+
+// Indentation comes from the editor's own tabSize/insertSpaces, so formatting
+// produces what the user set up. `insertSpaces !== true` mirrors how
+// EditorPanel configures Monaco: anything but an explicit true means tabs.
+function prettierOptions(prefs, parserName, extra) {
+  return Object.assign({
+    parser: parserName,
+    plugins: Object.values(window.prettierPlugins || {}),
+    printWidth: prefs.prettierPrintWidth != null ? prefs.prettierPrintWidth : 80,
+    tabWidth: prefs.tabSize != null ? prefs.tabSize : 4,
+    useTabs: prefs.insertSpaces !== true,
+    semi: prefs.prettierSemi !== false,
+    singleQuote: !!prefs.prettierSingleQuote,
+    trailingComma: prefs.prettierTrailingComma || 'all',
+    bracketSpacing: prefs.prettierBracketSpacing !== false
+  }, extra || {});
+}
+
+// Format with Prettier, loading it on first use. Rejects if it cannot be
+// loaded, so callers can report that rather than appear to do nothing.
+function runPrettier(source, prefs, parserName, extra) {
+  var go = function () { return window.prettier.format(source, prettierOptions(prefs, parserName, extra)); };
+  if (window.prettier && window.prettierPlugins) return go();
+  if (window.loadPrettierPlugins) return window.loadPrettierPlugins().then(go);
+  return Promise.reject(new Error('Prettier is not available'));
+}
 
 var DEFAULT_EDITOR_PREFS = {
   theme: 'vs-dark',
@@ -74,8 +119,6 @@ var DEFAULT_EDITOR_PREFS = {
   toolbarIconOnly: false,
   rubocopLintEnabled: true,
   prettierPrintWidth: 80,
-  prettierTabWidth: 2,
-  prettierUseTabs: false,
   prettierSemi: true,
   prettierSingleQuote: false,
   prettierTrailingComma: 'all',
@@ -89,28 +132,11 @@ var DEFAULT_EDITOR_PREFS = {
   branchStateRestore: true
 };
 
-// Detect the minimum number of leading spaces used for indentation across all
-// indented lines in the code. Returns 0 if no space-indented lines are found
-// (e.g. file already uses tabs or has no indented lines).
-function detectIndentWidth(code) {
-  var min = Infinity;
-  code.split('\n').forEach(function(line) {
-    if (!line.trim()) return;
-    var m = line.match(/^( +)/);
-    if (m) min = Math.min(min, m[1].length);
-  });
-  return min === Infinity ? 0 : min;
-}
-
-// Convert leading space-based indentation to tabs using the detected unit size.
-function spacesToTabs(code, indentSize) {
-  var unit = ' '.repeat(indentSize);
-  return code.split('\n').map(function(line) {
-    var tabs = '';
-    while (line.startsWith(unit)) { tabs += '\t'; line = line.slice(unit.length); }
-    return tabs + line;
-  }).join('\n');
-}
+// Indentation of formatted output is the formatter's job, not a post-pass:
+// Prettier is given useTabs/tabWidth from the editor's own settings, and Ruby
+// indentation comes from the project's .rubocop.yml. Monaco's built-in
+// "Convert Indentation to Tabs / to Spaces" commands (F1) cover converting a
+// file that is already open, using its own indentation guesser.
 
 function diffLines(oldLines, newLines) {
   var n = oldLines.length, m = newLines.length;
@@ -1018,28 +1044,11 @@ var MbeditorApp = function MbeditorApp() {
       return;
     }
 
-    var ext = tab.path.split('.').pop().toLowerCase();
-    var formatMap = {
-      'js': 'babel', 'jsx': 'babel',
-      'json': 'json',
-      'css': 'css', 'scss': 'scss',
-      'html': 'html', 'md': 'markdown'
-    };
-    var parserName = formatMap[ext];
+    var parserName = prettierParserFor(tab.path);
 
     if (parserName && window.prettier && window.prettierPlugins) {
       var prefs = EditorStore.getState().editorPrefs || DEFAULT_EDITOR_PREFS;
-      window.prettier.format(tab.content, {
-        parser: parserName,
-        plugins: Object.values(window.prettierPlugins),
-        printWidth: prefs.prettierPrintWidth != null ? prefs.prettierPrintWidth : 80,
-        tabWidth: prefs.tabSize != null ? prefs.tabSize : 2,
-        useTabs: !(prefs.insertSpaces),
-        semi: prefs.prettierSemi !== false,
-        singleQuote: !!prefs.prettierSingleQuote,
-        trailingComma: prefs.prettierTrailingComma || 'all',
-        bracketSpacing: prefs.prettierBracketSpacing !== false
-      }).then(function () {
+      window.prettier.format(tab.content, prettierOptions(prefs, parserName)).then(function () {
         var currentPane = EditorStore.getState().panes.find(function (p) {
           return p.id === paneId;
         });
@@ -2671,26 +2680,9 @@ var MbeditorApp = function MbeditorApp() {
         .then(function (res) { return (res && res.content) || null; })
         ["catch"](function () { return null; });
     }
-    var ext = tab.path.split('.').pop().toLowerCase();
-    var parserMap = { 'js': 'babel', 'jsx': 'babel', 'json': 'json', 'css': 'css', 'scss': 'scss', 'html': 'html', 'md': 'markdown' };
-    var parserName = parserMap[ext];
+    var parserName = prettierParserFor(tab.path);
     if (!parserName) return Promise.resolve(null);
-    var run = function () {
-      return window.prettier.format(tab.content, {
-        parser: parserName,
-        plugins: Object.values(window.prettierPlugins),
-        printWidth: editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80,
-        tabWidth: editorPrefs.prettierTabWidth != null ? editorPrefs.prettierTabWidth : 2,
-        useTabs: !!editorPrefs.prettierUseTabs,
-        semi: editorPrefs.prettierSemi !== false,
-        singleQuote: !!editorPrefs.prettierSingleQuote,
-        trailingComma: editorPrefs.prettierTrailingComma || 'all',
-        bracketSpacing: editorPrefs.prettierBracketSpacing !== false
-      })["catch"](function () { return null; });
-    };
-    if (window.prettier && window.prettierPlugins) return run();
-    if (window.loadPrettierPlugins) return window.loadPrettierPlugins().then(run)["catch"](function () { return null; });
-    return Promise.resolve(null);
+    return runPrettier(tab.content, editorPrefs, parserName)["catch"](function () { return null; });
   };
 
   var handleSave = function handleSave(paneId, tab) {
@@ -2991,132 +2983,141 @@ var MbeditorApp = function MbeditorApp() {
       });
   };
 
+  // Format one tab's content.
+  //
+  // Resolves to the formatted string, or to null when no formatter covers this
+  // file type (the caller then decides whether to fall back to a re-indent).
+  // Rejects when a formatter ran and failed, so the reason reaches the user
+  // rather than the button appearing to do nothing.
+  var formatTabContent = function formatTabContent(tab, prefs) {
+    prefs = prefs || editorPrefs;
+    if (isRubyPath(tab.path) || tab.path.endsWith('.rake')) {
+      if (!rubocopAvailable) return Promise.reject(new Error("RuboCop is not available for this workspace."));
+      // RuboCop's output is taken as-is. Ruby indentation belongs to the
+      // project's .rubocop.yml (Layout/IndentationStyle and friends), so
+      // rewriting it here would fight the linter that is about to be run over
+      // the same file. The old code tried the opposite — converting the source
+      // to tabs *before* handing it over — which RuboCop simply discarded.
+      return formatRubySource(tab.path, tab.content).then(function (res) {
+        return (res && res.content) || null;
+      });
+    }
+
+    var parserName = prettierParserFor(tab.path);
+    if (!parserName) return Promise.resolve(null);
+    return runPrettier(tab.content, prefs, parserName);
+  };
+
+  // Write formatted content back to a tab, dirty and unsaved — the user decides
+  // when to save. EditorPanel applies it through executeEdits, so undo works.
+  var applyFormattedContent = function applyFormattedContent(paneId, tabId, formatted) {
+    EditorStore.setState({
+      panes: EditorStore.getState().panes.map(function (p) {
+        if (p.id !== paneId) return p;
+        return _extends({}, p, { tabs: p.tabs.map(function (t) {
+          return t.id === tabId
+            ? _extends({}, t, { content: formatted, dirty: true, externalContentVersion: (t.externalContentVersion || 0) + 1 })
+            : t;
+        }) });
+      })
+    });
+  };
+
+  var highlightFormatChanges = function highlightFormatChanges(before, after) {
+    var monacoEditor = window.__mbeditorActiveEditor;
+    if (!monacoEditor || before === after) return;
+    var changedLineNums = diffLines(before.split('\n'), after.split('\n'));
+    if (!changedLineNums.length) return;
+    var ids = monacoEditor.deltaDecorations([], changedLineNums.map(function (ln) {
+      return { range: new monaco.Range(ln, 1, ln, 1), options: { isWholeLine: true, className: 'mbeditor-format-changed' } };
+    }));
+    setTimeout(function () { monacoEditor.deltaDecorations(ids, []); }, 3000);
+  };
+
   var handleFormat = function handleFormat() {
     if (!activeTab) return;
 
-    var isRubyLang = activeTab.path.endsWith('.rb') || activeTab.path.endsWith('.rake') || activeTab.path.endsWith('.gemspec') || activeTab.path.endsWith("Rakefile") || activeTab.path.endsWith("Gemfile");
+    var tab = activeTab;
+    var paneId = focusedPane.id;
+    var originalContent = tab.content;
 
-    if (isRubyLang && !rubocopAvailable) {
-      EditorStore.setStatus("RuboCop is not available for this workspace.", "warning");
-      return;
-    }
+    setLoading(function (prev) { return _extends({}, prev, { format: true }); });
+    EditorStore.setStatus("Formatting " + tab.name + "...", "info");
 
-    if (isRubyLang) {
-      setLoading(function (prev) {
-        return _extends({}, prev, { format: true });
-      });
-      EditorStore.setStatus("Formatting...", "info");
-      var originalContent = activeTab.content;
-      var codeToFormat = originalContent;
-      if (editorPrefs.insertSpaces === false) {
-        var detectedWidth = detectIndentWidth(originalContent);
-        if (detectedWidth > 0) codeToFormat = spacesToTabs(originalContent, detectedWidth);
-      }
-      formatRubySource(activeTab.path, codeToFormat).then(function (res) {
-        if (res.content) {
-          // Update content and mark dirty — user decides when to save.
-          // The executeEdits path in EditorPanel preserves the undo stack.
-          var newPanes = EditorStore.getState().panes.map(function (p) {
-            if (p.id === focusedPane.id) return _extends({}, p, { tabs: p.tabs.map(function (t) {
-                return t.id === activeTab.id ? _extends({}, t, { content: res.content, dirty: true, externalContentVersion: (t.externalContentVersion || 0) + 1 }) : t;
-              }) });
-            return p;
-          });
-          EditorStore.setState({ panes: newPanes });
-
-          // Highlight changed lines briefly
-          var monacoEditor = window.__mbeditorActiveEditor;
-          if (monacoEditor && res.content !== originalContent) {
-            var changedLineNums = diffLines(originalContent.split('\n'), res.content.split('\n'));
-            if (changedLineNums.length > 0) {
-              var decorations = changedLineNums.map(function(ln) {
-                return { range: new monaco.Range(ln, 1, ln, 1), options: { isWholeLine: true, className: 'mbeditor-format-changed' } };
-              });
-              var ids = monacoEditor.deltaDecorations([], decorations);
-              setTimeout(function() { monacoEditor.deltaDecorations(ids, []); }, 3000);
-            }
-          }
+    formatTabContent(tab).then(function (formatted) {
+      if (formatted == null) {
+        // No formatter for this file type — re-indent with Monaco instead.
+        var monacoEditor = window.__mbeditorActiveEditor;
+        var reindentAction = monacoEditor && monacoEditor.getAction('editor.action.reindentLines');
+        if (!reindentAction) {
+          EditorStore.setStatus("No formatter for " + tab.name + ".", "warning");
+          return;
         }
-        EditorStore.setStatus("Formatted (Unsaved)", "success");
-        GitService.fetchStatus();
+        return reindentAction.run().then(function () {
+          EditorStore.setStatus("Re-indented (Unsaved)", "success");
+        });
+      }
+      if (formatted !== originalContent) {
+        applyFormattedContent(paneId, tab.id, formatted);
+        highlightFormatChanges(originalContent, formatted);
+      }
+      EditorStore.setStatus(formatted === originalContent ? "Already formatted" : "Formatted (Unsaved)", "success");
+      GitService.fetchStatus();
+    })["catch"](function (err) {
+      EditorStore.setStatus("Format failed: " + (err && err.message ? err.message : err), "error");
+    })["finally"](function () {
+      setLoading(function (prev) { return _extends({}, prev, { format: false }); });
+    });
+  };
+
+  // Format every open document across all panes.
+  //
+  // Each tab is formatted independently and a failure is collected rather than
+  // thrown, so one unparseable file cannot stop the rest. Virtual tabs (diffs,
+  // settings, the changelog) have no path on disk and are skipped.
+  var handleFormatAll = function handleFormatAll() {
+    var targets = [];
+    EditorStore.getState().panes.forEach(function (p) {
+      p.tabs.forEach(function (t) {
+        if (t.path && !t.path.startsWith('mbeditor://') && t.path !== '__settings__' && typeof t.content === 'string') {
+          targets.push({ paneId: p.id, tab: t });
+        }
+      });
+    });
+
+    if (!targets.length) {
+      EditorStore.setStatus("No open documents to format.", "warning");
+      return;
+    }
+
+    setLoading(function (prev) { return _extends({}, prev, { format: true }); });
+    EditorStore.setStatus("Formatting " + targets.length + " open document" + (targets.length === 1 ? "" : "s") + "...", "info");
+
+    var changed = 0;
+    var skipped = 0;
+    var failures = [];
+
+    Promise.all(targets.map(function (target) {
+      return formatTabContent(target.tab).then(function (formatted) {
+        if (formatted == null) { skipped += 1; return; }
+        if (formatted === target.tab.content) return;
+        applyFormattedContent(target.paneId, target.tab.id, formatted);
+        changed += 1;
       })["catch"](function (err) {
-        return EditorStore.setStatus("Format failed: " + err.message, "error");
-      })["finally"](function () {
-        return setLoading(function (prev) {
-          return _extends({}, prev, { format: false });
-        });
+        failures.push(target.tab.name + ": " + (err && err.message ? err.message.split('\n')[0] : err));
       });
-      return;
-    }
-
-    // Attempt Prettier Formatting
-    var ext = activeTab.path.split('.').pop().toLowerCase();
-    var formatMap = {
-      'js': 'babel', 'jsx': 'babel',
-      'json': 'json',
-      'css': 'css', 'scss': 'scss',
-      'html': 'html', 'md': 'markdown'
-    };
-    var parserName = formatMap[ext];
-
-    if (parserName) {
-      setLoading(function (prev) {
-        return _extends({}, prev, { format: true });
-      });
-      EditorStore.setStatus("Formatting with Prettier...", "info");
-      var doFormat = function doFormat() {
-        return window.prettier.format(activeTab.content, {
-          parser: parserName,
-          plugins: Object.values(window.prettierPlugins),
-          printWidth: editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80,
-          tabWidth: editorPrefs.prettierTabWidth != null ? editorPrefs.prettierTabWidth : 2,
-          useTabs: !!editorPrefs.prettierUseTabs,
-          semi: editorPrefs.prettierSemi !== false,
-          singleQuote: !!editorPrefs.prettierSingleQuote,
-          trailingComma: editorPrefs.prettierTrailingComma || 'all',
-          bracketSpacing: editorPrefs.prettierBracketSpacing !== false
-        }).then(function (formatted) {
-          var newPanes = EditorStore.getState().panes.map(function (p) {
-            if (p.id === focusedPane.id) return _extends({}, p, { tabs: p.tabs.map(function (t) {
-                return t.id === activeTab.id ? _extends({}, t, { content: formatted, dirty: true, externalContentVersion: (t.externalContentVersion || 0) + 1 }) : t;
-              }) });
-            return p;
-          });
-          EditorStore.setState({ panes: newPanes });
-          EditorStore.setStatus("Formatted (Unsaved)", "success");
-          GitService.fetchStatus();
-        })["catch"](function (err) {
-          EditorStore.setStatus("Prettier Formatter failed: " + err.message, "error");
-        })["finally"](function () {
-          setLoading(function (prev) {
-            return _extends({}, prev, { format: false });
-          });
-        });
-      };
-      if (window.prettier && window.prettierPlugins) {
-        doFormat();
-      } else if (window.loadPrettierPlugins) {
-        window.loadPrettierPlugins().then(doFormat)["catch"](function (err) {
-          EditorStore.setStatus("Failed to load Prettier: " + err.message, "error");
-          setLoading(function (prev) { return _extends({}, prev, { format: false }); });
-        });
-      } else {
-        EditorStore.setStatus("Prettier is not available.", "warning");
-        setLoading(function (prev) { return _extends({}, prev, { format: false }); });
-      }
-      return;
-    }
-
-    // Fallback: Monaco re-indent using the editor's configured tabSize/insertSpaces
-    var monacoEditor = window.__mbeditorActiveEditor;
-    if (monacoEditor) {
-      var reindentAction = monacoEditor.getAction('editor.action.reindentLines');
-      if (reindentAction) {
-        reindentAction.run().then(function () {
-          EditorStore.setStatus("Formatted (Unsaved)", "success");
-        });
-      }
-    }
+    })).then(function () {
+      var parts = [changed + " formatted"];
+      if (skipped) parts.push(skipped + " skipped");
+      if (failures.length) parts.push(failures.length + " failed");
+      EditorStore.setStatus(
+        parts.join(", ") + (changed ? " (Unsaved)" : "") + (failures.length ? " — " + failures[0] : ""),
+        failures.length ? "error" : "success"
+      );
+      if (changed) GitService.fetchStatus();
+    })["finally"](function () {
+      setLoading(function (prev) { return _extends({}, prev, { format: false }); });
+    });
   };
 
   var TEST_CACHE_PREFIX = 'mbeditor_test_result_';
@@ -4226,9 +4227,15 @@ var MbeditorApp = function MbeditorApp() {
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
           "button",
-          { className: "statusbar-btn", onClick: handleFormat, disabled: loading.format || !canLintAndFormat, 'aria-busy': !!loading.format },
+          { className: "statusbar-btn", onClick: handleFormat, disabled: loading.format || !canLintAndFormat, 'aria-busy': !!loading.format, title: "Format this document" },
           !loading.format && React.createElement("i", { className: "fas fa-magic" }),
           !toolbarIconOnly && !loading.format && " Format"
+        ),
+        React.createElement(
+          "button",
+          { className: "statusbar-btn", onClick: handleFormatAll, disabled: loading.format || !canLintAndFormat, 'aria-busy': !!loading.format, title: "Format all open documents" },
+          React.createElement("i", { className: "fas fa-wand-magic-sparkles" }),
+          !toolbarIconOnly && !loading.format && " Format All"
         ),
         hasGitBranch && React.createElement(
           React.Fragment,

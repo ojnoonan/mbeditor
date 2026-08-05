@@ -89,6 +89,44 @@ parse time and contributes nothing, since it is UMD-wrapped.
 Nothing truncates silently: `/js_program` reports `skipped` with a reason per
 file, and `/js_globals` reports `truncated`.
 
+## Formatting: one Prettier config, one JS formatter
+
+`MbeditorApp.js` holds a single `PRETTIER_PARSERS` map, `prettierOptions()` and
+`runPrettier()`. Every caller — the toolbar button, Format All, format-on-save,
+the auto-lint syntax check, and the Monaco providers in `editor_plugins.js` —
+goes through them. There used to be four copies, and they had drifted: two read
+a `prettierTabWidth`/`prettierUseTabs` pair that no settings screen ever wrote,
+so JS and JSX reprinted at two spaces whatever the user had configured.
+**Indentation comes from `tabSize`/`insertSpaces`**, the same prefs Monaco is
+configured with, and `useTabs: insertSpaces !== true` mirrors how `EditorPanel`
+reads them. There is no separate Prettier indent setting; don't add one back.
+
+**The TypeScript worker's formatter is switched off** for `javascript`
+(`setModeConfiguration({documentRangeFormattingEdits: false, onTypeFormattingEdits: false})`).
+It registers its own provider, Monaco takes whichever it finds first, and the
+result was one file with two formatters that disagreed — the toolbar button got
+Prettier, Shift+Alt+F got the TS worker's two-space no-semicolon output. Only
+formatting is disabled; completions, hovers, diagnostics and rename still come
+from the worker.
+
+**Format-on-paste is driven from `editor.onDidPaste`**, not Monaco's
+`formatOnPaste` option (which is now passed as `false`). That option had been on
+by default for a long time and never ran the formatter — the contribution is in
+the bundle and `onDidPaste` fires, but it declines. The explicit handler in
+`attachEditorFeatures` also gives the distinction that matters: a paste covering
+the whole document formats as a document, a paste in the middle formats as a
+range, so Prettier's `rangeStart`/`rangeEnd` reprints the smallest enclosing
+statement and leaves the rest byte-identical. Edits are narrowed to the changed
+span (`minimalEdit`) — replacing the whole document would drop the cursor and
+collapse undo on every paste. It respects `editorPrefs.formatOnPaste`.
+
+**Ruby output is taken as-is.** RuboCop reprints per the project's
+`.rubocop.yml` (`Layout/IndentationStyle`, `Layout/IndentationWidth`), so the
+editor does not re-indent it — that would fight the linter about to run over the
+same file. An earlier attempt converted the source to tabs *before* handing it
+to RuboCop, which simply discarded it. Converting an already-open file is
+Monaco's built-in "Convert Indentation to Tabs / to Spaces" (F1).
+
 ## Ruby intelligence: ruby-lsp, and what it does not cover
 
 `lib/mbeditor/ruby_lsp_client.rb` runs one ruby-lsp per workspace and speaks LSP
