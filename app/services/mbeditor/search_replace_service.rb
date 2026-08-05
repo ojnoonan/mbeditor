@@ -45,6 +45,19 @@ module Mbeditor
         AvailabilityProbe.rg_command || "rg"
       end
 
+      # Whether the git tier is usable on this workspace. The presence of a
+      # `.git` entry is not enough: a repo git refuses to open (dubious
+      # ownership under Docker, a `.git` file pointing at a gitdir that moved,
+      # a git binary missing from the server's PATH) still has one. `git grep`
+      # then fails, its stderr goes to /dev/null, and search returns instantly
+      # with nothing — silently, and with no way to tell it apart from "no
+      # matches". AvailabilityProbe.git runs `rev-parse --is-inside-work-tree`,
+      # which fails in exactly those cases, so a bad repo falls through to
+      # plain grep instead of to an empty result set.
+      def git_tier?(root)
+        File.exist?(File.join(root, ".git")) && AvailabilityProbe.git(root)
+      end
+
       # Which backend a search on this workspace will actually use. Reported by
       # GET /workspace: the difference between the tiers is 10-30x, so "why is
       # search slow" needs to be answerable without reading the source.
@@ -245,7 +258,7 @@ module Mbeditor
 
       def pick_tier(root)
         return :rg if rg_available?
-        return :git if File.exist?(File.join(root, ".git"))
+        return :git if git_tier?(root)
 
         :grep
       end
