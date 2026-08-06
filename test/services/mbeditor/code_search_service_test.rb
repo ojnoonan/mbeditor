@@ -34,7 +34,7 @@ module Mbeditor
     # Non-matching pattern
     # -------------------------------------------------------------------------
 
-    test "grep fallback passes exclude-dirs and a timeout through ProcessRunner" do
+    test "grep fallback prunes exclusions via find and passes a timeout through ProcessRunner" do
       original_excluded = Mbeditor.configuration.excluded_paths
       Mbeditor.configuration.excluded_paths = %w[node_modules tmp vendor/bundle]
       captured = nil
@@ -43,7 +43,7 @@ module Mbeditor
       ProcessRunner.define_singleton_method(:call) do |cmd, **opts|
         # Background threads (git polling, cache warm) may call ProcessRunner
         # concurrently — only capture the grep spawned by CodeSearchService.
-        if cmd.first == "grep"
+        if cmd.first == "sh"
           captured = { cmd: cmd, opts: opts }
           { stdout: "", stderr: "", exit_status: nil }
         else
@@ -57,9 +57,11 @@ module Mbeditor
 
       CodeSearchService.call("pattern", @workspace)
 
-      assert_equal "grep", captured[:cmd].first
-      assert_includes captured[:cmd], "--exclude-dir=node_modules"
-      assert_includes captured[:cmd], "-I"
+      pipeline = captured[:cmd].last
+      assert_includes pipeline, "-name node_modules"
+      assert_includes pipeline, "-path #{File.join(@workspace, 'vendor/bundle')}"
+      assert_includes pipeline, "-prune"
+      assert_includes pipeline, "-I"
       assert_equal Mbeditor.configuration.search_timeout, captured[:opts][:timeout]
       assert_equal "C", captured[:opts][:env]["LC_ALL"]
     ensure
@@ -277,7 +279,7 @@ module Mbeditor
         end
       end
 
-      grep_call = captured.find { |c| c[:cmd].first == "grep" }
+      grep_call = captured.find { |c| c[:cmd].first == "sh" && c[:cmd].last.include?(" grep ") }
       assert grep_call, "expected the grep search to run through ProcessRunner"
       assert_equal 3, grep_call[:timeout]
     end

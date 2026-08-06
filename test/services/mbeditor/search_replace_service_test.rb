@@ -492,15 +492,47 @@ module Mbeditor
       SearchReplaceService.invalidate_cache(@workspace)
     end
 
-    test "grep tier command uses LC_ALL=C, -I, and drops slashed exclude-dirs" do
+    # Every exclusion — slashed ones included — must be pruned by find before
+    # the walk, not post-filtered: grep read vendor/bundle and public/assets in
+    # full on every search, which is what made the grep tier unusable on host
+    # apps without ripgrep.
+    test "grep tier prunes all exclusions via find and greps in parallel" do
       env, args = SearchReplaceService.send(:build_command, :grep, @workspace, "x",
                                             use_regex: false, match_case: false, whole_word: false,
                                             excluded_paths: %w[node_modules vendor/bundle], paths: nil)
       assert_equal "C", env["LC_ALL"]
-      assert_includes args, "-I"
-      assert_includes args, "-i"
-      assert_includes args, "--exclude-dir=node_modules"
-      assert_not_includes args, "--exclude-dir=vendor/bundle"
+      assert_equal %w[sh -c], args.first(2)
+      cmd = args.last
+      assert_includes cmd, "-name node_modules"
+      assert_includes cmd, "-path #{File.join(@workspace, 'vendor/bundle')}"
+      assert_includes cmd, "-prune"
+      assert_includes cmd, "xargs -0 -P"
+      assert_includes cmd, "-I"
+      assert_includes cmd, "--line-buffered"
+      assert_includes cmd, "-i"
+    end
+
+    test "grep tier scoped to paths runs grep directly with -e and -- guards" do
+      _env, args = SearchReplaceService.send(:build_command, :grep, @workspace, "-danger",
+                                             use_regex: false, match_case: true, whole_word: false,
+                                             excluded_paths: [], paths: [File.join(@workspace, "a.rb")])
+      assert_equal "grep", args.first
+      dash = args.index("--")
+      assert dash, "grep args must contain --"
+      assert_equal ["-e", "-danger"], args[dash - 2, 2]
+      assert_equal File.join(@workspace, "a.rb"), args.last
+    end
+
+    test "grep tier finds matches in a slashed excluded_paths sibling but not inside it" do
+      write_file("app/code.rb",            "SLASH_NEEDLE\n")
+      write_file("vendor/bundle/gem.rb",   "SLASH_NEEDLE\n")
+      write_file("vendor/keep.rb",         "SLASH_NEEDLE\n")
+
+      with_rg_available(false) do
+        results = search("SLASH_NEEDLE", excluded_paths: ["vendor/bundle"])
+        files = results.map { |r| r[:file] }.sort
+        assert_equal ["app/code.rb", "vendor/keep.rb"], files
+      end
     end
 
     # ---------------------------------------------------------------------------

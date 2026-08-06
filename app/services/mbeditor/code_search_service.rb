@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "shellwords"
+require "etc"
+
 module Mbeditor
   # Line-oriented regex search over the workspace's JS-family files. Backs the
   # JS definition/member lookups. Same three-tier backend as
@@ -86,15 +89,26 @@ module Mbeditor
         lines.map { |l| "#{workspace_root}/#{l}" }
       end
 
+      # Same shape as SearchReplaceService's grep tier: find prunes every
+      # exclusion — slashed ones included, which --exclude-dir cannot express —
+      # before the walk, and applies the include/minified globs there too, so
+      # grep only ever opens candidate JS files. grep -r --include still walked
+      # (and for public/assets, read) the excluded trees on every lookup.
+      # ProcessRunner kills the process group, so the sh -c pipeline dies as
+      # one unit on timeout.
       def run_grep(pattern, workspace_root, globs)
-        includes = globs.map { |g| "--include=#{g}" }
-        excludes = MINIFIED_GLOBS.map { |g| "--exclude=#{g}" }
-        args = ["grep", "-I", "-rn", "--color=never", "-E", pattern] + includes + excludes
-        excluded_paths.reject { |p| p.include?("/") }.select { |d| d.match?(/\A[\w.-]+\z/) }.each do |d|
-          args << "--exclude-dir=#{d}"
+        prune = excluded_paths.flat_map do |p|
+          p.include?("/") ? ["-path", File.join(workspace_root, p), "-o"] : ["-name", p, "-o"]
         end
-        args << workspace_root
-        run_command(args, env: { "LC_ALL" => "C" })
+        find = ["find", workspace_root]
+        find += ["("] + prune[0..-2] + [")", "-prune", "-o"] unless prune.empty?
+        find += ["-type", "f", "("] + globs.flat_map { |g| ["-name", g, "-o"] }[0..-2] + [")"]
+        MINIFIED_GLOBS.each { |g| find += ["!", "-name", g] }
+        find << "-print0"
+        xargs = ["xargs", "-0", "-P", Etc.nprocessors.clamp(2, 8).to_s, "-n", "500",
+                 "grep", "-I", "-Hn", "--line-buffered", "--color=never", "-E", "-e", pattern, "--"]
+        cmd = "#{Shellwords.shelljoin(find)} | #{Shellwords.shelljoin(xargs)}"
+        run_command(["sh", "-c", cmd], env: { "LC_ALL" => "C" })
       end
     end
   end
