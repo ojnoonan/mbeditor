@@ -18,7 +18,7 @@ module Mbeditor
     def initialize
       @allowed_environments = [:development]
       @workspace_root = nil
-      @excluded_paths = %w[.git tmp log node_modules .bundle coverage vendor/bundle public/assets storage]
+      @excluded_paths = %w[.git tmp log node_modules .bundle coverage vendor/bundle vendor/cache public/assets storage]
       @rubocop_command = "rubocop"
       @rubocop_server  = true # use rubocop's --server daemon (rubocop >= 1.31) for ~10x faster lint; false forces --no-server
       @redmine_enabled       = false
