@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.7] - 2026-08-06
+
+### Fixed
+- **Project search was 10-80x slower than terminal grep on hosts without
+  ripgrep.** grep's `--exclude-dir` only accepts plain directory names, so the
+  slashed default exclusions (`vendor/bundle`, `public/assets`) never reached
+  the command line and grep walked those trees in full on every search, with
+  the matches discarded in Ruby afterwards. The grep tier now prunes every
+  exclusion with `find` — slashed paths included — and feeds the survivors to
+  grep in parallel batches (`xargs -P`), measured 7.2 s → 0.09 s on a 350 MB
+  tree with a realistic `vendor/bundle`, 3-4x faster than a plain terminal
+  `grep -r`. The same fix applies to `CodeSearchService`, which backs the JS
+  definition/global lookups and was reading precompiled `public/assets`
+  bundles on every "Cannot find name" the editor reported.
+- **A search query starting with `-` was parsed as grep options.** Queries now
+  pass through `-e … --` on the grep tier.
+- **Superseding a search now kills the whole pipeline.** The subprocess is
+  spawned in its own process group and the TERM goes to the group, so a
+  stacked keystroke cannot leave a find/grep pipeline running behind the
+  shell.
+- **`vendor/cache` is excluded from search by default.** `bundle install
+  --local` keeps every `.gem` archive there — gigabytes of binary files search
+  has no business opening.
+
 ## [0.12.6] - 2026-08-05
 
 ### Added
