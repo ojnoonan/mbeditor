@@ -89,6 +89,16 @@ parse time and contributes nothing, since it is UMD-wrapped.
 Nothing truncates silently: `/js_program` reports `skipped` with a reason per
 file, and `/js_globals` reports `truncated`.
 
+**Babel scope lint** (`JsSyntaxCheckService.scope_lint`, save-time, warnings):
+parses the saved JS/JSX with `Babel.packages.parser`/`traverse` in the same
+mini_racer context as the syntax check. Whitelist = top-level declarations of
+every workspace JS file (parsed once, cached by content digest) + JsGlobals
+names (`window.X =`) + DOM/React/hook lists; ES builtins come from babel's own
+`Scope#hasBinding`. Reports unbound references and let-bindings written only
+inside `useEffect`/`useLayoutEffect` but read during render. Report-only, and
+`config.js_scope_lint = false` disables. Degrades to a no-op on babel bundles
+without `Babel.packages` (old standalone builds).
+
 ## Formatting: one Prettier config, one JS formatter
 
 `MbeditorApp.js` holds a single `PRETTIER_PARSERS` map, `prettierOptions()` and

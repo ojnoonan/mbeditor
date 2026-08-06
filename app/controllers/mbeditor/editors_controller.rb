@@ -931,7 +931,20 @@ module Mbeditor
             startLine: line, startCol: col, endLine: line, endCol: col + 1
           }]
         else
-          []
+          # Only when the file parses: the scope lint would re-hit the same
+          # parse error and report nothing useful on top of the marker above.
+          JsSyntaxCheckService.scope_lint(workspace_root, code).map do |w|
+            line = w["line"] || 1
+            col  = (w["column"] || 0) + 1
+            {
+              severity: "warning",
+              copName: "BabelScope",
+              correctable: false,
+              message: "[babel] #{w['message']}",
+              startLine: line, startCol: col,
+              endLine: line, endCol: col + [w["name"].to_s.length, 1].max
+            }
+          end
         end
         return render json: { markers: markers }
       end

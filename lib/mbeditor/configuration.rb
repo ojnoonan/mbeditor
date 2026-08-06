@@ -10,7 +10,7 @@ module Mbeditor
                   :ruby_def_include_dirs, :related_files_custom_paths,
                   :mount_path, :resilient_routing, :js_global_identifiers,
                   :js_program, :js_program_exclude,
-                  :js_syntax_check, :babel_standalone_path,
+                  :js_syntax_check, :babel_standalone_path, :js_scope_lint,
                   :ruby_lsp, :ruby_lsp_command, :ruby_lsp_timeout,
                   :exception_capture, :model_graph_max_models,
                   :search_respect_gitignore, :ripgrep_command
@@ -84,6 +84,7 @@ module Mbeditor
       # third-party or generated JS here, e.g. "app/assets/javascripts/react".
       @js_program_exclude = %w[vendor]
       @js_syntax_check = :auto # save-time babel parse check via host mini_racer + babel-standalone; false disables
+      @js_scope_lint   = true  # save-time undeclared-identifier warnings (needs js_syntax_check active); false disables
       @babel_standalone_path = nil # explicit path to babel-standalone JS; nil auto-detects via the asset pipeline
       @ruby_lsp         = :auto # use the host's ruby-lsp for Ruby definitions/hover/completion when available; false disables
       @ruby_lsp_command = nil   # override the ruby-lsp launch command (String or Array); nil auto-resolves bin/ruby-lsp > gem > bundle exec

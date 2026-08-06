@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Babel-based scope lint for JS/JSX, surfaced as warnings on save.** On top
+  of the existing babel syntax check (host mini_racer + babel-standalone), the
+  saved file is now traversed for identifier references that bind to nothing:
+  not to any scope in the file, not to a top-level declaration in any other
+  workspace JS file (Sprockets concatenates them into one scope), not to a
+  known `window.X` global, and not to the browser/React/hook names. Each one
+  gets a warning marker — `'name' is not defined in any reachable scope` — in
+  the editor and Problems panel. Also warns on bindings that are only assigned
+  inside a `useEffect`/`useLayoutEffect` callback but read during render
+  (undefined on first render). Report-only; `config.js_scope_lint = false`
+  disables it. Requires a babel-standalone new enough to expose
+  `Babel.packages` (7.9+); older bundles degrade to the syntax check alone.
+
 ## [0.12.7] - 2026-08-06
 
 ### Fixed
