@@ -2998,7 +2998,6 @@ button:not(.pico-btn) { margin-bottom: 0; }
   color: var(--ide-fg-muted, #ccc);
 }
 .ide-problems-title { font-weight: 600; }
-.ide-problems-summary { color: var(--ide-text-muted, #858585); font-size: 11px; }
 /* Severity toggles. Pushed to the right of the summary; the text filter that
    follows keeps its own left margin off `auto` so the two sit together. */
 .ide-problems-severity-filter {

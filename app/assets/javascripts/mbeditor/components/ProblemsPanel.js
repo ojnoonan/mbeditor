@@ -223,14 +223,8 @@ var ProblemsPanel = (function () {
         { className: 'ide-problems-header' },
         React.createElement('i', { className: 'fas fa-bug' }),
         React.createElement('span', { className: 'ide-problems-title' }, 'Problems'),
-        React.createElement(
-          'span',
-          { className: 'ide-problems-summary' },
-          problems.errors.length + ' error' + (problems.errors.length === 1 ? '' : 's') +
-            ', ' + problems.warnings.length + ' warning' + (problems.warnings.length === 1 ? '' : 's') +
-            ', ' + problems.infos.length + ' info' +
-            ' in open files'
-        ),
+        // No prose summary: the severity chips below carry the same three
+        // counts, and restating them was the longest thing in the header.
         React.createElement(
           'div',
           { className: 'ide-problems-severity-filter' },
