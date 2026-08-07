@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.8] - 2026-08-07
+
 ### Added
 - **Untitled scratch tabs.** The tab bar's "+" now opens an in-memory
   `Untitled-N` buffer (VS Code-style) instead of prompting to create a file on
