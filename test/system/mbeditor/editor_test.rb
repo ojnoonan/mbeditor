@@ -1000,16 +1000,18 @@ module Mbeditor
                    "A file with no formatter must be left exactly as it was"
     end
 
-    test "pasting space-indented code into a blank file reformats it to tabs" do
+    test "pasting re-indents to the editor's setting without reformatting the code" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
       find(".tree-item-name", text: "component.jsx").click
       assert_selector ".monaco-editor", wait: 10
 
-      # Monaco's own formatOnPaste never ran the formatter here; the paste is
-      # driven from onDidPaste instead. A paste that fills the document is
-      # formatted as a document, so code copied from a spaces project lands as
-      # tabs.
+      # Paste is driven from onDidPaste (Monaco's own formatOnPaste never ran
+      # the formatter here) and re-indents only. Running Prettier on paste
+      # rewrote code the user never touched, so the pasted text must come back
+      # with its indentation converted to the editor's setting and everything
+      # else byte-identical: no added semicolons, no requoting, no spaces
+      # inserted after commas.
       page.execute_script(<<~'JS')
         (function () {
           var ed = window.__mbeditorActiveEditor;
@@ -1023,9 +1025,9 @@ module Mbeditor
         })()
       JS
 
-      formatted = wait_for_formatted_value(matching: /\n\t/)
-      assert_match(/function greet\(name\) \{\n\tif \(name\) \{\n\t\tconsole\.log\("hi", name\);/, formatted,
-                   "Expected the pasted block reformatted with tabs, got: #{formatted.inspect}")
+      pasted = wait_for_formatted_value(matching: /\n\tif/)
+      assert_match(/function greet\(name\)\{\n\tif\(name\)\{\n\t\tconsole\.log\('hi',name\)\n\t\}\n\}/, pasted,
+                   "Expected tab-re-indented but otherwise untouched paste, got: #{pasted.inspect}")
     end
 
     test "a cancelled request does not report the server as offline" do

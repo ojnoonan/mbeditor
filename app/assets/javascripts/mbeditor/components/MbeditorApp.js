@@ -109,7 +109,7 @@ var DEFAULT_EDITOR_PREFS = {
   autoClosingBrackets: 'always',
   autoClosingQuotes: 'always',
   autoIndent: 'full',
-  formatOnPaste: true,
+  indentOnPaste: true,
   formatOnType: false,
   formatOnSave: false,
   quickSuggestions: true,
@@ -856,10 +856,21 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
+  // Every structural mutation (create, delete, rename, import) funnels through
+  // here, so this is where the project-search cache has to be dropped. Saves
+  // invalidated it at their own call sites, which is why editing a file
+  // updated the results but adding or deleting one never did — the stale
+  // cached page was served for the same query. The per-path delta refresh on
+  // the files_changed push can't cover it either: it re-scans named files,
+  // and a file that just appeared or vanished isn't in the previous result set.
   var refreshProjectTree = function refreshProjectTree() {
     return FileService.getTree().then(function (data) {
       setTreeData(data || []);
       SearchService.buildIndex(data || []);
+      SearchService.invalidate();
+      if (searchQueryRef.current && searchPanelVisibleRef.current) {
+        _debouncedSearch(searchQueryRef.current);
+      }
       return data || [];
     })["catch"](function (err) {
       EditorStore.setStatus("Failed to refresh files: " + (err && err.message || "Unknown error"), "error");
@@ -1663,14 +1674,25 @@ var MbeditorApp = function MbeditorApp() {
         });
       });
     }, Promise.resolve());
-  }, 2000)).current;
+    // 250ms, not 2s. The window only exists to coalesce the paths from a
+    // burst of saves; anything longer is dead time the user spends looking at
+    // stale search rows, and the server-side result cache was already dropped
+    // by the same broadcast, so waiting buys nothing.
+  }, 250)).current;
 
   // WebSocket push — when the server broadcasts files_changed, refresh the tree
   // and git status immediately (same work as the 10s poll below does).
   useEffect(function () {
     function handleFilesChanged(payload) {
       if (document.hidden) return;
-      GitService.fetchStatus()["catch"](function () {});
+      // The cheap /git_status probe, not the full /git_info fan-out. This
+      // fires on every save, and the fan-out is the most expensive request
+      // the editor makes — on a dev server with a handful of threads it
+      // queues the tree and search requests behind itself, which is what made
+      // search look like it was waiting for git. fetchStatusLite patches the
+      // branch and file list immediately and escalates to the fan-out on its
+      // own when the branch actually changed.
+      GitService.fetchStatusLite({ background: true })["catch"](function () {});
       FileService.getTree().then(function (data) {
         setTreeData(_treeUpdater(data || []));
         checkOpenTabsForExternalChanges(payload && payload.paths);
@@ -2004,7 +2026,7 @@ var MbeditorApp = function MbeditorApp() {
         noteLocalSave(tab.path, tab.content);
         EditorStore.setStatus("Saved", "success");
         SearchService.invalidate();
-        GitService.fetchStatus();
+        GitService.fetchStatusLite({ background: true });
         // Reset the AVI clean baseline so undo past this save point shows dirty correctly.
         var _closeEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
         if (_closeEntry && _closeEntry.model && !_closeEntry.model.isDisposed()) {
@@ -2109,7 +2131,7 @@ var MbeditorApp = function MbeditorApp() {
     return FileService.saveFile(newPath, tab.content).then(function () {
       noteLocalSave(newPath, tab.content);
       SearchService.invalidate();
-      GitService.fetchStatus();
+      GitService.fetchStatusLite({ background: true });
       FileService.getTree().then(function (data) { setTreeData(_treeUpdater(data || [])); })["catch"](function () {});
       TabManager.closeTab(paneId, tab.id);
       if (!(opts && opts.close)) {
@@ -2836,7 +2858,7 @@ var MbeditorApp = function MbeditorApp() {
         })["catch"](function () {});
       }
 
-      GitService.fetchStatus();
+      GitService.fetchStatusLite({ background: true });
     })["catch"](function (err) {
       EditorStore.setStatus("Save failed: " + err.message, "error");
     })["finally"](function () {
@@ -2947,7 +2969,7 @@ var MbeditorApp = function MbeditorApp() {
       });
       EditorStore.setStatus("All files saved", "success");
       SearchService.invalidate();
-      GitService.fetchStatus();
+      GitService.fetchStatusLite({ background: true });
     })["catch"](function (err) {
       EditorStore.setStatus("Failed to save some files", "error");
     })["finally"](function () {
@@ -3872,7 +3894,7 @@ var MbeditorApp = function MbeditorApp() {
         EditorStore.setStatus('Created file: ' + createdName, 'success');
         return refreshProjectTree().then(function () {
           handleSelectFile(createdPath, createdName);
-          GitService.fetchStatus();
+          GitService.fetchStatusLite({ background: true });
         });
       })["catch"](function (err) {
         var message = err && err.response && err.response.data && err.response.data.error || err.message;
@@ -3893,7 +3915,7 @@ var MbeditorApp = function MbeditorApp() {
         handleNodeSelect({ path: createdPath, name: createdPath.split('/').pop(), type: 'folder' });
         EditorStore.setStatus('Created folder: ' + createdPath, 'success');
         return refreshProjectTree().then(function () {
-          return GitService.fetchStatus();
+          return GitService.fetchStatusLite({ background: true });
         });
       })["catch"](function (err) {
         var message = err && err.response && err.response.data && err.response.data.error || err.message;
@@ -3968,7 +3990,7 @@ var MbeditorApp = function MbeditorApp() {
       setSelectedPaths(new Set([renamedPath]));
       EditorStore.setStatus('Renamed to: ' + renamedPath, 'success');
       return refreshProjectTree().then(function () {
-        GitService.fetchStatus();
+        GitService.fetchStatusLite({ background: true });
       });
     })["catch"](function (err) {
       var message = err && err.response && err.response.data && err.response.data.error || err.message;
@@ -4029,7 +4051,7 @@ var MbeditorApp = function MbeditorApp() {
         EditorStore.setStatus('Delete failed: ' + message, 'error');
       }
       return refreshProjectTree().then(function () {
-        GitService.fetchStatus();
+        GitService.fetchStatusLite({ background: true });
       });
     })["finally"](function () {
       setLoading(function (prev) {
@@ -5550,13 +5572,13 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Auto-format pasted code using the language formatter' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Format on paste'),
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Re-indent pasted code to match where it lands. Only leading whitespace changes — the formatter is not run.' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Indent on paste'),
                       React.createElement('input', {
                         type: 'checkbox',
                         className: 'ide-settings-checkbox',
-                        checked: editorPrefs.formatOnPaste !== false,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { formatOnPaste: v }); }); }
+                        checked: editorPrefs.indentOnPaste !== false,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { indentOnPaste: v }); }); }
                       })
                     ),
                     React.createElement(

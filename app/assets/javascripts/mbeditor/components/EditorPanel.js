@@ -647,9 +647,9 @@ var EditorPanel = function EditorPanel(_ref) {
       autoClosingBrackets: editorPrefs.autoClosingBrackets || 'always',
       autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
       autoIndent: editorPrefs.autoIndent || 'full',
-      // Monaco's own format-on-paste is left off: it never ran the formatter
-      // here. attachEditorFeatures drives it from onDidPaste instead, gated on
-      // the same editorPrefs.formatOnPaste setting.
+      // Monaco own format-on-paste is left off: it never ran the formatter
+      // here. attachEditorFeatures drives re-indent-on-paste from onDidPaste
+      // instead, gated on editorPrefs.indentOnPaste.
       formatOnPaste: false,
       formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
       quickSuggestions: editorPrefs.quickSuggestions !== false,
@@ -1213,9 +1213,9 @@ var EditorPanel = function EditorPanel(_ref) {
         autoClosingBrackets: editorPrefs.autoClosingBrackets || 'always',
         autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
         autoIndent: editorPrefs.autoIndent || 'full',
-        // Monaco's own format-on-paste is left off: it never ran the formatter
-      // here. attachEditorFeatures drives it from onDidPaste instead, gated on
-      // the same editorPrefs.formatOnPaste setting.
+        // Monaco own format-on-paste is left off: it never ran the formatter
+      // here. attachEditorFeatures drives re-indent-on-paste from onDidPaste
+      // instead, gated on editorPrefs.indentOnPaste.
       formatOnPaste: false,
         formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
         quickSuggestions: editorPrefs.quickSuggestions !== false,

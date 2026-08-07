@@ -816,48 +816,37 @@
       return handled;
     });
 
-    // ── Format on paste ──────────────────────────────────────────────────────
+    // ── Indent on paste ──────────────────────────────────────────────────────
     //
-    // Driven from onDidPaste rather than Monaco's own `formatOnPaste` option.
-    // That option has been on by default all along and never did anything here:
-    // its contribution is present and the event fires, but it declines to run
-    // the formatter, so pasted code kept whatever indentation it was copied
-    // with. onDidPaste is public API, fires reliably, and hands over the exact
-    // pasted range — which is also what makes the two cases distinguishable:
+    // Pasted code is re-indented to match where it landed, and nothing else is
+    // touched. This deliberately does NOT run the formatter: routing paste
+    // through Prettier reprinted the whole enclosing statement (and, for a
+    // paste that filled the document, every line of it), so pasting a snippet
+    // rewrote code the user never touched and buried the paste in an unrelated
+    // diff.
     //
-    //   * paste that fills the whole document (a blank file, or replacing all
-    //     of it) is formatted as a document
-    //   * a paste in the middle is formatted as a range, so Prettier reprints
-    //     the smallest enclosing statement and the rest of the file is left
-    //     byte-identical
-    //
-    // Either way the result comes back at the editor's own tab/space setting,
-    // which is the point: code copied in from a spaces project lands as tabs.
+    // `editor.action.reindentselectedlines` is Monaco's own re-indenter — it
+    // uses the language's indentation rules, the same ones that already run
+    // when you press Enter, and it only ever changes leading whitespace.
+    // Monaco's `formatOnPaste` option stays off (EditorPanel passes false):
+    // its contribution declines to run here anyway.
     var pasteDisposable = editor.onDidPaste(function (e) {
       var prefs = (typeof EditorStore !== 'undefined' && EditorStore.getState().editorPrefs) || {};
-      if (prefs.formatOnPaste === false) return;
+      if (prefs.indentOnPaste === false) return;
 
       var pasteModel = editor.getModel();
       if (!pasteModel || pasteModel.isDisposed()) return;
 
-      var full = pasteModel.getFullModelRange();
-      var wholeDocument = e.range.startLineNumber <= full.startLineNumber &&
-                          e.range.endLineNumber >= full.endLineNumber;
-
-      var action = editor.getAction(wholeDocument ? 'editor.action.formatDocument' : 'editor.action.formatSelection');
+      var action = editor.getAction('editor.action.reindentselectedlines');
       if (!action) return;
 
-      if (wholeDocument) {
-        action.run()["catch"](function () { /* no formatter, or unparseable — leave it */ });
-        return;
-      }
-
-      // formatSelection works on the selection, so point it at the pasted range
-      // and put the cursor back where the paste left it.
+      // The action works on the selection, so point it at the pasted range and
+      // put the cursor back where the paste left it.
       var restore = editor.getSelections();
       editor.setSelection(e.range);
       action.run()["catch"](function () {})["finally"](function () {
-        if (restore && restore.length && !editor.getModel().isDisposed()) editor.setSelections(restore);
+        var m = editor.getModel();
+        if (restore && restore.length && m && !m.isDisposed()) editor.setSelections(restore);
       });
     });
 
@@ -1187,6 +1176,20 @@
         noUnusedLocals: true
       });
     }
+
+    // Monaco ships no indentationRules for JavaScript, which makes
+    // `editor.action.reindentselectedlines` — what indent-on-paste runs — a
+    // silent no-op in JS/JSX files. These are VS Code's own JS rules.
+    // setLanguageConfiguration merges, so this adds indentation without
+    // disturbing the brackets/comments config the bundle already registers.
+    ['javascript', 'typescript'].forEach(function (langId) {
+      monaco.languages.setLanguageConfiguration(langId, {
+        indentationRules: {
+          increaseIndentPattern: /^((?!\/\/).)*(\{[^}"'`]*|\([^)"'`]*|\[[^\]"'`]*)$/,
+          decreaseIndentPattern: /^((?!.*?\/\*).*\*\/)?\s*[})\]].*$/
+        }
+      });
+    });
 
     monaco.languages.setLanguageConfiguration('ruby', {
       comments: { lineComment: '#', blockComment: ['=begin', '=end'] },
@@ -1616,6 +1619,15 @@
     // their "open this" through here.
     monaco.editor.registerEditorOpener({
       openCodeEditor: function (_source, resource, selectionOrPosition) {
+        // Only file:// resources name a workspace file. Models are created
+        // without an explicit URI, so Monaco gives each one an
+        // `inmemory://model/N` identity — and the TS worker returns exactly
+        // that when a JS definition resolves inside the file you are already
+        // in. Stripping it to a path opened a phantom tab called "57".
+        // Handing those back to Monaco lets it reveal the position in the
+        // current editor, which is what the gesture meant.
+        if (String(resource.scheme || '') !== 'file') return false;
+
         var path = String(resource.path || '').replace(/^\/+/, '');
         if (!path || typeof TabManager === 'undefined' || !TabManager.openTab) return false;
 

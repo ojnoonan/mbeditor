@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Paste re-indents instead of reformatting.** Pasting ran the pasted range
+  through Prettier, which reprinted the whole enclosing statement — and for a
+  paste that filled the document, every line of it — so pasting a snippet
+  rewrote code you never touched. Paste now only re-indents to the file's
+  indentation setting; quotes, semicolons and spacing come through exactly as
+  copied. The setting is renamed "Format on paste" → "Indent on paste"
+  (`indentOnPaste`, still on by default). Monaco ships no indentation rules for
+  JavaScript, which would have made the re-indent a silent no-op there, so
+  VS Code's JS rules are now registered. Format-on-save is unchanged and still
+  off by default.
+
+### Fixed
+- **Go-to-definition on a JS symbol defined in the same file opened a junk tab
+  named after a number.** Models are created without an explicit URI, so Monaco
+  identifies each as `inmemory://model/N`; the TS worker returns that URI for
+  an in-file definition, and the editor opener stripped it to a path and opened
+  a phantom tab called "57". Only `file://` resources are treated as workspace
+  files now — the rest go back to Monaco, which reveals the position in the
+  current editor.
+- **Search results ignored created and deleted files.** Only saves dropped the
+  client-side search cache, so a search re-run after adding or removing a file
+  was served the stale cached page. Every structural mutation now invalidates
+  it and re-runs the active query.
+- **Search and the git status counts lagged behind file changes.** The
+  live-result refresh sat behind a 2 s debounce (now 250 ms), and every save
+  fired the full `/git_info` fan-out — the most expensive request the editor
+  makes — twice over, once directly and once from the broadcast handler, which
+  on a dev server with a few threads queued the tree and search requests behind
+  it. Saves and file mutations now use the cheap `/git_status` probe, which
+  patches the branch and file list immediately and escalates to the fan-out
+  itself only when the branch actually changed.
+
 ## [0.12.8] - 2026-08-07
 
 ### Added
