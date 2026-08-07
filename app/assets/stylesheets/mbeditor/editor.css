@@ -2999,8 +2999,41 @@ button:not(.pico-btn) { margin-bottom: 0; }
 }
 .ide-problems-title { font-weight: 600; }
 .ide-problems-summary { color: var(--ide-text-muted, #858585); font-size: 11px; }
-.ide-problems-filter {
+/* Severity toggles. Pushed to the right of the summary; the text filter that
+   follows keeps its own left margin off `auto` so the two sit together. */
+.ide-problems-severity-filter {
   margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+.ide-problems-sev-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  /* Off is legible but clearly recessive — a disabled-looking chip reads as
+     "broken" rather than "toggled off". */
+  color: var(--ide-text-muted, #858585);
+  opacity: 0.55;
+}
+.ide-problems-sev-chip:hover { opacity: 0.85; }
+.ide-problems-sev-chip.is-on {
+  opacity: 1;
+  border-color: var(--ide-border, #333);
+  background: var(--ide-input-bg, #2d2d2d);
+}
+.ide-problems-sev-chip.is-on.ide-problems-sev-error { color: var(--ide-error, #f14c4c); }
+.ide-problems-sev-chip.is-on.ide-problems-sev-warning { color: var(--ide-warning, #cca700); }
+.ide-problems-sev-chip.is-on.ide-problems-sev-info { color: var(--ide-info, #3794ff); }
+
+.ide-problems-filter {
+  margin-left: 8px;
   background: var(--ide-input-bg, #2d2d2d);
   color: var(--ide-fg, #eee);
   border: 1px solid var(--ide-border, #333);

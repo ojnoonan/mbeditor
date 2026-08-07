@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Problems panel severity filter.** Three toggle chips — errors, warnings,
+  info — each showing its live count, filtering the list independently of the
+  text filter. Multi-select rather than one-of-three, so "errors and warnings
+  but not the convention noise" is expressible. The selection persists, and the
+  last active severity stays latched on so the panel can't be filtered down to
+  an unexplained blank.
+- **Search results carry match columns.** Clicking a result now puts the cursor
+  at the end of the matched text instead of the start of the line, ready to
+  type. Columns are measured against the raw source line on the server —
+  the row's display text is stripped, so a column derived from it would land
+  short by the indent on every indented hit.
+
 ### Changed
 - **Paste re-indents instead of reformatting.** Pasting ran the pasted range
   through Prettier, which reprinted the whole enclosing statement — and for a
@@ -27,6 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a phantom tab called "57". Only `file://` resources are treated as workspace
   files now — the rest go back to Monaco, which reveals the position in the
   current editor.
+- **Clicking a search result sometimes landed on the wrong line.** Opening a
+  hit in a file that wasn't already open ran the jump against a still-empty
+  model: it clamped to line 1 and then cleared the pending jump, so when the
+  content finally arrived nothing re-triggered it. Whether it misbehaved came
+  down to whether the fetch beat a 50 ms timer — hence "sometimes". The jump
+  now waits for the content, cancels a superseded timer, and clamps to the
+  file's real length when a result outlives the line it pointed at.
 - **Search results ignored created and deleted files.** Only saves dropped the
   client-side search cache, so a search re-run after adding or removing a file
   was served the stale cached page. Every structural mutation now invalidates

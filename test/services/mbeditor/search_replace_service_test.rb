@@ -338,6 +338,46 @@ module Mbeditor
       end
     end
 
+    # ---------------------------------------------------------------------------
+    # match columns
+    # ---------------------------------------------------------------------------
+    # Columns are measured against the RAW line, not the stripped `text` the
+    # row carries for display — the client cannot recover the leading
+    # whitespace strip removed, so a column derived there lands short by the
+    # indent on every indented hit.
+
+    test "results carry 1-based start and end columns for the match" do
+      write_file("app/code.rb", "    value = NEEDLE_TOKEN\n")
+
+      result = search("NEEDLE_TOKEN").first
+
+      assert_equal 13, result[:col], "column must count the stripped indentation"
+      assert_equal 25, result[:end_col]
+      assert_equal "value = NEEDLE_TOKEN", result[:text]
+    end
+
+    test "columns survive the grep tier as well as rg" do
+      write_file("app/code.rb", "  x = NEEDLE_TOKEN\n")
+
+      with_rg_available(false) do
+        result = search("NEEDLE_TOKEN").first
+        assert_equal 7, result[:col]
+        assert_equal 19, result[:end_col]
+      end
+    end
+
+    # A pattern that can't be built (or doesn't match the line rg handed back)
+    # must not cost the row its place in the results — it just opens at the
+    # start of the line instead.
+    test "a row whose match cannot be located still parses, without columns" do
+      row = SearchReplaceService.send(:parse_line, :grep, "#{@workspace}/app/code.rb:3:some text\n", @workspace, nil)
+
+      assert_equal "app/code.rb", row[:file]
+      assert_equal 3, row[:line]
+      assert_nil row[:col]
+      assert_nil row[:end_col]
+    end
+
     test "returns empty array when query does not match anything" do
       write_file("app/models/user.rb", "class User\nend\n")
 

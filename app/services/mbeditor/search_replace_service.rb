@@ -229,11 +229,20 @@ module Mbeditor
           end
         end
 
+        # Used to locate the match within each hit line so a result can carry
+        # its columns. Invalid user regexes are already reported elsewhere;
+        # here a nil pattern just means the rows come back without columns.
+        pattern = begin
+          build_pattern(query, use_regex: use_regex, match_case: match_case, whole_word: whole_word)
+        rescue RegexpError
+          nil
+        end
+
         begin
           io.each_line do |raw|
             break if results.length >= max
 
-            row = parse_line(tier, raw, root)
+            row = parse_line(tier, raw, root, pattern)
             next unless row
             next if matcher.excluded?(row[:file])
 
@@ -336,7 +345,7 @@ module Mbeditor
         end
       end
 
-      def parse_line(tier, raw, root)
+      def parse_line(tier, raw, root, pattern = nil)
         if tier == :rg
           begin
             data = JSON.parse(raw)
@@ -346,11 +355,23 @@ module Mbeditor
           return nil unless data["type"] == "match"
 
           md = data["data"]
+          raw_text = md.dig("lines", "text").to_s
+          # rg reports submatch offsets in BYTES; Monaco columns are character
+          # based, so slice the prefix and measure it as characters.
+          sub = Array(md["submatches"]).first
+          cols = if sub && sub["start"] && sub["end"]
+            bytes = raw_text.dup.force_encoding(Encoding::BINARY)
+            start_chars = bytes[0, sub["start"]].to_s.force_encoding(Encoding::UTF_8).scrub.length
+            match_chars = bytes[sub["start"], sub["end"] - sub["start"]].to_s.force_encoding(Encoding::UTF_8).scrub.length
+            { col: start_chars + 1, end_col: start_chars + match_chars + 1 }
+          else
+            match_columns(raw_text, pattern)
+          end
           return {
             file: relative_path(md.dig("path", "text").to_s, root),
             line: md.dig("line_number"),
-            text: md.dig("lines", "text").to_s.strip
-          }
+            text: raw_text.strip
+          }.merge(cols)
         end
 
         # git grep / grep emit "path:line:text" — possibly with bytes that are
@@ -367,7 +388,25 @@ module Mbeditor
           file_path = relative_path(file_path, root)
         end
 
-        { file: file_path, line: Regexp.last_match(2).to_i, text: Regexp.last_match(3).strip }
+        raw_text = Regexp.last_match(3)
+        { file: file_path, line: Regexp.last_match(2).to_i, text: raw_text.strip }
+          .merge(match_columns(raw_text, pattern))
+      end
+
+      # 1-based Monaco columns for the first match on a hit line. Returns an
+      # empty hash when there is no usable pattern or it doesn't match — the
+      # row is still a valid result, it just opens at the start of the line.
+      # Measured against the RAW line, never the stripped `text`: the client
+      # cannot recover the leading whitespace the strip removed.
+      def match_columns(raw_text, pattern)
+        return {} unless pattern
+
+        m = pattern.match(raw_text)
+        return {} unless m
+
+        { col: m.begin(0) + 1, end_col: m.end(0) + 1 }
+      rescue StandardError
+        {}
       end
 
       def register_search(root, pid)

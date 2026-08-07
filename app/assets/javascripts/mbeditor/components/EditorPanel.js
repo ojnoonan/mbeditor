@@ -1301,22 +1301,40 @@ var EditorPanel = function EditorPanel(_ref) {
     return function() { window.removeEventListener('mbeditor:focusPane', onFocusPane); };
   }, [paneId]);
 
-  // Jump to line if specified
+  // Jump to line if specified.
+  //
+  // The wait for content is load-bearing, not defensive. Opening a search hit
+  // in a file that wasn't already open runs this effect once while the model
+  // is still empty: the jump clamped to line 1 and then cleared gotoLine, so
+  // when the content finally arrived there was nothing left to re-trigger it
+  // and the cursor stayed on the wrong line. Whether it misbehaved came down
+  // to whether the fetch beat a 50 ms timer — hence "sometimes".
   useEffect(function () {
-    if (tab.gotoLine && monacoRef.current) {
-      (function () {
-        var editor = monacoRef.current;
-        setTimeout(function () {
-          editor.revealLineInCenter(tab.gotoLine);
-          editor.setPosition({ lineNumber: tab.gotoLine, column: tab.gotoCol || 1 });
-          editor.focus();
+    if (!tab.gotoLine || !monacoRef.current) return;
+    if (tab.loading) return;
 
-          TabManager.saveTabViewState(tab.id, editor.saveViewState());
-          TabManager.clearGotoLine(paneId, tab.path);
-        }, 50);
-      })();
-    }
-  }, [tab.gotoLine, tab.content]); // need tab.content in dep array so if it loads asynchronously, the jump happens AFTER content loads
+    var editor = monacoRef.current;
+    var timer = setTimeout(function () {
+      var model = editor.getModel();
+      if (!model || model.isDisposed()) return;
+
+      // A result can outlive the line it pointed at (the file shrank since the
+      // scan). Clamp instead of asking Monaco for a line that isn't there.
+      var line = Math.max(1, Math.min(tab.gotoLine, model.getLineCount()));
+      var column = tab.gotoCol || 1;
+      var maxColumn = model.getLineMaxColumn(line);
+      if (column > maxColumn) column = maxColumn;
+
+      editor.revealLineInCenter(line);
+      editor.setPosition({ lineNumber: line, column: column });
+      editor.focus();
+
+      TabManager.saveTabViewState(tab.id, editor.saveViewState());
+      TabManager.clearGotoLine(paneId, tab.path);
+    }, 50);
+
+    return function () { clearTimeout(timer); };
+  }, [tab.gotoLine, tab.gotoCol, tab.content, tab.loading]);
 
   // Apply RuboCop markers
   useEffect(function () {

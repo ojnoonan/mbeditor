@@ -4964,7 +4964,9 @@ var MbeditorApp = function MbeditorApp() {
                       {
                         key: i,
                         className: "search-result-item",
-                        onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line, r.col); }; })(res)
+                        // end_col puts the cursor just past the match, which is
+                        // where you want to start typing after jumping to a hit.
+                        onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line, r.end_col || r.col); }; })(res)
                       },
                       React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
                       React.createElement(
