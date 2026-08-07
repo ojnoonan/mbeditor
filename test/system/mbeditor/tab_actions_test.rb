@@ -65,21 +65,26 @@ module Mbeditor
       assert_no_selector ".tab-item", wait: 10
     end
 
-    test "plus button creates a new file in the active file's directory" do
+    test "plus button opens an untitled scratch tab, and saving converts it to a real file" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
-      expand_folder("app")
-      expand_folder("models")
-      open_file("user.rb") # under app/models
+      open_file("a.rb")
 
       find(".tab-new-file-btn").click
 
-      input = find(".tree-item-inline-create input", wait: 10)
-      input.set("helper.rb")
-      input.send_keys(:enter)
+      # A scratch buffer opens immediately; nothing is written to disk.
+      assert_selector ".tab-item", text: "Untitled-1", wait: 10
+      assert_empty Dir.glob(File.join(@workspace, "Untitled*"))
 
-      assert_selector ".tab-item", text: "helper.rb", wait: 10
-      assert File.exist?(File.join(@workspace, "app", "models", "helper.rb"))
+      # Saving prompts for a path (stub the prompt) and converts the tab.
+      page.execute_script("window.prompt = function () { return 'scratch.txt'; };")
+      find(".monaco-editor .view-lines").click
+      page.send_keys("scratch content")
+      find("button.statusbar-btn", text: "Save", match: :first).click
+
+      assert_selector ".tab-item", text: "scratch.txt", wait: 10
+      assert_no_selector ".tab-item", text: "Untitled-1"
+      assert_equal "scratch content", File.read(File.join(@workspace, "scratch.txt")).strip
     end
   end
 end
