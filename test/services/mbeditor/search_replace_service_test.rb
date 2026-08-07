@@ -412,6 +412,12 @@ module Mbeditor
                                              excluded_paths: ["node_modules", "vendor/bundle"], paths: nil)
       assert_includes args, ":(exclude)node_modules"
       assert_includes args, ":(exclude)vendor/bundle"
+      # Older git refuses a pathspec list of only :(exclude) entries
+      # ("fatal: There is nothing to exclude from"), exits 128, and search
+      # silently returns nothing — the anchor makes every git version read it
+      # as "everything under the root except these".
+      dashdash = args.index("--")
+      assert_equal ".", args[dashdash + 1], "exclusions must be anchored by a positive pathspec"
     end
 
     test "the git tier excludes configured paths from the results it returns" do

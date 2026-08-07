@@ -297,9 +297,11 @@ module Mbeditor
           # Exclusions have to reach git as pathspecs, not just be dropped from
           # the results by the matcher below: otherwise git walks node_modules
           # and every other excluded tree in full before we discard the matches.
-          # A pathspec list of nothing but :(exclude) entries means
-          # "everything except these", which is exactly what the unscoped
-          # search wants.
+          # The "." anchor is required: newer git reads a pathspec list of
+          # nothing but :(exclude) entries as "everything except these", but
+          # older git refuses it outright ("fatal: There is nothing to exclude
+          # from"), exits 128, and search silently returns empty.
+          args << "." if paths.nil? && exclusions.any?
           args += exclusions.map { |p| ":(exclude)#{p}" }
           # No LC_ALL=C: measured neutral for the -F -i default and 2.2x slower
           # for -E, and the UTF-8 locale case-folds non-ASCII correctly.

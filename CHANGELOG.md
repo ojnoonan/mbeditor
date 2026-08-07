@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **git-tier search returned nothing, instantly, on hosts with older git.** The
+  exclusion pathspecs added in 0.12.6 produced a pathspec list of nothing but
+  `:(exclude)` entries. Newer git reads that as "everything except these";
+  older git refuses it ("fatal: There is nothing to exclude from"), exits 128,
+  and — with stderr discarded — search silently returned empty. The list is
+  now anchored with a `.` pathspec, which every git version accepts.
+
 ### Added
 - **Babel-based scope lint for JS/JSX, surfaced as warnings on save.** On top
   of the existing babel syntax check (host mini_racer + babel-standalone), the
