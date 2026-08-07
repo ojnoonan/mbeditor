@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Untitled scratch tabs.** The tab bar's "+" now opens an in-memory
+  `Untitled-N` buffer (VS Code-style) instead of prompting to create a file on
+  disk. Nothing is written anywhere until you save, at which point a save-as
+  prompt asks for a workspace-relative path and the tab converts to a real
+  file. Scratch tabs are skipped by Save All (each needs its own prompt) and
+  are not persisted across reloads.
+
 ### Fixed
+- **"was updated externally" fired after your own saves.** A successful save
+  never refreshed the external-change baseline (the save-time grace window
+  skipped the very fetch that would have), so once you edited the file again,
+  the next save of *any* file compared new disk content against the stale
+  pre-save baseline and raised the banner. Saves now update the baseline
+  directly, the check re-reads live tab state instead of a snapshot taken
+  before its fetch, and — since the files_changed push only ever announces
+  mbeditor's own writes — the push-triggered check is now scoped to the pushed
+  paths instead of re-fetching every open tab on every save. The manual
+  Refresh Workspace button still checks everything.
+- **Virtual tabs no longer poll git.** Changelog/untitled/diff tabs were
+  fetching git line-diff every 10 s and git/file history on focus — guaranteed
+  no-ops, now skipped, along with persistent-undo tracking for paths that have
+  no file behind them.
 - **git-tier search returned nothing, instantly, on hosts with older git.** The
   exclusion pathspecs added in 0.12.6 produced a pathspec list of nothing but
   `:(exclude)` entries. Newer git reads that as "everything except these";

@@ -603,7 +603,11 @@ var EditorPanel = function EditorPanel(_ref) {
       CollaborationService.ensureRoom(tab.path);
     collabActiveRef.current = _collabActive;
 
-    if (!_collabActive && typeof HistoryService !== 'undefined') {
+    // untitled://, mbeditor:// and friends have no file to persist history
+    // against — tracking them just produces doomed /file_history requests.
+    var _virtualPath = (tab.path || '').indexOf('://') >= 0;
+
+    if (!_collabActive && !_virtualPath && typeof HistoryService !== 'undefined') {
       var _histBranch = EditorStore.getState().gitBranch || '';
       if (_histBranch) {
         if (_reusingModel) {
@@ -894,7 +898,7 @@ var EditorPanel = function EditorPanel(_ref) {
     // Phase 2: background undo-history replay.
     // Only run for newly-created models (reused models already have their undo stack).
     var _phase2CleanupFn = null;
-    if (!_collabActive && !_reusingModel && typeof HistoryService !== 'undefined') {
+    if (!_collabActive && !_virtualPath && !_reusingModel && typeof HistoryService !== 'undefined') {
       var _phase2Branch  = EditorStore.getState().gitBranch || '';
       var _phase2Path    = tab.path;
       var _phase2Content = tab.content || '';
@@ -1410,7 +1414,10 @@ var EditorPanel = function EditorPanel(_ref) {
   var GIT_LINE_POLL_MS = 10000;
 
   useEffect(function () {
+    // Virtual tabs (untitled://, mbeditor://, diff views) have no file behind
+    // them — polling git for one is a guaranteed-404 request every 10s.
     if (!gitAvailable || !tab.path || tab.isDiff || tab.isCombinedDiff) return;
+    if (tab.path.indexOf('://') >= 0) return;
 
     var cancelled = false;
 

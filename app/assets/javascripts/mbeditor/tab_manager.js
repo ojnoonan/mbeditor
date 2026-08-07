@@ -650,8 +650,42 @@ var TabManager = (function () {
     _updateTab(paneId, path, { gotoLine: null, gotoCol: null });
   }
 
+  // VS Code-style scratch buffer: a tab with no file behind it. Nothing is
+  // written anywhere until the user saves, at which point the save flow asks
+  // for a real path and converts the tab.
+  function openUntitledTab(forcePaneId) {
+    var state = EditorStore.getState();
+    var paneId = forcePaneId || state.focusedPaneId;
+    var pane = state.panes.find(function (p) { return p.id === paneId; });
+    if (!pane) return;
+
+    var used = {};
+    state.panes.forEach(function (p) {
+      p.tabs.forEach(function (t) { if (t.isUntitled) used[t.name] = true; });
+    });
+    var n = 1;
+    while (used['Untitled-' + n]) n++;
+    var name = 'Untitled-' + n;
+    var path = 'untitled://' + name;
+
+    var newTab = {
+      id: path, path: path, name: name,
+      dirty: false, content: '', cleanContent: '',
+      viewState: null, isUntitled: true, loading: false,
+      externalContentVersion: 1
+    };
+    var newPanes = state.panes.map(function (p) {
+      if (p.id === paneId) {
+        return Object.assign({}, p, { tabs: p.tabs.concat(newTab), activeTabId: path });
+      }
+      return p;
+    });
+    EditorStore.setState({ panes: newPanes, focusedPaneId: paneId, activeTabId: path });
+  }
+
   return {
     openTab: openTab,
+    openUntitledTab: openUntitledTab,
     getRecentFiles: getRecentFiles,
     openDiffTab: openDiffTab,
     openCombinedDiffTab: openCombinedDiffTab,

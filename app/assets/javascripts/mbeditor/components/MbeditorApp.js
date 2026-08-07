@@ -744,6 +744,21 @@ var MbeditorApp = function MbeditorApp() {
   // buffer flags every dirty tab, which is just the definition of "dirty".
   var lastDiskContentRef = useRef({});
 
+  // Every successful save must go through this. Besides the 3.5s grace window
+  // that stops the external-change check racing our own write, a save defines
+  // the new on-disk truth — so it must also refresh the external-change
+  // baseline. The check's own fetch is skipped inside the grace window, so
+  // without this the baseline stayed at the *pre-save* disk content and the
+  // next files_changed push reported our own save as an external edit on any
+  // tab the user had started editing again.
+  function noteLocalSave(path, content) {
+    recentSavesRef.current[path] = Date.now();
+    setTimeout(function () { delete recentSavesRef.current[path]; }, 3500);
+    if (typeof content === 'string') {
+      lastDiskContentRef.current[path] = content.replace(/\r\n/g, '\n');
+    }
+  }
+
   // ── Draft backup helpers ─────────────────────────────────────────────────
   var draftWriteTimerRef = useRef({});
   var serverOnlineRef = useRef(true);
@@ -1319,7 +1334,7 @@ var MbeditorApp = function MbeditorApp() {
           return {
             id: p.id,
             activeTabId: p.activeTabId,
-            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff && !t.isModelGraph; }).map(function (t) {
+            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff && !t.isModelGraph && !t.isUntitled; }).map(function (t) {
               return {
                 id: t.id, path: t.path, name: t.name, dirty: t.dirty, viewState: t.viewState,
                 isSettings: !!t.isSettings, isPreview: !!t.isPreview, previewFor: t.previewFor || null,
@@ -1658,7 +1673,7 @@ var MbeditorApp = function MbeditorApp() {
       GitService.fetchStatus()["catch"](function () {});
       FileService.getTree().then(function (data) {
         setTreeData(_treeUpdater(data || []));
-        checkOpenTabsForExternalChanges();
+        checkOpenTabsForExternalChanges(payload && payload.paths);
       })["catch"](function () {});
       if (payload && payload.paths && searchQueryRef.current && searchPanelVisibleRef.current) {
         payload.paths.forEach(function (p) { _pendingSearchRefreshPaths.current.add(p); });
@@ -1694,6 +1709,16 @@ var MbeditorApp = function MbeditorApp() {
       });
       if (changed) EditorStore.setState({ panes: newPanes });
 
+      // The CRDT kept our buffer identical to what the peer just wrote, so the
+      // buffer is the new on-disk truth — refresh the external-change baseline.
+      var _savedTab = null;
+      newPanes.forEach(function (p) {
+        p.tabs.forEach(function (t) { if (t.path === path) _savedTab = t; });
+      });
+      if (_savedTab && typeof _savedTab.content === 'string') {
+        lastDiskContentRef.current[path] = _savedTab.content.replace(/\r\n/g, '\n');
+      }
+
       // Reset the AVI clean baseline so undo past this peer's save shows dirty correctly.
       var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[path];
       if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
@@ -1704,17 +1729,31 @@ var MbeditorApp = function MbeditorApp() {
     return function () { WebSocketService.offFileSaved(handleFileSaved); };
   }, []);
 
-  function checkOpenTabsForExternalChanges() {
+  // onlyPaths: when the trigger names the files that changed (the
+  // files_changed push always does — it only ever announces mbeditor's own
+  // writes), restrict the check to open tabs on those paths. The old
+  // behaviour re-fetched EVERY open tab on every save: N requests per save,
+  // and each one another chance for a stale comparison to cry "changed
+  // externally". A manual workspace refresh passes nothing and still checks
+  // everything — that is the button's job.
+  function checkOpenTabsForExternalChanges(onlyPaths) {
+    var pathSet = null;
+    if (onlyPaths && onlyPaths.length) {
+      pathSet = {};
+      onlyPaths.forEach(function (p) { pathSet[p] = true; });
+    }
     var st = EditorStore.getState();
     var allTabs = st.panes.reduce(function (acc, p) {
       return acc.concat(p.tabs.map(function (t) { return { paneId: p.id, tab: t }; }));
     }, []);
     var fileTabs = allTabs.filter(function (pt) {
       var path = pt.tab.path || '';
+      if (pathSet && !pathSet[path]) return false;
       return path &&
         !path.startsWith('mbeditor://') &&
         !path.startsWith('diff://') &&
         !path.startsWith('combined-diff://') &&
+        !path.startsWith('untitled://') &&
         !pt.tab.isCombinedDiff &&
         !pt.tab.isSettings &&
         !pt.tab.isImage &&
@@ -1736,6 +1775,16 @@ var MbeditorApp = function MbeditorApp() {
       }
       FileService.getFile(pt.tab.path, { allowMissing: true }).then(function (data) {
         if (!data || typeof data.content !== 'string') return;
+        // Re-read the tab: the snapshot above predates the fetch, and edits or
+        // a save that landed meanwhile would make a stale comparison here
+        // report phantom external changes.
+        var liveState = EditorStore.getState();
+        var livePane = liveState.panes.find(function (p) { return p.id === pt.paneId; });
+        var liveTab = livePane && livePane.tabs.find(function (t) { return t.id === pt.tab.id; });
+        if (!liveTab || liveTab.path !== pt.tab.path) return;
+        var savedAgain = recentSavesRef.current[pt.tab.path];
+        if (savedAgain && Date.now() - savedAgain < 3000) return;
+        pt = { paneId: pt.paneId, tab: liveTab };
         var serverNorm = data.content.replace(/\r\n/g, '\n');
         var tabNorm = (pt.tab.content || '').replace(/\r\n/g, '\n');
 
@@ -1933,14 +1982,26 @@ var MbeditorApp = function MbeditorApp() {
     }
 
     if (save) {
+      if (tab.isUntitled) {
+        // Save-as converts the scratch tab to a real one (closing the scratch
+        // tab in the process); a cancelled prompt keeps the tab open.
+        saveUntitledTab(closingPaneId, tab, { close: true })["catch"](function (err) {
+          if (!(err && err.cancelled)) {
+            EditorStore.setStatus("Save failed: " + (err && err.message || err), "error");
+          }
+        })["finally"](function () {
+          setClosingTabId(null);
+          setClosingPaneId(null);
+        });
+        return;
+      }
       setLoading(function (prev) {
         return _extends({}, prev, { save: true });
       });
       EditorStore.setStatus("Saving " + tab.name + "...", "info");
       isSavingRef.current = true;
       FileService.saveFile(tab.path, tab.content).then(function () {
-        recentSavesRef.current[tab.path] = Date.now();
-        setTimeout(function() { delete recentSavesRef.current[tab.path]; }, 3500);
+        noteLocalSave(tab.path, tab.content);
         EditorStore.setStatus("Saved", "success");
         SearchService.invalidate();
         GitService.fetchStatus();
@@ -2037,26 +2098,25 @@ var MbeditorApp = function MbeditorApp() {
     EditorStore.setStatus("Closed " + saved.length + " saved editor" + (saved.length === 1 ? "" : "s"), "info");
   };
 
-  var handleNewFileInTabDir = function handleNewFileInTabDir(paneId) {
-    var pane = state.panes.find(function (p) { return p.id === paneId; });
-    var activeForPane = pane && pane.tabs.find(function (t) { return t.id === pane.activeTabId; });
-    var activePath = activeForPane && activeForPane.path;
-    var isReal = activePath && activePath.indexOf('://') < 0 && activePath !== '__settings__';
-    var baseDir = isReal ? parentDir(activePath) : '';
-    // Make sure the explorer is visible so the inline-create row shows.
-    setActiveSidebarTab('explorer');
-    setSidebarCollapsed(false);
-    // Expand ancestors of the target dir.
-    if (baseDir) {
-      var parts = baseDir.split('/');
-      var ancestors = {};
-      for (var i = 1; i <= parts.length; i++) {
-        ancestors[parts.slice(0, i).join('/')] = true;
+  // Save-as for an untitled scratch tab: ask for a workspace-relative path,
+  // write it, then swap the scratch tab for a real one opened at that path.
+  // Returns a promise that rejects with {cancelled: true} when the user backs
+  // out, so close-flows can abort instead of discarding.
+  var saveUntitledTab = function saveUntitledTab(paneId, tab, opts) {
+    var input = window.prompt('Save as (path relative to workspace root):', tab.name + '.txt');
+    if (!input || !input.trim()) return Promise.reject({ cancelled: true });
+    var newPath = input.trim().replace(/^\/+/, '');
+    return FileService.saveFile(newPath, tab.content).then(function () {
+      noteLocalSave(newPath, tab.content);
+      SearchService.invalidate();
+      GitService.fetchStatus();
+      FileService.getTree().then(function (data) { setTreeData(_treeUpdater(data || [])); })["catch"](function () {});
+      TabManager.closeTab(paneId, tab.id);
+      if (!(opts && opts.close)) {
+        TabManager.openTab(newPath, newPath.split('/').pop(), null, paneId);
       }
-      setExpandedDirs(function (prev) { return Object.assign({}, prev, ancestors); });
-    }
-    setPendingRename(null);
-    setPendingCreate({ type: 'file', parentPath: baseDir });
+      EditorStore.setStatus('Saved ' + newPath, 'success');
+    });
   };
 
   // Persist state when panes, focusedPaneId, or collapsedSections changes
@@ -2070,7 +2130,7 @@ var MbeditorApp = function MbeditorApp() {
         return {
           id: p.id,
           activeTabId: p.activeTabId,
-          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff && !t.isModelGraph; }).map(function (t) {
+          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff && !t.isModelGraph && !t.isUntitled; }).map(function (t) {
             return {
               id: t.id,
               path: t.path,
@@ -2566,7 +2626,7 @@ var MbeditorApp = function MbeditorApp() {
   var setActiveEOL = _useState31e2[1];
 
   useEffect(function () {
-    if (!gitAvailable || !activeTab || activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCommitGraph || !activeTab.path || activeTab.path.indexOf('diff://') === 0 || activeTab.path.indexOf('combined-diff://') === 0) {
+    if (!gitAvailable || !activeTab || activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCommitGraph || !activeTab.path || activeTab.path.indexOf('://') >= 0) {
       setActiveFileCommit(null);
       return;
     }
@@ -2711,14 +2771,20 @@ var MbeditorApp = function MbeditorApp() {
   };
 
   var _doSave = function _doSave(paneId, tab) {
+    if (tab.isUntitled) {
+      saveUntitledTab(paneId, tab)["catch"](function (err) {
+        if (err && err.cancelled) return;
+        EditorStore.setStatus("Save failed: " + (err && err.message || err), "error");
+      });
+      return;
+    }
     setLoading(function (prev) {
       return _extends({}, prev, { save: true });
     });
     EditorStore.setStatus("Saving " + tab.name + "...", "info");
     isSavingRef.current = true;
     FileService.saveFile(tab.path, tab.content).then(function () {
-      recentSavesRef.current[tab.path] = Date.now();
-      setTimeout(function() { delete recentSavesRef.current[tab.path]; }, 3500);
+      noteLocalSave(tab.path, tab.content);
       var newPanes = EditorStore.getState().panes.map(function (p) {
         if (p.id === paneId) {
           return _extends({}, p, { tabs: p.tabs.map(function (t) {
@@ -2796,8 +2862,7 @@ var MbeditorApp = function MbeditorApp() {
     if (!tab) { dismissPendingReload(reload); return; }
     isSavingRef.current = true;
     FileService.saveFile(tab.path, tab.content).then(function () {
-      recentSavesRef.current[tab.path] = Date.now();
-      setTimeout(function() { delete recentSavesRef.current[tab.path]; }, 3500);
+      noteLocalSave(tab.path, tab.content);
       EditorStore.setState({
         panes: EditorStore.getState().panes.map(function (p) {
           if (p.id !== reload.paneId) return p;
@@ -2848,7 +2913,9 @@ var MbeditorApp = function MbeditorApp() {
     var dirtyTabs = state.panes.flatMap(function (p) {
       return p.tabs;
     }).filter(function (t) {
-      return t.dirty;
+      // Untitled scratch tabs need a save-as prompt each — Ctrl+S them
+      // individually; bulk-save skips them rather than stacking prompts.
+      return t.dirty && !t.isUntitled;
     });
     if (dirtyTabs.length === 0) return;
 
@@ -2861,10 +2928,8 @@ var MbeditorApp = function MbeditorApp() {
       return FileService.saveFile(tab.path, tab.content);
     });
     Promise.all(promises).then(function () {
-      var now = Date.now();
       dirtyTabs.forEach(function(tab) {
-        recentSavesRef.current[tab.path] = now;
-        setTimeout(function() { delete recentSavesRef.current[tab.path]; }, 3500);
+        noteLocalSave(tab.path, tab.content);
       });
       var newPanes = EditorStore.getState().panes.map(function (p) {
         return _extends({}, p, { tabs: p.tabs.map(function (t) {
@@ -4024,7 +4089,7 @@ var MbeditorApp = function MbeditorApp() {
       onCloseOthers: function (id) { handleCloseOtherTabs(paneId, id); },
       onCloseSaved: function () { handleCloseSavedTabs(paneId); },
       onCloseAll: function () { handleCloseEditorsInGroup(paneId); },
-      onNewFile: function () { handleNewFileInTabDir(paneId); }
+      onNewFile: function () { TabManager.openUntitledTab(paneId); }
     });
   };
 
