@@ -1089,6 +1089,13 @@ module Mbeditor
     def model_schema
       model_name = params[:model].to_s.strip
       return render json: { error: "model required" }, status: :bad_request if model_name.blank?
+      # SchemaService interpolates the underscored name into app/models/<x>.rb,
+      # and Inflector.underscore leaves "../" intact. Same guard as
+      # module_members, widened to the "::" a namespaced model needs. Spaces
+      # are allowed because SchemaService strips them ("Order Item" → OrderItem).
+      unless model_name.delete(" ").match?(RUBY_CONSTANT_PATH)
+        return render json: { error: "Invalid model name" }, status: :bad_request
+      end
 
       schema = SchemaService.new(model_name, workspace_root.to_s).call
       if schema

@@ -44,10 +44,16 @@ module Mbeditor
     def derive_table_name(model_name)
       normalized = model_name.delete(" ")
 
-      # Check model file for an explicit table_name override
+      # Check model file for an explicit table_name override.
+      #
+      # Inflector.underscore is not a sanitizer — it leaves "../" untouched, so
+      # a model name reaches this join as a path fragment. Callers are expected
+      # to have validated the name, but the containment check is repeated here
+      # so the service is safe on its own; it also covers a symlink under
+      # app/models pointing outside the workspace, which no name check can.
       singular = ActiveSupport::Inflector.underscore(normalized)
       model_file = File.join(@workspace_root, "app", "models", "#{singular}.rb")
-      if File.exist?(model_file)
+      if SafePath.within?(@workspace_root, model_file) && File.exist?(model_file)
         begin
           source = File.read(model_file, encoding: "utf-8")
           # Matches: self.table_name = "name"  or  = :name  or  = 'name'

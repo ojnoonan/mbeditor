@@ -2638,6 +2638,86 @@ module Mbeditor
       assert_match(/Nothing to import/, json["error"])
     end
 
+    # ── model_schema ─────────────────────────────────────────────────────────
+
+    SCHEMA_RB = <<~RUBY
+      ActiveRecord::Schema[7.1].define(version: 2024_01_01_000000) do
+        create_table "users", force: :cascade do |t|
+          t.string "email", null: false
+          t.index ["email"], name: "index_users_on_email", unique: true
+        end
+      end
+    RUBY
+
+    def write_schema_rb
+      FileUtils.mkdir_p(File.join(@workspace, "db"))
+      File.write(File.join(@workspace, "db", "schema.rb"), SCHEMA_RB)
+    end
+
+    test "model_schema returns the table for a known model" do
+      write_schema_rb
+
+      get "/mbeditor/model_schema", params: { model: "User" }
+
+      assert_response :success
+      assert_equal "users", json["table"]
+      assert_equal "User", json["model"]
+      assert_equal ["email"], json["columns"].map { |c| c["name"] }
+      assert_equal true, json["indexes"].first["unique"]
+    end
+
+    test "model_schema honours an explicit self.table_name in the model file" do
+      write_schema_rb
+      File.write(File.join(@workspace, "app", "models", "user.rb"),
+                 "class User\n  self.table_name = \"users\"\nend\n")
+
+      get "/mbeditor/model_schema", params: { model: "User" }
+
+      assert_response :success
+      assert_equal "users", json["table"]
+    end
+
+    test "model_schema is 404 when the table is not in the schema" do
+      write_schema_rb
+
+      get "/mbeditor/model_schema", params: { model: "Nonexistent" }
+
+      assert_response :not_found
+      assert_match(/No schema found/, json["error"])
+    end
+
+    test "model_schema is 400 when the model is blank" do
+      get "/mbeditor/model_schema", params: { model: "  " }
+
+      assert_response :bad_request
+    end
+
+    # The model name is interpolated into app/models/<underscored>.rb, and
+    # Inflector.underscore leaves "../" untouched. Without a constant-name
+    # check the parameter is a filesystem path.
+    test "model_schema rejects a traversing model name" do
+      write_schema_rb
+
+      ["../../../../etc/passwd", "../../config/master", "..%2f..%2fsecret",
+       "/etc/passwd", "user; rm -rf /"].each do |evil|
+        get "/mbeditor/model_schema", params: { model: evil }
+
+        assert_response :bad_request, "#{evil.inspect} should be refused before it becomes a path"
+      end
+    end
+
+    test "model_schema accepts a namespaced model name" do
+      write_schema_rb
+      FileUtils.mkdir_p(File.join(@workspace, "app", "models", "admin"))
+      File.write(File.join(@workspace, "app", "models", "admin", "user.rb"),
+                 "class Admin::User\n  self.table_name = \"users\"\nend\n")
+
+      get "/mbeditor/model_schema", params: { model: "Admin::User" }
+
+      assert_response :success
+      assert_equal "users", json["table"]
+    end
+
     private
 
     def json

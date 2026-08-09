@@ -329,5 +329,47 @@ module Mbeditor
       assert result, "should find table via symbol self.table_name"
       assert_equal "legacy_users", result[:table]
     end
+
+    # ── path containment ─────────────────────────────────────────────────
+
+    # The controller validates the model name, but the service must not depend
+    # on that: underscore("../../x") is "../../x", and File.join makes it a path.
+    test "a traversing model name reads no file outside the workspace" do
+      outside = Dir.mktmpdir("mbeditor_schema_outside_")
+      File.write(File.join(outside, "secret.rb"), "self.table_name = \"pwned\"\n")
+
+      begin
+        rel = Pathname(outside).relative_path_from(Pathname(File.join(@workspace, "app", "models")))
+        result = call(File.join(rel.to_s, "secret"))
+
+        refute_equal "pwned", result&.dig(:table),
+                     "the escaping model file must not be read for its table_name"
+      ensure
+        FileUtils.rm_rf(outside)
+      end
+    end
+
+    # A name check cannot catch this one: "User" is a perfectly valid constant,
+    # and the escape is in the filesystem rather than the parameter.
+    test "a symlinked model file pointing outside the workspace is not read" do
+      outside = Dir.mktmpdir("mbeditor_schema_outside_")
+      File.write(File.join(outside, "evil.rb"), "self.table_name = \"pwned\"\n")
+      models = File.join(@workspace, "app", "models")
+      FileUtils.mkdir_p(models)
+
+      begin
+        File.symlink(File.join(outside, "evil.rb"), File.join(models, "user.rb"))
+      rescue NotImplementedError, SystemCallError
+        skip "symlinks unavailable on this filesystem"
+      end
+
+      begin
+        result = call("User")
+        refute_equal "pwned", result&.dig(:table),
+                     "a symlink out of the workspace must not be followed"
+      ensure
+        FileUtils.rm_rf(outside)
+      end
+    end
   end
 end
