@@ -45,6 +45,22 @@ var EditorPanel = function EditorPanel(_ref) {
   var conflictBlocksRef = React.useRef([]);
   var aviBaseRef = useRef(0);
   var aviMaxRef = useRef(0);
+  // True while this file participates in collaborative editing (a live Yjs room).
+  // When set, the persistent-undo machinery (HistoryService + Phase-2 model swap)
+  // is suspended and undo is routed through the room's local Yjs UndoManager.
+  var collabActiveRef = useRef(false);
+
+  // Collaboration becomes available when a peer joins, which can be at any point
+  // in the session. This flips with that transition and is a dependency of the
+  // editor-creation effect below, so an already-open tab rebuilds and joins the
+  // room then — reusing the persistent model, exactly like reopening.
+  var _collabReadyState = useState(function () {
+    return typeof CollaborationService !== 'undefined' &&
+      typeof CollaborationService.isAvailable === 'function' &&
+      CollaborationService.isAvailable();
+  });
+  var collabReady = _collabReadyState[0];
+  var setCollabReady = _collabReadyState[1];
 
   var _conflictState = React.useState(0);
   var conflictCount = _conflictState[0];
@@ -74,6 +90,7 @@ var EditorPanel = function EditorPanel(_ref) {
 
   var blameDecorationsRef = useRef([]);
   var gitLineDecorationsRef = useRef([]);
+  var routeDecorationsRef = useRef([]);
   // Latest git line-diff refresh, read by the poll effect so its interval does
   // not have to be torn down whenever the active tab changes.
   var gitLineRefreshRef = useRef(null);
@@ -192,6 +209,18 @@ var EditorPanel = function EditorPanel(_ref) {
     }
     return null;
   };
+
+  // Watch for collaboration becoming available after the editor already mounted.
+  // Event-driven, not polled: a peer can join at any point in the session, so a
+  // bounded poll would either miss a late arrival or burn a timer per open tab
+  // forever. CollaborationService fires only on a real transition.
+  useEffect(function () {
+    if (typeof CollaborationService === 'undefined' ||
+        typeof CollaborationService.onAvailabilityChange !== 'function') return;
+    return CollaborationService.onAvailabilityChange(function (available) {
+      setCollabReady(available);
+    });
+  }, []);
 
   useEffect(function () {
     if (tab.isPreview) return;
@@ -564,7 +593,21 @@ var EditorPanel = function EditorPanel(_ref) {
       _modelEntry = window.__mbeditorModels[tab.path];
     }
 
-    if (typeof HistoryService !== 'undefined') {
+    // Collaboration: open the per-file Yjs room when cable is available and this
+    // is a real, editable file. When active, persistent-undo (HistoryService) and
+    // the Phase-2 background model-swap replay are suspended for this file — the
+    // model swap would detach a live binding and corrupt the shared document.
+    var _collabActive = typeof CollaborationService !== 'undefined' &&
+      !tab.truncated && !tab.fileNotFound &&
+      CollaborationService.isEnabledFor(tab.path) &&
+      CollaborationService.ensureRoom(tab.path);
+    collabActiveRef.current = _collabActive;
+
+    // untitled://, mbeditor:// and friends have no file to persist history
+    // against — tracking them just produces doomed /file_history requests.
+    var _virtualPath = (tab.path || '').indexOf('://') >= 0;
+
+    if (!_collabActive && !_virtualPath && typeof HistoryService !== 'undefined') {
       var _histBranch = EditorStore.getState().gitBranch || '';
       if (_histBranch) {
         if (_reusingModel) {
@@ -604,7 +647,10 @@ var EditorPanel = function EditorPanel(_ref) {
       autoClosingBrackets: editorPrefs.autoClosingBrackets || 'always',
       autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
       autoIndent: editorPrefs.autoIndent || 'full',
-      formatOnPaste: editorPrefs.formatOnPaste !== false,
+      // Monaco own format-on-paste is left off: it never ran the formatter
+      // here. attachEditorFeatures drives re-indent-on-paste from onDidPaste
+      // instead, gated on editorPrefs.indentOnPaste.
+      formatOnPaste: false,
       formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
       quickSuggestions: editorPrefs.quickSuggestions !== false,
       wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',
@@ -672,6 +718,30 @@ var EditorPanel = function EditorPanel(_ref) {
     // can identify which file they are operating on without needing React state.
     if (modelObj) modelObj._mbeditorPath = tab.path;
 
+    if (_collabActive) {
+      // Attach this editor to the file's Yjs room. onSeeded rebaselines the
+      // clean-state once the binding has set the model, so seeding / late-join
+      // does not spuriously mark the tab dirty.
+      CollaborationService.bindEditor(tab.path, editor, modelObj, {
+        onSeeded: function () {
+          var m = editor.getModel();
+          if (!m) return;
+          var v = m.getValue();
+          var avi = m.getAlternativeVersionId();
+          aviBaseRef.current = avi;
+          aviMaxRef.current = avi;
+          var _e = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+          if (_e) _e.cleanVersionId = avi;
+          latestContentRef.current = v;
+          lastAppliedExternalVersionRef.current = Math.max(
+            lastAppliedExternalVersionRef.current, tab.externalContentVersion || 0
+          );
+          EditorStore.setState({ canUndo: false, canRedo: false });
+          TabManager.markClean(paneId, tab.id, v);
+        }
+      });
+    }
+
     // Run only the test under the cursor. Registered as an editor action so it
     // gets a context-menu entry and a keybinding without another toolbar button;
     // the flask button stays whole-file.
@@ -699,6 +769,16 @@ var EditorPanel = function EditorPanel(_ref) {
     // can preventDefault. The vim-mode mapping handles this separately.
     editor.addCommand(window.monaco.KeyMod.CtrlCmd | window.monaco.KeyCode.KeyP, function() {
       EditorStore.setState({ isQuickOpenVisible: true });
+    });
+
+    // PageUp/PageDown cycle between the current cursor position and where the
+    // cursor was before the last jump (go-to-definition, search result, etc.),
+    // replacing the default page-scroll behaviour.
+    editor.addCommand(window.monaco.KeyCode.PageUp, function() {
+      TabManager.toggleJumpOrigin();
+    });
+    editor.addCommand(window.monaco.KeyCode.PageDown, function() {
+      TabManager.toggleJumpOrigin();
     });
 
     var editorPluginDisposable = null;
@@ -767,7 +847,7 @@ var EditorPanel = function EditorPanel(_ref) {
     // a listener left on the old model would silently stop tracking edits.
     var _attachContentListener = function (model) {
       return model.onDidChangeContent(function (e) {
-        if (typeof HistoryService !== 'undefined') {
+        if (!_collabActive && typeof HistoryService !== 'undefined') {
           HistoryService.recordOps(tab.path, e.changes);
         }
         var currentAvi = model.getAlternativeVersionId();
@@ -818,7 +898,7 @@ var EditorPanel = function EditorPanel(_ref) {
     // Phase 2: background undo-history replay.
     // Only run for newly-created models (reused models already have their undo stack).
     var _phase2CleanupFn = null;
-    if (!_reusingModel && typeof HistoryService !== 'undefined') {
+    if (!_collabActive && !_virtualPath && !_reusingModel && typeof HistoryService !== 'undefined') {
       var _phase2Branch  = EditorStore.getState().gitBranch || '';
       var _phase2Path    = tab.path;
       var _phase2Content = tab.content || '';
@@ -986,12 +1066,13 @@ var EditorPanel = function EditorPanel(_ref) {
       contentDisposable.dispose();
       EditorStore.setState({ canUndo: false, canRedo: false });
       if (_phase2CleanupFn) _phase2CleanupFn();
+      if (_collabActive) CollaborationService.unbindEditor(tab.path);
       // Detach the model before disposing the editor so the model (and its undo
       // history) survives for when the user returns to this tab.
       editor.setModel(null);
       editor.dispose();
     };
-  }, [tab.id, tab.isPreview, monacoReady]); // re-run on tab switch or when Monaco becomes ready
+  }, [tab.id, tab.isPreview, monacoReady, collabReady]); // re-run on tab switch, when Monaco becomes ready, or when collaboration becomes available
 
   // Listen for external content changes (e.g. after Format/Load)
   // Only applies when externalContentVersion advances — prevents stale typing-originated
@@ -1002,6 +1083,14 @@ var EditorPanel = function EditorPanel(_ref) {
 
     var extVersion = tab.externalContentVersion || 0;
     if (extVersion <= lastAppliedExternalVersionRef.current) return;
+
+    // For a collaboration late-join the shared document is authoritative; applying
+    // the disk content would clobber it. Mark this version consumed and skip.
+    if (collabActiveRef.current && typeof CollaborationService !== 'undefined' &&
+        CollaborationService.consumesDiskLoad(tab.path)) {
+      lastAppliedExternalVersionRef.current = extVersion;
+      return;
+    }
 
     lastAppliedExternalVersionRef.current = extVersion;
     latestContentRef.current = tab.content; // keep ref in sync for onDidChangeContent closure
@@ -1124,7 +1213,10 @@ var EditorPanel = function EditorPanel(_ref) {
         autoClosingBrackets: editorPrefs.autoClosingBrackets || 'always',
         autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
         autoIndent: editorPrefs.autoIndent || 'full',
-        formatOnPaste: editorPrefs.formatOnPaste !== false,
+        // Monaco own format-on-paste is left off: it never ran the formatter
+      // here. attachEditorFeatures drives re-indent-on-paste from onDidPaste
+      // instead, gated on editorPrefs.indentOnPaste.
+      formatOnPaste: false,
         formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
         quickSuggestions: editorPrefs.quickSuggestions !== false,
         wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',
@@ -1209,22 +1301,40 @@ var EditorPanel = function EditorPanel(_ref) {
     return function() { window.removeEventListener('mbeditor:focusPane', onFocusPane); };
   }, [paneId]);
 
-  // Jump to line if specified
+  // Jump to line if specified.
+  //
+  // The wait for content is load-bearing, not defensive. Opening a search hit
+  // in a file that wasn't already open runs this effect once while the model
+  // is still empty: the jump clamped to line 1 and then cleared gotoLine, so
+  // when the content finally arrived there was nothing left to re-trigger it
+  // and the cursor stayed on the wrong line. Whether it misbehaved came down
+  // to whether the fetch beat a 50 ms timer — hence "sometimes".
   useEffect(function () {
-    if (tab.gotoLine && monacoRef.current) {
-      (function () {
-        var editor = monacoRef.current;
-        setTimeout(function () {
-          editor.revealLineInCenter(tab.gotoLine);
-          editor.setPosition({ lineNumber: tab.gotoLine, column: tab.gotoCol || 1 });
-          editor.focus();
+    if (!tab.gotoLine || !monacoRef.current) return;
+    if (tab.loading) return;
 
-          TabManager.saveTabViewState(tab.id, editor.saveViewState());
-          TabManager.clearGotoLine(paneId, tab.path);
-        }, 50);
-      })();
-    }
-  }, [tab.gotoLine, tab.content]); // need tab.content in dep array so if it loads asynchronously, the jump happens AFTER content loads
+    var editor = monacoRef.current;
+    var timer = setTimeout(function () {
+      var model = editor.getModel();
+      if (!model || model.isDisposed()) return;
+
+      // A result can outlive the line it pointed at (the file shrank since the
+      // scan). Clamp instead of asking Monaco for a line that isn't there.
+      var line = Math.max(1, Math.min(tab.gotoLine, model.getLineCount()));
+      var column = tab.gotoCol || 1;
+      var maxColumn = model.getLineMaxColumn(line);
+      if (column > maxColumn) column = maxColumn;
+
+      editor.revealLineInCenter(line);
+      editor.setPosition({ lineNumber: line, column: column });
+      editor.focus();
+
+      TabManager.saveTabViewState(tab.id, editor.saveViewState());
+      TabManager.clearGotoLine(paneId, tab.path);
+    }, 50);
+
+    return function () { clearTimeout(timer); };
+  }, [tab.gotoLine, tab.gotoCol, tab.content, tab.loading]);
 
   // Apply RuboCop markers
   useEffect(function () {
@@ -1322,7 +1432,10 @@ var EditorPanel = function EditorPanel(_ref) {
   var GIT_LINE_POLL_MS = 10000;
 
   useEffect(function () {
+    // Virtual tabs (untitled://, mbeditor://, diff views) have no file behind
+    // them — polling git for one is a guaranteed-404 request every 10s.
     if (!gitAvailable || !tab.path || tab.isDiff || tab.isCombinedDiff) return;
+    if (tab.path.indexOf('://') >= 0) return;
 
     var cancelled = false;
 
@@ -1448,6 +1561,83 @@ var EditorPanel = function EditorPanel(_ref) {
       });
     }
   }, [isBlameVisible, tab.path, blameData, isBlameLoading]);
+
+  // Inline route hints for controllers.
+  //
+  // Every `def` in a controller gets the verb and path that reach it drawn after
+  // the line, and a public action nothing routes to is called out — the question
+  // "is this actually reachable?" otherwise means reading config/routes.rb and
+  // mentally expanding `resources`. Routes come from the host app's own route
+  // set, which is the only thing that knows how those expand.
+  //
+  // Decorations, not view zones: a hint belongs on the line, and a zone would
+  // push the code around every time a file was opened.
+  useEffect(function () {
+    var editor = monacoRef.current;
+    if (!editor || !window.monaco) return;
+
+    var clear = function () {
+      if (!routeDecorationsRef.current.length) return;
+      routeDecorationsRef.current = editor.deltaDecorations(routeDecorationsRef.current, []);
+    };
+
+    if (!tab.path || !/^app\/controllers\/.+_controller\.rb$/.test(tab.path)) {
+      clear();
+      return;
+    }
+
+    var cancelled = false;
+    FileService.getRoutes(tab.path).then(function (data) {
+      if (cancelled) return;
+      var actions = (data && data.actions) || {};
+      var model = editor.getModel();
+      if (!model) return;
+
+      var decorations = [];
+      var text = model.getValue().split('\n');
+      // Only methods above the first `private`/`protected` are candidates for a
+      // route; flagging a helper below it as unrouted would be noise.
+      var visibilityEnded = false;
+
+      text.forEach(function (line, i) {
+        if (/^\s*(private|protected)\s*$/.test(line)) { visibilityEnded = true; return; }
+        var m = line.match(/^\s*def\s+(?:self\.)?([a-zA-Z_][a-zA-Z0-9_]*[?!=]?)/);
+        if (!m) return;
+
+        var name = m[1];
+        var routes = actions[name];
+        var lineNo = i + 1;
+        var col = line.length + 1;
+
+        if (routes && routes.length) {
+          var label = routes.map(function (r) { return r.verb + ' ' + r.path; }).join('  ·  ');
+          decorations.push({
+            range: new window.monaco.Range(lineNo, col, lineNo, col),
+            options: {
+              after: { content: '  ' + label, inlineClassName: 'mbeditor-route-hint' },
+              hoverMessage: routes.map(function (r) {
+                return { value: '`' + r.verb + ' ' + r.path + '`' + (r.name ? ' — `' + r.name + '_path`' : '') };
+              }),
+              showIfCollapsed: true
+            }
+          });
+        } else if (!visibilityEnded && !/[?!=]$/.test(name) && name !== 'initialize') {
+          decorations.push({
+            range: new window.monaco.Range(lineNo, col, lineNo, col),
+            options: {
+              after: { content: '  no route', inlineClassName: 'mbeditor-route-hint-none' },
+              hoverMessage: [{ value: 'No route in this application dispatches to this action.' }],
+              showIfCollapsed: true
+            }
+          });
+        }
+      });
+
+      routeDecorationsRef.current = editor.deltaDecorations(routeDecorationsRef.current, decorations);
+    }).catch(function () { /* hints are additive; a failure just means none */ });
+
+    return function () { cancelled = true; clear(); };
+  }, [tab.path, tab.externalContentVersion, monacoReady]);
 
   // Render Blame block headers (author + summary) above contiguous commit regions.
   useEffect(function () {

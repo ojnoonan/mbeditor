@@ -34,7 +34,7 @@ module Mbeditor
     # Non-matching pattern
     # -------------------------------------------------------------------------
 
-    test "grep fallback passes exclude-dirs and a timeout through ProcessRunner" do
+    test "grep fallback prunes exclusions via find and passes a timeout through ProcessRunner" do
       original_excluded = Mbeditor.configuration.excluded_paths
       Mbeditor.configuration.excluded_paths = %w[node_modules tmp vendor/bundle]
       captured = nil
@@ -43,7 +43,7 @@ module Mbeditor
       ProcessRunner.define_singleton_method(:call) do |cmd, **opts|
         # Background threads (git polling, cache warm) may call ProcessRunner
         # concurrently — only capture the grep spawned by CodeSearchService.
-        if cmd.first == "grep"
+        if cmd.first == "sh"
           captured = { cmd: cmd, opts: opts }
           { stdout: "", stderr: "", exit_status: nil }
         else
@@ -57,9 +57,11 @@ module Mbeditor
 
       CodeSearchService.call("pattern", @workspace)
 
-      assert_equal "grep", captured[:cmd].first
-      assert_includes captured[:cmd], "--exclude-dir=node_modules"
-      assert_includes captured[:cmd], "-I"
+      pipeline = captured[:cmd].last
+      assert_includes pipeline, "-name node_modules"
+      assert_includes pipeline, "-path #{File.join(@workspace, 'vendor/bundle')}"
+      assert_includes pipeline, "-prune"
+      assert_includes pipeline, "-I"
       assert_equal Mbeditor.configuration.search_timeout, captured[:opts][:timeout]
       assert_equal "C", captured[:opts][:env]["LC_ALL"]
     ensure
@@ -70,6 +72,60 @@ module Mbeditor
       sr_singleton.remove_method :rg_available?
       sr_singleton.alias_method :rg_available?, :__orig_rg_available?
       sr_singleton.remove_method :__orig_rg_available?
+    end
+
+    # The git tier used to be the only backend that ignored excluded_paths, so
+    # a definition lookup walked node_modules in full on every "Cannot find
+    # name" the editor reported. Keep the exclusions on the command line.
+    test "git grep tier passes excluded paths as :(exclude) pathspecs and no LC_ALL" do
+      original_excluded = Mbeditor.configuration.excluded_paths
+      Mbeditor.configuration.excluded_paths = %w[node_modules vendor/bundle]
+      system("git", "-C", @workspace, "init", "-q", exception: true)
+      captured = nil
+
+      singleton = class << ProcessRunner; self; end
+      singleton.alias_method :__orig_call, :call
+      ProcessRunner.define_singleton_method(:call) do |cmd, **opts|
+        if cmd.first == "git" && cmd.include?("grep")
+          captured = { cmd: cmd, opts: opts }
+          { stdout: "", stderr: "", exit_status: nil }
+        else
+          __orig_call(cmd, **opts)
+        end
+      end
+
+      sr_singleton = class << SearchReplaceService; self; end
+      sr_singleton.alias_method :__orig_rg_available?, :rg_available?
+      SearchReplaceService.define_singleton_method(:rg_available?) { false }
+
+      CodeSearchService.call("pattern", @workspace)
+
+      assert_equal "git", captured[:cmd].first
+      assert_includes captured[:cmd], ":(exclude)node_modules"
+      assert_includes captured[:cmd], ":(exclude)vendor/bundle"
+      assert_nil (captured[:opts][:env] || {})["LC_ALL"]
+    ensure
+      Mbeditor.configuration.excluded_paths = original_excluded
+      singleton.remove_method :call
+      singleton.alias_method :call, :__orig_call
+      singleton.remove_method :__orig_call
+      sr_singleton.remove_method :rg_available?
+      sr_singleton.alias_method :rg_available?, :__orig_rg_available?
+      sr_singleton.remove_method :__orig_rg_available?
+    end
+
+    # Minified bundles cannot hold the definition being looked for (their
+    # globals are one-letter names inside a closure) but are usually the
+    # largest files in the workspace, so every tier skips them — same
+    # convention as JsProgramService and JsGlobalsService.
+    test "minified bundles are skipped by the definition search" do
+      write_file("app/assets/javascripts/thing.js", "function myFunction() {}")
+      write_file("vendor/assets/lib.min.js", "function myFunction() {}")
+
+      files = CodeSearchService.call("myFunction", @workspace).map { |l| l.split(":").first }
+
+      assert files.any? { |f| f.end_with?("thing.js") }
+      assert_empty files.select { |f| f.end_with?("lib.min.js") }, "minified bundle must not be scanned"
     end
 
     test "the rg tier honours search_respect_gitignore like the search service" do
@@ -223,7 +279,7 @@ module Mbeditor
         end
       end
 
-      grep_call = captured.find { |c| c[:cmd].first == "grep" }
+      grep_call = captured.find { |c| c[:cmd].first == "sh" && c[:cmd].last.include?(" grep ") }
       assert grep_call, "expected the grep search to run through ProcessRunner"
       assert_equal 3, grep_call[:timeout]
     end

@@ -15,6 +15,12 @@ module Mbeditor
       def info(message = nil)
         @messages << message.to_s
       end
+
+      # Action Cable logs broadcasts at debug, which is the level that actually
+      # floods a development log during pairing.
+      def debug(message = nil)
+        @messages << message.to_s
+      end
     end
 
     test 'suppresses mbeditor channel messages' do
@@ -25,6 +31,21 @@ module Mbeditor
       filter.info('regular message')
 
       assert_equal ['regular message'], logger.messages
+    end
+
+    # Action Cable's broadcast line names only the stream, never the channel
+    # class, so a Mbeditor::-only pattern let every collaboration broadcast
+    # through — one per keystroke and per cursor move, with the base64 CRDT
+    # payload inlined.
+    test 'suppresses collaboration stream broadcasts' do
+      logger = PlainLogger.new
+      filter = CableLogFilter.new(logger)
+
+      filter.debug('[ActionCable] Broadcasting to mbeditor_collab:9f2a1c: {"type"=>"doc_update", "update"=>"AQHt"}')
+      filter.debug('[ActionCable] Broadcasting to mbeditor_editor: {"type"=>"presence"}')
+      filter.debug('[ActionCable] Broadcasting to app_notifications: {"id"=>1}')
+
+      assert_equal ['[ActionCable] Broadcasting to app_notifications: {"id"=>1}'], logger.messages
     end
 
     test 'suppresses cable websocket lifecycle request log lines' do

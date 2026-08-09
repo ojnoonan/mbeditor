@@ -7,6 +7,13 @@ module Mbeditor
     driven_by :cuprite, options: MBEDITOR_CUPRITE_OPTIONS.dup
 
     def setup
+      # The collaboration doc store is a process-level singleton shared with the
+      # in-process Capybara server; clear it so buffered CRDT state from a prior
+      # test can't leak into a late-join here.
+      Mbeditor::CollaborationDocStore.reset! if defined?(Mbeditor::CollaborationDocStore)
+      # Same story for the presence registry: a participant left over from a prior
+      # test would make collaboration activate before this test's peer joins.
+      Mbeditor::PresenceRegistry.reset! if defined?(Mbeditor::PresenceRegistry)
       @workspace = Dir.mktmpdir("mbeditor_sys_")
       FileUtils.mkdir_p(File.join(@workspace, "app", "models"))
       File.write(File.join(@workspace, "README.md"), "# Hello\n")
@@ -52,6 +59,21 @@ module Mbeditor
       Mbeditor.configure { |c| c.authenticate_with = nil }
     end
 
+    # Collaboration activates only once another participant is connected, never on
+    # cable availability alone — on your own the editor keeps persistent undo and
+    # external-change detection. So any test that needs a live room has to put a
+    # second participant on the cable first. This opens one and leaves it
+    # connected; Capybara tears the session down in teardown.
+    def join_collaboration_peer(session_name = :collab_peer)
+      Capybara.using_session(session_name) do
+        visit "/mbeditor"
+        assert_selector ".file-tree", wait: 10
+        page.execute_script("window.WebSocketService.connect(true);")
+        assert wait_for_js("window.WebSocketService.isCableAvailable()"),
+               "the peer session should reach Action Cable"
+      end
+    end
+
     def expand_tree_folder(path)
       find(".tree-item[data-path='#{path}']").click
     end
@@ -64,6 +86,244 @@ module Mbeditor
     test "file tree shows workspace files" do
       visit "/mbeditor"
       assert_text "README.md", wait: 10
+    end
+
+    test "collaborative-editing globals are reachable from the browser" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      # The vendored collab bundle publishes the exact contract the frontend
+      # collaboration slices bind against (matching the upstream npm names).
+      assert_equal "object", wait_for_global_typeof("window.Y"),
+                   "Yjs (window.Y) should be exposed by the vendored collab bundle"
+      assert_equal "function", wait_for_global_typeof("window.MonacoBinding"),
+                   "y-monaco (window.MonacoBinding) should be exposed by the vendored collab bundle"
+      assert_equal "object", wait_for_global_typeof("window.awarenessProtocol"),
+                   "y-protocols awareness (window.awarenessProtocol) should be exposed by the vendored collab bundle"
+
+      # Spot-check the members the later slices actually use, so a bad rebuild
+      # (e.g. tree-shaken exports) fails loudly rather than at runtime.
+      assert_equal "function", page.evaluate_script("typeof window.Y.Doc")
+      assert_equal "function", page.evaluate_script("typeof window.Y.UndoManager")
+      assert_equal "function", page.evaluate_script("typeof window.Y.applyUpdate")
+      assert_equal "function", page.evaluate_script("typeof window.awarenessProtocol.Awareness")
+      assert_equal "function", page.evaluate_script("typeof window.awarenessProtocol.encodeAwarenessUpdate")
+    end
+
+    test "external on-disk edit does not clobber a collaboratively-bound buffer" do
+      # A room needs someone to be in it — see join_collaboration_peer.
+      join_collaboration_peer
+
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      # Cable is mounted in the dummy app; establish the WebSocket up front so the
+      # first opener seeds and binds the shared Yjs document deterministically (the
+      # app's own auto-connect is timing-sensitive under headless Chrome).
+      page.execute_script("window.WebSocketService.connect(true);")
+      assert wait_for_js("window.WebSocketService.isCableAvailable()"),
+             "Action Cable should be available in the dummy app"
+
+      all(".tree-item-name", text: "README.md").first.click
+      assert_selector ".monaco-editor", wait: 10
+
+      # Wait until the collaborative binding is live for README.md.
+      assert wait_for_js("window.CollaborationService.isAttached('README.md')"),
+             "collaboration binding should attach for README.md"
+      wait_for_editor_value("# Hello\n")
+
+      # Another tool edits the file on disk while it's open and collab-bound.
+      File.write(File.join(@workspace, "README.md"), "# Changed on disk\n")
+
+      # Refresh-workspace runs the external-change detection
+      # (checkOpenTabsForExternalChanges) against the now-changed file on disk.
+      find("button[title='Refresh workspace']").click
+
+      # The live shared buffer wins: the external disk content is NOT applied over
+      # the collaborative buffer.
+      assert_editor_value_stays("# Hello\n")
+    end
+
+    test "an already-open tab joins the room once a participant arrives" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      # Open a file with the cable held down, so its editor is built in single-user
+      # mode. This is the first-paint race: a restored tab can mount before the
+      # cable connects. (Stubbing the predicate is deterministic; the app's own
+      # async auto-connect would otherwise re-enable cable mid-test.)
+      page.execute_script(<<~'JS')
+        window.__origCableAvailable = window.WebSocketService.isCableAvailable;
+        window.WebSocketService.isCableAvailable = function () { return false; };
+      JS
+      all(".tree-item-name", text: "README.md").first.click
+      assert_selector ".monaco-editor", wait: 10
+      refute wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 2),
+             "precondition: the file should open without collaboration while cable is down"
+
+      # Cable alone must NOT be enough — that was the old behaviour, and it put
+      # every solo user into collaboration mode with nobody on the other end.
+      page.execute_script(<<~'JS')
+        window.WebSocketService.isCableAvailable = window.__origCableAvailable;
+        window.WebSocketService.connect(true);
+      JS
+      assert wait_for_js("window.WebSocketService.isCableAvailable()")
+      refute wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 3),
+             "cable being up on its own must not activate collaboration"
+
+      # A second participant arrives. The already-open tab joins the room on its
+      # own — no close/reopen needed.
+      join_collaboration_peer
+
+      assert wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 15),
+             "an already-open tab should join collaboration once a participant arrives"
+    end
+
+    test "a participant's colour survives a reload" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      before = page.evaluate_script("window.CollaborationIdentity.get().color")
+      client_before = page.evaluate_script("window.CollaborationIdentity.get().clientId")
+
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      after = page.evaluate_script("window.CollaborationIdentity.get().color")
+      client_after = page.evaluate_script("window.CollaborationIdentity.get().clientId")
+
+      # Seeding the colour on the per-load client id made every refresh hand you a
+      # new colour, which peers saw as your caret changing hue for no reason.
+      assert_equal before, after, "colour should be stable across a reload"
+      refute_equal client_before, client_after,
+                   "precondition: the client id is per-connection and should differ"
+    end
+
+    test "a late joiner receives the first browser's existing edits" do
+      # B connects first but stays out of the file. It is A's *participant*, which
+      # is what lets A's room activate at all; B is the late joiner to the file.
+      Capybara.using_session(:browser_b) do
+        visit "/mbeditor"
+        assert_selector ".file-tree", wait: 10
+        page.execute_script("window.WebSocketService.connect(true);")
+        assert wait_for_js("window.WebSocketService.isCableAvailable()")
+      end
+
+      Capybara.using_session(:browser_a) do
+        visit "/mbeditor"
+        assert_selector ".file-tree", wait: 10
+        page.execute_script("window.WebSocketService.connect(true);")
+        assert wait_for_js("window.WebSocketService.isCableAvailable()")
+        all(".tree-item-name", text: "README.md").first.click
+        assert_selector ".monaco-editor", wait: 10
+        assert wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 15),
+               "browser A should bind the room"
+
+        # An edit that flows through the binding into the shared Yjs document.
+        page.execute_script(<<~'JS')
+          var ed = window.__mbeditorActiveEditor;
+          ed.setPosition({ lineNumber: 1, column: 1 });
+          ed.focus();
+          ed.trigger('keyboard', 'type', { text: 'COLLAB-EDIT ' });
+        JS
+        wait_for_editor_value("COLLAB-EDIT # Hello\n")
+      end
+
+      Capybara.using_session(:browser_b) do
+        all(".tree-item-name", text: "README.md").first.click
+        assert_selector ".monaco-editor", wait: 10
+        assert wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 15),
+               "browser B should bind the room"
+
+        # B joined after A's edit; the late-join sync must carry A's existing edits.
+        assert wait_for_js(
+          "window.__mbeditorActiveEditor && window.__mbeditorActiveEditor.getValue().indexOf('COLLAB-EDIT') !== -1",
+          timeout: 15
+        ), "late joiner should receive the first browser's existing edits"
+      end
+
+      # And a subsequent edit in A propagates live to the already-open B.
+      Capybara.using_session(:browser_a) do
+        page.execute_script(<<~'JS')
+          var ed = window.__mbeditorActiveEditor;
+          ed.setPosition({ lineNumber: 1, column: 1 });
+          ed.focus();
+          ed.trigger('keyboard', 'type', { text: 'LIVE-EDIT ' });
+        JS
+      end
+      Capybara.using_session(:browser_b) do
+        assert wait_for_js(
+          "window.__mbeditorActiveEditor && window.__mbeditorActiveEditor.getValue().indexOf('LIVE-EDIT') !== -1",
+          timeout: 15
+        ), "a live edit in the first browser should propagate to the second"
+      end
+    end
+
+    test "edits made before collaboration activates reach a later second browser" do
+      Capybara.using_session(:browser_a) do
+        visit "/mbeditor"
+        assert_selector ".file-tree", wait: 10
+        # Open + edit while collaboration is unavailable (single-user), mirroring a
+        # tab that was already open with edits before the cable connected.
+        page.execute_script(<<~'JS')
+          window.__origCableAvailable = window.WebSocketService.isCableAvailable;
+          window.WebSocketService.isCableAvailable = function () { return false; };
+        JS
+        all(".tree-item-name", text: "README.md").first.click
+        assert_selector ".monaco-editor", wait: 10
+        page.execute_script(<<~'JS')
+          var ed = window.__mbeditorActiveEditor;
+          ed.setPosition({ lineNumber: 1, column: 1 });
+          ed.focus();
+          ed.trigger('keyboard', 'type', { text: 'PRECONNECT-EDIT ' });
+        JS
+        wait_for_editor_value("PRECONNECT-EDIT # Hello\n")
+      end
+
+      # A participant arrives, which is what makes collaboration available at all.
+      join_collaboration_peer
+
+      Capybara.using_session(:browser_a) do
+        # Now collaboration becomes available; A should join and seed its edits.
+        page.execute_script(<<~'JS')
+          window.WebSocketService.isCableAvailable = window.__origCableAvailable;
+          window.WebSocketService.connect(true);
+        JS
+        assert wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 15),
+               "browser A should join the room once a participant is present"
+      end
+
+      Capybara.using_session(:browser_b) do
+        visit "/mbeditor"
+        assert_selector ".file-tree", wait: 10
+        # B also opens single-user first, then its cable connects — so B joins the
+        # room by rebuilding as a late-joiner (the real auto-connect ordering).
+        page.execute_script(<<~'JS')
+          window.__origCableAvailable = window.WebSocketService.isCableAvailable;
+          window.WebSocketService.isCableAvailable = function () { return false; };
+        JS
+        all(".tree-item-name", text: "README.md").first.click
+        assert_selector ".monaco-editor", wait: 10
+        page.execute_script(<<~'JS')
+          window.WebSocketService.isCableAvailable = window.__origCableAvailable;
+          window.WebSocketService.connect(true);
+        JS
+        unless wait_for_js("window.CollaborationService.isAttached('README.md')", timeout: 15)
+          diag = page.evaluate_script(<<~'JS')
+            JSON.stringify({
+              cable: window.WebSocketService.isCableAvailable(),
+              connected: window.WebSocketService.isConnected(),
+              available: window.CollaborationService.isAvailable(),
+              bound: window.CollaborationService.isBound('README.md'),
+              models: Object.keys(window.__mbeditorModels || {})
+            })
+          JS
+          flunk "browser B should bind the room after cable connects; state: #{diag}"
+        end
+
+        assert wait_for_js(
+          "window.__mbeditorActiveEditor && window.__mbeditorActiveEditor.getValue().indexOf('PRECONNECT-EDIT') !== -1",
+          timeout: 15
+        ), "second browser should receive edits made before A joined collaboration"
+      end
     end
 
     test "clicking a file opens it in the editor" do
@@ -680,6 +940,120 @@ module Mbeditor
                    "Expected no React errors (sprockets global), got: #{react_errors.inspect}"
     end
 
+    # ── Formatting ────────────────────────────────────────────────────────────
+
+    test "formatting a jsx file indents with the editor's tab setting" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      # insertSpaces false is the default: the file must come back tab-indented.
+      # Prettier used to read a separate prettierUseTabs pref that no settings
+      # screen wrote, so this reprinted at two spaces whatever the user chose.
+      page.execute_script(<<~'JS')
+        window.__mbeditorActiveEditor.setValue("const A=()=>{\n  return <div   className='a'>{1}</div>;\n};\n");
+      JS
+
+      click_button "Format"
+
+      formatted = wait_for_formatted_value(matching: /\n\t/)
+      assert_match(/\n\treturn <div className="a">/, formatted,
+                   "Expected tab-indented Prettier output, got: #{formatted.inspect}")
+    end
+
+    test "format all formats every open document and skips ones with no formatter" do
+      File.write(File.join(@workspace, "styles.scss"), ".x{color:red}\n")
+      File.write(File.join(@workspace, "plain.txt"), "no formatter here\n")
+
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      # Double-click pins the tab; a single click opens a preview tab that the
+      # next click replaces, so only the last file would still be open.
+      find(".tree-item-name", text: "component.jsx").double_click
+      assert_selector ".monaco-editor", wait: 10
+      page.execute_script(%(window.__mbeditorActiveEditor.setValue("const A=()=>{return 1};\\n");))
+      find(".tree-item-name", text: "styles.scss").double_click
+      find(".tree-item-name", text: "plain.txt").double_click
+      wait_for_condition("all three files to be open") do
+        page.evaluate_script("EditorStore.getState().panes.reduce(function(n,p){return n+p.tabs.length},0)") >= 3
+      end
+
+      click_button "Format All"
+
+      contents = wait_for_condition("all open documents to settle") do
+        result = page.evaluate_script(<<~'JS')
+          (function () {
+            var out = {};
+            EditorStore.getState().panes.forEach(function (p) {
+              p.tabs.forEach(function (t) { if (t.path) out[t.path] = t.content; });
+            });
+            return out;
+          })()
+        JS
+        result if result["component.jsx"].to_s.include?("=>") && result["styles.scss"].to_s.include?("{\n")
+      end
+
+      assert_match(/const A = \(\) => \{/, contents["component.jsx"])
+      assert_match(/\.x \{\n\tcolor: red;/, contents["styles.scss"])
+      assert_equal "no formatter here\n", contents["plain.txt"],
+                   "A file with no formatter must be left exactly as it was"
+    end
+
+    test "pasting re-indents to the editor's setting without reformatting the code" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      # Paste is driven from onDidPaste (Monaco's own formatOnPaste never ran
+      # the formatter here) and re-indents only. Running Prettier on paste
+      # rewrote code the user never touched, so the pasted text must come back
+      # with its indentation converted to the editor's setting and everything
+      # else byte-identical: no added semicolons, no requoting, no spaces
+      # inserted after commas.
+      page.execute_script(<<~'JS')
+        (function () {
+          var ed = window.__mbeditorActiveEditor;
+          ed.getModel().setValue("");
+          ed.setPosition({ lineNumber: 1, column: 1 });
+          ed.focus();
+          var dt = new DataTransfer();
+          dt.setData('text/plain', "function greet(name){\n  if(name){\n    console.log('hi',name)\n  }\n}\n");
+          document.querySelector('.monaco-editor textarea')
+            .dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+        })()
+      JS
+
+      pasted = wait_for_formatted_value(matching: /\n\tif/)
+      assert_match(/function greet\(name\)\{\n\tif\(name\)\{\n\t\tconsole\.log\('hi',name\)\n\t\}\n\}/, pasted,
+                   "Expected tab-re-indented but otherwise untouched paste, got: #{pasted.inspect}")
+    end
+
+    test "a cancelled request does not report the server as offline" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      # The editor aborts requests constantly — superseded searches, hover and
+      # completion providers, prefetches. Counting those as unreachable flashed
+      # "Server offline" during ordinary actions like creating a file.
+      still_online = page.evaluate_async_script(<<~'JS')
+        var done = arguments[0];
+        (async function () {
+          for (var i = 0; i < 3; i++) {
+            var c = new AbortController();
+            var p = axios.get('/mbeditor/search', { params: { q: 'zz' + i }, signal: c.signal }).catch(function () {});
+            c.abort();
+            await p;
+          }
+          setTimeout(function () { done(FileService.isServerReachable()); }, 200);
+        })();
+      JS
+
+      assert still_online, "Cancelled requests must not mark the server unreachable"
+      assert_no_selector ".statusbar-offline"
+    end
+
     test "monaco warns about unused local variable in javascript" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
@@ -791,6 +1165,45 @@ module Mbeditor
       end
     end
 
+    # Polls until `typeof <expr>` settles to something other than "undefined"
+    # (the vendored collab bundle loads via a deferred <script>, so the global
+    # may not exist on the first tick). Returns the final typeof string.
+    def wait_for_global_typeof(expr, timeout: 10)
+      deadline = Time.now + timeout
+      loop do
+        kind = page.evaluate_script("typeof #{expr}")
+        return kind if kind != "undefined"
+        return kind if Time.now >= deadline
+
+        sleep 0.1
+      end
+    end
+
+    # Polls until the JS expression evaluates truthy (or timeout). Returns the bool.
+    def wait_for_js(expr, timeout: 10)
+      deadline = Time.now + timeout
+      loop do
+        return true if page.evaluate_script("!!(#{expr})")
+        return false if Time.now >= deadline
+
+        sleep 0.1
+      end
+    end
+
+    # Asserts the editor value equals +expected+ and stays that way for +hold+
+    # seconds — catching a late, asynchronous clobber that a single read would miss.
+    def assert_editor_value_stays(expected, hold: 1.5)
+      deadline = Time.now + hold
+      loop do
+        value = active_editor_value
+        assert_equal expected, value,
+                     "editor value changed to #{value.inspect}; the shared buffer was clobbered"
+        break if Time.now >= deadline
+
+        sleep 0.1
+      end
+    end
+
     def wait_for_editor_value(expected, timeout: Capybara.default_max_wait_time)
       deadline = Time.now + timeout
       loop do
@@ -799,6 +1212,26 @@ module Mbeditor
         raise "Timed out waiting for editor value to become #{expected.inspect}; got #{value.inspect}" if Time.now >= deadline
 
         sleep 0.05
+      end
+    end
+
+    # Formatting is asynchronous (Prettier is lazy-loaded on first use), so poll
+    # the buffer until it matches rather than guessing at a sleep.
+    def wait_for_formatted_value(matching:, timeout: 20)
+      wait_for_condition("editor content to match #{matching.inspect}") do
+        value = active_editor_value
+        value if value =~ matching
+      end
+    end
+
+    def wait_for_condition(description, timeout: 20)
+      deadline = Time.now + timeout
+      loop do
+        result = yield
+        return result if result
+        raise "Timed out waiting for #{description}" if Time.now >= deadline
+
+        sleep 0.1
       end
     end
 

@@ -61,6 +61,10 @@ var TabManager = (function () {
         entry.model.dispose();
       }
       delete window.__mbeditorModels[candidate];
+      // The evicted file is not open in any pane — tear down its collaboration room.
+      if (typeof CollaborationService !== 'undefined') {
+        CollaborationService.leaveRoom(candidate);
+      }
     }
   }
 
@@ -141,7 +145,32 @@ var TabManager = (function () {
     });
   }
 
+  // Single slot holding "where the cursor was before the last jump".
+  // PageUp/PageDown swap the cursor between this slot and its current spot.
+  // ponytail: two-position cycle, upgrade to a real back/forward stack if asked
+  var _jumpOrigin = null;
+
+  function _snapshotPosition() {
+    var editor = window.__mbeditorActiveEditor;
+    var pos = editor && editor.getPosition ? editor.getPosition() : null;
+    if (!pos) return null;
+    var state = EditorStore.getState();
+    var pane = state.panes.find(function(p) { return p.id === state.focusedPaneId; });
+    var tab = pane && pane.tabs.find(function(t) { return t.id === pane.activeTabId; });
+    if (!tab || !tab.path) return null;
+    return { path: tab.path, name: tab.name, line: pos.lineNumber, col: pos.column };
+  }
+
+  function toggleJumpOrigin() {
+    var target = _jumpOrigin;
+    if (!target) return;
+    // openTab re-snapshots the current position into _jumpOrigin below,
+    // which is exactly the swap we want.
+    openTab(target.path, target.name, target.line, null, false, target.col);
+  }
+
   function openTab(path, name, line, forcePaneId, isSoftOpen, col) {
+    if (line) _jumpOrigin = _snapshotPosition() || _jumpOrigin;
     var state = EditorStore.getState();
     var paneId = forcePaneId || state.focusedPaneId;
     var pane = state.panes.find(function(p) { return p.id === paneId; });
@@ -449,6 +478,10 @@ var TabManager = (function () {
           _entry.model.dispose();
         }
         delete window.__mbeditorModels[path];
+        // File is no longer open in any pane — tear down its collaboration room.
+        if (typeof CollaborationService !== 'undefined') {
+          CollaborationService.leaveRoom(path);
+        }
       }
     }
   }
@@ -617,8 +650,42 @@ var TabManager = (function () {
     _updateTab(paneId, path, { gotoLine: null, gotoCol: null });
   }
 
+  // VS Code-style scratch buffer: a tab with no file behind it. Nothing is
+  // written anywhere until the user saves, at which point the save flow asks
+  // for a real path and converts the tab.
+  function openUntitledTab(forcePaneId) {
+    var state = EditorStore.getState();
+    var paneId = forcePaneId || state.focusedPaneId;
+    var pane = state.panes.find(function (p) { return p.id === paneId; });
+    if (!pane) return;
+
+    var used = {};
+    state.panes.forEach(function (p) {
+      p.tabs.forEach(function (t) { if (t.isUntitled) used[t.name] = true; });
+    });
+    var n = 1;
+    while (used['Untitled-' + n]) n++;
+    var name = 'Untitled-' + n;
+    var path = 'untitled://' + name;
+
+    var newTab = {
+      id: path, path: path, name: name,
+      dirty: false, content: '', cleanContent: '',
+      viewState: null, isUntitled: true, loading: false,
+      externalContentVersion: 1
+    };
+    var newPanes = state.panes.map(function (p) {
+      if (p.id === paneId) {
+        return Object.assign({}, p, { tabs: p.tabs.concat(newTab), activeTabId: path });
+      }
+      return p;
+    });
+    EditorStore.setState({ panes: newPanes, focusedPaneId: paneId, activeTabId: path });
+  }
+
   return {
     openTab: openTab,
+    openUntitledTab: openUntitledTab,
     getRecentFiles: getRecentFiles,
     openDiffTab: openDiffTab,
     openCombinedDiffTab: openCombinedDiffTab,
@@ -632,6 +699,7 @@ var TabManager = (function () {
     reorderTabInPane: reorderTabInPane,
     moveTabToPane: moveTabToPane,
     clearGotoLine: clearGotoLine,
+    toggleJumpOrigin: toggleJumpOrigin,
     closeAllTabsInPane: closeAllTabsInPane,
     closeOtherTabsInPane: closeOtherTabsInPane,
     closeSavedTabsInPane: closeSavedTabsInPane,

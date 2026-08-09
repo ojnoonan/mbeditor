@@ -7,8 +7,16 @@ module Mbeditor
   CableBaseClass = defined?(ActionCable::Channel::Base) ? ActionCable::Channel::Base : Object
 
   class EditorChannel < CableBaseClass
+    include ChannelAuthentication
+
     def subscribed
+      return unless mbeditor_authenticated?
+
       stream_from "mbeditor_editor" if respond_to?(:stream_from)
+      # Hand the joiner the current roster straight away. Without it they would
+      # only learn about a peer who happens to heartbeat after they connected,
+      # and would show an empty participant list until then.
+      transmit(presence_payload) if respond_to?(:transmit, true)
     end
 
     # Push newly appended log lines to this subscriber ~once a second while the
@@ -17,7 +25,26 @@ module Mbeditor
     periodically :push_log_lines, every: 1 if respond_to?(:periodically)
 
     def unsubscribed
-      # no-op
+      # Action Cable calls this on a clean close *and* on its own connection
+      # timeout, which is what makes the registry authoritative: a participant
+      # cannot linger past their socket.
+      return if @presence_client_id.nil?
+
+      PresenceRegistry.remove(@presence_client_id)
+      relay(presence_payload)
+    end
+
+    # Presence heartbeat: record this participant and broadcast the whole roster.
+    #
+    # Whole roster, not just the sender: clients replace theirs outright, so they
+    # cannot accumulate a participant the server has already dropped. That is the
+    # one guarantee per-participant events could not give, and it also removes the
+    # client-side merge, the leave handling and the greet-a-new-peer re-announce
+    # that used to stand in for it.
+    def presence(data)
+      @presence_client_id = data["client_id"]
+      PresenceRegistry.record(@presence_client_id, data)
+      relay(presence_payload)
     end
 
     def save_state(data)
@@ -50,6 +77,18 @@ module Mbeditor
     end
 
     private
+
+    def presence_payload
+      { "type" => "presence", "roster" => PresenceRegistry.roster }
+    end
+
+    def relay(payload)
+      return unless defined?(ActionCable) && ActionCable.respond_to?(:server)
+
+      ActionCable.server.broadcast("mbeditor_editor", payload)
+    rescue StandardError
+      # Never let a relay failure crash the WebSocket connection.
+    end
 
     def push_log_lines
       return unless @log_watching

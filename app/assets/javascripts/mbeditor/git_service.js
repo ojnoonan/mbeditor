@@ -35,8 +35,11 @@ var GitService = (function () {
   // changed — an external branch switch or a working-tree change. Rich fields
   // from the last full fetch (unpushedCommits, branchCommits, ...) are
   // preserved rather than clobbered.
-  function fetchStatusLite() {
-    return axios.get(window.mbeditorBasePath() + '/git_status')
+  // opts.background marks the 5s poll, which is dropped while the server is
+  // unreachable rather than failing over and over in the console.
+  function fetchStatusLite(opts) {
+    var cfg = (opts && opts.background) ? { mbeditorBackground: true } : {};
+    return axios.get(window.mbeditorBasePath() + '/git_status', cfg)
       .then(function(res) {
         var data = res.data;
         if (!data || !data.ok) return fetchInfo();

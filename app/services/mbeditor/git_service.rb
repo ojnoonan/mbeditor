@@ -155,9 +155,12 @@ module Mbeditor
     # Resolve a file path safely within repo_path.  Returns full path string or
     # nil if the path escapes the root.
     #
-    # Follows symlinks (via SafePath, including dangling ones) so that a symlink
-    # inside the repo cannot escape it, mirroring
-    # ApplicationController#resolve_path.  When repo_path is not a real directory
+    # Resolves symlinks (via SafePath, including dangling ones) so that a
+    # symlink inside the repo cannot escape it.  Deliberately stricter than
+    # ApplicationController#resolve_path, which follows links out of the
+    # workspace so linked-in files open: git has nothing to say about a file
+    # outside its own repo, so there is no feature to lose here.
+    # When repo_path is not a real directory
     # (e.g. unit tests with synthetic roots) the symlink check is skipped, since
     # there is nothing on disk to resolve and repo_path is server-controlled.
     def resolve_path(repo_path, relative)

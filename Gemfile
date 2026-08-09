@@ -23,4 +23,9 @@ gem 'webmock',            require: false
 if RUBY_VERSION >= '3.2'
   gem 'mini_racer',       require: false
   gem 'ruby-lsp',         require: false
+  # Same reason: sqlite3 2.x's native extension fails to build on the 3.0/3.1
+  # legs. The dummy app uses it for a real schema behind the model graph, and
+  # boots without ActiveRecord entirely when it is absent — which is also a
+  # case worth exercising, since plenty of host apps have no ActiveRecord.
+  gem 'sqlite3',          '>= 2.0'
 end

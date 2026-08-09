@@ -96,6 +96,34 @@ var ProblemsPanel = (function () {
     var _filter = React.useState('');
     var filter = _filter[0], setFilter = _filter[1];
 
+    // Which severities the list shows. Multi-select rather than a single
+    // dropdown: "errors and warnings, but not the convention noise" is the
+    // view people actually want, and a one-of-three picker can't express it.
+    // Persisted, because a filter you have to re-set every time you open the
+    // panel is one you stop using.
+    var _severities = React.useState(function () {
+      try {
+        var saved = JSON.parse(window.localStorage.getItem('mbeditorProblemsSeverities'));
+        if (saved && typeof saved === 'object') {
+          return { error: saved.error !== false, warning: saved.warning !== false, info: saved.info !== false };
+        }
+      } catch (e) { /* unparseable or storage blocked — fall through to the default */ }
+      return { error: true, warning: true, info: true };
+    });
+    var severities = _severities[0], setSeverities = _severities[1];
+
+    var toggleSeverity = function (kind) {
+      setSeverities(function (prev) {
+        var next = Object.assign({}, prev);
+        next[kind] = !next[kind];
+        // Turning the last one off would show an empty panel with no hint as
+        // to why, so the final active severity stays latched on.
+        if (!next.error && !next.warning && !next.info) return prev;
+        try { window.localStorage.setItem('mbeditorProblemsSeverities', JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
+    };
+
     // Exceptions raised by the host app. Unlike markers these are not per-model
     // — a runtime failure isn't a property of a file you happen to have open —
     // so they live in their own section above the marker list.
@@ -165,11 +193,14 @@ var ProblemsPanel = (function () {
     }, []);
 
     var needle = filter.trim().toLowerCase();
-    var shown = needle
+    var allSeverities = severities.error && severities.warning && severities.info;
+    var shown = (needle || !allSeverities)
       ? problems.byFile.map(function (entry) {
           return {
             path: entry.path,
             markers: entry.markers.filter(function (item) {
+              if (!severities[SEVERITY_KIND[item.marker.severity] || 'info']) return false;
+              if (!needle) return true;
               return (item.marker.message + ' ' + item.code + ' ' + entry.path)
                 .toLowerCase().indexOf(needle) !== -1;
             })
@@ -192,13 +223,31 @@ var ProblemsPanel = (function () {
         { className: 'ide-problems-header' },
         React.createElement('i', { className: 'fas fa-bug' }),
         React.createElement('span', { className: 'ide-problems-title' }, 'Problems'),
+        // No prose summary: the severity chips below carry the same three
+        // counts, and restating them was the longest thing in the header.
         React.createElement(
-          'span',
-          { className: 'ide-problems-summary' },
-          problems.errors.length + ' error' + (problems.errors.length === 1 ? '' : 's') +
-            ', ' + problems.warnings.length + ' warning' + (problems.warnings.length === 1 ? '' : 's') +
-            ', ' + problems.infos.length + ' info' +
-            ' in open files'
+          'div',
+          { className: 'ide-problems-severity-filter' },
+          [
+            { kind: 'error', count: problems.errors.length },
+            { kind: 'warning', count: problems.warnings.length },
+            { kind: 'info', count: problems.infos.length }
+          ].map(function (s) {
+            var on = severities[s.kind];
+            return React.createElement(
+              'button',
+              {
+                key: s.kind,
+                type: 'button',
+                className: 'ide-problems-sev-chip ide-problems-sev-' + s.kind + (on ? ' is-on' : ''),
+                title: (on ? 'Hide' : 'Show') + ' ' + SEVERITY_LABEL[s.kind].toLowerCase() + 's',
+                'aria-pressed': on ? 'true' : 'false',
+                onClick: function () { toggleSeverity(s.kind); }
+              },
+              React.createElement('i', { className: 'fas ' + SEVERITY_ICON[s.kind] }),
+              React.createElement('span', null, s.count)
+            );
+          })
         ),
         React.createElement('input', {
           className: 'ide-problems-filter',

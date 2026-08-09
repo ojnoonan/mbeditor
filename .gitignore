@@ -7,6 +7,10 @@
 /pkg/
 /test/dummy/db/*.sqlite3
 /test/dummy/db/*.sqlite3-journal
+# SQLite's write-ahead-log sidecars; the existing *.sqlite3 pattern does
+# not match them because the suffix comes after the extension.
+/test/dummy/db/*.sqlite3-shm
+/test/dummy/db/*.sqlite3-wal
 /test/dummy/log/
 /test/dummy/tmp/
 /test/dummy/storage/

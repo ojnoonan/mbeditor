@@ -25,6 +25,14 @@ Mbeditor exposes read and write access to your Rails application directory over 
 - Always keep it in the development group in your Gemfile.
 - The engine enforces environment restrictions at runtime, and Gemfile scoping is a second line of defense that keeps the gem out of deploy builds.
 
+> **Pairing crosses the localhost-only boundary by design.** Realtime collaborative
+> editing (see [Collaborative pairing](#collaborative-pairing-optional)) is meant to
+> be reached by a second person, so it necessarily exposes the editor beyond your own
+> machine. Treat that as an explicit, deliberate exception to the rules above — confine
+> exposure to a trusted tunnel or LAN, set an authentication hook, and tear it down when
+> you finish pairing. It does not change the core rule: mbeditor is development-only and
+> must never be reachable by untrusted users.
+
 ## Installation
 1. Add the gem to the host app Gemfile in development only:
 
@@ -59,8 +67,12 @@ Mbeditor.configure do |config|
   config.excluded_paths = %w[.git tmp log node_modules .bundle coverage vendor/bundle]
   config.rubocop_command = "bundle exec rubocop"
 
-  # Optional authentication (runs as a before_action in the engine controllers)
-  # config.authenticate_with = proc { redirect_to login_path unless UserSession.find }
+  # Optional authentication (runs as a before_action in the engine controllers,
+  # and on the collaboration WebSocket subscribe). Resolve the user from
+  # `session` — a WebSocket subscribe runs no controller, so Current.user,
+  # UserSession.find and a memoised current_user are all unavailable there.
+  # config.authenticate_with = proc { redirect_to login_path unless User.find_by(id: session[:user_id]) }
+  # config.cable_authenticate_with = proc { ... }  # when one proc cannot serve both
 
   # Optional test runner (Minitest or RSpec)
   # config.test_framework = :minitest   # :minitest or :rspec — auto-detected when nil
@@ -97,7 +109,8 @@ end
 | `rubocop_command` | `"rubocop"` | Command used for inline Ruby linting and formatting. |
 | `git_timeout` | `10` | Seconds each git subprocess may run; a timed-out call degrades its own field of the git panel instead of failing the request. `nil` disables the bound. |
 | `search_timeout` | `15` | Wall-clock bound on project-search subprocesses; a tripped deadline returns the partial results collected so far. `nil` disables. |
-| `search_respect_gitignore` | `false` | When `true`, project search and definition lookups skip files ignored by `.gitignore`. The default searches them, matching the editor's "show me everything on disk" behaviour. |
+| `search_respect_gitignore` | `true` | Project search and definition lookups skip files ignored by `.gitignore`, matching VS Code and ripgrep. Set to `false` to search ignored files too — expect it to be slow without ripgrep installed, since git then has to walk `node_modules`, `public/packs`, build output and caches. |
+| `ripgrep_command` | `nil` | Path to the `rg` binary. `nil` auto-resolves: `PATH` first, then the usual install prefixes (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, linuxbrew, cargo). Set this if ripgrep lives somewhere unusual. See [Search performance](#search-performance). |
 | `js_global_identifiers` | `[]` | Extra JS names declared as ambient globals in the editor — for runtime-only globals the static workspace scan can't see (e.g. `%w[Routes I18n]`). |
 | `js_program` | `true` | Load the workspace's own JS source into Monaco's TypeScript program, so cross-file references get real inferred types instead of ambient `any`. See [JavaScript intelligence](#javascript-intelligence). `false` falls back to ambient declarations alone. |
 | `js_program_exclude` | `%w[vendor]` | Directories excluded from that program, on top of `excluded_paths`. Point this at any third-party or generated JS — vendored libraries are UMD-wrapped, so their source costs parse time and contributes no globals. |
@@ -113,7 +126,8 @@ end
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `authenticate_with` | `nil` | Proc run as a `before_action` in all engine controllers. Executed via `instance_exec` inside the controller, so it has access to `session`, `cookies`, `redirect_to`, and auth-library class methods (e.g. Authlogic's `UserSession.find`) — but not helper methods from the host's `ApplicationController`. |
+| `authenticate_with` | `nil` | Proc run as a `before_action` in all engine controllers. Executed via `instance_exec` inside the controller, so it has access to `session`, `cookies`, `redirect_to`, and auth-library class methods (e.g. Authlogic's `UserSession.find`) — but not helper methods from the host's `ApplicationController`. The same hook is also evaluated when the collaboration / editor **WebSocket** subscribes (see [Collaborative pairing](#collaborative-pairing-optional)); if it halts or raises, that subscription is rejected (fail-closed). Over the cable the proc runs against a request-derived probe, so request-scoped state may be narrower than over HTTP. |
+| `cable_authenticate_with` | `nil` | Authentication for the collaboration WebSocket; `nil` falls back to `authenticate_with`. Set this when the HTTP hook cannot work on the cable — a WebSocket subscribe runs no controller, so `Current.*`, an Authlogic `UserSession` and a memoised `current_user` are `nil` or raise, and the hook then denies the socket while working perfectly over HTTP. See [Collaborative pairing](#collaborative-pairing-optional). |
 | `authentication_cache_ttl` | `0` | Seconds to cache the auth result in the session (`0` = no caching). Set e.g. `300` to avoid calling `authenticate_with` on every request when the proc is expensive. Trade-off: after host logout, mbeditor stays accessible for up to TTL seconds. |
 
 ### Test runner
@@ -148,6 +162,13 @@ See [Resilient Routing](#resilient-routing) for details.
 |--------|---------|-------------|
 | `mount_path` | `nil` | Explicit URL prefix to serve resilient routing from. When `nil`, auto-detected from your `mount Mbeditor::Engine, at: "..."` line on every healthy boot. Set only to override detection. |
 | `resilient_routing` | `true` | Keeps mbeditor reachable when the host's `config/routes.rb` is broken, by serving its traffic from middleware that dispatches to a private route set. Set to `false` as an escape hatch: no middleware is inserted and the private set is never built. |
+
+### Collaboration
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `user_name_callback` | `nil` | Proc resolving the display name shown on your caret during realtime collaboration. Only needed when the automatic lookup can't reach your user — see `user_name_methods` below. Executed via `instance_exec` inside the engine's controller (like `authenticate_with`), so it can read `session`, `cookies`, `params`, and anything your auth library exposes to an `ActionController::Base` subclass — e.g. `proc { User.find_by(id: session[:user_id])&.name }`. **It cannot see helper methods defined on your own `ApplicationController`**, because the engine's controllers do not inherit from it; a hand-rolled `current_user` living there will raise `NameError`, which is logged as `[mbeditor] user name lookup failed` and falls back to the generated name. |
+| `user_name_methods` | `%w[name full_name display_name username login email]` | Attributes tried on `current_user`, in order, when no `user_name_callback` is set — the first non-blank one becomes your collaboration display name. This is what makes an authenticated editor show real names with no extra wiring, provided your auth library exposes `current_user` to `ActionController::Base` (Devise and Sorcery do; a `current_user` you wrote yourself on `ApplicationController` does not). Set it to your own column instead of writing a callback, e.g. `%w[preferred_name]`. |
 
 ## JavaScript intelligence
 
@@ -281,6 +302,174 @@ The gem keeps host/tooling responsibilities in the host app:
 
 All lint and test tools are auto-detected at runtime. The engine gracefully disables features if the tools are not available. Neither `rubocop`, `haml_lint`, nor any test framework are runtime dependencies of the gem itself — they are discovered from the host app's environment.
 
+### Realtime via Action Cable (Optional)
+
+Mbeditor works without Action Cable. If Action Cable is unavailable, unreachable, or returns transient errors, the editor automatically falls back to polling.
+
+To enable realtime features in a host app:
+
+1. Ensure Action Cable is enabled in the host app (for apps that do not load it by default, add the framework/gem explicitly).
+2. Mount cable in host routes:
+
+```ruby
+mount ActionCable.server => '/cable'
+```
+
+3. Make Action Cable JavaScript available to the page (for asset-pipeline apps, `actioncable.js` is typically sufficient).
+
+If any of these are missing, mbeditor still runs in polling mode.
+
+### Collaborative pairing (Optional)
+
+When Action Cable is available, mbeditor supports **realtime collaborative editing** —
+live cursors and content sync over a WebSocket, so a second person can join the same
+files. This is the one feature intended to be reached from another machine, so exposing
+it is a **deliberate exception** to the localhost-only [Security Warning](#security-warning)
+above. Expose it narrowly and only while you are actively pairing.
+
+Collaboration activates only once **another participant is actually connected**, not
+merely because Action Cable is up. On your own the editor behaves exactly as it does
+without cable — persistent undo history and external-change detection stay in force,
+both of which defer to the shared document while a session is live.
+
+**1. Restrict the network exposure to a trusted path.**
+Put the editor behind a **trusted tunnel** (e.g. an authenticated `ngrok`/Tailscale/
+Cloudflare tunnel, or SSH port-forward) or keep it on a **trusted LAN**. Never bind it to
+a public interface or an untrusted network. The person you pair with is the only one who
+should be able to reach the port.
+
+**2. Set an authentication hook — it runs on the WebSocket handshake.**
+Configure `authenticate_with` (see the [Authentication](#authentication) options).
+The same hook that gates the HTTP editor is also evaluated when the collaboration /
+editor WebSocket subscribes: if it halts (e.g. `redirect_to`/`render`/`head`) — or raises —
+the socket subscription is **rejected (fail-closed)**, so pairing cannot bypass your auth.
+
+> **A WebSocket subscribe runs no controller.** This is the single most common reason
+> pairing appears to do nothing. Anything a `before_action` populates is unavailable on
+> the cable: `Current.user` (and any other `ActiveSupport::CurrentAttributes`) is `nil`,
+> `UserSession.find` raises because Authlogic's controller adapter was never activated,
+> and a memoised `current_user` is undefined. The hook then denies — correctly, given it
+> was handed nobody — and the socket is rejected. It works perfectly over HTTP the whole
+> time, so nothing looks wrong until you notice collaboration never connects.
+
+The hook is evaluated against a probe exposing `session`, `cookies`, `request`, `params`
+and the halt methods. Resolve the user from `session` so the same hook works in both
+contexts:
+
+```ruby
+Mbeditor.configure do |c|
+  c.authenticate_with = proc do
+    user = Current.user || User.find_by(id: session[:user_credentials_id])
+    head :forbidden unless user&.super_admin_access?
+  end
+end
+```
+
+When one proc genuinely cannot serve both, give the cable its own:
+
+```ruby
+Mbeditor.configure do |c|
+  c.authenticate_with       = proc { head :forbidden unless Current.user&.super_admin_access? }
+  c.cable_authenticate_with = proc do
+    head :forbidden unless User.find_by(id: session[:user_credentials_id])&.super_admin_access?
+  end
+end
+```
+
+Every rejection is logged as `[mbeditor] WebSocket subscription rejected: …` with the
+reason, so a denial is visible rather than silent. The editor also shows a **Pairing off**
+chip when collaboration cannot work, listing each failing condition. For defence in depth, also authenticate at your host app's
+`ApplicationCable::Connection` (the standard `identified_by` / `reject_unauthorized_connection`
+pattern) — mbeditor's hook is an additional gate, not a replacement for securing the cable
+connection itself.
+
+**3. Configure Action Cable allowed request origins.**
+Action Cable rejects cross-origin WebSocket connections. When you reach the editor through a
+tunnel or LAN host, that origin must be allowed, or the socket silently fails and pairing
+falls back to single-user mode. Allow exactly the origin(s) you pair through — never `/.*/`:
+
+```ruby
+# config/environments/development.rb
+config.action_cable.allowed_request_origins = [
+  "https://your-pairing-tunnel.example.com",
+  %r{https://.*\.trusted-lan\.local}
+]
+```
+
+When you finish pairing, close the tunnel / stop the forward so the editor is local-only again.
+
+**4. Run a single web process.**
+The shared document buffer is held in process memory and relayed over Action Cable's
+default in-process (`async`) adapter, so collaboration state is **per-process**. If your
+server runs multiple workers (e.g. Puma with `workers > 0` / `WEB_CONCURRENCY`), two
+browsers can land on different workers and each see an empty or stale document — the most
+common cause of *"the other person's edits never show up."* For pairing, run a single
+worker (`WEB_CONCURRENCY=0`, or `bundle exec rails server` which is single-process by
+default). A multi-worker setup would additionally need a cross-process cable adapter, but
+the in-memory buffer still would not be shared — single-process is the supported mode.
+
+#### Showing real usernames
+
+Each participant's caret and presence chip are labelled. With no configuration
+the label is a generated name like *Witty Operator*, persisted per browser and
+editable by clicking your own chip.
+
+**If your auth library exposes `current_user` to controllers** — Devise and
+Sorcery both do, because they include their helpers into `ActionController::Base`
+— it already works with no configuration at all. mbeditor reads the first
+non-blank of `name`, `full_name`, `display_name`, `username`, `login`, `email`.
+
+To point it at a different column:
+
+```ruby
+Mbeditor.configure do |c|
+  c.user_name_methods = %w[preferred_name email]
+end
+```
+
+**If `current_user` is your own method on `ApplicationController`**, mbeditor
+cannot see it — the engine's controllers inherit from `ActionController::Base`,
+not from your `ApplicationController`. Resolve the user yourself instead; the
+proc runs in the engine's controller, so `session`, `cookies` and `params` are
+all available:
+
+```ruby
+Mbeditor.configure do |c|
+  c.user_name_callback = proc { User.find_by(id: session[:user_id])&.name }
+end
+```
+
+An explicit `user_name_callback` always wins over the automatic lookup. If it
+raises or returns blank you get the generated name, and the reason is logged as
+`[mbeditor] user name lookup failed: …` rather than silently swallowed.
+
+## Search performance
+
+Project search and JS definition lookups pick a backend per call:
+**ripgrep → `git grep` → `grep`**. ripgrep is 10–30× faster than the fallbacks,
+so installing it is the single biggest thing you can do for search speed:
+
+```bash
+brew install ripgrep      # macOS
+apt install ripgrep       # Debian/Ubuntu
+```
+
+`GET /mbeditor/workspace` reports `searchBackend` (`"rg"`, `"git"` or `"grep"`)
+so you can check which tier is actually in use. Two things commonly make it
+`"git"` when you expected `"rg"`:
+
+- **ripgrep isn't on the server process's `PATH`.** A Rails server started from
+  launchd, systemd, foreman or an IDE inherits a stripped `PATH` that often
+  omits `/opt/homebrew/bin`. Mbeditor probes the usual install prefixes as well
+  as `PATH`; if yours is elsewhere, set `config.ripgrep_command`.
+- **ripgrep genuinely isn't installed.** The `git grep` tier is then used. It
+  honours `excluded_paths` and `.gitignore`, so it stays usable — but it is
+  still far slower than ripgrep on a large workspace.
+
+If search is slow, check `searchBackend` first, then confirm your build output
+(`public/packs`, `app/assets/builds`, bundler/npm caches) is either gitignored
+or listed in `excluded_paths`. Setting `search_respect_gitignore = false` makes
+git walk every ignored tree and will be slow without ripgrep.
 
 ## Asset Pipeline
 
@@ -295,6 +484,32 @@ cd test/dummy && rails server
 ```
 
 Then visit http://localhost:3000/mbeditor.
+
+### Vendored JavaScript (no consumer build step)
+
+All third-party JS is **prebuilt and committed** under `vendor/assets/javascripts/`
+and served as-is by Sprockets. Installing the gem needs **zero JS tooling** — no
+Node, npm, or bundler — which is the contract recorded in
+[ADR-0001](docs/adr/0001-no-frontend-build-step.md). `package.json` exists only as
+a dependency manifest for `npm audit`.
+
+Most vendored libs are committed verbatim from npm. The one exception is the
+collaborative-editing bundle, `vendor/assets/javascripts/yjs-collab.js`, which
+combines Yjs + y-monaco + y-protocols (awareness) into a single IIFE exposing
+`window.Y`, `window.MonacoBinding`, and `window.awarenessProtocol`. It is produced
+by a **maintainer-only** build script. Monaco itself is not bundled — the binding
+forwards to the page's runtime `window.monaco`.
+
+To regenerate it after bumping any of those pinned versions in `package.json`:
+
+```bash
+npm install          # installs yjs / y-monaco / y-protocols + esbuild (maintainer-only)
+npm run build:yjs    # === node script/build-yjs-bundle.mjs
+```
+
+then commit the regenerated `vendor/assets/javascripts/yjs-collab.js`. The build is
+deterministic: rebuilding from the same pinned versions reproduces identical bytes.
+This step is for maintainers only; it never runs on a consumer's machine.
 
 ## Testing
 

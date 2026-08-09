@@ -12,8 +12,15 @@ module Mbeditor
       assert_equal 15, Mbeditor::Configuration.new.search_timeout
     end
 
-    test "search_respect_gitignore defaults to false" do
-      assert_equal false, Mbeditor::Configuration.new.search_respect_gitignore
+    # Defaulting to true keeps git off --no-index, which walks every ignored
+    # tree in the workspace. On the git-grep tier that is the difference
+    # between a usable search and an unusable one.
+    test "search_respect_gitignore defaults to true" do
+      assert_equal true, Mbeditor::Configuration.new.search_respect_gitignore
+    end
+
+    test "ripgrep_command defaults to nil so the probe auto-resolves it" do
+      assert_nil Mbeditor::Configuration.new.ripgrep_command
     end
 
     test "resilient_routing can be disabled" do

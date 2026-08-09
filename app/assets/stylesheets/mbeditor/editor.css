@@ -61,6 +61,17 @@ html, body, #mbeditor-root {
   font-size: 13px;
   color: var(--ide-text);
   font-weight: 500;
+  /* Never wrap: the titlebar is a fixed 32px row, so a second line pushed the
+     toolbar buttons out of it. */
+  white-space: nowrap;
+}
+
+/* Below the width where the toolbar drops its button labels, drop the title
+   too. The layers icon beside it already identifies the editor, and the host
+   and port are in the browser's own address bar. */
+@media (max-width: 1180px) {
+  .ide-titlebar-title { display: none; }
+  .ide-titlebar-icon { margin-right: 0; }
 }
 
 /* Fills the gap between the title and the button cluster. min-width: 0 lets it
@@ -867,6 +878,51 @@ html, body, #mbeditor-root {
 }
 
 .statusbar-sep { width: 1px; height: 14px; background: color-mix(in srgb, var(--ide-accent-text) 20%, transparent); margin: 0 2px; }
+
+/* ── Collaboration presence ────────────────────────────────────────────────
+   A participant is in the roster only while their heartbeat keeps arriving, so
+   roster membership is liveness — the pulse needs no separate timer, and a peer
+   whose connection drops stops pulsing by disappearing. Slow and shallow on
+   purpose: this sits in the titlebar for the whole session, so anything faster
+   or higher-contrast reads as an alert. */
+@keyframes mbeditor-collab-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+.collab-pulse { animation: mbeditor-collab-pulse 2.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .collab-pulse { animation: none; }
+}
+
+/* Own popover rather than a title attribute: native tooltips wait ~1s before
+   appearing, cannot show the colour swatch, and collapse the newlines this
+   content needs. Fixed positioning is anchored from the chip's rect at hover
+   time — the titlebar never scrolls, so there is nothing to keep in sync. */
+.collab-hovercard {
+  position: fixed;
+  z-index: 4000;
+  min-width: 180px;
+  max-width: 320px;
+  padding: 8px 10px;
+  background: var(--ide-panel-bg);
+  border: 1px solid var(--ide-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ide-text);
+  pointer-events: none;
+}
+.collab-hovercard-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+.collab-hovercard-swatch { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.collab-hovercard-row { color: var(--ide-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.collab-hovercard-hint { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--ide-border); color: var(--ide-text-muted); }
 
 .statusbar-msg {
   margin-left: auto;
@@ -2942,9 +2998,41 @@ button:not(.pico-btn) { margin-bottom: 0; }
   color: var(--ide-fg-muted, #ccc);
 }
 .ide-problems-title { font-weight: 600; }
-.ide-problems-summary { color: var(--ide-text-muted, #858585); font-size: 11px; }
-.ide-problems-filter {
+/* Severity toggles. Pushed to the right of the summary; the text filter that
+   follows keeps its own left margin off `auto` so the two sit together. */
+.ide-problems-severity-filter {
   margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+.ide-problems-sev-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  /* Off is legible but clearly recessive — a disabled-looking chip reads as
+     "broken" rather than "toggled off". */
+  color: var(--ide-text-muted, #858585);
+  opacity: 0.55;
+}
+.ide-problems-sev-chip:hover { opacity: 0.85; }
+.ide-problems-sev-chip.is-on {
+  opacity: 1;
+  border-color: var(--ide-border, #333);
+  background: var(--ide-input-bg, #2d2d2d);
+}
+.ide-problems-sev-chip.is-on.ide-problems-sev-error { color: var(--ide-error, #f14c4c); }
+.ide-problems-sev-chip.is-on.ide-problems-sev-warning { color: var(--ide-warning, #cca700); }
+.ide-problems-sev-chip.is-on.ide-problems-sev-info { color: var(--ide-info, #3794ff); }
+
+.ide-problems-filter {
+  margin-left: 8px;
   background: var(--ide-input-bg, #2d2d2d);
   color: var(--ide-fg, #eee);
   border: 1px solid var(--ide-border, #333);
@@ -3075,8 +3163,16 @@ button:not(.pico-btn) { margin-bottom: 0; }
   margin-left: auto;
 }
 .ide-model-graph-search {
-  width: 150px;
-  padding: 3px 6px;
+  width: 170px;
+  /* Two separate things drew over the text here. WebKit renders its own
+     magnifier and clear button inside type="search"; and the vendored Pico
+     stylesheet paints a magnifier as a background-image on every [type=search],
+     positioned at the left, which the 8px padding put the text straight on top
+     of. Disabling the native decorations alone fixed neither — the visible icon
+     was Pico's. Both are off; the placeholder already says what the field is. */
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 3px 8px;
   background: var(--ide-input-bg, #3c3c3c);
   border: 1px solid var(--ide-border, #3c3c3c);
   border-radius: 3px;
@@ -3198,3 +3294,164 @@ button:not(.pico-btn) { margin-bottom: 0; }
 .statusbar-problems-error-icon { color: var(--ide-danger); }
 .statusbar-problems-warning-icon { color: var(--ide-warning); }
 .statusbar-problems-count { font-variant-numeric: tabular-nums; }
+
+/* Search decorations off across engines — Chrome/Safari draw their own
+   magnifier and clear button inside type="search". */
+.ide-model-graph-search::-webkit-search-decoration,
+.ide-model-graph-search::-webkit-search-cancel-button,
+.ide-model-graph-search::-webkit-search-results-button,
+.ide-model-graph-search::-webkit-search-results-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Cluster areas — a connected part of the schema, drawn behind its models so
+   the grouping is visible rather than implied by proximity alone. */
+.mg-region-box {
+  fill: color-mix(in srgb, var(--ide-fg, #d4d4d4) 4%, transparent);
+  stroke: color-mix(in srgb, var(--ide-fg, #d4d4d4) 12%, transparent);
+  stroke-width: 1;
+}
+.mg-region-label {
+  fill: color-mix(in srgb, var(--ide-fg, #d4d4d4) 45%, transparent);
+  font-size: 11px;
+  font-weight: 500;
+  pointer-events: none;
+}
+
+/* Hovering a model dims every association it is not part of. With 500+ edges on
+   screen the lines are otherwise indistinguishable from each other, and picking
+   out one model's relationships is the whole reason to look at the diagram.
+   Applied by toggling classes on the DOM rather than through React — re-rendering
+   thousands of SVG nodes on mouseenter is what made this view unusable before. */
+/* The ~30 ms this costs on a 300-model graph is the browser restyling every
+   edge and box, not anything in our code — toggling the classes themselves
+   measures 1.6 ms. Switching to stroke-opacity/fill-opacity was tried on the
+   theory that opacity stacking contexts were the cost; measured slower (38 ms
+   vs 32 ms), so plain opacity stays. */
+.mg-focus-mode .mg-edge { opacity: 0.08; }
+.mg-focus-mode .mg-lit .mg-edge { opacity: 1; stroke-width: 2; }
+.mg-focus-mode .mg-node { opacity: 0.55; }
+.mg-focus-mode .mg-node:hover { opacity: 1; }
+
+/* The association list shown while a model is hovered. Kept mounted and toggled
+   with a class so moving between boxes doesn't thrash the DOM. */
+.mg-assoc-card {
+  position: absolute;
+  z-index: 30;
+  max-width: 290px;
+  padding: 8px 10px;
+  background: var(--ide-panel-bg, #252526);
+  border: 1px solid var(--ide-border, #3c3c3c);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ide-text, #d4d4d4);
+  pointer-events: none;
+}
+.mg-assoc-card-hidden { display: none; }
+.mg-assoc-title { font-weight: 600; margin-bottom: 4px; }
+.mg-assoc-count { color: var(--ide-text-muted, #858585); margin-bottom: 4px; }
+.mg-assoc-row { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.mg-assoc-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.mg-assoc-macro { color: var(--ide-accent-fg, #4ec9b0); }
+.mg-assoc-name { color: var(--ide-text, #d4d4d4); }
+.mg-assoc-dir { color: var(--ide-text-muted, #858585); overflow: hidden; text-overflow: ellipsis; }
+.mg-assoc-through { color: var(--ide-text-muted, #858585); font-style: italic; }
+.mg-assoc-more, .mg-assoc-empty { color: var(--ide-text-muted, #858585); margin-top: 3px; }
+
+/* Explicit "open the schema" target in each model's header. */
+.mg-open-btn { cursor: pointer; }
+.mg-open-btn-bg { fill: transparent; }
+.mg-open-btn-bar { fill: var(--ide-text-muted, #858585); }
+.mg-open-btn:hover .mg-open-btn-bg { fill: color-mix(in srgb, var(--ide-fg, #d4d4d4) 16%, transparent); }
+.mg-open-btn:hover .mg-open-btn-bar { fill: var(--ide-fg, #d4d4d4); }
+.mg-node { cursor: zoom-in; }
+
+/* Pico paints a magnifier as a background-image on every [type=search], at the
+   left of the field, and our 8px padding put the text straight on top of it.
+   Its selector is input:not([type=checkbox],...)[type=search] — specificity
+   (0,2,1) — so a plain .class rule (0,1,0) loses and the icon stayed. Matching
+   that specificity, and loading later, is what actually removes it. */
+input.ide-model-graph-search[type="search"] {
+  background-image: none;
+  padding-inline-start: 8px;
+}
+
+/* Model-graph search dropdown. Replaces a native <datalist>, which the browser
+   renders in its own chrome — unstyleable, and unable to show the table name
+   beside each model. */
+.mg-search-wrap { position: relative; display: inline-block; }
+.mg-search-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--ide-panel-bg, #252526);
+  border: 1px solid var(--ide-border, #3c3c3c);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+.mg-search-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--ide-text, #d4d4d4);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mg-search-option-active { background: var(--ide-accent, #3794ff); color: #fff; }
+.mg-search-option-name { font-family: var(--ide-mono, monospace); }
+.mg-search-option-meta { color: var(--ide-text-muted, #858585); font-size: 10px; }
+.mg-search-option-active .mg-search-option-meta { color: rgba(255, 255, 255, 0.75); }
+
+/* Inline route hints beside controller actions. Muted and italic so they read
+   as annotation rather than code — they sit on the same line as the `def`. */
+.mbeditor-route-hint {
+  color: var(--ide-text-muted, #858585) !important;
+  font-style: italic;
+  opacity: 0.85;
+}
+.mbeditor-route-hint-none {
+  color: var(--ide-warning, #cca700) !important;
+  font-style: italic;
+  opacity: 0.8;
+}
+
+/* Pair-programming diagnostics. The chip only appears when a condition pairing
+   needs has actually failed — an empty room is silence, not a warning. */
+.mbeditor-collab-trouble { color: var(--ide-warning, #cca700); }
+.mbeditor-modal-backdrop {
+  position: fixed; inset: 0; z-index: 5000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center;
+}
+.mbeditor-collab-diag {
+  width: min(560px, 92vw);
+  max-height: 80vh; overflow-y: auto;
+  padding: 18px 20px;
+  background: var(--ide-panel-bg, #252526);
+  border: 1px solid var(--ide-border, #3c3c3c);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  color: var(--ide-text, #d4d4d4);
+  font-size: 12px;
+}
+.mbeditor-collab-diag-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+.mbeditor-collab-diag-list { list-style: none; margin: 0 0 12px; padding: 0; }
+.mbeditor-collab-diag-row { display: flex; gap: 9px; align-items: flex-start; padding: 6px 0; }
+.mbeditor-collab-diag-row i { margin-top: 2px; color: var(--ide-success, #4ec9b0); }
+.mbeditor-collab-diag-row.is-bad i { color: var(--ide-danger, #f14c4c); }
+.mbeditor-collab-diag-label { font-weight: 500; }
+.mbeditor-collab-diag-detail { color: var(--ide-text-muted, #858585); margin-top: 3px; line-height: 1.5; }
+.mbeditor-collab-diag-foot { color: var(--ide-text-muted, #858585); margin-bottom: 12px; }

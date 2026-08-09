@@ -816,12 +816,47 @@
       return handled;
     });
 
+    // ── Indent on paste ──────────────────────────────────────────────────────
+    //
+    // Pasted code is re-indented to match where it landed, and nothing else is
+    // touched. This deliberately does NOT run the formatter: routing paste
+    // through Prettier reprinted the whole enclosing statement (and, for a
+    // paste that filled the document, every line of it), so pasting a snippet
+    // rewrote code the user never touched and buried the paste in an unrelated
+    // diff.
+    //
+    // `editor.action.reindentselectedlines` is Monaco's own re-indenter — it
+    // uses the language's indentation rules, the same ones that already run
+    // when you press Enter, and it only ever changes leading whitespace.
+    // Monaco's `formatOnPaste` option stays off (EditorPanel passes false):
+    // its contribution declines to run here anyway.
+    var pasteDisposable = editor.onDidPaste(function (e) {
+      var prefs = (typeof EditorStore !== 'undefined' && EditorStore.getState().editorPrefs) || {};
+      if (prefs.indentOnPaste === false) return;
+
+      var pasteModel = editor.getModel();
+      if (!pasteModel || pasteModel.isDisposed()) return;
+
+      var action = editor.getAction('editor.action.reindentselectedlines');
+      if (!action) return;
+
+      // The action works on the selection, so point it at the pasted range and
+      // put the cursor back where the paste left it.
+      var restore = editor.getSelections();
+      editor.setSelection(e.range);
+      action.run()["catch"](function () {})["finally"](function () {
+        var m = editor.getModel();
+        if (restore && restore.length && m && !m.isDisposed()) editor.setSelections(restore);
+      });
+    });
+
     return {
       dispose: function dispose() {
         if (keydownDisposable) keydownDisposable.dispose();
         if (emmetTabDisposable) emmetTabDisposable.dispose();
         if (jsGotoMouseDisposable) jsGotoMouseDisposable.dispose();
         if (jsGotoActionDisposable) jsGotoActionDisposable.dispose();
+        if (pasteDisposable) pasteDisposable.dispose();
         contentDisposable.dispose();
       }
     };
@@ -853,6 +888,22 @@
         jsx: monaco.languages.typescript.JsxEmit.React,
         noUnusedLocals: true
       });
+      // Hand JS formatting to Prettier alone.
+      //
+      // The TypeScript worker registers its own range formatter for
+      // 'javascript', and Monaco consults whichever provider it finds first.
+      // That gave one file two formatters that disagreed: the toolbar button
+      // went through Prettier and honoured the editor's tab settings, while
+      // Shift+Alt+F and format-on-paste got the TS worker's, which reprints at
+      // two spaces and never adds semicolons, ignoring every preference. Only
+      // formatting is switched off — completions, hovers, diagnostics, rename
+      // and the rest of the JS intelligence still come from the worker.
+      monaco.languages.typescript.javascriptDefaults.setModeConfiguration(
+        Object.assign({}, monaco.languages.typescript.javascriptDefaults.modeConfiguration, {
+          documentRangeFormattingEdits: false,
+          onTypeFormattingEdits: false
+        })
+      );
     }
 
     // ── React mini-UMD type declarations ────────────────────────────────────
@@ -1126,6 +1177,20 @@
       });
     }
 
+    // Monaco ships no indentationRules for JavaScript, which makes
+    // `editor.action.reindentselectedlines` — what indent-on-paste runs — a
+    // silent no-op in JS/JSX files. These are VS Code's own JS rules.
+    // setLanguageConfiguration merges, so this adds indentation without
+    // disturbing the brackets/comments config the bundle already registers.
+    ['javascript', 'typescript'].forEach(function (langId) {
+      monaco.languages.setLanguageConfiguration(langId, {
+        indentationRules: {
+          increaseIndentPattern: /^((?!\/\/).)*(\{[^}"'`]*|\([^)"'`]*|\[[^\]"'`]*)$/,
+          decreaseIndentPattern: /^((?!.*?\/\*).*\*\/)?\s*[})\]].*$/
+        }
+      });
+    });
+
     monaco.languages.setLanguageConfiguration('ruby', {
       comments: { lineComment: '#', blockComment: ['=begin', '=end'] },
       brackets: [['(', ')'], ['{', '}'], ['[', ']']],
@@ -1158,13 +1223,24 @@
           // Single-line comments
           [/#.*$/, 'comment'],
 
-          // Heredoc start — capture the terminator word; route to specialized state by delimiter name
+          // Heredoc start — capture the terminator word. A tag naming a
+          // language hands the body to Monaco's own tokenizer for that
+          // language via nextEmbedded, so <<~JS is highlighted as real
+          // JavaScript, not an imitation.
           [/<<[-~]?(['"]?)(\w+)\1/, {
             cases: {
-              '$2~(?i:SQL)':        { token: 'string.heredoc.delimiter', next: '@heredocSQL.$2' },
-              '$2~(?i:HTML?)':      { token: 'string.heredoc.delimiter', next: '@heredocHTML.$2' },
-              '$2~(?i:JS|JAVASCRIPT)': { token: 'string.heredoc.delimiter', next: '@heredocJS.$2' },
-              '@default':           { token: 'string.heredoc.delimiter', next: '@heredoc.$2' }
+              '$2~(?i:SQL)':            { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'sql' },
+              '$2~(?i:HTML?|ERB)':      { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'html' },
+              '$2~(?i:JS|JAVASCRIPT)':  { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'javascript' },
+              '$2~(?i:CSS)':            { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'css' },
+              '$2~(?i:SCSS)':           { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'scss' },
+              '$2~(?i:JSON)':           { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'json' },
+              '$2~(?i:XML|SVG)':        { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'xml' },
+              '$2~(?i:YAML|YML)':       { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'yaml' },
+              '$2~(?i:SH|BASH|SHELL)':  { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'shell' },
+              '$2~(?i:GRAPHQL|GQL)':    { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'graphql' },
+              '$2~(?i:RUBY)':           { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'ruby' },
+              '@default':               { token: 'string.heredoc.delimiter', next: '@heredoc.$2' }
             }
           }],
 
@@ -1298,9 +1374,12 @@
           [/\s+/, '']
         ],
 
-        // Generic heredoc — all content is string.heredoc
+        // Generic heredoc — all content is string.heredoc. The terminator may
+        // be indented: that is the whole point of <<~ (and <<-), and the old
+        // /^(\w+)$/ rule missed it, leaving the rest of the file painted as a
+        // string.
         heredoc: [
-          [/^(\w+)\s*$/, {
+          [/^\s*(\w+)\s*$/, {
             cases: {
               '$1==$S2': { token: 'string.heredoc.delimiter', next: '@pop' },
               '@default': 'string.heredoc'
@@ -1309,67 +1388,23 @@
           [/.+/, 'string.heredoc']
         ],
 
-        // SQL heredoc — keyword/string/number/comment tokenization
-        heredocSQL: [
-          [/^(\w+)\s*$/, {
+        // Language-tagged heredoc body. While embedded, Monarch only consults
+        // this state to find the leaving rule; everything before it is
+        // tokenized by the embedded language. @rematch + switchTo hands the
+        // terminator line to @heredocEnd so it gets the delimiter colour
+        // rather than being re-lexed as Ruby.
+        heredocEmbedded: [
+          [/^\s*(\w+)\s*$/, {
             cases: {
-              '$1==$S2': { token: 'string.heredoc.delimiter', next: '@pop' },
-              '@default': { token: '@rematch', next: '@heredocSQLLine' }
+              '$1==$S2': { token: '@rematch', switchTo: '@heredocEnd.$S2', nextEmbedded: '@pop' },
+              '@default': { token: '' }
             }
           }],
-          [/.+/, { token: '@rematch', next: '@heredocSQLLine' }]
+          [/.*/, { token: '' }]
         ],
 
-        heredocSQLLine: [
-          [/--.*$/, { token: 'comment.sql', next: '@pop' }],
-          [/'[^']*'/, 'string.sql'],
-          [/\b\d+(?:\.\d+)?\b/, 'number.sql'],
-          [/\b(?:SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|JOIN|LEFT|RIGHT|INNER|OUTER|ON|GROUP|ORDER|BY|HAVING|LIMIT|OFFSET|CREATE|DROP|ALTER|TABLE|INDEX|INTO|VALUES|SET|AS|AND|OR|NOT|NULL|IS|IN|LIKE|BETWEEN|DISTINCT|COUNT|SUM|AVG|MIN|MAX)\b/i, 'keyword.sql'],
-          [/[^\s\w'"-]+/, 'string.heredoc'],
-          [/\w+/, 'string.heredoc'],
-          [/$/, { token: '', next: '@pop' }]
-        ],
-
-        // HTML heredoc — tag/attribute tokenization
-        heredocHTML: [
-          [/^(\w+)\s*$/, {
-            cases: {
-              '$1==$S2': { token: 'string.heredoc.delimiter', next: '@pop' },
-              '@default': { token: '@rematch', next: '@heredocHTMLLine' }
-            }
-          }],
-          [/.+/, { token: '@rematch', next: '@heredocHTMLLine' }]
-        ],
-
-        heredocHTMLLine: [
-          [/<\/?[a-zA-Z][a-zA-Z0-9]*/, 'tag.html'],
-          [/[a-zA-Z_:][a-zA-Z0-9_:\-\.]*(?=\s*=)/, 'attribute.name.html'],
-          [/\/?>/, 'tag.html'],
-          [/[^<>]+/, 'string.heredoc'],
-          [/$/, { token: '', next: '@pop' }]
-        ],
-
-        // JS heredoc — keyword/string/number/comment tokenization
-        heredocJS: [
-          [/^(\w+)\s*$/, {
-            cases: {
-              '$1==$S2': { token: 'string.heredoc.delimiter', next: '@pop' },
-              '@default': { token: '@rematch', next: '@heredocJSLine' }
-            }
-          }],
-          [/.+/, { token: '@rematch', next: '@heredocJSLine' }]
-        ],
-
-        heredocJSLine: [
-          [/\/\/.*$/, { token: 'comment', next: '@pop' }],
-          [/"(?:[^"\\]|\\.)*"/, 'string'],
-          [/'(?:[^'\\]|\\.)*'/, 'string'],
-          [/`(?:[^`\\]|\\.)*`/, 'string'],
-          [/\b\d+(?:\.\d+)?\b/, 'number'],
-          [/\b(?:var|let|const|function|return|if|else|for|while|do|switch|case|break|continue|new|delete|typeof|instanceof|in|of|class|extends|import|export|default|null|undefined|true|false|this|super|async|await|try|catch|finally|throw|void|yield)\b/, 'keyword'],
-          [/[^\s\w'"`;\/]+/, 'string.heredoc'],
-          [/\w+/, 'string.heredoc'],
-          [/$/, { token: '', next: '@pop' }]
+        heredocEnd: [
+          [/^\s*\w+\s*$/, { token: 'string.heredoc.delimiter', next: '@pop' }]
         ],
 
         // %w[] %W[] word arrays
@@ -1584,6 +1619,15 @@
     // their "open this" through here.
     monaco.editor.registerEditorOpener({
       openCodeEditor: function (_source, resource, selectionOrPosition) {
+        // Only file:// resources name a workspace file. Models are created
+        // without an explicit URI, so Monaco gives each one an
+        // `inmemory://model/N` identity — and the TS worker returns exactly
+        // that when a JS definition resolves inside the file you are already
+        // in. Stripping it to a path opened a phantom tab called "57".
+        // Handing those back to Monaco lets it reveal the position in the
+        // current editor, which is what the gesture meant.
+        if (String(resource.scheme || '') !== 'file') return false;
+
         var path = String(resource.path || '').replace(/^\/+/, '');
         if (!path || typeof TabManager === 'undefined' || !TabManager.openTab) return false;
 
@@ -1766,6 +1810,82 @@
         return [{ range: model.getFullModelRange(), text: formatted }];
       }).catch(function () { return []; });
     }
+
+    // ── Prettier formatting providers ────────────────────────────────────────
+    //
+    // `formatOnPaste` has been on by default for a long time and did nothing
+    // outside Ruby: Monaco acts on a paste only through a *range* formatting
+    // provider, and none was registered. Registering one here is what makes
+    // pasted blocks land correctly indented, and what formats the whole thing
+    // when the paste fills an empty file (the pasted range is then the file).
+    //
+    // Prettier's own rangeStart/rangeEnd does the narrowing — it reprints the
+    // smallest enclosing statement and leaves the rest byte-identical, so a
+    // paste in the middle of a file does not reformat the file.
+    var PRETTIER_LANGUAGE_PARSERS = {
+      javascript: 'babel', json: 'json', css: 'css',
+      scss: 'scss', less: 'less', html: 'html', markdown: 'markdown'
+    };
+
+    // One edit spanning only what actually changed. A whole-document
+    // replacement would work but throws away the cursor position and collapses
+    // undo, which on every paste is very noticeable.
+    function minimalEdit(model, oldText, newText) {
+      if (oldText === newText) return [];
+      var start = 0;
+      var maxStart = Math.min(oldText.length, newText.length);
+      while (start < maxStart && oldText.charCodeAt(start) === newText.charCodeAt(start)) start++;
+      var oldEnd = oldText.length;
+      var newEnd = newText.length;
+      while (oldEnd > start && newEnd > start && oldText.charCodeAt(oldEnd - 1) === newText.charCodeAt(newEnd - 1)) {
+        oldEnd--;
+        newEnd--;
+      }
+      return [{
+        range: monaco.Range.fromPositions(model.getPositionAt(start), model.getPositionAt(oldEnd)),
+        text: newText.slice(start, newEnd)
+      }];
+    }
+
+    function prettierEdits(model, range) {
+      var parser = PRETTIER_LANGUAGE_PARSERS[model.getLanguageId()];
+      if (!parser || typeof runPrettier !== 'function') return Promise.resolve([]);
+
+      var text = model.getValue();
+      var prefs = (typeof EditorStore !== 'undefined' && EditorStore.getState().editorPrefs) || {};
+      var extra = null;
+      if (range) {
+        extra = {
+          rangeStart: model.getOffsetAt({ lineNumber: range.startLineNumber, column: range.startColumn }),
+          rangeEnd: model.getOffsetAt({ lineNumber: range.endLineNumber, column: range.endColumn })
+        };
+      }
+
+      return runPrettier(text, prefs, parser, extra)
+        .then(function (formatted) {
+          // The model can have moved on while Prettier was working.
+          if (model.isDisposed() || model.getValue() !== text) return [];
+          return minimalEdit(model, text, formatted);
+        })
+        // A paste of half an expression will not parse. Leaving it alone is the
+        // right answer — the diagnostics path reports the syntax error.
+        ["catch"](function () { return []; });
+    }
+
+    Object.keys(PRETTIER_LANGUAGE_PARSERS).forEach(function (languageId) {
+      monaco.languages.registerDocumentRangeFormattingEditProvider(languageId, {
+        displayName: 'Prettier',
+        provideDocumentRangeFormattingEdits: function (model, range) {
+          return prettierEdits(model, range);
+        }
+      });
+      monaco.languages.registerDocumentFormattingEditProvider(languageId, {
+        displayName: 'Prettier',
+        provideDocumentFormattingEdits: function (model) {
+          return prettierEdits(model, null);
+        }
+      });
+    });
 
     // Parameter hints while typing a call's arguments.
     monaco.languages.registerSignatureHelpProvider('ruby', {

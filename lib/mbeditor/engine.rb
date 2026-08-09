@@ -54,9 +54,23 @@ module Mbeditor
       # Insert before CheckPending so our middleware wraps it and can rescue
       # the error it raises. Falls back silently if CheckPending is absent
       # (e.g. host app does not use ActiveRecord).
-      # Note: app.middleware is a MiddlewareStackProxy during initializers and
-      # does not support .to_a — rely solely on defined? to detect ActiveRecord.
-      if defined?(ActiveRecord::Migration::CheckPending)
+      #
+      # The constant being defined is not enough: Rails only puts CheckPending
+      # in the stack when config.active_record.migration_error is :page_load, so
+      # an app that loads ActiveRecord with any other setting has the constant
+      # but no middleware — and insert_before then raises "No such middleware",
+      # taking the host app's boot down with it. app.middleware is a
+      # MiddlewareStackProxy here and cannot be inspected, so the only way to
+      # know is to try it. Losing this middleware costs a friendlier pending-
+      # migration page, which is never worth failing to boot over.
+      # Rescuing the call is not an option: app.middleware is a
+      # MiddlewareStackProxy, so insert_before only records the operation and the
+      # "No such middleware" error surfaces later, during merge_into. Test the
+      # same condition Rails uses to add CheckPending in the first place.
+      migration_error = app.config.respond_to?(:active_record) &&
+                        app.config.active_record[:migration_error]
+
+      if defined?(ActiveRecord::Migration::CheckPending) && migration_error == :page_load
         app.middleware.insert_before ActiveRecord::Migration::CheckPending,
                                      Mbeditor::Rack::HandlePendingMigrations
       end
@@ -112,6 +126,7 @@ module Mbeditor
         react-dom.min.js
         axios.min.js
         lodash.min.js
+        yjs-collab.js
         minisearch.min.js
         marked.min.js
         prettier-standalone.js

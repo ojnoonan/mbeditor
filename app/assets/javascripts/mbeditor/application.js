@@ -10,6 +10,8 @@
 //= require mbeditor/conflict_parser
 //= require mbeditor/search_service
 //= require mbeditor/tab_manager
+//= require mbeditor/collaboration_identity
+//= require mbeditor/collaboration_service
 //= require mbeditor/color_provider
 //= require mbeditor/editor_plugins
 //= require mbeditor/ruby_outline

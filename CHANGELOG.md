@@ -8,6 +8,407 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Problems panel severity filter.** Three toggle chips — errors, warnings,
+  info — each showing its live count, filtering the list independently of the
+  text filter. Multi-select rather than one-of-three, so "errors and warnings
+  but not the convention noise" is expressible. The selection persists, and the
+  last active severity stays latched on so the panel can't be filtered down to
+  an unexplained blank.
+- **Search results carry match columns.** Clicking a result now puts the cursor
+  at the end of the matched text instead of the start of the line, ready to
+  type. Columns are measured against the raw source line on the server —
+  the row's display text is stripped, so a column derived from it would land
+  short by the indent on every indented hit.
+
+### Changed
+- **Paste re-indents instead of reformatting.** Pasting ran the pasted range
+  through Prettier, which reprinted the whole enclosing statement — and for a
+  paste that filled the document, every line of it — so pasting a snippet
+  rewrote code you never touched. Paste now only re-indents to the file's
+  indentation setting; quotes, semicolons and spacing come through exactly as
+  copied. The setting is renamed "Format on paste" → "Indent on paste"
+  (`indentOnPaste`, still on by default). Monaco ships no indentation rules for
+  JavaScript, which would have made the re-indent a silent no-op there, so
+  VS Code's JS rules are now registered. Format-on-save is unchanged and still
+  off by default.
+
+### Fixed
+- **Go-to-definition on a JS symbol defined in the same file opened a junk tab
+  named after a number.** Models are created without an explicit URI, so Monaco
+  identifies each as `inmemory://model/N`; the TS worker returns that URI for
+  an in-file definition, and the editor opener stripped it to a path and opened
+  a phantom tab called "57". Only `file://` resources are treated as workspace
+  files now — the rest go back to Monaco, which reveals the position in the
+  current editor.
+- **Clicking a search result sometimes landed on the wrong line.** Opening a
+  hit in a file that wasn't already open ran the jump against a still-empty
+  model: it clamped to line 1 and then cleared the pending jump, so when the
+  content finally arrived nothing re-triggered it. Whether it misbehaved came
+  down to whether the fetch beat a 50 ms timer — hence "sometimes". The jump
+  now waits for the content, cancels a superseded timer, and clamps to the
+  file's real length when a result outlives the line it pointed at.
+- **Search results ignored created and deleted files.** Only saves dropped the
+  client-side search cache, so a search re-run after adding or removing a file
+  was served the stale cached page. Every structural mutation now invalidates
+  it and re-runs the active query.
+- **Search and the git status counts lagged behind file changes.** The
+  live-result refresh sat behind a 2 s debounce (now 250 ms), and every save
+  fired the full `/git_info` fan-out — the most expensive request the editor
+  makes — twice over, once directly and once from the broadcast handler, which
+  on a dev server with a few threads queued the tree and search requests behind
+  it. Saves and file mutations now use the cheap `/git_status` probe, which
+  patches the branch and file list immediately and escalates to the fan-out
+  itself only when the branch actually changed.
+
+## [0.12.8] - 2026-08-07
+
+### Added
+- **Untitled scratch tabs.** The tab bar's "+" now opens an in-memory
+  `Untitled-N` buffer (VS Code-style) instead of prompting to create a file on
+  disk. Nothing is written anywhere until you save, at which point a save-as
+  prompt asks for a workspace-relative path and the tab converts to a real
+  file. Scratch tabs are skipped by Save All (each needs its own prompt) and
+  are not persisted across reloads.
+
+### Fixed
+- **"was updated externally" fired after your own saves.** A successful save
+  never refreshed the external-change baseline (the save-time grace window
+  skipped the very fetch that would have), so once you edited the file again,
+  the next save of *any* file compared new disk content against the stale
+  pre-save baseline and raised the banner. Saves now update the baseline
+  directly, the check re-reads live tab state instead of a snapshot taken
+  before its fetch, and — since the files_changed push only ever announces
+  mbeditor's own writes — the push-triggered check is now scoped to the pushed
+  paths instead of re-fetching every open tab on every save. The manual
+  Refresh Workspace button still checks everything.
+- **Virtual tabs no longer poll git.** Changelog/untitled/diff tabs were
+  fetching git line-diff every 10 s and git/file history on focus — guaranteed
+  no-ops, now skipped, along with persistent-undo tracking for paths that have
+  no file behind them.
+- **git-tier search returned nothing, instantly, on hosts with older git.** The
+  exclusion pathspecs added in 0.12.6 produced a pathspec list of nothing but
+  `:(exclude)` entries. Newer git reads that as "everything except these";
+  older git refuses it ("fatal: There is nothing to exclude from"), exits 128,
+  and — with stderr discarded — search silently returned empty. The list is
+  now anchored with a `.` pathspec, which every git version accepts.
+
+### Added
+- **Babel-based scope lint for JS/JSX, surfaced as warnings on save.** On top
+  of the existing babel syntax check (host mini_racer + babel-standalone), the
+  saved file is now traversed for identifier references that bind to nothing:
+  not to any scope in the file, not to a top-level declaration in any other
+  workspace JS file (Sprockets concatenates them into one scope), not to a
+  known `window.X` global, and not to the browser/React/hook names. Each one
+  gets a warning marker — `'name' is not defined in any reachable scope` — in
+  the editor and Problems panel. Also warns on bindings that are only assigned
+  inside a `useEffect`/`useLayoutEffect` callback but read during render
+  (undefined on first render). Report-only; `config.js_scope_lint = false`
+  disables it. Requires a babel-standalone new enough to expose
+  `Babel.packages` (7.9+); older bundles degrade to the syntax check alone.
+
+## [0.12.7] - 2026-08-06
+
+### Fixed
+- **Project search was 10-80x slower than terminal grep on hosts without
+  ripgrep.** grep's `--exclude-dir` only accepts plain directory names, so the
+  slashed default exclusions (`vendor/bundle`, `public/assets`) never reached
+  the command line and grep walked those trees in full on every search, with
+  the matches discarded in Ruby afterwards. The grep tier now prunes every
+  exclusion with `find` — slashed paths included — and feeds the survivors to
+  grep in parallel batches (`xargs -P`), measured 7.2 s → 0.09 s on a 350 MB
+  tree with a realistic `vendor/bundle`, 3-4x faster than a plain terminal
+  `grep -r`. The same fix applies to `CodeSearchService`, which backs the JS
+  definition/global lookups and was reading precompiled `public/assets`
+  bundles on every "Cannot find name" the editor reported.
+- **A search query starting with `-` was parsed as grep options.** Queries now
+  pass through `-e … --` on the grep tier.
+- **Superseding a search now kills the whole pipeline.** The subprocess is
+  spawned in its own process group and the TERM goes to the group, so a
+  stacked keystroke cannot leave a find/grep pipeline running behind the
+  shell.
+- **`vendor/cache` is excluded from search by default.** `bundle install
+  --local` keeps every `.gem` archive there — gigabytes of binary files search
+  has no business opening.
+
+## [0.12.6] - 2026-08-05
+
+### Added
+- **Format All.** A second toolbar button formats every open document. Each tab
+  is formatted independently and failures are collected rather than thrown, so
+  one unparseable file cannot stop the rest; the status line reports how many
+  were formatted, skipped and failed.
+- **Format on paste actually formats.** `formatOnPaste` has been on by default
+  for a long time and did nothing outside Ruby: Monaco acts on a paste only
+  through a *range* formatting provider, and none was registered. Prettier-backed
+  range and document providers now cover JS/JSX, JSON, CSS/SCSS/LESS, HTML and
+  Markdown. A paste that fills the document is formatted as a document — so
+  pasting into a blank file formats the whole thing — while a paste in the middle
+  is formatted as a range, reprinting the smallest enclosing statement and
+  leaving the rest of the file byte-identical. Code copied in from a spaces
+  project therefore lands as tabs (or the reverse), which was previously a manual
+  chore that never converted cleanly.
+- **Files symlinked in from outside the workspace now open.** An app that links a
+  shared config directory or a sibling engine into its tree could see those files
+  in the explorer but not open them — the tab opened and closed itself a moment
+  later. Symlinks are now followed the way a file manager does. Containment is
+  still enforced: `File.expand_path` collapses `..` before a lexical check
+  against the workspace root, so no request can name anything outside it, and
+  git operations stay strictly inside the repo.
+
+### Fixed
+- **Search returned nothing, instantly, on some workspaces without ripgrep.** The
+  git-grep tier was chosen on the mere presence of a `.git` entry, with no check
+  that git could actually open the repo. When it cannot — dubious ownership under
+  Docker, a `.git` file pointing at a gitdir that moved, no git binary on the
+  server's `PATH` — `git grep` fails, its stderr goes to `/dev/null`, and the
+  result is an empty set indistinguishable from "no matches". The tier is now
+  gated on `git rev-parse --is-inside-work-tree`, which fails in exactly those
+  cases, so a bad repo falls through to plain grep. Definition lookups had the
+  same check and were silently broken the same way.
+- **Formatting ignored the tab/space setting.** There were four copies of the
+  Prettier options and they had drifted: two read a `prettierTabWidth` /
+  `prettierUseTabs` pair that no settings screen ever wrote, frozen at two
+  spaces, overriding the `tabSize` / `insertSpaces` actually configured. A JSX
+  file in a tabs workspace came back space-indented. Indentation now comes from
+  the same preferences Monaco itself is given.
+- **One JS file had two formatters that disagreed.** Monaco's TypeScript worker
+  registers its own range formatter for `javascript` and Monaco uses whichever it
+  finds first, so the toolbar button went through Prettier while `Shift+Alt+F`
+  and format-on-paste got the worker's two-space, no-semicolon output. The
+  worker's formatting is switched off; its completions, hovers, diagnostics and
+  rename are untouched.
+- **"Server offline" flashed during ordinary actions.** The reachability check
+  counted any error without a response as a network failure, and a request the
+  editor aborts itself has none either. The editor cancels constantly — each
+  keystroke supersedes the previous search, hover and completion providers abort
+  when the cursor moves on, opening a file aborts its own prefetch — so two in a
+  row declared the server offline until the `/ping` probe a second later put it
+  back. Creating a file reliably triggered it. Cancellations are now ignored; a
+  genuinely unreachable host still marks offline and still recovers.
+- **Warnings logged by the host app from mbeditor's own hooks were swallowed.**
+  Editor requests were silenced at `ERROR`, which hides Rails' own INFO-level
+  request lines but also everything a host app logs from inside
+  `authenticate_with` or `user_name_callback` — those procs run within the
+  request, so a developer debugging their own hook saw nothing and had no way to
+  know why. Silenced at `WARN` now, which still hides the request lines.
+
+### Changed
+- RuboCop's output is taken as-is. Ruby indentation belongs to the project's
+  `.rubocop.yml`, so rewriting it in the editor fought the linter about to run
+  over the same file. The previous code converted the source to tabs *before*
+  handing it to RuboCop, which discarded it. To convert an already-open file,
+  use Monaco's built-in "Convert Indentation to Tabs / to Spaces" (F1).
+
+## [0.12.5] - 2026-08-03
+
+### Fixed
+- **The cable took up to 30 seconds to reconnect.** The retry was a flat 30s
+  interval, and because a disconnect tears the consumer down, Action Cable's own
+  much faster reconnection monitor was discarded with it. Any transient blip or
+  dev-server restart therefore cost half a minute with no cable at all: no
+  presence, no collaboration, no file-change push. Replaced with a jittered
+  backoff from 1s to a 8s ceiling, reset on a successful connect. Measured
+  against a real server restart: **2.8 seconds** from the server answering again
+  to the cable being back, where the flat interval could take the full 30.
+- **Collaboration broadcasts flooded the development log.** The Action Cable log
+  filter matched `Mbeditor::` and `mbeditor_editor`, but a broadcast line names
+  only the stream — `Broadcasting to mbeditor_collab:…` — so every keystroke and
+  cursor move was logged with the base64 CRDT payload inlined.
+- **The browser console filled with failed requests when the server became
+  unreachable.** A dropped VPN, a closed lid or a stopped server left the file
+  tree polling every 10s, git status every 5s and the git line tint every 10s,
+  all failing forever — and the browser logs every failed request itself, which
+  no amount of JavaScript can suppress. The only fix is to stop making them.
+
+  Background polls are now skipped before the request is issued once two
+  consecutive *network-level* failures have been seen (an HTTP error does not
+  count — a 500 proves the server is there), and a single probe on a 1s→30s
+  backoff decides when it is back. Requests you initiate are never blocked; they
+  fail fast with a real error rather than hanging until the 30s timeout.
+  Measured with the server down: two failed requests, then silence, instead of
+  an unbounded stream.
+
+## [0.12.4] - 2026-08-03
+
+### Fixed
+- **Rejected-subscription logging flooded the console.** 0.12.3 made a silent
+  failure visible, which was right, but logged every occurrence — and a
+  rejection is not a one-off: the client retries every 30 seconds, every open
+  tab retries independently, and both the editor channel and every per-file
+  collaboration room authenticate. One message per distinct reason per five
+  minutes now, which says the same thing without drowning the log.
+
+## [0.12.3] - 2026-08-03
+
+### Added
+- **`config.cable_authenticate_with`** — authentication for the collaboration
+  WebSocket, falling back to `authenticate_with` when unset.
+- **A "Pairing off" chip and diagnostics panel.** When collaboration cannot
+  work, the editor now says so and lists every condition it depends on — the
+  vendored libraries, Action Cable's JavaScript, whether the server advertises
+  it, whether the socket actually connected, and whether anyone else is here —
+  with the fix written beside each failure. Nothing is shown when everything is
+  healthy and you are simply alone.
+
+### Fixed
+- **A WebSocket subscribe runs no controller, and this made pairing silently
+  impossible for most authenticated apps.** `authenticate_with` is evaluated on
+  the cable against a probe exposing `session`, `cookies`, `request` and
+  `params` — so a hook reading `Current.user`, calling `UserSession.find`, or
+  using a memoised `current_user` gets `nil` or a `NameError`, denies, and the
+  socket is rejected. The hook keeps working perfectly over HTTP, so nothing
+  looks wrong; collaboration simply never connects.
+
+  Rejections are now logged as `[mbeditor] WebSocket subscription rejected: …`
+  naming the cause, `cable_authenticate_with` provides an escape hatch when one
+  proc cannot serve both contexts, and the README says this plainly instead of
+  noting that request-scoped state "may be narrower". The README's own example
+  used `UserSession.find`, which is exactly the pattern that cannot work.
+
+## [0.12.2] - 2026-08-03
+
+### Added
+- **Inline route hints in controllers.** Every action in a controller file is
+  annotated with the verb and path that reach it — `GET /orders/:id` beside
+  `def show` — and a public action nothing routes to is flagged `no route`.
+  Hovering adds the named-route helper. Answering "is this actually reachable?"
+  previously meant reading `config/routes.rb` and expanding `resources` in your
+  head.
+
+  Routes come from the host app's own route set rather than by parsing
+  `config/routes.rb`. mbeditor runs inside the app, so the routes are already
+  built — and they are the only source that accounts for `resources` expansion,
+  `member`/`collection` blocks, scopes, constraints and mounted engines.
+
+- **`config.model_graph_max_models`** (default 1000, was a hard-coded 300).
+  A schema over the cap silently lost models and only said "(truncated)".
+
+### Changed
+- **Model boxes are sized to their contents** rather than all being one width,
+  so a long model or column name is no longer truncated while a model called
+  `Tag` wastes most of its box. Layer positions accumulate per layer, since a
+  fixed stride would let a wide box overlap the next layer.
+- **Cluster blocks are packed in two dimensions** instead of stacked in a single
+  column, which left a schema with one big core and several small islands
+  running off the bottom with the right-hand side empty.
+- **The dummy app now carries a real ActiveRecord schema** — 20 models and 44
+  associations covering a hub, a chain, a self-reference, a join table, a
+  polymorphic association and unconnected islands — so the model graph can be
+  demonstrated and tested against something representative.
+
+### Fixed
+- **mbeditor could stop a host app from booting.** The pending-migrations
+  middleware was installed whenever `ActiveRecord::Migration::CheckPending` was
+  defined, but Rails only puts that middleware in the stack when
+  `config.active_record.migration_error` is `:page_load`. Any app loading
+  ActiveRecord with a different setting raised "No such middleware to insert
+  before" during boot. It now tests the same condition Rails does.
+- **Long labels drew straight out past the edge of their model box.** SVG text
+  neither wraps nor ellipsises; labels are now measured against the font the
+  theme actually resolves and cut to fit.
+- **"no database connection" hung below the box it belonged to** — the box
+  height did not count that placeholder line.
+- **The model search is a real dropdown.** The native `<datalist>` rendered in
+  the browser's own chrome: unstyleable, and unable to show the table name and
+  column count beside each model. Arrow keys and Enter work as before.
+- **The titlebar wrapped to two lines in a narrow window**, pushing the toolbar
+  out of its 32px row. It no longer wraps, and below the width where the toolbar
+  drops its button labels the title gives way to the icon alone.
+
+## [0.12.1] - 2026-08-03
+
+### Added
+- **The collaboration name now comes from the signed-in user automatically.**
+  Previously it required a `user_name_callback`; with none set the editor fell
+  straight through to a generated name like "Witty Operator" even on an
+  authenticated instance. When no callback is configured, the name is now read
+  off `current_user`, trying `name`, `full_name`, `display_name`, `username`,
+  `login` and `email` in order. New `config.user_name_methods` names your own
+  column instead — `%w[preferred_name]` — so the common case no longer needs a
+  callback at all. An explicit `user_name_callback` still wins.
+
+  This works when your auth library exposes `current_user` to an
+  `ActionController::Base` subclass, which Devise and Sorcery do. A
+  `current_user` written by hand on your own `ApplicationController` is **not**
+  reachable — the engine's controllers do not inherit from it — so that case
+  still needs a callback reading `session` directly.
+
+### Changed
+- **The model graph is laid out by dependency, not by traversal order.** It now
+  uses the Sugiyama layered method — break cycles, layer by longest path, cut
+  crossings with the median heuristic, then straighten — which is what Graphviz
+  `dot`, and so Rails ERD, uses for this picture. The previous radial layout
+  became one enormous circle on a real schema, fitted so far out that no box was
+  legible. A model's position now tells you something: depth reads left to
+  right, and each connected part of the schema is drawn as its own area.
+
+- **Your own presence chip only appears once someone else is connected.** Action
+  Cable is up in any normal dev setup, so it used to sit in the toolbar
+  permanently announcing a session of one.
+
+### Fixed
+- **The model graph was unusable on a large schema.** On 300 models and 513
+  associations a single zoom tick cost 27 ms; it is now 0.2 ms. Three causes,
+  all compounding: the entire layout ran on every render, the pan/zoom transform
+  sat in the render output so each tick rebuilt ~7,000 SVG elements, and the
+  wheel handler read `getBoundingClientRect()` per tick, forcing a synchronous
+  reflow of the whole scene.
+- **Fit-to-pane produced a zoom the controls refused to honour.** It clamped to
+  `min(1, ...)` but not to the minimum zoom, so a large graph fitted at ~0.04
+  against a 0.2 floor — and the first scroll snapped up to the floor, a fivefold
+  jump anchored on the cursor that looked like the diagram leaping somewhere
+  random. The floor is now low enough to frame a few hundred models, and the fit
+  clamps to the same range the wheel enforces. Opening the tab also no longer
+  leaves the graph unfitted when the pane has not been sized yet.
+- **Hovering a model now shows what its associations actually are** — macro,
+  name, direction and `through:` — and dims every unrelated edge, which is the
+  only way to follow one model's relationships among hundreds of lines.
+- **Clicking a model zooms to it** instead of opening its schema; the schema is
+  an explicit button in the model's header, so navigating no longer throws a
+  modal at you.
+- **The model-graph search field drew its text over a magnifier icon.** The icon
+  comes from the vendored Pico stylesheet, whose selector outranks a plain class
+  rule — disabling the browser's own `type="search"` decorations did not touch
+  it.
+- **A failing `user_name_callback` was swallowed silently.** Any exception
+  returned a bare `nil`, which made a broken callback indistinguishable from an
+  unconfigured one: you got the generated name and no clue why. The usual cause
+  is a `NameError` on a `current_user` the engine cannot see. It is now logged
+  as `[mbeditor] user name lookup failed: ...` and still never breaks the
+  request.
+
+## [0.12.0] - 2026-07-31
+
+### Added
+- **Realtime collaborative editing (pair programming).** When Action Cable is
+  available, two or more people can open the same file and edit it together —
+  content converges through a Yjs CRDT, with live remote carets, selections and
+  a coloured name label per participant. Undo is scoped to your own edits, so
+  Ctrl+Z can never revert your partner's work. Joining late is safe: the shared
+  document wins over the copy on disk, and one save on any side settles the file
+  for everyone.
+
+  Participants appear as chips in the toolbar. A solid dot means they are in the
+  file you are looking at, a hollow ring means they are elsewhere (with their
+  filename beside it, when the toolbar is showing labels). Hovering gives their
+  name, current file and measured cable latency; clicking follows them, so their
+  file and scroll position track yours. Past three participants the chips
+  collapse to colour dots so the toolbar cannot overflow. Colours are assigned
+  against the live roster rather than hashed from the name, so two people never
+  share one while a free colour exists.
+
+  Collaboration only activates once someone else is actually connected — on your
+  own, the editor behaves exactly as before, keeping persistent undo history and
+  external-change detection.
+
+  **This is the one feature intended to be reached from another machine**, so it
+  is a deliberate exception to mbeditor's localhost-only posture. Read the
+  [Collaborative pairing](README.md#collaborative-pairing-optional) section
+  before exposing it: put it behind a trusted tunnel, set `authenticate_with`
+  (now also evaluated on the WebSocket handshake, fail-closed), restrict
+  `action_cable.allowed_request_origins`, and run a single web process. New
+  `user_name_callback` config resolves the display name from your host app.
+
 - **Drag files and folders from your desktop straight into the explorer.**
   Drop onto a folder row to import there, or onto the empty space below the
   tree to import into the workspace root. Folders are imported recursively.
@@ -16,6 +417,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes `name 2.ext` beside the original), or Skip. Imports are capped at 100
   files and 50 MB per drop, and 5 MB per file, and every target path goes
   through the same sandbox checks as every other file operation.
+
+- **A model graph — an entity diagram of the host app's ActiveRecord models.**
+  The activity-bar button opens it as a full-width editor tab, drawing each
+  model with its fields. Search centres the view on a model; hovering an edge
+  names the relation. (Released with a radial layout; replaced by a layered one
+  in the next version — see Unreleased.)
+
+  Associations are read by **reflection, not by parsing model files**. mbeditor
+  runs inside the host app, so `reflect_on_all_associations` is right there and
+  resolves `class_name:`, `through:`, polymorphic and inverse sides correctly —
+  all of which regex or AST parsing of `has_many` lines silently gets wrong.
+  The graph never touches the database connection, so it works against a
+  database that isn't running or migrated. It is built only when the tab is
+  opened (it eager-loads the host app) and cached on a fingerprint of
+  `app/models` and `db/migrate`, so saving a model invalidates it. It also
+  writes `tmp/mbeditor_model_graph.mmd`, a Mermaid `erDiagram` that GitHub and
+  VS Code render natively.
+
+- **Ruby navigation through real Monaco providers.** Go-to-definition was
+  hand-wired per editor with an `onMouseDown` and an `addAction`, so Monaco
+  never knew Ruby had definitions and peek-definition, Ctrl+hover previews and
+  the references widget all did nothing. Definition, references, document
+  symbols, folding, highlights, rename, formatting, signature help and
+  selection ranges are now registered providers, fed by a raw ruby-lsp
+  passthrough instead of a bespoke translator per method.
+
+  - **F2 renames a Ruby constant across the workspace.** Open files get their
+    edits back for Monaco to apply, so the change is undoable and marks the tab
+    dirty; closed files are written server-side. That split is what keeps
+    unsaved work safe — anything dirty is by definition open.
+  - **Shift+Alt+F and format-on-save now work for Ruby.**
+  - **RuboCop fixes apply straight from the diagnostic.** The edits are already
+    in the diagnostics response, so the lightbulb no longer makes a second
+    request or spawns a `rubocop -A` over the buffer on every click. "Disable
+    <cop> for this line" comes from the same payload.
+  - **Diagnostics are graded Error / Warning / Info / Hint** instead of
+    everything non-error being one yellow warning, and unnecessary code is
+    faded rather than squiggled. A status-bar chip shows ruby-lsp health.
+
+- **Host-app exceptions appear in the Problems panel.** A failed request used to
+  show up only in the log. Controller exceptions are now listed with clickable
+  backtrace frames and pushed live over the existing cable channel. Backtraces
+  are filtered to frames under the workspace root and capped, since absolute
+  host paths are both a leak and unopenable. Development only, and
+  `config.exception_capture = false` disables it.
+
+- **PageUp/PageDown cycle between the cursor and the last jump origin.**
+  Opening a file at a line — go-to-definition, a search result, a hover link —
+  snapshots where you came from, and PageUp/PageDown swap between the two.
+  Replaces the default page-scroll binding.
+
+### Changed
+- **Search is dramatically faster on host apps without ripgrep**, where it was
+  effectively unusable. Three separate causes, all on the `git grep` tier:
+  the exclusion list was computed and then never put on the command line, so
+  git walked `node_modules` in full and the results were discarded afterwards;
+  `search_respect_gitignore` defaulted to `false`, which asks git to search
+  every ignored tree the app has; and `LC_ALL=C` was set, measured neutral for
+  the default and 2.2× *slower* for regex. Measured 3714 files walked → 253.
+  `search_respect_gitignore` now defaults to `true`, matching VS Code and
+  ripgrep. `GET /workspace` reports `searchBackend` so the live tier is visible,
+  and `ripgrep_command` now resolves the usual install prefixes as well as
+  `PATH` — a server started from launchd, systemd or an IDE has a stripped
+  `PATH`, which silently dropped search to the 10–30× slower tier.
+
+- **Assignments to undeclared variables are reported as errors.** `foo = 1`
+  with no declaration anywhere is an implicit global the host's Babel pipeline
+  rejects, so it keeps Error severity with an explanatory hint. Read-side
+  unknowns still downgrade to a warning, since those are usually host globals
+  the language service cannot see.
+
+### Fixed
+- **The bottom drawers covered the code instead of making room for it.** The
+  log and problems drawers were absolutely positioned, so they sat on top of
+  what you were reading. They are now ordinary flow siblings of the split
+  panes, so opening one shrinks the editor.
+- **"Changes in Branch" showed nothing on a branch well ahead of the base.**
+  With no base branch resolved it fell back to diffing against the branch's
+  upstream — which for a feature branch is its own remote copy, reliably empty.
+  Every layer then degraded to empty rather than erroring, so it looked like
+  there were no changes.
+- **The What's New tab was wiped by the session restore** when it opened on a
+  version change.
+- **An idle editor no longer re-renders.** Polls that found nothing changed were
+  still writing fresh objects into state — the file tree every 10 s and the
+  ruby-lsp health chip every 10 s — each costing a full reconciliation of a
+  tree that had not changed. Verified by counting React renders over an idle
+  minute: now zero.
 
 ## [0.11.0] - 2026-07-29
 

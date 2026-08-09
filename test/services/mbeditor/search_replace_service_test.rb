@@ -338,6 +338,46 @@ module Mbeditor
       end
     end
 
+    # ---------------------------------------------------------------------------
+    # match columns
+    # ---------------------------------------------------------------------------
+    # Columns are measured against the RAW line, not the stripped `text` the
+    # row carries for display — the client cannot recover the leading
+    # whitespace strip removed, so a column derived there lands short by the
+    # indent on every indented hit.
+
+    test "results carry 1-based start and end columns for the match" do
+      write_file("app/code.rb", "    value = NEEDLE_TOKEN\n")
+
+      result = search("NEEDLE_TOKEN").first
+
+      assert_equal 13, result[:col], "column must count the stripped indentation"
+      assert_equal 25, result[:end_col]
+      assert_equal "value = NEEDLE_TOKEN", result[:text]
+    end
+
+    test "columns survive the grep tier as well as rg" do
+      write_file("app/code.rb", "  x = NEEDLE_TOKEN\n")
+
+      with_rg_available(false) do
+        result = search("NEEDLE_TOKEN").first
+        assert_equal 7, result[:col]
+        assert_equal 19, result[:end_col]
+      end
+    end
+
+    # A pattern that can't be built (or doesn't match the line rg handed back)
+    # must not cost the row its place in the results — it just opens at the
+    # start of the line instead.
+    test "a row whose match cannot be located still parses, without columns" do
+      row = SearchReplaceService.send(:parse_line, :grep, "#{@workspace}/app/code.rb:3:some text\n", @workspace, nil)
+
+      assert_equal "app/code.rb", row[:file]
+      assert_equal 3, row[:line]
+      assert_nil row[:col]
+      assert_nil row[:end_col]
+    end
+
     test "returns empty array when query does not match anything" do
       write_file("app/models/user.rb", "class User\nend\n")
 
@@ -391,12 +431,43 @@ module Mbeditor
                                               use_regex: false, match_case: true, whole_word: false,
                                               excluded_paths: [], paths: nil)
         assert_equal "git", args.first
-        assert_equal "C", env["LC_ALL"]
+        # No LC_ALL override: the C locale is neutral for the -F -i default and
+        # measurably slower for -E, so the tier inherits the process locale.
+        assert_nil env["LC_ALL"]
 
         results = search("User")
         assert_equal 1, results.length
         assert_equal "app/models/user.rb", results.first[:file]
         assert_equal 1, results.first[:line]
+      end
+    end
+
+    # An excluded directory must be kept out of git's own traversal, not merely
+    # filtered out of the results afterwards. Post-filtering still pays for git
+    # walking node_modules in full, which is what made search unusable on real
+    # host apps; assert the pathspecs are actually on the command line.
+    test "the git tier passes excluded paths to git as :(exclude) pathspecs" do
+      _env, args = SearchReplaceService.send(:build_command, :git, @workspace, "x",
+                                             use_regex: false, match_case: true, whole_word: false,
+                                             excluded_paths: ["node_modules", "vendor/bundle"], paths: nil)
+      assert_includes args, ":(exclude)node_modules"
+      assert_includes args, ":(exclude)vendor/bundle"
+      # Older git refuses a pathspec list of only :(exclude) entries
+      # ("fatal: There is nothing to exclude from"), exits 128, and search
+      # silently returns nothing — the anchor makes every git version read it
+      # as "everything under the root except these".
+      dashdash = args.index("--")
+      assert_equal ".", args[dashdash + 1], "exclusions must be anchored by a positive pathspec"
+    end
+
+    test "the git tier excludes configured paths from the results it returns" do
+      system("git", "-C", @workspace, "init", "-q", exception: true)
+      write_file("app/models/user.rb", "class User\nend\n")
+      write_file("node_modules/pkg/user.js", "var User = 1;\n")
+
+      with_rg_available(false) do
+        results = search("User", excluded_paths: ["node_modules"])
+        assert_equal ["app/models/user.rb"], results.map { |r| r[:file] }
       end
     end
 
@@ -467,15 +538,47 @@ module Mbeditor
       SearchReplaceService.invalidate_cache(@workspace)
     end
 
-    test "grep tier command uses LC_ALL=C, -I, and drops slashed exclude-dirs" do
+    # Every exclusion — slashed ones included — must be pruned by find before
+    # the walk, not post-filtered: grep read vendor/bundle and public/assets in
+    # full on every search, which is what made the grep tier unusable on host
+    # apps without ripgrep.
+    test "grep tier prunes all exclusions via find and greps in parallel" do
       env, args = SearchReplaceService.send(:build_command, :grep, @workspace, "x",
                                             use_regex: false, match_case: false, whole_word: false,
                                             excluded_paths: %w[node_modules vendor/bundle], paths: nil)
       assert_equal "C", env["LC_ALL"]
-      assert_includes args, "-I"
-      assert_includes args, "-i"
-      assert_includes args, "--exclude-dir=node_modules"
-      assert_not_includes args, "--exclude-dir=vendor/bundle"
+      assert_equal %w[sh -c], args.first(2)
+      cmd = args.last
+      assert_includes cmd, "-name node_modules"
+      assert_includes cmd, "-path #{File.join(@workspace, 'vendor/bundle')}"
+      assert_includes cmd, "-prune"
+      assert_includes cmd, "xargs -0 -P"
+      assert_includes cmd, "-I"
+      assert_includes cmd, "--line-buffered"
+      assert_includes cmd, "-i"
+    end
+
+    test "grep tier scoped to paths runs grep directly with -e and -- guards" do
+      _env, args = SearchReplaceService.send(:build_command, :grep, @workspace, "-danger",
+                                             use_regex: false, match_case: true, whole_word: false,
+                                             excluded_paths: [], paths: [File.join(@workspace, "a.rb")])
+      assert_equal "grep", args.first
+      dash = args.index("--")
+      assert dash, "grep args must contain --"
+      assert_equal ["-e", "-danger"], args[dash - 2, 2]
+      assert_equal File.join(@workspace, "a.rb"), args.last
+    end
+
+    test "grep tier finds matches in a slashed excluded_paths sibling but not inside it" do
+      write_file("app/code.rb",            "SLASH_NEEDLE\n")
+      write_file("vendor/bundle/gem.rb",   "SLASH_NEEDLE\n")
+      write_file("vendor/keep.rb",         "SLASH_NEEDLE\n")
+
+      with_rg_available(false) do
+        results = search("SLASH_NEEDLE", excluded_paths: ["vendor/bundle"])
+        files = results.map { |r| r[:file] }.sort
+        assert_equal ["app/code.rb", "vendor/keep.rb"], files
+      end
     end
 
     # ---------------------------------------------------------------------------
@@ -582,6 +685,27 @@ module Mbeditor
 
       assert_equal 1, results.length
       assert_equal "a.rb", results.first[:file]
+    end
+
+    # ---------------------------------------------------------------------------
+    # Tier selection
+    # ---------------------------------------------------------------------------
+
+    test "a .git git refuses to open falls back to grep instead of returning nothing" do
+      write_file("a.rb", "BROKEN_REPO_NEEDLE\n")
+      # A gitdir pointer to somewhere that isn't there: `.git` exists, so the
+      # old presence check picked the git tier, git grep failed, and the search
+      # came back instantly empty. Stands in for the field cases — dubious
+      # ownership, a moved worktree, no git binary.
+      File.write(File.join(@workspace, ".git"), "gitdir: /nonexistent/gitdir\n")
+      AvailabilityProbe.reset!
+
+      with_rg_available(false) do
+        assert_equal :grep, SearchReplaceService.backend(@workspace)
+        assert_equal 1, search("BROKEN_REPO_NEEDLE").length
+      end
+    ensure
+      AvailabilityProbe.reset!
     end
   end
 end

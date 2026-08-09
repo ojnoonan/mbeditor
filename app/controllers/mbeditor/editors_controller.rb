@@ -75,7 +75,11 @@ module Mbeditor
         testAvailable: test_available?,
         actionCableEnabled: action_cable_enabled?,
         jsSyntaxCheckAvailable: JsSyntaxCheckService.available?,
-        rubyLspAvailable: AvailabilityProbe.ruby_lsp(workspace_root)
+        rubyLspAvailable: AvailabilityProbe.ruby_lsp(workspace_root),
+        # "rg" | "git" | "grep". The tiers differ by 10-30x, and the usual
+        # reason for a slow search is ripgrep being installed but absent from
+        # the server process's PATH — which is invisible without this.
+        searchBackend: SearchReplaceService.backend(workspace_root)
       }
     end
 
@@ -322,6 +326,7 @@ module Mbeditor
 
       result = FileOperationService.new(workspace_root).save(path, params[:code].to_s)
       broadcast_files_changed([path])
+      broadcast_file_saved(path)
       render json: result
     rescue FileOperationService::FileTooLargeError
       render_file_too_large(params[:code].to_s.bytesize)
@@ -926,7 +931,20 @@ module Mbeditor
             startLine: line, startCol: col, endLine: line, endCol: col + 1
           }]
         else
-          []
+          # Only when the file parses: the scope lint would re-hit the same
+          # parse error and report nothing useful on top of the marker above.
+          JsSyntaxCheckService.scope_lint(workspace_root, code).map do |w|
+            line = w["line"] || 1
+            col  = (w["column"] || 0) + 1
+            {
+              severity: "warning",
+              copName: "BabelScope",
+              correctable: false,
+              message: "[babel] #{w['message']}",
+              startLine: line, startCol: col,
+              endLine: line, endCol: col + [w["name"].to_s.length, 1].max
+            }
+          end
         end
         return render json: { markers: markers }
       end
@@ -1062,8 +1080,22 @@ module Mbeditor
     # GET /mbeditor/client_config — returns client-side configuration values
     def client_config
       render json: {
-        related_files_custom_paths: Array(Mbeditor.configuration.related_files_custom_paths)
+        related_files_custom_paths: Array(Mbeditor.configuration.related_files_custom_paths),
+        user_name: resolved_user_name
       }
+    end
+
+    # GET /mbeditor/routes?path=app/controllers/users_controller.rb
+    #
+    # Which routes reach each action in a controller, for the inline hints the
+    # editor draws beside every `def`. Returns {} for anything that is not a
+    # controller rather than erroring — the client asks for every Ruby file it
+    # opens and should not have to know the convention.
+    def routes
+      key = RouteService.controller_key(params[:path].to_s)
+      return render json: { controller: nil, actions: {} } unless key
+
+      render json: { controller: key, actions: RouteService.for_controller(key) }
     end
 
     # GET /mbeditor/related_files?path=...
@@ -1142,6 +1174,48 @@ module Mbeditor
 
     private
 
+    # Resolve the optional user_name_callback in controller context (like
+    # authenticate_with) so the host app can supply a collaboration display name.
+    # nil — including any failure or a blank result — falls through to the
+    # client-generated name.
+    # Display name for the collaboration caret. An explicit user_name_callback
+    # wins; otherwise fall back to current_user, when the host's auth library put
+    # it within reach of an ActionController::Base subclass (Devise, Sorcery and
+    # friends do; a current_user hand-written on the host's own
+    # ApplicationController does not — see default_user_name).
+    def resolved_user_name
+      cb = Mbeditor.configuration.user_name_callback
+      name = cb ? instance_exec(&cb) : default_user_name
+      name = name.to_s.strip
+      name.empty? ? nil : name
+    rescue StandardError => e
+      # Was a bare `nil`, which made a broken callback indistinguishable from an
+      # unconfigured one: you got the generated name and no clue why. The usual
+      # cause is a NameError on current_user, and silently swallowing it sent
+      # people looking in the wrong place.
+      Rails.logger.warn("[mbeditor] user name lookup failed: #{e.class}: #{e.message}")
+      nil
+    end
+
+    # Read the display name straight off current_user, trying each configured
+    # attribute in turn. This is what makes an authenticated editor show real
+    # names with no extra wiring; user_name_methods exists so an app whose column
+    # isn't in the default list can name it instead of writing a callback.
+    def default_user_name
+      return nil unless respond_to?(:current_user, true)
+
+      user = current_user
+      return nil unless user
+
+      Array(Mbeditor.configuration.user_name_methods).each do |m|
+        next unless user.respond_to?(m)
+
+        value = user.public_send(m).to_s.strip
+        return value unless value.empty?
+      end
+      nil
+    end
+
     # Normalized base prefix mbeditor renders URLs against. Sourced from
     # MountPath (not the engine `root_path` helper) so it still resolves when a
     # broken host config/routes.rb has wiped Mbeditor::Engine.routes — the exact
@@ -1199,6 +1273,18 @@ module Mbeditor
       rel = Array(changed_paths).compact.map { |p| relative_path(p.to_s) }.reject(&:empty?)
       payload[:paths] = rel if rel.any?
       ActionCable.server.broadcast("mbeditor_editor", payload)
+    rescue StandardError
+      # Never let a broadcast failure affect the HTTP response
+    end
+
+    # Tells every peer that this file's shared buffer was just saved to disk so
+    # they can reset that tab's clean baseline and clear its dirty indicator.
+    # Rides the same global stream as broadcast_files_changed and is equally
+    # resilient: a relay failure must never affect the HTTP response.
+    def broadcast_file_saved(path)
+      return unless defined?(ActionCable.server)
+
+      ActionCable.server.broadcast("mbeditor_editor", { type: "file_saved", path: relative_path(path) })
     rescue StandardError
       # Never let a broadcast failure affect the HTTP response
     end

@@ -6,6 +6,118 @@ axios.defaults.headers.common['X-Mbeditor-Client'] = '1';
 // The ping endpoint overrides this with a tighter 4 s timeout per-request.
 axios.defaults.timeout = 30000;
 
+// ── Server reachability ─────────────────────────────────────────────────────
+//
+// The editor polls hard and unconditionally: the file tree every 10s, git status
+// every 5s, the git line tint every 10s. When the host stops resolving — a
+// dropped VPN, a closed laptop lid, a stopped server — every one of those keeps
+// firing forever, and the browser logs each failure itself. That is where the
+// wall of ERR_NAME_NOT_RESOLVED in the console comes from, and JavaScript cannot
+// suppress those entries: the only fix is to stop making the requests.
+//
+// So background polling is short-circuited while the server looks unreachable,
+// and a single probe on a backoff decides when it is back. User-initiated
+// requests are never blocked — they fail fast with a real error instead, which
+// beats hanging until the 30s timeout.
+var ServerReachability = (function () {
+  // A network-level failure has no response; an HTTP error does. Only the former
+  // means "cannot reach the server" — a 500 proves it is very much there.
+  var CONSECUTIVE_FAILURES_BEFORE_OFFLINE = 2;
+  var PROBE_BASE_MS = 1000;
+  var PROBE_MAX_MS = 30000;
+
+  var _failures = 0;
+  var _online = true;
+  var _probeTimer = null;
+  var _probeAttempts = 0;
+  var _listeners = [];
+
+  function _emit() {
+    _listeners.slice().forEach(function (fn) {
+      try { fn(_online); } catch (e) { /* a bad listener must not stop the rest */ }
+    });
+  }
+
+  function _scheduleProbe() {
+    if (_probeTimer || _online) return;
+    var delay = Math.min(PROBE_MAX_MS, PROBE_BASE_MS * Math.pow(2, _probeAttempts));
+    _probeAttempts += 1;
+    _probeTimer = setTimeout(function () {
+      _probeTimer = null;
+      // Bypasses the short-circuit below: this is the one request allowed
+      // through while offline, and it is what lets us notice recovery.
+      axios.get(window.mbeditorBasePath() + '/ping', { timeout: 4000, mbeditorProbe: true })
+        .then(function () { noteSuccess(); })
+        .catch(function () { _scheduleProbe(); });
+    }, delay);
+  }
+
+  function noteSuccess() {
+    _failures = 0;
+    _probeAttempts = 0;
+    if (_probeTimer) { clearTimeout(_probeTimer); _probeTimer = null; }
+    if (!_online) { _online = true; _emit(); }
+  }
+
+  function noteNetworkFailure() {
+    _failures += 1;
+    if (_online && _failures >= CONSECUTIVE_FAILURES_BEFORE_OFFLINE) {
+      _online = false;
+      _emit();
+      _scheduleProbe();
+    } else if (!_online) {
+      _scheduleProbe();
+    }
+  }
+
+  return {
+    isOnline: function () { return _online; },
+    noteSuccess: noteSuccess,
+    noteNetworkFailure: noteNetworkFailure,
+    onChange: function (fn) {
+      _listeners.push(fn);
+      return function () { _listeners = _listeners.filter(function (f) { return f !== fn; }); };
+    }
+  };
+})();
+
+// Drop background polls while the server is unreachable, so they stop producing
+// console noise and pointless traffic. Marked requests only — anything the user
+// asked for still goes out.
+axios.interceptors.request.use(function (config) {
+  if (config.mbeditorBackground && !ServerReachability.isOnline()) {
+    var err = new Error('mbeditor: skipped background request while server unreachable');
+    err.mbeditorSkipped = true;
+    return Promise.reject(err);
+  }
+  return config;
+});
+
+// A request we aborted ourselves also arrives here with no response, and the
+// editor cancels constantly — every keystroke supersedes the previous search,
+// every hover and completion provider aborts when the cursor moves on, and
+// opening a file aborts its own prefetch. Counting those as unreachable took
+// two cancellations to declare the server offline, so routine actions (creating
+// a file, typing in search) flashed "Server offline" until the /ping probe
+// one second later put it back. A cancellation says nothing about the server.
+function _isCanceled(error) {
+  if (!error) return false;
+  if (axios.isCancel && axios.isCancel(error)) return true;
+  return error.code === 'ERR_CANCELED' || error.name === 'CanceledError' || error.name === 'AbortError';
+}
+
+axios.interceptors.response.use(function (response) {
+  ServerReachability.noteSuccess();
+  return response;
+}, function (error) {
+  if (error && error.mbeditorSkipped) return Promise.reject(error);
+  if (_isCanceled(error)) return Promise.reject(error);
+  // No response object at all means the request never reached the server.
+  if (error && !error.response) ServerReachability.noteNetworkFailure();
+  else ServerReachability.noteSuccess();
+  return Promise.reject(error);
+});
+
 // Surface pending-migration errors as a dismissible banner instead of silently failing.
 axios.interceptors.response.use(null, function(error) {
   if (error.response && error.response.data && error.response.data.pending_migration_error) {
@@ -42,8 +154,11 @@ var FileService = (function () {
     return axios.get(window.mbeditorBasePath() + '/workspace').then(function(res) { return res.data; });
   }
 
-  function getTree() {
-    return axios.get(window.mbeditorBasePath() + '/files').then(function(res) { return res.data; });
+  // opts.background marks an automatic poll rather than something the user
+  // asked for, so it can be skipped while the server is unreachable.
+  function getTree(opts) {
+    var cfg = (opts && opts.background) ? { mbeditorBackground: true } : {};
+    return axios.get(window.mbeditorBasePath() + '/files', cfg).then(function(res) { return res.data; });
   }
 
   function getFile(path, options) {
@@ -115,6 +230,14 @@ var FileService = (function () {
 
   function ping() {
     return axios.get(window.mbeditorBasePath() + '/ping', { timeout: 4000 }).then(function(res) { return res.data; });
+  }
+
+  // Which routes reach each action in a controller. Returns { controller, actions }
+  // with an empty actions map for anything that is not a controller, so the
+  // caller does not have to know the naming convention.
+  function getRoutes(path) {
+    return axios.get(window.mbeditorBasePath() + '/routes?path=' + encodeURIComponent(path))
+      .then(function (res) { return res.data; });
   }
 
   function getState() {
@@ -336,6 +459,9 @@ var FileService = (function () {
     formatFile: formatFile,
     runTests: runTests,
     ping: ping,
+    getRoutes: getRoutes,
+    isServerReachable: ServerReachability.isOnline,
+    onReachabilityChange: ServerReachability.onChange,
     getState: getState,
     saveState: saveState,
     getBranchState: getBranchState,

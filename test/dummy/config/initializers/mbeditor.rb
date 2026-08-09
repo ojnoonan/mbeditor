@@ -126,6 +126,48 @@ Rails.application.config.after_initialize do
     # Commit referencing ticket #42 (dark-mode) — most recent, will be matched first
     File.write(sample_workspace.join("app", "controllers", "theme_controller.rb"),
                "class ThemeController\n  THEMES = %i[light dark].freeze\nend\n")
+
+    # Mirrors the real OrdersController in the dummy app, so the inline route
+    # hints have something to annotate. The hints read the *running app's* route
+    # set but annotate the *workspace* file, which coincide in a real host app
+    # and only need pairing up here because the workspace is redirected.
+    File.write(sample_workspace.join("app", "controllers", "orders_controller.rb"), <<~RUBY)
+      # frozen_string_literal: true
+
+      # Every action below is annotated with the route that reaches it. Note
+      # `unreachable`, which nothing routes to.
+      class OrdersController < ApplicationController
+        def index
+          render plain: "orders"
+        end
+
+        def show
+          render plain: "order \#{params[:id]}"
+        end
+
+        def create
+          head :created
+        end
+
+        def cancel
+          head :ok
+        end
+
+        def search
+          render plain: "search"
+        end
+
+        def unreachable
+          head :ok
+        end
+
+        private
+
+        def order_params
+          params.permit(:number)
+        end
+      end
+    RUBY
     system(git_env, "git", "-C", ws, "add", ".", out: File::NULL, err: File::NULL)
     system(git_env, "git", "-C", ws, "commit", "-m", "Implement dark-mode toggle for navigation - refs #42",
            out: File::NULL, err: File::NULL)

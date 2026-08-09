@@ -3,6 +3,8 @@
 require "open3"
 require "json"
 require "timeout"
+require "shellwords"
+require "etc"
 
 module Mbeditor
   # Project-wide text search and replace-in-files.
@@ -37,6 +39,32 @@ module Mbeditor
       # ripgrep while the server runs is picked up within a minute.
       def rg_available?
         AvailabilityProbe.rg
+      end
+
+      # The resolved ripgrep executable, shared with CodeSearchService so both
+      # search paths run the same binary.
+      def rg_command
+        AvailabilityProbe.rg_command || "rg"
+      end
+
+      # Whether the git tier is usable on this workspace. The presence of a
+      # `.git` entry is not enough: a repo git refuses to open (dubious
+      # ownership under Docker, a `.git` file pointing at a gitdir that moved,
+      # a git binary missing from the server's PATH) still has one. `git grep`
+      # then fails, its stderr goes to /dev/null, and search returns instantly
+      # with nothing — silently, and with no way to tell it apart from "no
+      # matches". AvailabilityProbe.git runs `rev-parse --is-inside-work-tree`,
+      # which fails in exactly those cases, so a bad repo falls through to
+      # plain grep instead of to an empty result set.
+      def git_tier?(root)
+        File.exist?(File.join(root, ".git")) && AvailabilityProbe.git(root)
+      end
+
+      # Which backend a search on this workspace will actually use. Reported by
+      # GET /workspace: the difference between the tiers is 10-30x, so "why is
+      # search slow" needs to be answerable without reading the source.
+      def backend(workspace_root)
+        pick_tier(workspace_root.to_s)
       end
 
       # Returns up to +limit+ result rows. When +paths+ is given the scan is
@@ -187,7 +215,9 @@ module Mbeditor
         timed_out = false
         timeout_secs = Mbeditor.configuration.search_timeout
 
-        io = IO.popen(env, args, err: File::NULL)
+        # pgroup: the grep tier is a sh -c pipeline; killing only the shell
+        # would leave find/xargs/grep running. TERM goes to the whole group.
+        io = IO.popen(env, args, err: File::NULL, pgroup: true)
         pid = io.pid
         register_search(root, pid) if supersede
         watchdog = nil
@@ -199,11 +229,20 @@ module Mbeditor
           end
         end
 
+        # Used to locate the match within each hit line so a result can carry
+        # its columns. Invalid user regexes are already reported elsewhere;
+        # here a nil pattern just means the rows come back without columns.
+        pattern = begin
+          build_pattern(query, use_regex: use_regex, match_case: match_case, whole_word: whole_word)
+        rescue RegexpError
+          nil
+        end
+
         begin
           io.each_line do |raw|
             break if results.length >= max
 
-            row = parse_line(tier, raw, root)
+            row = parse_line(tier, raw, root, pattern)
             next unless row
             next if matcher.excluded?(row[:file])
 
@@ -232,7 +271,7 @@ module Mbeditor
 
       def pick_tier(root)
         return :rg if rg_available?
-        return :git if File.exist?(File.join(root, ".git"))
+        return :git if git_tier?(root)
 
         :grep
       end
@@ -242,7 +281,7 @@ module Mbeditor
 
         case tier
         when :rg
-          args = ["rg", "--json"]
+          args = [rg_command, "--json"]
           args << "--no-ignore" unless respect_gitignore?
           args << "-F" unless use_regex
           args << "--ignore-case" unless match_case
@@ -264,26 +303,49 @@ module Mbeditor
           args << "-w" if whole_word
           args += ["-e", query, "--"]
           args += paths.map { |p| relative_path(File.expand_path(p, root), root) } if paths
-          # C locale restores fast byte-wise case folding for -i (non-ASCII
-          # characters simply don't case-fold, which is acceptable here).
-          [{ "LC_ALL" => "C" }, args]
+          # Exclusions have to reach git as pathspecs, not just be dropped from
+          # the results by the matcher below: otherwise git walks node_modules
+          # and every other excluded tree in full before we discard the matches.
+          # The "." anchor is required: newer git reads a pathspec list of
+          # nothing but :(exclude) entries as "everything except these", but
+          # older git refuses it outright ("fatal: There is nothing to exclude
+          # from"), exits 128, and search silently returns empty.
+          args << "." if paths.nil? && exclusions.any?
+          args += exclusions.map { |p| ":(exclude)#{p}" }
+          # No LC_ALL=C: measured neutral for the -F -i default and 2.2x slower
+          # for -E, and the UTF-8 locale case-folds non-ASCII correctly.
+          [{}, args]
         else
-          base_flags = use_regex ? "-E" : "-F"
-          args = ["grep", "-I", "-Hn", base_flags]
-          args << "-r" unless paths
-          args << "-i" unless match_case
-          args << "-w" if whole_word
-          # grep --exclude-dir only accepts plain directory names, not paths with
-          # slashes; slashed patterns are enforced by the ExclusionMatcher
-          # post-filter instead.
-          exclusions.reject { |p| p.include?("/") }.select { |d| d.match?(/\A[\w.-]+\z/) }.each { |d| args << "--exclude-dir=#{d}" }
-          args << query
-          args += paths ? paths.map { |p| File.expand_path(p, root) } : [root]
-          [{ "LC_ALL" => "C" }, args]
+          grep = ["grep", "-I", "-Hn", "--line-buffered", use_regex ? "-E" : "-F"]
+          grep << "-i" unless match_case
+          grep << "-w" if whole_word
+          # -e + -- so a query starting with "-" can't be parsed as options.
+          grep += ["-e", query, "--"]
+          if paths
+            [{ "LC_ALL" => "C" }, grep + paths.map { |p| File.expand_path(p, root) }]
+          else
+            # find prunes every exclusion — slashed ones included, which
+            # --exclude-dir cannot express — *before* the walk, then feeds the
+            # survivors to grep in parallel batches. grep -r with post-filtered
+            # exclusions read vendor/bundle and public/assets in full on every
+            # search; measured 7.2 s -> 0.09 s on a 350 MB tree. --line-buffered
+            # keeps concurrent greps from tearing lines mid-row on the shared
+            # pipe.
+            prune = exclusions.flat_map do |p|
+              p.include?("/") ? ["-path", File.join(root, p), "-o"] : ["-name", p, "-o"]
+            end
+            find = ["find", root]
+            find += ["("] + prune[0..-2] + [")", "-prune", "-o"] unless prune.empty?
+            find += ["-type", "f", "-print0"]
+            workers = Etc.nprocessors.clamp(2, 8)
+            xargs = ["xargs", "-0", "-P", workers.to_s, "-n", "500"] + grep
+            cmd = "#{Shellwords.shelljoin(find)} | #{Shellwords.shelljoin(xargs)}"
+            [{ "LC_ALL" => "C" }, ["sh", "-c", cmd]]
+          end
         end
       end
 
-      def parse_line(tier, raw, root)
+      def parse_line(tier, raw, root, pattern = nil)
         if tier == :rg
           begin
             data = JSON.parse(raw)
@@ -293,11 +355,23 @@ module Mbeditor
           return nil unless data["type"] == "match"
 
           md = data["data"]
+          raw_text = md.dig("lines", "text").to_s
+          # rg reports submatch offsets in BYTES; Monaco columns are character
+          # based, so slice the prefix and measure it as characters.
+          sub = Array(md["submatches"]).first
+          cols = if sub && sub["start"] && sub["end"]
+            bytes = raw_text.dup.force_encoding(Encoding::BINARY)
+            start_chars = bytes[0, sub["start"]].to_s.force_encoding(Encoding::UTF_8).scrub.length
+            match_chars = bytes[sub["start"], sub["end"] - sub["start"]].to_s.force_encoding(Encoding::UTF_8).scrub.length
+            { col: start_chars + 1, end_col: start_chars + match_chars + 1 }
+          else
+            match_columns(raw_text, pattern)
+          end
           return {
             file: relative_path(md.dig("path", "text").to_s, root),
             line: md.dig("line_number"),
-            text: md.dig("lines", "text").to_s.strip
-          }
+            text: raw_text.strip
+          }.merge(cols)
         end
 
         # git grep / grep emit "path:line:text" — possibly with bytes that are
@@ -314,7 +388,25 @@ module Mbeditor
           file_path = relative_path(file_path, root)
         end
 
-        { file: file_path, line: Regexp.last_match(2).to_i, text: Regexp.last_match(3).strip }
+        raw_text = Regexp.last_match(3)
+        { file: file_path, line: Regexp.last_match(2).to_i, text: raw_text.strip }
+          .merge(match_columns(raw_text, pattern))
+      end
+
+      # 1-based Monaco columns for the first match on a hit line. Returns an
+      # empty hash when there is no usable pattern or it doesn't match — the
+      # row is still a valid result, it just opens at the start of the line.
+      # Measured against the RAW line, never the stripped `text`: the client
+      # cannot recover the leading whitespace the strip removed.
+      def match_columns(raw_text, pattern)
+        return {} unless pattern
+
+        m = pattern.match(raw_text)
+        return {} unless m
+
+        { col: m.begin(0) + 1, end_col: m.end(0) + 1 }
+      rescue StandardError
+        {}
       end
 
       def register_search(root, pid)
@@ -337,9 +429,15 @@ module Mbeditor
       end
 
       def kill_quietly(pid)
-        Process.kill("TERM", pid) if pid
+        return unless pid
+
+        Process.kill("TERM", -pid)
       rescue StandardError
-        nil
+        begin
+          Process.kill("TERM", pid)
+        rescue StandardError
+          nil
+        end
       end
 
       def monotonic

@@ -11,6 +11,27 @@ var useState = _React.useState;
 var useEffect = _React.useEffect;
 var useRef = _React.useRef;
 
+// Functional setTreeData updater shared by every path that re-fetches the tree
+// (WebSocket push, the 10s poll, the manual refresh button).
+//
+// Returning prevData when nothing changed is the whole point: the fetched array
+// is always a fresh object, so returning it unconditionally makes React commit
+// on every tick and defeats FileTreeMemo's `prev.items === next.items` check —
+// a full app re-render every 10 seconds, forever, with the tree untouched.
+//
+// The comparison is a deep one. An earlier version hashed only the top-level
+// entry names, which missed every file added or removed inside a directory:
+// the re-render happened anyway, and the quick-open index was never rebuilt.
+// JSON.stringify over the whole tree measures 0.33 ms for ~1600 nodes, well
+// under the render it saves.
+function _treeUpdater(newData) {
+  return function (prevData) {
+    if (JSON.stringify(newData) === JSON.stringify(prevData)) return prevData;
+    SearchService.buildIndex(newData);
+    return newData;
+  };
+}
+
 var SIDEBAR_MIN_WIDTH = 280;
 var SIDEBAR_MAX_WIDTH = 560;
 var EDITOR_MIN_WIDTH = 320;
@@ -18,7 +39,52 @@ var GIT_PANEL_MIN_WIDTH = 280;
 var PANE_MIN_WIDTH_PERCENT = 20;
 var PANE_MAX_WIDTH_PERCENT = 80;
 var SIDEBAR_COLLAPSED_WIDTH = 48;
-var SUPPORTED_PRETTIER_EXTS = ['js', 'jsx', 'json', 'css', 'scss', 'html', 'md'];
+// Extension -> Prettier parser. Limited to what the vendored plugins actually
+// parse (babel, estree, html, postcss, markdown); anything outside this map
+// falls through to Monaco's re-indent.
+//
+// One map, one options builder, one runner — there were four copies of each,
+// and they had drifted: two read a `prettierTabWidth`/`prettierUseTabs` pair
+// that no settings screen ever wrote, so Prettier reprinted every JS/JSX file
+// at two spaces however the editor was configured.
+var PRETTIER_PARSERS = {
+  js: 'babel', jsx: 'babel', mjs: 'babel', cjs: 'babel',
+  json: 'json', jsonc: 'json', json5: 'json5',
+  css: 'css', scss: 'scss', less: 'less',
+  html: 'html', vue: 'vue',
+  md: 'markdown', markdown: 'markdown'
+};
+var SUPPORTED_PRETTIER_EXTS = Object.keys(PRETTIER_PARSERS);
+
+function prettierParserFor(path) {
+  return PRETTIER_PARSERS[String(path || '').split('.').pop().toLowerCase()] || null;
+}
+
+// Indentation comes from the editor's own tabSize/insertSpaces, so formatting
+// produces what the user set up. `insertSpaces !== true` mirrors how
+// EditorPanel configures Monaco: anything but an explicit true means tabs.
+function prettierOptions(prefs, parserName, extra) {
+  return Object.assign({
+    parser: parserName,
+    plugins: Object.values(window.prettierPlugins || {}),
+    printWidth: prefs.prettierPrintWidth != null ? prefs.prettierPrintWidth : 80,
+    tabWidth: prefs.tabSize != null ? prefs.tabSize : 4,
+    useTabs: prefs.insertSpaces !== true,
+    semi: prefs.prettierSemi !== false,
+    singleQuote: !!prefs.prettierSingleQuote,
+    trailingComma: prefs.prettierTrailingComma || 'all',
+    bracketSpacing: prefs.prettierBracketSpacing !== false
+  }, extra || {});
+}
+
+// Format with Prettier, loading it on first use. Rejects if it cannot be
+// loaded, so callers can report that rather than appear to do nothing.
+function runPrettier(source, prefs, parserName, extra) {
+  var go = function () { return window.prettier.format(source, prettierOptions(prefs, parserName, extra)); };
+  if (window.prettier && window.prettierPlugins) return go();
+  if (window.loadPrettierPlugins) return window.loadPrettierPlugins().then(go);
+  return Promise.reject(new Error('Prettier is not available'));
+}
 
 var DEFAULT_EDITOR_PREFS = {
   theme: 'vs-dark',
@@ -43,7 +109,7 @@ var DEFAULT_EDITOR_PREFS = {
   autoClosingBrackets: 'always',
   autoClosingQuotes: 'always',
   autoIndent: 'full',
-  formatOnPaste: true,
+  indentOnPaste: true,
   formatOnType: false,
   formatOnSave: false,
   quickSuggestions: true,
@@ -53,8 +119,6 @@ var DEFAULT_EDITOR_PREFS = {
   toolbarIconOnly: false,
   rubocopLintEnabled: true,
   prettierPrintWidth: 80,
-  prettierTabWidth: 2,
-  prettierUseTabs: false,
   prettierSemi: true,
   prettierSingleQuote: false,
   prettierTrailingComma: 'all',
@@ -68,28 +132,11 @@ var DEFAULT_EDITOR_PREFS = {
   branchStateRestore: true
 };
 
-// Detect the minimum number of leading spaces used for indentation across all
-// indented lines in the code. Returns 0 if no space-indented lines are found
-// (e.g. file already uses tabs or has no indented lines).
-function detectIndentWidth(code) {
-  var min = Infinity;
-  code.split('\n').forEach(function(line) {
-    if (!line.trim()) return;
-    var m = line.match(/^( +)/);
-    if (m) min = Math.min(min, m[1].length);
-  });
-  return min === Infinity ? 0 : min;
-}
-
-// Convert leading space-based indentation to tabs using the detected unit size.
-function spacesToTabs(code, indentSize) {
-  var unit = ' '.repeat(indentSize);
-  return code.split('\n').map(function(line) {
-    var tabs = '';
-    while (line.startsWith(unit)) { tabs += '\t'; line = line.slice(unit.length); }
-    return tabs + line;
-  }).join('\n');
-}
+// Indentation of formatted output is the formatter's job, not a post-pass:
+// Prettier is given useTabs/tabWidth from the editor's own settings, and Ruby
+// indentation comes from the project's .rubocop.yml. Monaco's built-in
+// "Convert Indentation to Tabs / to Spaces" commands (F1) cover converting a
+// file that is already open, using its own indentation guesser.
 
 function diffLines(oldLines, newLines) {
   var n = oldLines.length, m = newLines.length;
@@ -654,6 +701,35 @@ var MbeditorApp = function MbeditorApp() {
   var setCustomPaths = _useStateCP2[1];
   var customPathsRef = useRef([]);
   customPathsRef.current = customPaths;
+  // Whether to show the presence chips at all. Read at render rather than held in
+  // state: cable availability changes on handshake and on every reconnect, so a
+  // stored copy is stale the moment it is written. This only decides whether a
+  // chip paints — the protocol itself is gated on the roster.
+  var collabEnabled = typeof WebSocketService !== 'undefined' &&
+    typeof WebSocketService.isCableAvailable === 'function' &&
+    WebSocketService.isCableAvailable();
+  var _useStateIdent = useState(
+    typeof CollaborationIdentity !== 'undefined' ? CollaborationIdentity.get() : null
+  );
+  var _useStateIdent2 = _slicedToArray(_useStateIdent, 2);
+  var collabIdentity = _useStateIdent2[0];
+  var setCollabIdentity = _useStateIdent2[1];
+  // Presence roster: other connected participants, keyed by client_id →
+  // { name, colour, current_file }. Fed by the global presence stream; rendered
+  // as click-to-jump chips in the status bar.
+  var _useStateRoster = useState({});
+  var _useStateRoster2 = _slicedToArray(_useStateRoster, 2);
+  var collabRoster = _useStateRoster2[0];
+  var setCollabRoster = _useStateRoster2[1];
+
+  // Follow mode (slice 8): the presence client_id of the participant whose file +
+  // viewport we're tracking, or null when navigating independently. Toggled from a
+  // roster chip. The file-open is driven by the effect below; the scroll-tracking
+  // lives in CollaborationService.setFollow().
+  var _useStateFollow = useState(null);
+  var _useStateFollow2 = _slicedToArray(_useStateFollow, 2);
+  var followedClientId = _useStateFollow2[0];
+  var setFollowedClientId = _useStateFollow2[1];
   var recentSavesRef = useRef({});
   var isSavingRef = useRef(false);
   // True once the saved session has finished loading into the panes. Anything
@@ -667,6 +743,21 @@ var MbeditorApp = function MbeditorApp() {
   // External-change detection compares disk-to-disk; comparing disk to the
   // buffer flags every dirty tab, which is just the definition of "dirty".
   var lastDiskContentRef = useRef({});
+
+  // Every successful save must go through this. Besides the 3.5s grace window
+  // that stops the external-change check racing our own write, a save defines
+  // the new on-disk truth — so it must also refresh the external-change
+  // baseline. The check's own fetch is skipped inside the grace window, so
+  // without this the baseline stayed at the *pre-save* disk content and the
+  // next files_changed push reported our own save as an external edit on any
+  // tab the user had started editing again.
+  function noteLocalSave(path, content) {
+    recentSavesRef.current[path] = Date.now();
+    setTimeout(function () { delete recentSavesRef.current[path]; }, 3500);
+    if (typeof content === 'string') {
+      lastDiskContentRef.current[path] = content.replace(/\r\n/g, '\n');
+    }
+  }
 
   // ── Draft backup helpers ─────────────────────────────────────────────────
   var draftWriteTimerRef = useRef({});
@@ -765,10 +856,21 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
+  // Every structural mutation (create, delete, rename, import) funnels through
+  // here, so this is where the project-search cache has to be dropped. Saves
+  // invalidated it at their own call sites, which is why editing a file
+  // updated the results but adding or deleting one never did — the stale
+  // cached page was served for the same query. The per-path delta refresh on
+  // the files_changed push can't cover it either: it re-scans named files,
+  // and a file that just appeared or vanished isn't in the previous result set.
   var refreshProjectTree = function refreshProjectTree() {
     return FileService.getTree().then(function (data) {
       setTreeData(data || []);
       SearchService.buildIndex(data || []);
+      SearchService.invalidate();
+      if (searchQueryRef.current && searchPanelVisibleRef.current) {
+        _debouncedSearch(searchQueryRef.current);
+      }
       return data || [];
     })["catch"](function (err) {
       EditorStore.setStatus("Failed to refresh files: " + (err && err.message || "Unknown error"), "error");
@@ -841,8 +943,20 @@ var MbeditorApp = function MbeditorApp() {
   // The backoff expires on a wall-clock deadline rather than a timer, so the
   // chip also re-reads on a slow interval — otherwise it would sit on
   // 'degraded' until the next failure or restart click.
+  //
+  // readLspHealth() builds a fresh object every call, so handing it straight to
+  // setLspHealth re-rendered the whole app every 10 seconds whether or not the
+  // health had changed — React bails on Object.is, and two object literals are
+  // never identical. Compare the fields and keep the previous object when they
+  // match. (Same shape of bug as the file-tree poll; see _treeUpdater.)
   useEffect(function () {
-    var sync = function () { setLspHealth(readLspHealth()); };
+    var sync = function () {
+      setLspHealth(function (prev) {
+        var next = readLspHealth();
+        if (prev && prev.status === next.status && prev.reason === next.reason) return prev;
+        return next;
+      });
+    };
     sync();
     window.addEventListener('mbeditor:lsp-health', sync);
     var tick = setInterval(sync, 10000);
@@ -956,28 +1070,11 @@ var MbeditorApp = function MbeditorApp() {
       return;
     }
 
-    var ext = tab.path.split('.').pop().toLowerCase();
-    var formatMap = {
-      'js': 'babel', 'jsx': 'babel',
-      'json': 'json',
-      'css': 'css', 'scss': 'scss',
-      'html': 'html', 'md': 'markdown'
-    };
-    var parserName = formatMap[ext];
+    var parserName = prettierParserFor(tab.path);
 
     if (parserName && window.prettier && window.prettierPlugins) {
       var prefs = EditorStore.getState().editorPrefs || DEFAULT_EDITOR_PREFS;
-      window.prettier.format(tab.content, {
-        parser: parserName,
-        plugins: Object.values(window.prettierPlugins),
-        printWidth: prefs.prettierPrintWidth != null ? prefs.prettierPrintWidth : 80,
-        tabWidth: prefs.tabSize != null ? prefs.tabSize : 2,
-        useTabs: !(prefs.insertSpaces),
-        semi: prefs.prettierSemi !== false,
-        singleQuote: !!prefs.prettierSingleQuote,
-        trailingComma: prefs.prettierTrailingComma || 'all',
-        bracketSpacing: prefs.prettierBracketSpacing !== false
-      }).then(function () {
+      window.prettier.format(tab.content, prettierOptions(prefs, parserName)).then(function () {
         var currentPane = EditorStore.getState().panes.find(function (p) {
           return p.id === paneId;
         });
@@ -1248,7 +1345,7 @@ var MbeditorApp = function MbeditorApp() {
           return {
             id: p.id,
             activeTabId: p.activeTabId,
-            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff && !t.isModelGraph; }).map(function (t) {
+            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff && !t.isModelGraph && !t.isUntitled; }).map(function (t) {
               return {
                 id: t.id, path: t.path, name: t.name, dirty: t.dirty, viewState: t.viewState,
                 isSettings: !!t.isSettings, isPreview: !!t.isPreview, previewFor: t.previewFor || null,
@@ -1577,22 +1674,28 @@ var MbeditorApp = function MbeditorApp() {
         });
       });
     }, Promise.resolve());
-  }, 2000)).current;
+    // 250ms, not 2s. The window only exists to coalesce the paths from a
+    // burst of saves; anything longer is dead time the user spends looking at
+    // stale search rows, and the server-side result cache was already dropped
+    // by the same broadcast, so waiting buys nothing.
+  }, 250)).current;
 
   // WebSocket push — when the server broadcasts files_changed, refresh the tree
   // and git status immediately (same work as the 10s poll below does).
   useEffect(function () {
     function handleFilesChanged(payload) {
       if (document.hidden) return;
-      GitService.fetchStatus()["catch"](function () {});
+      // The cheap /git_status probe, not the full /git_info fan-out. This
+      // fires on every save, and the fan-out is the most expensive request
+      // the editor makes — on a dev server with a handful of threads it
+      // queues the tree and search requests behind itself, which is what made
+      // search look like it was waiting for git. fetchStatusLite patches the
+      // branch and file list immediately and escalates to the fan-out on its
+      // own when the branch actually changed.
+      GitService.fetchStatusLite({ background: true })["catch"](function () {});
       FileService.getTree().then(function (data) {
-        var newData = data || [];
-        setTreeData(function (prevData) {
-          var sig = function(d) { return d.length + ':' + d.map(function(n) { return n.name; }).join(','); };
-          if (sig(newData) !== sig(prevData)) SearchService.buildIndex(newData);
-          return newData;
-        });
-        checkOpenTabsForExternalChanges();
+        setTreeData(_treeUpdater(data || []));
+        checkOpenTabsForExternalChanges(payload && payload.paths);
       })["catch"](function () {});
       if (payload && payload.paths && searchQueryRef.current && searchPanelVisibleRef.current) {
         payload.paths.forEach(function (p) { _pendingSearchRefreshPaths.current.add(p); });
@@ -1603,17 +1706,76 @@ var MbeditorApp = function MbeditorApp() {
     return function () { WebSocketService.offFilesChanged(handleFilesChanged); };
   }, []);
 
-  function checkOpenTabsForExternalChanges() {
+  // WebSocket push — when a peer saves a collaboratively-bound file, the CRDT has
+  // already kept our buffer byte-identical, so the single on-disk write is enough
+  // for everyone. Reset that tab's clean baseline and clear its dirty indicator
+  // without touching disk or undo history. Gated on the file being collab-bound:
+  // for non-collab tabs a peer's save is an external change handled by the
+  // files_changed path above (which respects local unsaved edits).
+  useEffect(function () {
+    function handleFileSaved(data) {
+      var path = data && data.path;
+      if (!path) return;
+      if (typeof CollaborationService === 'undefined' || !CollaborationService.isBound(path)) return;
+
+      var st = EditorStore.getState();
+      var changed = false;
+      var newPanes = st.panes.map(function (p) {
+        return Object.assign({}, p, {
+          tabs: p.tabs.map(function (t) {
+            if (t.path !== path || !t.dirty) return t;
+            changed = true;
+            return Object.assign({}, t, { dirty: false, cleanContent: t.content });
+          })
+        });
+      });
+      if (changed) EditorStore.setState({ panes: newPanes });
+
+      // The CRDT kept our buffer identical to what the peer just wrote, so the
+      // buffer is the new on-disk truth — refresh the external-change baseline.
+      var _savedTab = null;
+      newPanes.forEach(function (p) {
+        p.tabs.forEach(function (t) { if (t.path === path) _savedTab = t; });
+      });
+      if (_savedTab && typeof _savedTab.content === 'string') {
+        lastDiskContentRef.current[path] = _savedTab.content.replace(/\r\n/g, '\n');
+      }
+
+      // Reset the AVI clean baseline so undo past this peer's save shows dirty correctly.
+      var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[path];
+      if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
+        _modelEntry.cleanVersionId = _modelEntry.model.getAlternativeVersionId();
+      }
+    }
+    WebSocketService.onFileSaved(handleFileSaved);
+    return function () { WebSocketService.offFileSaved(handleFileSaved); };
+  }, []);
+
+  // onlyPaths: when the trigger names the files that changed (the
+  // files_changed push always does — it only ever announces mbeditor's own
+  // writes), restrict the check to open tabs on those paths. The old
+  // behaviour re-fetched EVERY open tab on every save: N requests per save,
+  // and each one another chance for a stale comparison to cry "changed
+  // externally". A manual workspace refresh passes nothing and still checks
+  // everything — that is the button's job.
+  function checkOpenTabsForExternalChanges(onlyPaths) {
+    var pathSet = null;
+    if (onlyPaths && onlyPaths.length) {
+      pathSet = {};
+      onlyPaths.forEach(function (p) { pathSet[p] = true; });
+    }
     var st = EditorStore.getState();
     var allTabs = st.panes.reduce(function (acc, p) {
       return acc.concat(p.tabs.map(function (t) { return { paneId: p.id, tab: t }; }));
     }, []);
     var fileTabs = allTabs.filter(function (pt) {
       var path = pt.tab.path || '';
+      if (pathSet && !pathSet[path]) return false;
       return path &&
         !path.startsWith('mbeditor://') &&
         !path.startsWith('diff://') &&
         !path.startsWith('combined-diff://') &&
+        !path.startsWith('untitled://') &&
         !pt.tab.isCombinedDiff &&
         !pt.tab.isSettings &&
         !pt.tab.isImage &&
@@ -1623,8 +1785,28 @@ var MbeditorApp = function MbeditorApp() {
     fileTabs.forEach(function (pt) {
       var savedAt = recentSavesRef.current[pt.tab.path];
       if (savedAt && Date.now() - savedAt < 3000) return;
+      // A collaboratively-bound file's live buffer is the shared CRDT, kept
+      // converged across peers and reconciled with disk on save (file_saved).
+      // Re-applying an external on-disk snapshot over it would silently clobber
+      // everyone's shared state, so skip detection here — the CRDT is authoritative
+      // while peers are editing. Intentional local edits (Format/Load) still flow
+      // through the binding and are unaffected.
+      if (typeof CollaborationService !== 'undefined' &&
+          CollaborationService.isAttached(pt.tab.path)) {
+        return;
+      }
       FileService.getFile(pt.tab.path, { allowMissing: true }).then(function (data) {
         if (!data || typeof data.content !== 'string') return;
+        // Re-read the tab: the snapshot above predates the fetch, and edits or
+        // a save that landed meanwhile would make a stale comparison here
+        // report phantom external changes.
+        var liveState = EditorStore.getState();
+        var livePane = liveState.panes.find(function (p) { return p.id === pt.paneId; });
+        var liveTab = livePane && livePane.tabs.find(function (t) { return t.id === pt.tab.id; });
+        if (!liveTab || liveTab.path !== pt.tab.path) return;
+        var savedAgain = recentSavesRef.current[pt.tab.path];
+        if (savedAgain && Date.now() - savedAgain < 3000) return;
+        pt = { paneId: pt.paneId, tab: liveTab };
         var serverNorm = data.content.replace(/\r\n/g, '\n');
         var tabNorm = (pt.tab.content || '').replace(/\r\n/g, '\n');
 
@@ -1691,17 +1873,13 @@ var MbeditorApp = function MbeditorApp() {
   // broadcasts from mbeditor's own mutation endpoints, so a connected socket
   // meant external changes were never picked up at all. The push remains the
   // instant path for our own writes; this is what catches everything else.
-  // Uses functional setTreeData to skip the re-render when nothing has changed.
+  // _treeUpdater keeps the previous array when nothing changed, so a quiet
+  // workspace costs one fetch and no re-render at all.
   useEffect(function () {
     var intervalId = setInterval(function () {
       if (document.hidden) return;
-      FileService.getTree().then(function (data) {
-        var newData = data || [];
-        setTreeData(function (prevData) {
-          var sig = function(d) { return d.length + ':' + d.map(function(n) { return n.name; }).join(','); };
-          if (sig(newData) !== sig(prevData)) SearchService.buildIndex(newData);
-          return newData;
-        });
+      FileService.getTree({ background: true }).then(function (data) {
+        setTreeData(_treeUpdater(data || []));
       }).catch(function () {}); // silently ignore auto-refresh errors
     }, 10000);
     return function () { clearInterval(intervalId); };
@@ -1717,7 +1895,7 @@ var MbeditorApp = function MbeditorApp() {
     // /git_info fan-out on its own when the branch or working tree changed.
     var refresh = function () {
       if (document.hidden) return;
-      GitService.fetchStatusLite()["catch"](function () {});
+      GitService.fetchStatusLite({ background: true })["catch"](function () {});
     };
     // Regaining focus is a strong signal something may have happened in a
     // terminal meanwhile — do a full refresh (server-side cache bounds cost).
@@ -1826,17 +2004,29 @@ var MbeditorApp = function MbeditorApp() {
     }
 
     if (save) {
+      if (tab.isUntitled) {
+        // Save-as converts the scratch tab to a real one (closing the scratch
+        // tab in the process); a cancelled prompt keeps the tab open.
+        saveUntitledTab(closingPaneId, tab, { close: true })["catch"](function (err) {
+          if (!(err && err.cancelled)) {
+            EditorStore.setStatus("Save failed: " + (err && err.message || err), "error");
+          }
+        })["finally"](function () {
+          setClosingTabId(null);
+          setClosingPaneId(null);
+        });
+        return;
+      }
       setLoading(function (prev) {
         return _extends({}, prev, { save: true });
       });
       EditorStore.setStatus("Saving " + tab.name + "...", "info");
       isSavingRef.current = true;
       FileService.saveFile(tab.path, tab.content).then(function () {
-        recentSavesRef.current[tab.path] = Date.now();
-        setTimeout(function() { delete recentSavesRef.current[tab.path]; }, 3500);
+        noteLocalSave(tab.path, tab.content);
         EditorStore.setStatus("Saved", "success");
         SearchService.invalidate();
-        GitService.fetchStatus();
+        GitService.fetchStatusLite({ background: true });
         // Reset the AVI clean baseline so undo past this save point shows dirty correctly.
         var _closeEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
         if (_closeEntry && _closeEntry.model && !_closeEntry.model.isDisposed()) {
@@ -1930,26 +2120,25 @@ var MbeditorApp = function MbeditorApp() {
     EditorStore.setStatus("Closed " + saved.length + " saved editor" + (saved.length === 1 ? "" : "s"), "info");
   };
 
-  var handleNewFileInTabDir = function handleNewFileInTabDir(paneId) {
-    var pane = state.panes.find(function (p) { return p.id === paneId; });
-    var activeForPane = pane && pane.tabs.find(function (t) { return t.id === pane.activeTabId; });
-    var activePath = activeForPane && activeForPane.path;
-    var isReal = activePath && activePath.indexOf('://') < 0 && activePath !== '__settings__';
-    var baseDir = isReal ? parentDir(activePath) : '';
-    // Make sure the explorer is visible so the inline-create row shows.
-    setActiveSidebarTab('explorer');
-    setSidebarCollapsed(false);
-    // Expand ancestors of the target dir.
-    if (baseDir) {
-      var parts = baseDir.split('/');
-      var ancestors = {};
-      for (var i = 1; i <= parts.length; i++) {
-        ancestors[parts.slice(0, i).join('/')] = true;
+  // Save-as for an untitled scratch tab: ask for a workspace-relative path,
+  // write it, then swap the scratch tab for a real one opened at that path.
+  // Returns a promise that rejects with {cancelled: true} when the user backs
+  // out, so close-flows can abort instead of discarding.
+  var saveUntitledTab = function saveUntitledTab(paneId, tab, opts) {
+    var input = window.prompt('Save as (path relative to workspace root):', tab.name + '.txt');
+    if (!input || !input.trim()) return Promise.reject({ cancelled: true });
+    var newPath = input.trim().replace(/^\/+/, '');
+    return FileService.saveFile(newPath, tab.content).then(function () {
+      noteLocalSave(newPath, tab.content);
+      SearchService.invalidate();
+      GitService.fetchStatusLite({ background: true });
+      FileService.getTree().then(function (data) { setTreeData(_treeUpdater(data || [])); })["catch"](function () {});
+      TabManager.closeTab(paneId, tab.id);
+      if (!(opts && opts.close)) {
+        TabManager.openTab(newPath, newPath.split('/').pop(), null, paneId);
       }
-      setExpandedDirs(function (prev) { return Object.assign({}, prev, ancestors); });
-    }
-    setPendingRename(null);
-    setPendingCreate({ type: 'file', parentPath: baseDir });
+      EditorStore.setStatus('Saved ' + newPath, 'success');
+    });
   };
 
   // Persist state when panes, focusedPaneId, or collapsedSections changes
@@ -1963,7 +2152,7 @@ var MbeditorApp = function MbeditorApp() {
         return {
           id: p.id,
           activeTabId: p.activeTabId,
-          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff && !t.isModelGraph; }).map(function (t) {
+          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff && !t.isModelGraph && !t.isUntitled; }).map(function (t) {
             return {
               id: t.id,
               path: t.path,
@@ -2015,7 +2204,19 @@ var MbeditorApp = function MbeditorApp() {
   useEffect(function() {
     FileService.getClientConfig().then(function(cfg) {
       setCustomPaths(Array.isArray(cfg.related_files_custom_paths) ? cfg.related_files_custom_paths : []);
+      // Host-app override for the collaboration display name (user_name_callback).
+      // Null/blank falls back to the browser-generated, user-editable name.
+      if (typeof CollaborationIdentity !== 'undefined') {
+        CollaborationIdentity.setServerName(cfg.user_name);
+      }
     })['catch'](function() {});
+  }, []);
+
+  // Keep the presence chip in sync with name edits / host overrides.
+  useEffect(function() {
+    if (typeof CollaborationIdentity === 'undefined') return;
+    setCollabIdentity(CollaborationIdentity.get());
+    return CollaborationIdentity.onChange(function(id) { setCollabIdentity(id); });
   }, []);
 
   // Version-update detection: open the changelog tab automatically when the
@@ -2177,6 +2378,263 @@ var MbeditorApp = function MbeditorApp() {
     return t.id === focusedPane.activeTabId;
   });
 
+  // ── Collaboration presence (slice 7) ──────────────────────────────────────
+  // Only real, openable files belong in presence — virtual tabs (diffs, previews,
+  // settings/changelog) are reported as "no file" so a peer's chip stays blank
+  // rather than pointing at something click-to-jump can't open.
+  var _presenceFileFor = function (tab) {
+    if (!tab || !tab.path) return null;
+    var p = tab.path;
+    if (tab.isDiff || tab.isCombinedDiff || tab.isCommitGraph || tab.isPreview || tab.isSettings || tab.isChangelog) return null;
+    if (p.indexOf('diff://') === 0 || p.indexOf('combined-diff://') === 0 || p.indexOf('mbeditor://') === 0) return null;
+    if (p.indexOf('::preview') !== -1 || p === '__settings__') return null;
+    return p;
+  };
+  var presenceFile = _presenceFileFor(activeTab);
+
+  // Latest heartbeat payload, read by the throttled sender and the late-join
+  // re-announce so both always relay our current identity + file.
+  // Round-trip time to the cable, in ms. Our heartbeat comes back on the same
+  // stream, so timing it needs no clock comparison and no extra ping traffic. We
+  // publish the result in the next heartbeat; a peer's hover card therefore shows
+  // *their* server RTT, which is the number that explains why their edits lag.
+  //
+  // Matched by sequence number, not just "our entry appeared". Every participant's
+  // heartbeat rebroadcasts the whole roster, so our entry comes back on other
+  // people's beats too — timing against those measured the gap since our last send
+  // instead of the round trip, and read as seconds.
+  var presenceSentAtRef = useRef(0);
+  var presenceSeqRef = useRef(0);
+  var measuredSeqRef = useRef(-1);
+  var ownRttRef = useRef(null);
+  // Peer RTT + local arrival time, kept in a ref rather than roster state on
+  // purpose: both change on every heartbeat, and folding them into the compared
+  // roster fields would reinstate the 5s idle re-render this branch just removed.
+  // The hover card reads them when it opens instead, and ticks only while open.
+  var peerStatsRef = useRef({});
+
+  var presencePayloadRef = useRef(null);
+  presencePayloadRef.current = collabIdentity ? {
+    client_id:    collabIdentity.clientId,
+    name:         collabIdentity.name,
+    colour:       collabIdentity.color,
+    current_file: presenceFile,
+    rtt:          ownRttRef.current,
+    seed:         collabIdentity.seed
+  } : null;
+
+  var _sendPresenceNow = function () {
+    if (!presencePayloadRef.current) return;
+    presenceSentAtRef.current = Date.now();
+    presenceSeqRef.current += 1;
+    WebSocketService.perform(
+      'presence',
+      Object.assign({}, presencePayloadRef.current, { seq: presenceSeqRef.current })
+    );
+  };
+  // Throttle heartbeats (presence is coarse — not cursor-level), trailing edge so
+  // the final file/identity always lands.
+  var sendPresenceRef = useRef(null);
+  if (!sendPresenceRef.current) {
+    sendPresenceRef.current = (window._ && window._.throttle)
+      ? window._.throttle(_sendPresenceNow, 1000, { leading: true, trailing: true })
+      : _sendPresenceNow;
+  }
+
+  // Heartbeat: announce ourselves when the active file or our identity changes,
+  // plus a keepalive that refreshes peers who joined in between.
+  //
+  // Deliberately NOT gated on cable availability. Whether cable is up is not
+  // knowable at any single moment worth latching: the handshake completes after
+  // the /workspace fetch that first reads it, and reconnects flip it again. Any
+  // boolean captured for this decision goes stale and silently strands the page in
+  // single-user mode. WebSocketService.perform() already no-ops while
+  // disconnected, so an ungated heartbeat costs one dead call every 5s and starts
+  // working the instant the socket does.
+  useEffect(function () {
+    sendPresenceRef.current();
+    var id = setInterval(function () { sendPresenceRef.current(); }, 5000);
+    return function () { clearInterval(id); };
+  }, [presenceFile, collabIdentity ? collabIdentity.clientId : null,
+      collabIdentity ? collabIdentity.name : null, collabIdentity ? collabIdentity.color : null]);
+
+  // Roster sync. The server sends the complete roster on every change and we
+  // replace ours with it, rather than merging per-participant here/leave events.
+  // Merging could not self-correct: one missed leave left a peer in the roster
+  // permanently, and since the roster gates collaboration, that one phantom kept
+  // persistent undo off and external-change detection suppressed for the whole
+  // session. A dropped message now costs one stale interval instead.
+  // Subscribed for the life of the app, for the same reason the heartbeat is:
+  // no message arrives without a cable, so there is nothing to gate, and gating it
+  // on a latched boolean is what left presence unsubscribed when the handshake
+  // landed after startup.
+  useEffect(function () {
+    var handler = function (data) {
+      var roster = data && data.roster;
+      if (!roster) return;
+      var me = (typeof CollaborationIdentity !== 'undefined') ? CollaborationIdentity.get().clientId : null;
+
+      // The first broadcast carrying our newest seq is the one our own heartbeat
+      // caused — the server records then broadcasts in the same call. Later
+      // broadcasts repeat that seq, hence measuring once per sequence number.
+      var mineEcho = me && roster[me];
+      if (mineEcho && presenceSentAtRef.current &&
+          mineEcho.seq === presenceSeqRef.current &&
+          measuredSeqRef.current !== presenceSeqRef.current) {
+        measuredSeqRef.current = presenceSeqRef.current;
+        ownRttRef.current = Date.now() - presenceSentAtRef.current;
+      }
+
+      // rtt and idle change every broadcast, so they stay out of the compared
+      // state entirely — folding them in would re-render the app every 5s to keep
+      // a hover card fresh that nobody is looking at. The card reads this ref.
+      var next = {};
+      var stats = {};
+      Object.keys(roster).forEach(function (cid) {
+        if (cid === me) return;
+        var p = roster[cid];
+        // Validated once, here, rather than at each of the places that paints it.
+        next[cid] = {
+          name: p.name,
+          colour: CollaborationIdentity.safeColor(p.colour),
+          current_file: p.current_file,
+          seed: p.seed
+        };
+        stats[cid] = { rtt: p.rtt, idle: p.idle };
+      });
+      peerStatsRef.current = stats;
+
+      // Re-evaluated on every roster message rather than only when the peer count
+      // transitions, so availability recovers on its own after a reconnect. The
+      // service compares the computed value, so a no-change call costs nothing.
+      if (typeof CollaborationService !== 'undefined') {
+        CollaborationService.setPeerPresent(Object.keys(next).length > 0);
+      }
+
+      // Stop following someone who is no longer here.
+      setFollowedClientId(function (cur) {
+        if (cur && !next[cur]) {
+          if (typeof CollaborationService !== 'undefined') CollaborationService.clearFollow();
+          return null;
+        }
+        return cur;
+      });
+
+      setCollabRoster(function (prev) {
+        var prevIds = Object.keys(prev);
+        var nextIds = Object.keys(next);
+        var same = prevIds.length === nextIds.length && nextIds.every(function (cid) {
+          var a = prev[cid], b = next[cid];
+          return a && a.name === b.name && a.colour === b.colour &&
+                 a.current_file === b.current_file && a.seed === b.seed;
+        });
+        return same ? prev : next;
+      });
+    };
+    WebSocketService.onPresence(handler);
+    return function () { WebSocketService.offPresence(handler); };
+  }, []);
+
+  // The roster is the only "is anyone actually pairing with me?" signal, so it is
+  // what gates collaboration. Cable availability alone is not enough: it is up in
+  // a normal dev setup, and gating on it silently disabled persistent undo and
+  // external-change detection for solo users. The service is told about the roster
+  // from the presence handler above, not from an effect here, so it hears about
+  // every message rather than only about a change in the participant count.
+  var _collabDiag = useState(false);
+  var collabDiagOpen = _collabDiag[0], setCollabDiagOpen = _collabDiag[1];
+  var _collabTrouble = useState(null);
+  var collabTrouble = _collabTrouble[0], setCollabTrouble = _collabTrouble[1];
+
+  // Re-checked on a slow interval because the failures worth reporting — a
+  // rejected handshake, a dropped socket — happen asynchronously and nothing
+  // else would notice. Only the first failing check's key is stored, so an
+  // unchanged state is an identical string and React bails rather than
+  // re-rendering the app every tick.
+  useEffect(function () {
+    function check() {
+      if (typeof CollaborationService === 'undefined' ||
+          typeof CollaborationService.diagnostics !== 'function') return;
+      var d = CollaborationService.diagnostics();
+      // "Nobody else is here" is not a fault; everything else is.
+      var problem = d.firstProblem && d.firstProblem.key !== 'peers' ? d.firstProblem.key : null;
+      setCollabTrouble(function (prev) { return prev === problem ? prev : problem; });
+    }
+    check();
+    var id = setInterval(check, 10000);
+    return function () { clearInterval(id); };
+  }, []);
+
+  var collabPeerIds = Object.keys(collabRoster);
+
+  // A labelled peer chip costs ~110px (name + filename), and the titlebar button
+  // cluster does not shrink or wrap: past three peers it squeezes the search pill
+  // to its floor and then pushes Help / Install off the right edge. Drop to bare
+  // colour dots instead of hiding peers behind a "+N more" summary — a dot is
+  // ~20px, so ten peers still fit, every chip stays clickable to follow, and the
+  // solid/hollow ring keeps working. The name and file live in the tooltip.
+  var COLLAB_LABEL_LIMIT = 3;
+  var collabPeerLabels = !toolbarIconOnly && collabPeerIds.length <= COLLAB_LABEL_LIMIT;
+
+  // Colour is minted from a hash before any peer is known, so it has to be
+  // reconciled against the roster once one exists. Runs on every roster change;
+  // reconcileColor no-ops unless we actually clash and lose the tie-break, so the
+  // usual case costs one array map and no state write.
+  useEffect(function () {
+    if (typeof CollaborationIdentity === 'undefined') return;
+    CollaborationIdentity.reconcileColor(collabPeerIds.map(function (cid) {
+      return { clientId: cid, color: collabRoster[cid].colour, seed: collabRoster[cid].seed };
+    }));
+  }, [collabRoster]);
+
+  // Hover card. Anchored from the chip's own rect, right-aligned because these
+  // chips sit against the right edge of the titlebar and a left-anchored card
+  // would run off screen.
+  var _useStateHover = useState(null);
+  var _useStateHover2 = _slicedToArray(_useStateHover, 2);
+  var collabHover = _useStateHover2[0];
+  var setCollabHover = _useStateHover2[1];
+
+  var openCollabHover = function (cid, e) {
+    var r = e.currentTarget.getBoundingClientRect();
+    setCollabHover({ cid: cid, top: r.bottom + 4, right: window.innerWidth - r.right });
+  };
+
+  // Latency and last-seen only need to tick while the card is actually on screen,
+  // so the interval lives and dies with it. Idle cost stays zero.
+  var _useStateHoverTick = useState(0);
+  var _useStateHoverTick2 = _slicedToArray(_useStateHoverTick, 2);
+  var setCollabHoverTick = _useStateHoverTick2[1];
+  useEffect(function () {
+    if (!collabHover) return;
+    var id = setInterval(function () { setCollabHoverTick(function (n) { return n + 1; }); }, 1000);
+    return function () { clearInterval(id); };
+  }, [collabHover]);
+
+  // Follow mode (slice 8): toggle tracking a roster participant. Following sets up
+  // the viewport scroll-tracking in CollaborationService; the file-open is handled
+  // by the effect below (it also re-fires when the followed peer switches files).
+  var followedFile = (followedClientId && collabRoster[followedClientId])
+    ? collabRoster[followedClientId].current_file : null;
+  var toggleFollow = function (cid) {
+    if (followedClientId === cid) {
+      setFollowedClientId(null);
+      if (typeof CollaborationService !== 'undefined') CollaborationService.clearFollow();
+    } else {
+      setFollowedClientId(cid);
+      if (typeof CollaborationService !== 'undefined') CollaborationService.setFollow(cid);
+    }
+  };
+
+  // While following, open/focus whatever file the followed participant currently
+  // has open, and re-open when they switch files. Viewport tracking within that
+  // file is handled by CollaborationService once both peers share the room.
+  useEffect(function () {
+    if (!followedClientId || !followedFile) return;
+    if (activeTab && activeTab.path === followedFile) return;
+    handleSelectFile(followedFile, followedFile.split('/').pop());
+  }, [followedClientId, followedFile]);
+
   // Phase 7: Per-file last-commit info shown in the status bar
   var _useState31 = useState(null);
   var _useState32 = _slicedToArray(_useState31, 2);
@@ -2190,7 +2648,7 @@ var MbeditorApp = function MbeditorApp() {
   var setActiveEOL = _useState31e2[1];
 
   useEffect(function () {
-    if (!gitAvailable || !activeTab || activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCommitGraph || !activeTab.path || activeTab.path.indexOf('diff://') === 0 || activeTab.path.indexOf('combined-diff://') === 0) {
+    if (!gitAvailable || !activeTab || activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCommitGraph || !activeTab.path || activeTab.path.indexOf('://') >= 0) {
       setActiveFileCommit(null);
       return;
     }
@@ -2304,26 +2762,9 @@ var MbeditorApp = function MbeditorApp() {
         .then(function (res) { return (res && res.content) || null; })
         ["catch"](function () { return null; });
     }
-    var ext = tab.path.split('.').pop().toLowerCase();
-    var parserMap = { 'js': 'babel', 'jsx': 'babel', 'json': 'json', 'css': 'css', 'scss': 'scss', 'html': 'html', 'md': 'markdown' };
-    var parserName = parserMap[ext];
+    var parserName = prettierParserFor(tab.path);
     if (!parserName) return Promise.resolve(null);
-    var run = function () {
-      return window.prettier.format(tab.content, {
-        parser: parserName,
-        plugins: Object.values(window.prettierPlugins),
-        printWidth: editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80,
-        tabWidth: editorPrefs.prettierTabWidth != null ? editorPrefs.prettierTabWidth : 2,
-        useTabs: !!editorPrefs.prettierUseTabs,
-        semi: editorPrefs.prettierSemi !== false,
-        singleQuote: !!editorPrefs.prettierSingleQuote,
-        trailingComma: editorPrefs.prettierTrailingComma || 'all',
-        bracketSpacing: editorPrefs.prettierBracketSpacing !== false
-      })["catch"](function () { return null; });
-    };
-    if (window.prettier && window.prettierPlugins) return run();
-    if (window.loadPrettierPlugins) return window.loadPrettierPlugins().then(run)["catch"](function () { return null; });
-    return Promise.resolve(null);
+    return runPrettier(tab.content, editorPrefs, parserName)["catch"](function () { return null; });
   };
 
   var handleSave = function handleSave(paneId, tab) {
@@ -2352,14 +2793,20 @@ var MbeditorApp = function MbeditorApp() {
   };
 
   var _doSave = function _doSave(paneId, tab) {
+    if (tab.isUntitled) {
+      saveUntitledTab(paneId, tab)["catch"](function (err) {
+        if (err && err.cancelled) return;
+        EditorStore.setStatus("Save failed: " + (err && err.message || err), "error");
+      });
+      return;
+    }
     setLoading(function (prev) {
       return _extends({}, prev, { save: true });
     });
     EditorStore.setStatus("Saving " + tab.name + "...", "info");
     isSavingRef.current = true;
     FileService.saveFile(tab.path, tab.content).then(function () {
-      recentSavesRef.current[tab.path] = Date.now();
-      setTimeout(function() { delete recentSavesRef.current[tab.path]; }, 3500);
+      noteLocalSave(tab.path, tab.content);
       var newPanes = EditorStore.getState().panes.map(function (p) {
         if (p.id === paneId) {
           return _extends({}, p, { tabs: p.tabs.map(function (t) {
@@ -2373,6 +2820,10 @@ var MbeditorApp = function MbeditorApp() {
       var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
       if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
         _modelEntry.cleanVersionId = _modelEntry.model.getAlternativeVersionId();
+      }
+      // Collab: push a fresh snapshot so the server compacts the buffered deltas.
+      if (typeof CollaborationService !== 'undefined' && CollaborationService.isBound(tab.path)) {
+        CollaborationService.pushSnapshot(tab.path);
       }
       EditorStore.setStatus("Saved", "success");
       _clearDraft(tab.path);
@@ -2407,7 +2858,7 @@ var MbeditorApp = function MbeditorApp() {
         })["catch"](function () {});
       }
 
-      GitService.fetchStatus();
+      GitService.fetchStatusLite({ background: true });
     })["catch"](function (err) {
       EditorStore.setStatus("Save failed: " + err.message, "error");
     })["finally"](function () {
@@ -2433,8 +2884,7 @@ var MbeditorApp = function MbeditorApp() {
     if (!tab) { dismissPendingReload(reload); return; }
     isSavingRef.current = true;
     FileService.saveFile(tab.path, tab.content).then(function () {
-      recentSavesRef.current[tab.path] = Date.now();
-      setTimeout(function() { delete recentSavesRef.current[tab.path]; }, 3500);
+      noteLocalSave(tab.path, tab.content);
       EditorStore.setState({
         panes: EditorStore.getState().panes.map(function (p) {
           if (p.id !== reload.paneId) return p;
@@ -2485,7 +2935,9 @@ var MbeditorApp = function MbeditorApp() {
     var dirtyTabs = state.panes.flatMap(function (p) {
       return p.tabs;
     }).filter(function (t) {
-      return t.dirty;
+      // Untitled scratch tabs need a save-as prompt each — Ctrl+S them
+      // individually; bulk-save skips them rather than stacking prompts.
+      return t.dirty && !t.isUntitled;
     });
     if (dirtyTabs.length === 0) return;
 
@@ -2498,10 +2950,8 @@ var MbeditorApp = function MbeditorApp() {
       return FileService.saveFile(tab.path, tab.content);
     });
     Promise.all(promises).then(function () {
-      var now = Date.now();
       dirtyTabs.forEach(function(tab) {
-        recentSavesRef.current[tab.path] = now;
-        setTimeout(function() { delete recentSavesRef.current[tab.path]; }, 3500);
+        noteLocalSave(tab.path, tab.content);
       });
       var newPanes = EditorStore.getState().panes.map(function (p) {
         return _extends({}, p, { tabs: p.tabs.map(function (t) {
@@ -2519,7 +2969,7 @@ var MbeditorApp = function MbeditorApp() {
       });
       EditorStore.setStatus("All files saved", "success");
       SearchService.invalidate();
-      GitService.fetchStatus();
+      GitService.fetchStatusLite({ background: true });
     })["catch"](function (err) {
       EditorStore.setStatus("Failed to save some files", "error");
     })["finally"](function () {
@@ -2580,12 +3030,7 @@ var MbeditorApp = function MbeditorApp() {
     });
     GitService.fetchStatus()["catch"](function () {});
     FileService.getTree().then(function (data) {
-      var newData = data || [];
-      setTreeData(function (prevData) {
-        if (JSON.stringify(newData) === JSON.stringify(prevData)) return prevData;
-        SearchService.buildIndex(newData);
-        return newData;
-      });
+      setTreeData(_treeUpdater(data || []));
       checkOpenTabsForExternalChanges();
       EditorStore.setStatus("Workspace refreshed", "success");
     })["catch"](function (err) {
@@ -2625,132 +3070,141 @@ var MbeditorApp = function MbeditorApp() {
       });
   };
 
+  // Format one tab's content.
+  //
+  // Resolves to the formatted string, or to null when no formatter covers this
+  // file type (the caller then decides whether to fall back to a re-indent).
+  // Rejects when a formatter ran and failed, so the reason reaches the user
+  // rather than the button appearing to do nothing.
+  var formatTabContent = function formatTabContent(tab, prefs) {
+    prefs = prefs || editorPrefs;
+    if (isRubyPath(tab.path) || tab.path.endsWith('.rake')) {
+      if (!rubocopAvailable) return Promise.reject(new Error("RuboCop is not available for this workspace."));
+      // RuboCop's output is taken as-is. Ruby indentation belongs to the
+      // project's .rubocop.yml (Layout/IndentationStyle and friends), so
+      // rewriting it here would fight the linter that is about to be run over
+      // the same file. The old code tried the opposite — converting the source
+      // to tabs *before* handing it over — which RuboCop simply discarded.
+      return formatRubySource(tab.path, tab.content).then(function (res) {
+        return (res && res.content) || null;
+      });
+    }
+
+    var parserName = prettierParserFor(tab.path);
+    if (!parserName) return Promise.resolve(null);
+    return runPrettier(tab.content, prefs, parserName);
+  };
+
+  // Write formatted content back to a tab, dirty and unsaved — the user decides
+  // when to save. EditorPanel applies it through executeEdits, so undo works.
+  var applyFormattedContent = function applyFormattedContent(paneId, tabId, formatted) {
+    EditorStore.setState({
+      panes: EditorStore.getState().panes.map(function (p) {
+        if (p.id !== paneId) return p;
+        return _extends({}, p, { tabs: p.tabs.map(function (t) {
+          return t.id === tabId
+            ? _extends({}, t, { content: formatted, dirty: true, externalContentVersion: (t.externalContentVersion || 0) + 1 })
+            : t;
+        }) });
+      })
+    });
+  };
+
+  var highlightFormatChanges = function highlightFormatChanges(before, after) {
+    var monacoEditor = window.__mbeditorActiveEditor;
+    if (!monacoEditor || before === after) return;
+    var changedLineNums = diffLines(before.split('\n'), after.split('\n'));
+    if (!changedLineNums.length) return;
+    var ids = monacoEditor.deltaDecorations([], changedLineNums.map(function (ln) {
+      return { range: new monaco.Range(ln, 1, ln, 1), options: { isWholeLine: true, className: 'mbeditor-format-changed' } };
+    }));
+    setTimeout(function () { monacoEditor.deltaDecorations(ids, []); }, 3000);
+  };
+
   var handleFormat = function handleFormat() {
     if (!activeTab) return;
 
-    var isRubyLang = activeTab.path.endsWith('.rb') || activeTab.path.endsWith('.rake') || activeTab.path.endsWith('.gemspec') || activeTab.path.endsWith("Rakefile") || activeTab.path.endsWith("Gemfile");
+    var tab = activeTab;
+    var paneId = focusedPane.id;
+    var originalContent = tab.content;
 
-    if (isRubyLang && !rubocopAvailable) {
-      EditorStore.setStatus("RuboCop is not available for this workspace.", "warning");
-      return;
-    }
+    setLoading(function (prev) { return _extends({}, prev, { format: true }); });
+    EditorStore.setStatus("Formatting " + tab.name + "...", "info");
 
-    if (isRubyLang) {
-      setLoading(function (prev) {
-        return _extends({}, prev, { format: true });
-      });
-      EditorStore.setStatus("Formatting...", "info");
-      var originalContent = activeTab.content;
-      var codeToFormat = originalContent;
-      if (editorPrefs.insertSpaces === false) {
-        var detectedWidth = detectIndentWidth(originalContent);
-        if (detectedWidth > 0) codeToFormat = spacesToTabs(originalContent, detectedWidth);
-      }
-      formatRubySource(activeTab.path, codeToFormat).then(function (res) {
-        if (res.content) {
-          // Update content and mark dirty — user decides when to save.
-          // The executeEdits path in EditorPanel preserves the undo stack.
-          var newPanes = EditorStore.getState().panes.map(function (p) {
-            if (p.id === focusedPane.id) return _extends({}, p, { tabs: p.tabs.map(function (t) {
-                return t.id === activeTab.id ? _extends({}, t, { content: res.content, dirty: true, externalContentVersion: (t.externalContentVersion || 0) + 1 }) : t;
-              }) });
-            return p;
-          });
-          EditorStore.setState({ panes: newPanes });
-
-          // Highlight changed lines briefly
-          var monacoEditor = window.__mbeditorActiveEditor;
-          if (monacoEditor && res.content !== originalContent) {
-            var changedLineNums = diffLines(originalContent.split('\n'), res.content.split('\n'));
-            if (changedLineNums.length > 0) {
-              var decorations = changedLineNums.map(function(ln) {
-                return { range: new monaco.Range(ln, 1, ln, 1), options: { isWholeLine: true, className: 'mbeditor-format-changed' } };
-              });
-              var ids = monacoEditor.deltaDecorations([], decorations);
-              setTimeout(function() { monacoEditor.deltaDecorations(ids, []); }, 3000);
-            }
-          }
+    formatTabContent(tab).then(function (formatted) {
+      if (formatted == null) {
+        // No formatter for this file type — re-indent with Monaco instead.
+        var monacoEditor = window.__mbeditorActiveEditor;
+        var reindentAction = monacoEditor && monacoEditor.getAction('editor.action.reindentLines');
+        if (!reindentAction) {
+          EditorStore.setStatus("No formatter for " + tab.name + ".", "warning");
+          return;
         }
-        EditorStore.setStatus("Formatted (Unsaved)", "success");
-        GitService.fetchStatus();
+        return reindentAction.run().then(function () {
+          EditorStore.setStatus("Re-indented (Unsaved)", "success");
+        });
+      }
+      if (formatted !== originalContent) {
+        applyFormattedContent(paneId, tab.id, formatted);
+        highlightFormatChanges(originalContent, formatted);
+      }
+      EditorStore.setStatus(formatted === originalContent ? "Already formatted" : "Formatted (Unsaved)", "success");
+      GitService.fetchStatus();
+    })["catch"](function (err) {
+      EditorStore.setStatus("Format failed: " + (err && err.message ? err.message : err), "error");
+    })["finally"](function () {
+      setLoading(function (prev) { return _extends({}, prev, { format: false }); });
+    });
+  };
+
+  // Format every open document across all panes.
+  //
+  // Each tab is formatted independently and a failure is collected rather than
+  // thrown, so one unparseable file cannot stop the rest. Virtual tabs (diffs,
+  // settings, the changelog) have no path on disk and are skipped.
+  var handleFormatAll = function handleFormatAll() {
+    var targets = [];
+    EditorStore.getState().panes.forEach(function (p) {
+      p.tabs.forEach(function (t) {
+        if (t.path && !t.path.startsWith('mbeditor://') && t.path !== '__settings__' && typeof t.content === 'string') {
+          targets.push({ paneId: p.id, tab: t });
+        }
+      });
+    });
+
+    if (!targets.length) {
+      EditorStore.setStatus("No open documents to format.", "warning");
+      return;
+    }
+
+    setLoading(function (prev) { return _extends({}, prev, { format: true }); });
+    EditorStore.setStatus("Formatting " + targets.length + " open document" + (targets.length === 1 ? "" : "s") + "...", "info");
+
+    var changed = 0;
+    var skipped = 0;
+    var failures = [];
+
+    Promise.all(targets.map(function (target) {
+      return formatTabContent(target.tab).then(function (formatted) {
+        if (formatted == null) { skipped += 1; return; }
+        if (formatted === target.tab.content) return;
+        applyFormattedContent(target.paneId, target.tab.id, formatted);
+        changed += 1;
       })["catch"](function (err) {
-        return EditorStore.setStatus("Format failed: " + err.message, "error");
-      })["finally"](function () {
-        return setLoading(function (prev) {
-          return _extends({}, prev, { format: false });
-        });
+        failures.push(target.tab.name + ": " + (err && err.message ? err.message.split('\n')[0] : err));
       });
-      return;
-    }
-
-    // Attempt Prettier Formatting
-    var ext = activeTab.path.split('.').pop().toLowerCase();
-    var formatMap = {
-      'js': 'babel', 'jsx': 'babel',
-      'json': 'json',
-      'css': 'css', 'scss': 'scss',
-      'html': 'html', 'md': 'markdown'
-    };
-    var parserName = formatMap[ext];
-
-    if (parserName) {
-      setLoading(function (prev) {
-        return _extends({}, prev, { format: true });
-      });
-      EditorStore.setStatus("Formatting with Prettier...", "info");
-      var doFormat = function doFormat() {
-        return window.prettier.format(activeTab.content, {
-          parser: parserName,
-          plugins: Object.values(window.prettierPlugins),
-          printWidth: editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80,
-          tabWidth: editorPrefs.prettierTabWidth != null ? editorPrefs.prettierTabWidth : 2,
-          useTabs: !!editorPrefs.prettierUseTabs,
-          semi: editorPrefs.prettierSemi !== false,
-          singleQuote: !!editorPrefs.prettierSingleQuote,
-          trailingComma: editorPrefs.prettierTrailingComma || 'all',
-          bracketSpacing: editorPrefs.prettierBracketSpacing !== false
-        }).then(function (formatted) {
-          var newPanes = EditorStore.getState().panes.map(function (p) {
-            if (p.id === focusedPane.id) return _extends({}, p, { tabs: p.tabs.map(function (t) {
-                return t.id === activeTab.id ? _extends({}, t, { content: formatted, dirty: true, externalContentVersion: (t.externalContentVersion || 0) + 1 }) : t;
-              }) });
-            return p;
-          });
-          EditorStore.setState({ panes: newPanes });
-          EditorStore.setStatus("Formatted (Unsaved)", "success");
-          GitService.fetchStatus();
-        })["catch"](function (err) {
-          EditorStore.setStatus("Prettier Formatter failed: " + err.message, "error");
-        })["finally"](function () {
-          setLoading(function (prev) {
-            return _extends({}, prev, { format: false });
-          });
-        });
-      };
-      if (window.prettier && window.prettierPlugins) {
-        doFormat();
-      } else if (window.loadPrettierPlugins) {
-        window.loadPrettierPlugins().then(doFormat)["catch"](function (err) {
-          EditorStore.setStatus("Failed to load Prettier: " + err.message, "error");
-          setLoading(function (prev) { return _extends({}, prev, { format: false }); });
-        });
-      } else {
-        EditorStore.setStatus("Prettier is not available.", "warning");
-        setLoading(function (prev) { return _extends({}, prev, { format: false }); });
-      }
-      return;
-    }
-
-    // Fallback: Monaco re-indent using the editor's configured tabSize/insertSpaces
-    var monacoEditor = window.__mbeditorActiveEditor;
-    if (monacoEditor) {
-      var reindentAction = monacoEditor.getAction('editor.action.reindentLines');
-      if (reindentAction) {
-        reindentAction.run().then(function () {
-          EditorStore.setStatus("Formatted (Unsaved)", "success");
-        });
-      }
-    }
+    })).then(function () {
+      var parts = [changed + " formatted"];
+      if (skipped) parts.push(skipped + " skipped");
+      if (failures.length) parts.push(failures.length + " failed");
+      EditorStore.setStatus(
+        parts.join(", ") + (changed ? " (Unsaved)" : "") + (failures.length ? " — " + failures[0] : ""),
+        failures.length ? "error" : "success"
+      );
+      if (changed) GitService.fetchStatus();
+    })["finally"](function () {
+      setLoading(function (prev) { return _extends({}, prev, { format: false }); });
+    });
   };
 
   var TEST_CACHE_PREFIX = 'mbeditor_test_result_';
@@ -3440,7 +3894,7 @@ var MbeditorApp = function MbeditorApp() {
         EditorStore.setStatus('Created file: ' + createdName, 'success');
         return refreshProjectTree().then(function () {
           handleSelectFile(createdPath, createdName);
-          GitService.fetchStatus();
+          GitService.fetchStatusLite({ background: true });
         });
       })["catch"](function (err) {
         var message = err && err.response && err.response.data && err.response.data.error || err.message;
@@ -3461,7 +3915,7 @@ var MbeditorApp = function MbeditorApp() {
         handleNodeSelect({ path: createdPath, name: createdPath.split('/').pop(), type: 'folder' });
         EditorStore.setStatus('Created folder: ' + createdPath, 'success');
         return refreshProjectTree().then(function () {
-          return GitService.fetchStatus();
+          return GitService.fetchStatusLite({ background: true });
         });
       })["catch"](function (err) {
         var message = err && err.response && err.response.data && err.response.data.error || err.message;
@@ -3536,7 +3990,7 @@ var MbeditorApp = function MbeditorApp() {
       setSelectedPaths(new Set([renamedPath]));
       EditorStore.setStatus('Renamed to: ' + renamedPath, 'success');
       return refreshProjectTree().then(function () {
-        GitService.fetchStatus();
+        GitService.fetchStatusLite({ background: true });
       });
     })["catch"](function (err) {
       var message = err && err.response && err.response.data && err.response.data.error || err.message;
@@ -3597,7 +4051,7 @@ var MbeditorApp = function MbeditorApp() {
         EditorStore.setStatus('Delete failed: ' + message, 'error');
       }
       return refreshProjectTree().then(function () {
-        GitService.fetchStatus();
+        GitService.fetchStatusLite({ background: true });
       });
     })["finally"](function () {
       setLoading(function (prev) {
@@ -3657,7 +4111,7 @@ var MbeditorApp = function MbeditorApp() {
       onCloseOthers: function (id) { handleCloseOtherTabs(paneId, id); },
       onCloseSaved: function () { handleCloseSavedTabs(paneId); },
       onCloseAll: function () { handleCloseEditorsInGroup(paneId); },
-      onNewFile: function () { handleNewFileInTabDir(paneId); }
+      onNewFile: function () { TabManager.openUntitledTab(paneId); }
     });
   };
 
@@ -3860,9 +4314,15 @@ var MbeditorApp = function MbeditorApp() {
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
           "button",
-          { className: "statusbar-btn", onClick: handleFormat, disabled: loading.format || !canLintAndFormat, 'aria-busy': !!loading.format },
+          { className: "statusbar-btn", onClick: handleFormat, disabled: loading.format || !canLintAndFormat, 'aria-busy': !!loading.format, title: "Format this document" },
           !loading.format && React.createElement("i", { className: "fas fa-magic" }),
           !toolbarIconOnly && !loading.format && " Format"
+        ),
+        React.createElement(
+          "button",
+          { className: "statusbar-btn", onClick: handleFormatAll, disabled: loading.format || !canLintAndFormat, 'aria-busy': !!loading.format, title: "Format all open documents" },
+          React.createElement("i", { className: "fas fa-wand-magic-sparkles" }),
+          !toolbarIconOnly && !loading.format && " Format All"
         ),
         hasGitBranch && React.createElement(
           React.Fragment,
@@ -3874,6 +4334,97 @@ var MbeditorApp = function MbeditorApp() {
             React.createElement("i", { className: "fas fa-code-branch" }),
             !toolbarIconOnly && " Git"
           )
+        ),
+        // Collaboration trouble chip. Deliberately not shown when everything is
+        // healthy and you are simply alone — that was the whole point of hiding
+        // the solo chip. It appears only when a condition pairing needs has
+        // actually failed, so silence means "nobody here" and never "quietly
+        // broken", which is exactly the ambiguity that made a real pairing
+        // failure impossible to diagnose from the other machine.
+        collabTrouble && React.createElement(
+          React.Fragment,
+          null,
+          React.createElement("div", { className: "statusbar-sep" }),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "statusbar-btn mbeditor-collab-trouble",
+              title: "Pairing is not available — click for details",
+              onClick: function () { setCollabDiagOpen(true); }
+            },
+            React.createElement("i", { className: "fas fa-user-slash" }),
+            !toolbarIconOnly && " Pairing off"
+          )
+        ),
+        // Your own chip appears only once someone else is actually connected.
+        // Alone it told you nothing — Action Cable is up in any normal dev setup,
+        // so it sat in the toolbar permanently announcing a session of one. While
+        // pairing it earns its place: it is how your peers see you, and it is the
+        // control for renaming yourself.
+        collabEnabled && collabIdentity && collabPeerIds.length > 0 && React.createElement(
+          React.Fragment,
+          null,
+          React.createElement("div", { className: "statusbar-sep" }),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "statusbar-btn",
+              onMouseEnter: function (e) { openCollabHover('__me__', e); },
+              onMouseLeave: function () { setCollabHover(null); },
+              onClick: function () { CollaborationIdentity.editName(); }
+            },
+            React.createElement("i", {
+              className: "fas fa-circle collab-pulse",
+              style: { color: collabIdentity.color, fontSize: "0.7em", marginRight: "2px" }
+            }),
+            !toolbarIconOnly && (" " + collabIdentity.name)
+          )
+        ),
+        collabEnabled && collabPeerIds.length > 0 && React.createElement(
+          React.Fragment,
+          null,
+          React.createElement("div", { className: "statusbar-sep" }),
+          collabPeerIds.map(function (cid) {
+            var peer = collabRoster[cid];
+            var file = peer.current_file;
+            var name = peer.name || 'Anonymous';
+            var colour = peer.colour || '#888888';
+            var following = followedClientId === cid;
+            // Solid dot: they are in the file you are looking at, so their caret
+            // is on screen. Hollow ring: they are somewhere else and there is
+            // nothing to see — without this the chip looked identical either way
+            // and a peer's caret just vanished with no explanation.
+            var elsewhere = file !== presenceFile;
+            return React.createElement(
+              "button",
+              {
+                key: cid,
+                type: "button",
+                className: "statusbar-btn",
+                style: following
+                  ? { background: 'color-mix(in srgb, ' + colour + ' 28%, transparent)' }
+                  : undefined,
+                onMouseEnter: function (e) { openCollabHover(cid, e); },
+                onMouseLeave: function () { setCollabHover(null); },
+                onClick: function () { toggleFollow(cid); }
+              },
+              React.createElement("i", {
+                className: (following ? "fas fa-eye" : (elsewhere ? "far fa-circle" : "fas fa-circle")) +
+                  " collab-pulse",
+                style: { color: colour, fontSize: "0.7em", marginRight: "2px" }
+              }),
+              collabPeerLabels && (" " + name),
+              // Where they went, when they are not where you are. Basename only —
+              // the chip has ~110px to spend and the full path is in the tooltip.
+              collabPeerLabels && elsewhere && file && React.createElement(
+                "span",
+                { style: { opacity: 0.65, marginLeft: "4px" } },
+                file.split('/').pop()
+              )
+            );
+          })
         ),
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
@@ -3903,6 +4454,93 @@ var MbeditorApp = function MbeditorApp() {
         )
       )
     ),
+    collabHover && (function () {
+      var isMe = collabHover.cid === '__me__';
+      var peer = isMe ? null : collabRoster[collabHover.cid];
+      // The peer can leave between hover and paint — the roster is the authority.
+      if (!isMe && !peer) return null;
+
+      var stats = isMe ? { rtt: ownRttRef.current } : (peerStatsRef.current[collabHover.cid] || {});
+      var name = isMe ? collabIdentity.name : (peer.name || 'Anonymous');
+      var colour = isMe ? collabIdentity.color : (peer.colour || '#888888');
+      var file = isMe ? presenceFile : peer.current_file;
+      // Server-measured against a monotonic clock, so it is not our arrival time
+      // and no clock skew enters into it.
+      var idle = typeof stats.idle === 'number' ? stats.idle : null;
+
+      return React.createElement(
+        'div',
+        { className: 'collab-hovercard', style: { top: collabHover.top + 'px', right: collabHover.right + 'px' } },
+        React.createElement(
+          'div',
+          { className: 'collab-hovercard-name' },
+          React.createElement('span', { className: 'collab-hovercard-swatch', style: { background: colour } }),
+          name,
+          isMe && React.createElement('span', { style: { opacity: 0.6, fontWeight: 400 } }, ' (you)')
+        ),
+        React.createElement('div', { className: 'collab-hovercard-row' }, file || 'No file open'),
+        typeof stats.rtt === 'number' && React.createElement(
+          'div', { className: 'collab-hovercard-row' }, 'Latency ' + Math.round(stats.rtt) + ' ms'
+        ),
+        // Everyone in the roster is connected — the server evicts on disconnect —
+        // so this is not a liveness warning. It says their heartbeat has slowed,
+        // which is what a browser does to a backgrounded tab's timers, and is why
+        // their caret may be behind. Silent under 20s, where it would only ever
+        // read "5s ago".
+        idle !== null && idle >= 20 && React.createElement(
+          'div', { className: 'collab-hovercard-row' }, 'Idle ' + idle + 's'
+        ),
+        React.createElement(
+          'div',
+          { className: 'collab-hovercard-hint' },
+          isMe ? 'Click to change your name'
+               : (followedClientId === collabHover.cid ? 'Click to stop following' : 'Click to follow')
+        )
+      );
+    })(),
+    // The diagnostics panel. Every condition listed with its own state, because
+    // the person who needs this is usually on the other machine and cannot paste
+    // a console snippet back.
+    collabDiagOpen && (function () {
+      var d = CollaborationService.diagnostics();
+      return React.createElement(
+        'div',
+        { className: 'mbeditor-modal-backdrop', onClick: function () { setCollabDiagOpen(false); } },
+        React.createElement(
+          'div',
+          { className: 'mbeditor-collab-diag', onClick: function (e) { e.stopPropagation(); } },
+          React.createElement('div', { className: 'mbeditor-collab-diag-title' }, 'Pair programming status'),
+          React.createElement(
+            'ul',
+            { className: 'mbeditor-collab-diag-list' },
+            d.checks.map(function (c) {
+              return React.createElement(
+                'li',
+                { key: c.key, className: 'mbeditor-collab-diag-row' + (c.ok ? '' : ' is-bad') },
+                React.createElement('i', { className: c.ok ? 'fas fa-check' : 'fas fa-times' }),
+                React.createElement(
+                  'div',
+                  null,
+                  React.createElement('div', { className: 'mbeditor-collab-diag-label' }, c.label),
+                  !c.ok && React.createElement('div', { className: 'mbeditor-collab-diag-detail' }, c.detail)
+                )
+              );
+            })
+          ),
+          React.createElement(
+            'div',
+            { className: 'mbeditor-collab-diag-foot' },
+            d.ok
+              ? 'Pairing is working.'
+              : 'The first failing item above is the one to fix; the rest follow from it.'
+          ),
+          React.createElement('button', {
+            type: 'button', className: 'ide-model-graph-btn',
+            onClick: function () { setCollabDiagOpen(false); }
+          }, 'Close')
+        )
+      );
+    })(),
     showHelp && React.createElement(ShortcutHelp, { onClose: function () { return setShowHelp(false); } }),
     React.createElement(
       "div",
@@ -4326,7 +4964,9 @@ var MbeditorApp = function MbeditorApp() {
                       {
                         key: i,
                         className: "search-result-item",
-                        onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line, r.col); }; })(res)
+                        // end_col puts the cursor just past the match, which is
+                        // where you want to start typing after jumping to a hit.
+                        onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line, r.end_col || r.col); }; })(res)
                       },
                       React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
                       React.createElement(
@@ -4934,13 +5574,13 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Auto-format pasted code using the language formatter' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Format on paste'),
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Re-indent pasted code to match where it lands. Only leading whitespace changes — the formatter is not run.' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Indent on paste'),
                       React.createElement('input', {
                         type: 'checkbox',
                         className: 'ide-settings-checkbox',
-                        checked: editorPrefs.formatOnPaste !== false,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { formatOnPaste: v }); }); }
+                        checked: editorPrefs.indentOnPaste !== false,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { indentOnPaste: v }); }); }
                       })
                     ),
                     React.createElement(
