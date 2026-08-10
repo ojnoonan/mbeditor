@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.9] - 2026-08-07
+
 ### Added
 - **Problems panel severity filter.** Three toggle chips — errors, warnings,
   info — each showing its live count, filtering the list independently of the
@@ -21,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   short by the indent on every indented hit.
 
 ### Changed
+- **The Problems header no longer restates its counts in prose.** The severity
+  chips carry the same three numbers.
 - **Paste re-indents instead of reformatting.** Pasting ran the pasted range
   through Prettier, which reprinted the whole enclosing statement — and for a
   paste that filled the document, every line of it — so pasting a snippet
