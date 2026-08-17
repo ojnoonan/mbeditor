@@ -216,8 +216,17 @@ module Mbeditor
         existing = f.size > 0 ? (JSON.parse(f.read) rescue {}) : {}
 
         if existing.empty?
+          # An empty base is a legitimate one, and in practice the usual one:
+          # the client starts tracking when the editor mounts, which is before
+          # the file content has arrived, so the load itself is recorded as the
+          # first op against an empty document. Rejecting "" meant the initial
+          # POST for every file 400'd and no history was ever written at all.
+          # Only an absent base is an error.
+          unless params.key?(:base)
+            return render json: { error: 'base required for initial history' }, status: :bad_request
+          end
+
           base = params[:base].to_s
-          return render json: { error: 'base required for initial history' }, status: :bad_request if base.empty?
           return render json: { error: 'base too large' }, status: :content_too_large if base.bytesize > STATE_MAX_BYTES
           existing = { 'branch' => branch, 'path' => rel, 'base' => base, 'ops' => [], 't' => Time.now.utc.iso8601 }
         end
@@ -325,7 +334,7 @@ module Mbeditor
       return render json: { error: "Cannot write to this path" }, status: :forbidden if path_blocked_for_operations?(path)
 
       result = FileOperationService.new(workspace_root).save(path, params[:code].to_s)
-      broadcast_files_changed([path])
+      broadcast_files_changed([path], structural: false)
       broadcast_file_saved(path)
       render json: result
     rescue FileOperationService::FileTooLargeError
@@ -1248,7 +1257,12 @@ module Mbeditor
       base.to_s
     end
 
-    def broadcast_files_changed(changed_paths = nil)
+    # structural: false means "these files' contents changed, the tree did not"
+    # — a save or a replace-in-files. The client uses it to skip re-walking the
+    # whole workspace and rebuilding its quick-open index on every save, which
+    # is work no content change can invalidate. Defaults to true so a new call
+    # site that says nothing keeps the conservative behaviour.
+    def broadcast_files_changed(changed_paths = nil, structural: true)
       root = workspace_root.to_s
       FileTreeService.invalidate(root)
       SearchReplaceService.invalidate_cache(root)
@@ -1262,7 +1276,7 @@ module Mbeditor
 
       return unless defined?(ActionCable.server)
 
-      payload = { type: "files_changed" }
+      payload = { type: "files_changed", structural: structural }
       rel = Array(changed_paths).compact.map { |p| relative_path(p.to_s) }.reject(&:empty?)
       payload[:paths] = rel if rel.any?
       ActionCable.server.broadcast("mbeditor_editor", payload)
@@ -1468,7 +1482,7 @@ module Mbeditor
         end
       end
 
-      broadcast_files_changed(written.map { |rel| File.join(workspace_root, rel) }) if written.any?
+      broadcast_files_changed(written.map { |rel| File.join(workspace_root, rel) }, structural: false) if written.any?
       { ok: true, written: written, rejected: rejected, edits: edits_for_open }
     end
 

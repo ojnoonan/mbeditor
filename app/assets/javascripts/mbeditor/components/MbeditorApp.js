@@ -109,7 +109,6 @@ var DEFAULT_EDITOR_PREFS = {
   autoClosingBrackets: 'always',
   autoClosingQuotes: 'always',
   autoIndent: 'full',
-  indentOnPaste: true,
   formatOnType: false,
   formatOnSave: false,
   quickSuggestions: true,
@@ -118,6 +117,7 @@ var DEFAULT_EDITOR_PREFS = {
   autoRevealInExplorer: true,
   toolbarIconOnly: false,
   rubocopLintEnabled: true,
+  routeHints: true,
   prettierPrintWidth: 80,
   prettierSemi: true,
   prettierSingleQuote: false,
@@ -346,6 +346,49 @@ var MbeditorApp = function MbeditorApp() {
   var searchMatchCaseRef = useRef(false);
   var searchWholeWordRef = useRef(false);
   var searchResultsContainerRef = useRef(null);
+
+  // Search results are windowed: a project-wide query can return up to
+  // SearchReplaceService::MAX_RESULTS (10_000) rows, and every row is five
+  // elements, so rendering the list in full built ~50k nodes — enough to kill
+  // the tab outright, and 92 ms of render for a mere 3_000 rows. Rows are a
+  // fixed 40px (.search-result-item), which is what makes the arithmetic here
+  // as simple as the file tree's.
+  var SEARCH_ROW_HEIGHT = 40;
+  var SEARCH_ROW_BUFFER = 5;
+  var _useStateSV = useState({ scrollTop: 0, height: 0 });
+  var _useStateSV2 = _slicedToArray(_useStateSV, 2);
+  var searchViewport = _useStateSV2[0];
+  var setSearchViewport = _useStateSV2[1];
+
+  // The container's height is only known once it is on screen, and a viewport
+  // of 0 would render a single row and never grow — nothing would scroll, so
+  // no scroll event would arrive to correct it.
+  //
+  // Measured from a callback ref rather than an effect: the results list
+  // mounts and unmounts as the sidebar tab changes and as a query goes from
+  // no-results to results, none of which an effect's dependency list sees.
+  // Same reason the model graph wires its pan/zoom this way.
+  var searchViewportObserverRef = useRef(null);
+  var measureSearchViewport = function measureSearchViewport(el) {
+    if (!el) return;
+    setSearchViewport(function (prev) {
+      if (prev.height === el.clientHeight && prev.scrollTop === el.scrollTop) return prev;
+      return { scrollTop: el.scrollTop, height: el.clientHeight };
+    });
+  };
+  var attachSearchResults = useRef(function (el) {
+    if (searchViewportObserverRef.current) {
+      searchViewportObserverRef.current.disconnect();
+      searchViewportObserverRef.current = null;
+    }
+    searchResultsContainerRef.current = el;
+    if (!el) return;
+    measureSearchViewport(el);
+    if (typeof ResizeObserver === 'undefined') return;
+    var obs = new ResizeObserver(function () { measureSearchViewport(el); });
+    obs.observe(el);
+    searchViewportObserverRef.current = obs;
+  }).current;
 
   var _useStateRM = useState(false);
   var _useStateRM2 = _slicedToArray(_useStateRM, 2);
@@ -1683,8 +1726,32 @@ var MbeditorApp = function MbeditorApp() {
   // WebSocket push — when the server broadcasts files_changed, refresh the tree
   // and git status immediately (same work as the 10s poll below does).
   useEffect(function () {
-    function handleFilesChanged(payload) {
-      if (document.hidden) return;
+    // One broadcast per written file, so a bulk write (Save All, Format All,
+    // a drag-and-drop import, a rename) used to cost one full tree walk and
+    // one git status PER FILE, all in flight at once. On a real host repo
+    // those are the two most expensive requests the editor makes, and with
+    // the browser's six sockets per host the saves themselves ended up queued
+    // behind their own fallout — past ~30 files the POSTs hit the 30 s axios
+    // timeout and Save All reported failure for writes that had succeeded.
+    // The refresh is idempotent, so a burst only needs one of each.
+    var timer = null;
+    var pendingPaths = [];
+    var pendingFullCheck = false;
+    var pendingStructural = false;
+
+    function flush() {
+      timer = null;
+      // The named paths and "re-check everything" are two separate questions.
+      // Collapsing them lost the paths whenever a path-less broadcast (a new
+      // directory, say) landed in the same window as a save, and the saved
+      // file's search rows then stayed stale until the next edit.
+      var paths = pendingPaths;
+      var fullCheck = pendingFullCheck;
+      var structural = pendingStructural;
+      pendingPaths = [];
+      pendingFullCheck = false;
+      pendingStructural = false;
+      var tabsToCheck = (fullCheck || paths.length === 0) ? null : paths;
       // The cheap /git_status probe, not the full /git_info fan-out. This
       // fires on every save, and the fan-out is the most expensive request
       // the editor makes — on a dev server with a handful of threads it
@@ -1693,17 +1760,57 @@ var MbeditorApp = function MbeditorApp() {
       // branch and file list immediately and escalates to the fan-out on its
       // own when the branch actually changed.
       GitService.fetchStatusLite({ background: true })["catch"](function () {});
-      FileService.getTree().then(function (data) {
-        setTreeData(_treeUpdater(data || []));
-        checkOpenTabsForExternalChanges(payload && payload.paths);
-      })["catch"](function () {});
-      if (payload && payload.paths && searchQueryRef.current && searchPanelVisibleRef.current) {
-        payload.paths.forEach(function (p) { _pendingSearchRefreshPaths.current.add(p); });
+
+      // A save changes a file's contents, not the shape of the workspace, so
+      // there is nothing in the tree for it to invalidate: the names, the
+      // nesting and the quick-open index are all exactly as they were. Walking
+      // the whole workspace to learn that — and then rebuilding the MiniSearch
+      // index from the result, because the file's byte count moved and made
+      // the payload compare unequal — was pure cost on the save path, and it
+      // grew with the size of the checkout rather than with the edit.
+      // Git badges come from git_status above, not from this payload.
+      if (structural) {
+        FileService.getTree().then(function (data) {
+          setTreeData(_treeUpdater(data || []));
+          checkOpenTabsForExternalChanges(tabsToCheck);
+        })["catch"](function () {});
+      } else {
+        checkOpenTabsForExternalChanges(tabsToCheck);
+      }
+
+      if (paths.length && searchQueryRef.current && searchPanelVisibleRef.current) {
+        paths.forEach(function (p) { _pendingSearchRefreshPaths.current.add(p); });
         _flushSearchRefresh();
       }
     }
+
+    function handleFilesChanged(payload) {
+      if (document.hidden) return;
+      // No paths named means "something changed, re-check everything" — it
+      // must not be swallowed by a burst that did name paths.
+      if (!payload || !payload.paths) pendingFullCheck = true;
+      else pendingPaths = pendingPaths.concat(payload.paths);
+      // Absent (an older server) counts as structural — the conservative read.
+      if (!payload || payload.structural !== false) pendingStructural = true;
+      if (timer) return;
+      timer = setTimeout(flush, 200);
+    }
+    // Deferring the refresh means it can now come due after the page has begun
+    // going away. Requests issued into a closing page are aborted mid-flight,
+    // which wastes a tree walk and leaves the server holding a connection that
+    // never completes.
+    var cancelPending = function () {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    };
+    window.addEventListener('pagehide', cancelPending);
+
     WebSocketService.onFilesChanged(handleFilesChanged);
-    return function () { WebSocketService.offFilesChanged(handleFilesChanged); };
+    return function () {
+      cancelPending();
+      window.removeEventListener('pagehide', cancelPending);
+      WebSocketService.offFilesChanged(handleFilesChanged);
+    };
   }, []);
 
   // WebSocket push — when a peer saves a collaboratively-bound file, the CRDT has
@@ -2946,32 +3053,53 @@ var MbeditorApp = function MbeditorApp() {
     });
     EditorStore.setStatus("Saving " + dirtyTabs.length + " files...", "info");
     isSavingRef.current = true;
+    // allSettled, not all: one slow or rejected write used to abandon the
+    // bookkeeping for every other file, so tabs whose contents were already on
+    // disk stayed dirty and the only thing on offer was to hit Save All again.
+    // Each file is now settled on its own result.
     var promises = dirtyTabs.map(function (tab) {
       return FileService.saveFile(tab.path, tab.content);
     });
-    Promise.all(promises).then(function () {
-      dirtyTabs.forEach(function(tab) {
+    Promise.allSettled(promises).then(function (results) {
+      var saved = dirtyTabs.filter(function (tab, i) { return results[i].status === "fulfilled"; });
+      // Object.create(null): these keys are file paths, and a file called
+      // "constructor" would otherwise test as present against Object.prototype
+      // and have its tab marked clean without ever being written.
+      var savedPaths = Object.create(null);
+      saved.forEach(function (tab) {
+        savedPaths[tab.path] = tab.content;
         noteLocalSave(tab.path, tab.content);
       });
       var newPanes = EditorStore.getState().panes.map(function (p) {
         return _extends({}, p, { tabs: p.tabs.map(function (t) {
+            // Compare content, not just the path: a tab edited again while the
+            // save was in flight is dirty against what actually reached disk.
+            if (!(t.path in savedPaths) || t.content !== savedPaths[t.path]) return t;
             return _extends({}, t, { dirty: false, cleanContent: t.content });
           })
         });
       });
       EditorStore.setState({ panes: newPanes });
       // Reset AVI clean baselines for all saved files so undo past save shows dirty correctly.
-      dirtyTabs.forEach(function(tab) {
+      saved.forEach(function(tab) {
         var _me = window.__mbeditorModels && window.__mbeditorModels[tab.path];
         if (_me && _me.model && !_me.model.isDisposed()) {
           _me.cleanVersionId = _me.model.getAlternativeVersionId();
         }
       });
-      EditorStore.setStatus("All files saved", "success");
+      if (saved.length === dirtyTabs.length) {
+        EditorStore.setStatus("All files saved", "success");
+      } else {
+        EditorStore.setStatus("Saved " + saved.length + " of " + dirtyTabs.length +
+          " files — " + (dirtyTabs.length - saved.length) + " failed", "error");
+      }
       SearchService.invalidate();
       GitService.fetchStatusLite({ background: true });
-    })["catch"](function (err) {
-      EditorStore.setStatus("Failed to save some files", "error");
+    })["catch"](function () {
+      // allSettled never rejects, so this only fires if the bookkeeping above
+      // throws. Without it that would be an unhandled rejection and the status
+      // bar would sit on "Saving N files..." forever.
+      EditorStore.setStatus("Save All finished with errors", "error");
     })["finally"](function () {
       isSavingRef.current = false;
       return setLoading(function (prev) {
@@ -3095,19 +3223,41 @@ var MbeditorApp = function MbeditorApp() {
     return runPrettier(tab.content, prefs, parserName);
   };
 
+  // Markers are per-model and only the mounted editor re-lints, so a document
+  // formatted in the background kept the diagnostics of the text it no longer
+  // holds — the Problems panel and the status-bar tallies went on reporting
+  // offenses at line numbers that had moved, and Format All barely moved the
+  // counts because only the visible tab was re-checked. Dropping them says
+  // "not known yet", which is true: the file re-lints when you open it.
+  var discardStaleMarkers = function discardStaleMarkers(path) {
+    if (!path || !window.monaco || !window.monaco.editor) return;
+    var entry = window.__mbeditorModels && window.__mbeditorModels[path];
+    if (!entry || !entry.model || entry.model.isDisposed()) return;
+
+    var owners = {};
+    window.monaco.editor.getModelMarkers({ resource: entry.model.uri }).forEach(function (m) {
+      owners[m.owner] = true;
+    });
+    Object.keys(owners).forEach(function (owner) {
+      window.monaco.editor.setModelMarkers(entry.model, owner, []);
+    });
+  };
+
   // Write formatted content back to a tab, dirty and unsaved — the user decides
   // when to save. EditorPanel applies it through executeEdits, so undo works.
   var applyFormattedContent = function applyFormattedContent(paneId, tabId, formatted) {
+    var formattedPath = null;
     EditorStore.setState({
       panes: EditorStore.getState().panes.map(function (p) {
         if (p.id !== paneId) return p;
         return _extends({}, p, { tabs: p.tabs.map(function (t) {
-          return t.id === tabId
-            ? _extends({}, t, { content: formatted, dirty: true, externalContentVersion: (t.externalContentVersion || 0) + 1 })
-            : t;
+          if (t.id !== tabId) return t;
+          formattedPath = t.path;
+          return _extends({}, t, { content: formatted, dirty: true, externalContentVersion: (t.externalContentVersion || 0) + 1 });
         }) });
       })
     });
+    discardStaleMarkers(formattedPath);
   };
 
   var highlightFormatChanges = function highlightFormatChanges(before, after) {
@@ -3457,6 +3607,13 @@ var MbeditorApp = function MbeditorApp() {
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
       loadMoreSearchResults();
     }
+    setSearchViewport(function (prev) {
+      // Only the rows that moved in or out of the window matter, and those
+      // change a row at a time. Comparing keeps a scroll gesture from
+      // committing a render per pixel.
+      if (prev.scrollTop === el.scrollTop && prev.height === el.clientHeight) return prev;
+      return { scrollTop: el.scrollTop, height: el.clientHeight };
+    });
   };
 
   var toggleGitPanel = function toggleGitPanel() {
@@ -4937,6 +5094,14 @@ var MbeditorApp = function MbeditorApp() {
             var total       = searchTotalCount > 0 ? searchTotalCount : loadedCount;
             var hasAny      = loadedCount > 0;
 
+            // Only the rows on screen (plus a small buffer either side) are
+            // built. Everything else is represented by the height of the
+            // spacer, so the scrollbar and every scroll position stay exactly
+            // as they would be for the full list.
+            var winStart = Math.max(0, Math.floor(searchViewport.scrollTop / SEARCH_ROW_HEIGHT) - SEARCH_ROW_BUFFER);
+            var winEnd   = Math.min(loadedCount, Math.ceil((searchViewport.scrollTop + (searchViewport.height || 600)) / SEARCH_ROW_HEIGHT) + SEARCH_ROW_BUFFER);
+            var visible  = allResults.slice(winStart, winEnd);
+
             return React.createElement(
               React.Fragment,
               null,
@@ -4954,32 +5119,38 @@ var MbeditorApp = function MbeditorApp() {
                   "div",
                   {
                     className: "search-results" + (searchLoading ? " search-results-blurred" : ""),
-                    ref: searchResultsContainerRef,
+                    ref: attachSearchResults,
                     onScroll: handleSearchResultsScroll
                   },
-                  allResults.map(function(res, i) {
-                    var fileName = res.file.split('/').pop();
-                    return React.createElement(
-                      "div",
-                      {
-                        key: i,
-                        className: "search-result-item",
-                        // end_col puts the cursor just past the match, which is
-                        // where you want to start typing after jumping to a hit.
-                        onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line, r.end_col || r.col); }; })(res)
-                      },
-                      React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
-                      React.createElement(
-                        "div", { className: "search-result-body" },
+                  React.createElement(
+                    "div",
+                    { style: { height: loadedCount * SEARCH_ROW_HEIGHT, position: 'relative' } },
+                    visible.map(function(res, vi) {
+                      var i = winStart + vi;
+                      var fileName = res.file.split('/').pop();
+                      return React.createElement(
+                        "div",
+                        {
+                          key: i,
+                          className: "search-result-item",
+                          style: { position: 'absolute', top: i * SEARCH_ROW_HEIGHT, left: 0, right: 0 },
+                          // end_col puts the cursor just past the match, which is
+                          // where you want to start typing after jumping to a hit.
+                          onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line, r.end_col || r.col); }; })(res)
+                        },
+                        React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
                         React.createElement(
-                          "div", { className: "search-result-file" },
-                          fileName,
-                          React.createElement("span", { className: "search-result-line-num" }, " ", res.file, ":", res.line)
-                        ),
-                        React.createElement("div", { className: "search-result-text" }, res.text)
-                      )
-                    );
-                  }),
+                          "div", { className: "search-result-body" },
+                          React.createElement(
+                            "div", { className: "search-result-file" },
+                            fileName,
+                            React.createElement("span", { className: "search-result-line-num" }, " ", res.file, ":", res.line)
+                          ),
+                          React.createElement("div", { className: "search-result-text" }, res.text)
+                        )
+                      );
+                    })
+                  ),
                   searchHasMore && React.createElement(
                     "div", { className: "search-loading-more" },
                     React.createElement("i", { className: "fas fa-spinner fa-spin" }),
@@ -5574,16 +5745,6 @@ var MbeditorApp = function MbeditorApp() {
                       )
                     ),
                     React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Re-indent pasted code to match where it lands. Only leading whitespace changes — the formatter is not run.' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Indent on paste'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: editorPrefs.indentOnPaste !== false,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { indentOnPaste: v }); }); }
-                      })
-                    ),
-                    React.createElement(
                       'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Re-indent and auto-close blocks as you type (e.g. after pressing Enter inside {})' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Format on type'),
                       React.createElement('input', {
@@ -5764,6 +5925,17 @@ var MbeditorApp = function MbeditorApp() {
                         className: 'ide-settings-checkbox',
                         checked: editorPrefs.branchStateRestore !== false,
                         onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { branchStateRestore: v }); }); }
+                      })
+                    ),
+
+                    React.createElement(
+                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Show the verb and path that route to each controller action after its def line, and mark public actions nothing routes to' },
+                      React.createElement('span', { className: 'ide-settings-label' }, 'Controller route hints'),
+                      React.createElement('input', {
+                        type: 'checkbox',
+                        className: 'ide-settings-checkbox',
+                        checked: editorPrefs.routeHints !== false,
+                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { routeHints: v }); }); }
                       })
                     ),
 

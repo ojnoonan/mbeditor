@@ -949,6 +949,33 @@ module Mbeditor
       assert_equal [[1,1,1,1,"hello"]], json["ops"]
     end
 
+    # The client begins tracking when the editor mounts, before the content has
+    # arrived, so the load itself is the first op against an empty document.
+    # Rejecting that base made the initial POST for every file fail.
+    test "file_history accepts an empty base and replays the content from ops" do
+      post "/mbeditor/file_history", params: {
+        branch: "main",
+        path: "app/models/user.rb",
+        ops: [[1,1,1,1,"class User; end\n"]],
+        base: ""
+      }, as: :json
+      assert_response :no_content
+
+      get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }
+      assert_response :ok
+      assert_equal "", json["base"]
+      assert_equal [[1,1,1,1,"class User; end\n"]], json["ops"]
+    end
+
+    test "file_history still rejects an absent base for initial history" do
+      post "/mbeditor/file_history", params: {
+        branch: "main",
+        path: "app/models/user.rb",
+        ops: [[1,1,1,1,"hello"]]
+      }, as: :json
+      assert_response :bad_request
+    end
+
     test "file_history prunes and returns empty when history is older than 7 days" do
       hist_dir = File.join(@workspace, "tmp", "mbeditor_history")
       FileUtils.mkdir_p(hist_dir)
@@ -1236,6 +1263,31 @@ module Mbeditor
         post "/mbeditor/file", params: { path: "../../evil.rb", code: "bad" }, as: :json
       end
       assert_response :forbidden
+    end
+
+    # The client skips its whole-workspace tree walk and quick-open re-index
+    # when a change cannot have altered the shape of the tree. Getting this
+    # flag wrong is silent: too eager and the explorer stops noticing new
+    # files, too conservative and every save pays for a full walk again.
+    test "save broadcasts files_changed as non-structural" do
+      assert_broadcast_on("mbeditor_editor", type: "files_changed", structural: false, paths: ["README.md"]) do
+        post "/mbeditor/file", params: { path: "README.md", code: "# Updated\n" }, as: :json
+      end
+      assert_response :ok
+    end
+
+    test "creating a file broadcasts files_changed as structural" do
+      assert_broadcast_on("mbeditor_editor", type: "files_changed", structural: true, paths: ["fresh.rb"]) do
+        post "/mbeditor/create_file", params: { path: "fresh.rb", code: "" }, as: :json
+      end
+      assert_response :ok
+    end
+
+    test "deleting a file broadcasts files_changed as structural" do
+      assert_broadcast_on("mbeditor_editor", type: "files_changed", structural: true, paths: ["README.md"]) do
+        delete "/mbeditor/delete", params: { path: "README.md" }, as: :json
+      end
+      assert_response :ok
     end
 
     # ---------------------------------------------------------------------------

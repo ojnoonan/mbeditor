@@ -25,10 +25,19 @@ var HistoryService = (function () {
     _bases[k] = baseContent;
   }
 
-  function resumeTracking(branch, filePath) {
+  // Reusing a cached model: the ops already recorded against this key still
+  // apply, so an existing base must not be replaced. But the key is per
+  // BRANCH, so switching branch (or clearing history) lands here with nothing
+  // recorded on either side, and a base-less first flush is a guaranteed
+  // "base required for initial history" 400. With no ops pending, the current
+  // content IS the base. The server ignores it once history exists.
+  function resumeTracking(branch, filePath, baseContent) {
     _tracking[filePath] = { branch: branch };
     var k = _key(branch, filePath);
     _pending[k] = _pending[k] || [];
+    if (!_bases.hasOwnProperty(k) && _pending[k].length === 0 && baseContent !== undefined) {
+      _bases[k] = baseContent;
+    }
   }
 
   function stopTracking(filePath) {
@@ -69,7 +78,7 @@ var HistoryService = (function () {
     _idleTimers[k] = setTimeout(function () { flush(rec.branch, filePath); }, IDLE_MS);
   }
 
-  function flush(branch, filePath) {
+  function flush(branch, filePath, keepalive) {
     var k = _key(branch, filePath);
     var ops = _pending[k];
     if (!ops || ops.length === 0) return;
@@ -83,6 +92,19 @@ var HistoryService = (function () {
       delete _bases[k];
     }
 
+    // Put the ops — and the base, which this attempt consumed — back so the
+    // next flush retries. fetch only rejects on a transport failure, so a
+    // rejected POST has to be requeued from the response as well: a 400 used
+    // to discard the base along with the ops, and every later flush for that
+    // file was then a fresh "base required for initial history" 400. One
+    // dropped request permanently disabled persistent undo for the file.
+    function requeue() {
+      _pending[k] = ops.concat(_pending[k] || []);
+      if (body.base !== undefined && !_bases.hasOwnProperty(k)) {
+        _bases[k] = body.base;
+      }
+    }
+
     try {
       fetch(window.mbeditorBasePath() + '/file_history', {
         method: 'POST',
@@ -90,47 +112,20 @@ var HistoryService = (function () {
           'Content-Type': 'application/json',
           'X-Mbeditor-Client': '1'
         },
+        keepalive: keepalive === true,
         body: JSON.stringify(body)
-      }).catch(function () {
-        // On failure, put ops back so next flush retries
-        var existing = _pending[k] || [];
-        _pending[k] = ops.concat(existing);
-        if (body.base !== undefined && !_bases.hasOwnProperty(k)) {
-          _bases[k] = body.base;
-        }
-      });
-    } catch (e) {}
+      }).then(function (res) {
+        if (!res.ok) requeue();
+      })["catch"](requeue);
+    } catch (e) {
+      requeue();
+    }
   }
 
   function flushAll(options) {
-    var useKeepalive = options && options.keepalive;
+    var keepalive = !!(options && options.keepalive);
     Object.keys(_tracking).forEach(function (filePath) {
-      var rec = _tracking[filePath];
-      var k = _key(rec.branch, filePath);
-      var ops = _pending[k];
-      if (!ops || ops.length === 0) return;
-      var remaining = ops.slice();
-      _pending[k] = [];
-      clearTimeout(_idleTimers[k]);
-      delete _idleTimers[k];
-
-      var body = { branch: rec.branch, path: filePath, ops: remaining };
-      if (_bases.hasOwnProperty(k)) {
-        body.base = _bases[k];
-        delete _bases[k];
-      }
-
-      try {
-        fetch(window.mbeditorBasePath() + '/file_history', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Mbeditor-Client': '1'
-          },
-          keepalive: useKeepalive === true,
-          body: JSON.stringify(body)
-        });
-      } catch (e) {}
+      flush(_tracking[filePath].branch, filePath, keepalive);
     });
   }
 

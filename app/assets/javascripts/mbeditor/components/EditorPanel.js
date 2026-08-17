@@ -611,7 +611,7 @@ var EditorPanel = function EditorPanel(_ref) {
       var _histBranch = EditorStore.getState().gitBranch || '';
       if (_histBranch) {
         if (_reusingModel) {
-          HistoryService.resumeTracking(_histBranch, tab.path);
+          HistoryService.resumeTracking(_histBranch, tab.path, modelObj.getValue());
         } else {
           HistoryService.beginTracking(_histBranch, tab.path, tab.content || '');
         }
@@ -647,9 +647,8 @@ var EditorPanel = function EditorPanel(_ref) {
       autoClosingBrackets: editorPrefs.autoClosingBrackets || 'always',
       autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
       autoIndent: editorPrefs.autoIndent || 'full',
-      // Monaco own format-on-paste is left off: it never ran the formatter
-      // here. attachEditorFeatures drives re-indent-on-paste from onDidPaste
-      // instead, gated on editorPrefs.indentOnPaste.
+      // Paste inserts what was copied, unchanged. See attachEditorFeatures for
+      // why re-indenting it was removed rather than repaired.
       formatOnPaste: false,
       formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
       quickSuggestions: editorPrefs.quickSuggestions !== false,
@@ -1213,10 +1212,9 @@ var EditorPanel = function EditorPanel(_ref) {
         autoClosingBrackets: editorPrefs.autoClosingBrackets || 'always',
         autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
         autoIndent: editorPrefs.autoIndent || 'full',
-        // Monaco own format-on-paste is left off: it never ran the formatter
-      // here. attachEditorFeatures drives re-indent-on-paste from onDidPaste
-      // instead, gated on editorPrefs.indentOnPaste.
-      formatOnPaste: false,
+        // Paste inserts what was copied, unchanged. See attachEditorFeatures
+        // for why re-indenting it was removed rather than repaired.
+        formatOnPaste: false,
         formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
         quickSuggestions: editorPrefs.quickSuggestions !== false,
         wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',
@@ -1572,6 +1570,16 @@ var EditorPanel = function EditorPanel(_ref) {
   //
   // Decorations, not view zones: a hint belongs on the line, and a zone would
   // push the code around every time a file was opened.
+  //
+  // Redrawn whenever the text changes, not only when the file is opened. A
+  // decoration is a zero-width range pinned at the end of the `def` line, and
+  // Monaco keeps that position through an edit rather than re-deriving it — so
+  // replacing a method (a paste over the selection is the usual way) left the
+  // hint at a column that now falls in the middle of whatever text took its
+  // place, rendering as `def sho  GET /orders/:idw`. Nothing recomputed it,
+  // so saving did not clear it either; it survived until the file was
+  // reopened. The route data itself only depends on the route set, so an edit
+  // redraws from the cached response without asking the server again.
   useEffect(function () {
     var editor = monacoRef.current;
     if (!editor || !window.monaco) return;
@@ -1581,17 +1589,19 @@ var EditorPanel = function EditorPanel(_ref) {
       routeDecorationsRef.current = editor.deltaDecorations(routeDecorationsRef.current, []);
     };
 
-    if (!tab.path || !/^app\/controllers\/.+_controller\.rb$/.test(tab.path)) {
+    if (editorPrefs.routeHints === false ||
+        !tab.path || !/^app\/controllers\/.+_controller\.rb$/.test(tab.path)) {
       clear();
       return;
     }
 
     var cancelled = false;
-    FileService.getRoutes(tab.path).then(function (data) {
+    var redrawTimer = null;
+
+    var draw = function (actions) {
       if (cancelled) return;
-      var actions = (data && data.actions) || {};
       var model = editor.getModel();
-      if (!model) return;
+      if (!model || model.isDisposed()) return;
 
       var decorations = [];
       var text = model.getValue().split('\n');
@@ -1634,10 +1644,31 @@ var EditorPanel = function EditorPanel(_ref) {
       });
 
       routeDecorationsRef.current = editor.deltaDecorations(routeDecorationsRef.current, decorations);
+    };
+
+    var contentSub = null;
+    FileService.getRoutes(tab.path).then(function (data) {
+      if (cancelled) return;
+      var actions = (data && data.actions) || {};
+      draw(actions);
+
+      // Debounced: a redraw per keystroke would rebuild every decoration in
+      // the file for an edit that usually cannot have moved one.
+      var model = editor.getModel();
+      if (!model || !model.onDidChangeContent) return;
+      contentSub = model.onDidChangeContent(function () {
+        clearTimeout(redrawTimer);
+        redrawTimer = setTimeout(function () { draw(actions); }, 250);
+      });
     }).catch(function () { /* hints are additive; a failure just means none */ });
 
-    return function () { cancelled = true; clear(); };
-  }, [tab.path, tab.externalContentVersion, monacoReady]);
+    return function () {
+      cancelled = true;
+      clearTimeout(redrawTimer);
+      if (contentSub) contentSub.dispose();
+      clear();
+    };
+  }, [tab.path, tab.externalContentVersion, monacoReady, editorPrefs.routeHints]);
 
   // Render Blame block headers (author + summary) above contiguous commit regions.
   useEffect(function () {
