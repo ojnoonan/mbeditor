@@ -49,7 +49,9 @@ var CollapsibleSection = function CollapsibleSection(_ref) {
       icon && React.createElement("i", { className: "collapsible-icon " + icon }),
       React.createElement(
         "span",
-        { className: "collapsible-title" },
+        // The title truncates away entirely on a narrow sidebar, so it carries
+        // its own tooltip — otherwise the section becomes unidentifiable.
+        { className: "collapsible-title", title: typeof title === 'string' ? title : undefined },
         title
       ),
       actions && React.createElement(

@@ -236,8 +236,16 @@ var SearchService = (function () {
     });
   }
 
+  // The flattened, exclusion-filtered tree behind the index. Read-only for
+  // callers that need every known path (the import dialog's destination
+  // suggestions) rather than a query.
+  function allDocs() {
+    return _allDocs;
+  }
+
   return {
     buildIndex: buildIndex,
+    allDocs: allDocs,
     searchFiles: searchFiles,
     projectSearch: projectSearch,
     fetchPage: fetchPage,

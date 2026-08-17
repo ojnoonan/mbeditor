@@ -178,10 +178,69 @@ var WebSocketService = (function () {
     }
   }
 
-  function _emitFilesChanged(data) {
-    _filesChangedCallbacks.forEach(function (fn) {
-      try { fn(data); } catch (e) { /* ignore */ }
+  // ── files_changed coalescing ───────────────────────────────────────────────
+  //
+  // The server broadcasts once per written file, and each subscriber turns a
+  // broadcast into HTTP work: the app refreshes the tree and git status, the
+  // Monaco plugin refreshes the TypeScript program, every open editor pane
+  // re-runs git line-diff. Saving several files in a row — paste, save, next
+  // file — therefore multiplied one write into a fan-out per save, and past
+  // the point where the dev server could keep up the queue simply grew: saves
+  // got slower and slower until requests hit the axios timeout.
+  //
+  // MbeditorApp already debounced its own handler for exactly this reason, but
+  // a debounce there cannot help the other subscribers. Coalescing here fixes
+  // every subscriber at once, including any added later.
+  var FILES_CHANGED_COALESCE_MS = 150;
+  var _filesChangedTimer = null;
+  var _filesChangedAcc = null;
+
+  // Merge a broadcast into the accumulator. Pure so it can be tested directly;
+  // the two invariants are easy to get wrong and both have teeth:
+  //
+  //   - A broadcast with no paths means "something changed, re-check
+  //     everything". It must not be narrowed by paths that happen to land in
+  //     the same window, or the re-check silently covers only those files.
+  //   - `structural` is a union: one structural broadcast in the burst makes
+  //     the whole flush structural, because a tree walk that gets skipped
+  //     leaves a created or deleted file missing from the explorer.
+  function _mergeFilesChanged(acc, data) {
+    var next = acc || { paths: [], pathless: false, structural: false };
+    if (data && data.paths) next.paths = next.paths.concat(data.paths);
+    else next.pathless = true;
+    // Absent `structural` means an older server — the conservative read is true.
+    if (!data || data.structural !== false) next.structural = true;
+    return next;
+  }
+
+  function _coalescedPayload(acc) {
+    var payload = { type: 'files_changed', structural: acc.structural };
+    if (!acc.pathless && acc.paths.length) {
+      var seen = {};
+      payload.paths = acc.paths.filter(function (p) {
+        if (seen['$' + p]) return false;
+        seen['$' + p] = true;
+        return true;
+      });
+    }
+    return payload;
+  }
+
+  function _flushFilesChanged() {
+    _filesChangedTimer = null;
+    var acc = _filesChangedAcc;
+    _filesChangedAcc = null;
+    if (!acc) return;
+    var payload = _coalescedPayload(acc);
+    _filesChangedCallbacks.slice().forEach(function (fn) {
+      try { fn(payload); } catch (e) { /* ignore */ }
     });
+  }
+
+  function _emitFilesChanged(data) {
+    _filesChangedAcc = _mergeFilesChanged(_filesChangedAcc, data);
+    if (_filesChangedTimer) return;
+    _filesChangedTimer = setTimeout(_flushFilesChanged, FILES_CHANGED_COALESCE_MS);
   }
 
   function _emitFileSaved(data) {
@@ -342,6 +401,9 @@ var WebSocketService = (function () {
     subscribeCollaboration: subscribeCollaboration,
     perform: perform,
     onFilesChanged: onFilesChanged,
+    // Exposed for tests — the burst-merge invariants above are worth pinning.
+    _mergeFilesChanged: _mergeFilesChanged,
+    _coalescedPayload: _coalescedPayload,
     offFilesChanged: offFilesChanged,
     onFileSaved: onFileSaved,
     offFileSaved: offFileSaved,

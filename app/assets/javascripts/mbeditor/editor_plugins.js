@@ -404,6 +404,12 @@
       if (typeof FileService === 'undefined' || !FileService.rubyLspRequest) return Promise.resolve(null);
       if (!model || !model._mbeditorPath || !position) return Promise.resolve(null);
       if (model.getValueLength() > 5 * 1024 * 1024) return Promise.resolve(null);
+      // Nothing in the buffer means nothing to fold, outline, highlight or
+      // resolve, so every one of these is a round trip that can only come back
+      // empty. A newly created file is opened while empty, so this is the
+      // common case rather than an edge one. null is already this function's
+      // "no result" answer, so callers need no change.
+      if (model.getValueLength() === 0) return Promise.resolve(null);
       var config = LSP_SLOW_METHODS[lspMethod] ? { timeout: LSP_SLOW_METHODS[lspMethod] } : null;
       return FileService.rubyLspRequest(lspMethod, model._mbeditorPath, model.getValue(),
                                         position.lineNumber, position.column, config, extraBody)

@@ -169,18 +169,32 @@ var SidebarActionButton = function SidebarActionButton(_ref) {
   var _ref$ariaBusy = _ref.ariaBusy;
   var ariaBusy = _ref$ariaBusy === undefined ? false : _ref$ariaBusy;
 
+  // The tooltip lives on a wrapper, not on the button, and is drawn by CSS
+  // rather than the title attribute. Both parts are load-bearing:
+  //
+  // The host app's Pico CSS sets `pointer-events: none` on [disabled], so a
+  // disabled button never receives hover and a native title never appears at
+  // all — and Rename/Delete are disabled whenever nothing is selected, which
+  // is most of the time. Hanging the tooltip on an always-enabled wrapper is
+  // what keeps it working in that state.
+  //
+  // Native titles are also ~1s late, which is already why .collab-hovercard
+  // exists rather than a title on the collab chip.
   return React.createElement(
-    "button",
-    {
-      type: "button",
-      className: "project-action-btn" + (danger ? " danger" : ""),
-      title: title,
-      "aria-label": ariaLabel || title,
-      "aria-busy": !!ariaBusy,
-      onClick: onClick,
-      disabled: !!disabled
-    },
-    !ariaBusy && React.createElement("i", { className: iconClass })
+    "span",
+    { className: "sb-tip", "data-tip": title },
+    React.createElement(
+      "button",
+      {
+        type: "button",
+        className: "project-action-btn" + (danger ? " danger" : ""),
+        "aria-label": ariaLabel || title,
+        "aria-busy": !!ariaBusy,
+        onClick: onClick,
+        disabled: !!disabled
+      },
+      !ariaBusy && React.createElement("i", { className: iconClass })
+    )
   );
 };
 
@@ -450,6 +464,12 @@ var MbeditorApp = function MbeditorApp() {
   var _useStateImportConflict2 = _slicedToArray(_useStateImportConflict, 2);
   var importConflict = _useStateImportConflict2[0];
   var setImportConflict = _useStateImportConflict2[1];
+
+  // { initialFolder } while the upload dialog is open, null otherwise.
+  var _useStateImportDialog = useState(null);
+  var _useStateImportDialog2 = _slicedToArray(_useStateImportDialog, 2);
+  var importDialog = _useStateImportDialog2[0];
+  var setImportDialog = _useStateImportDialog2[1];
 
   var _useStateSchemaLoading = useState(null);
   var _useStateSchemaLoading2 = _slicedToArray(_useStateSchemaLoading, 2);
@@ -800,6 +820,11 @@ var MbeditorApp = function MbeditorApp() {
     if (typeof content === 'string') {
       lastDiskContentRef.current[path] = content.replace(/\r\n/g, '\n');
     }
+    // The file on disk just moved, so any line-diff answer we are holding for
+    // it predates the write and must not be reused for the tint.
+    if (typeof GitService !== 'undefined' && GitService.invalidateLineDiff) {
+      GitService.invalidateLineDiff(path);
+    }
   }
 
   // ── Draft backup helpers ─────────────────────────────────────────────────
@@ -906,6 +931,17 @@ var MbeditorApp = function MbeditorApp() {
   // cached page was served for the same query. The per-path delta refresh on
   // the files_changed push can't cover it either: it re-scans named files,
   // and a file that just appeared or vanished isn't in the previous result set.
+  // True when the server will push a files_changed broadcast for a write we are
+  // about to make, so the coalesced handler will refresh the tree and git for
+  // us. Every mutation used to refresh both itself as well, which doubled or
+  // tripled the most expensive requests the editor makes. Without a socket
+  // nothing arrives, so callers keep their own refresh for that case.
+  var _socketWillBroadcast = function _socketWillBroadcast() {
+    return typeof WebSocketService !== 'undefined' &&
+      typeof WebSocketService.isCableAvailable === 'function' &&
+      WebSocketService.isCableAvailable();
+  };
+
   var refreshProjectTree = function refreshProjectTree() {
     return FileService.getTree().then(function (data) {
       setTreeData(data || []);
@@ -1048,6 +1084,20 @@ var MbeditorApp = function MbeditorApp() {
     var options = arguments.length <= 2 || arguments[2] === undefined ? {} : arguments[2];
 
     if (!tab || (!isRubyPath(tab.path) && !tab.path.endsWith('.haml'))) return Promise.resolve(null);
+
+    // An empty buffer has no offenses, and answering that here rather than over
+    // the wire skips the most expensive request the Ruby path makes: a
+    // whole-document RuboCop run, budgeted at 10s server-side. It matters
+    // because every newly created .rb file starts empty and is opened
+    // immediately, so the lint fired on a document with nothing in it.
+    // Resolving with an empty marker set (rather than null) keeps the
+    // marker-clearing below intact, so deleting a file's contents still clears
+    // its squiggles.
+    if (!String(tab.content || '').trim()) {
+      applyMarkersForTab(paneId, tab.id, []);
+      if (options.showStatus) EditorStore.setStatus('No RuboCop offenses!', 'success');
+      return Promise.resolve({ markers: [] });
+    }
 
     if (options.showLoading) {
       setLoading(function (prev) {
@@ -2659,17 +2709,43 @@ var MbeditorApp = function MbeditorApp() {
   // unchanged state is an identical string and React bails rather than
   // re-rendering the app every tick.
   useEffect(function () {
+    // A reconnect is not a fault. Action Cable drops and re-establishes its
+    // socket routinely, and a dev server busy with a burst of saves is enough
+    // to cause it — the cable shares the same thread pool as every request the
+    // editor makes. Reporting the first non-connected sample made the chip
+    // announce "Pairing off" during exactly the moments the editor was already
+    // struggling, then clear a few seconds later, which reads as a second
+    // failure rather than as the self-healing reconnect it actually is.
+    //
+    // So a transient state has to be seen twice before it is shown, with the
+    // confirming check brought forward so a real outage still surfaces in
+    // seconds. Hard failures are exempt: missing libraries, no Action Cable, a
+    // server that does not advertise it, or a *rejected* handshake never heal
+    // on their own, so they report on the first sample as before.
+    var TRANSIENT_PROBLEMS = { connected: true };
+    var unconfirmed = null;
+    var recheckTimer = null;
+
     function check() {
       if (typeof CollaborationService === 'undefined' ||
           typeof CollaborationService.diagnostics !== 'function') return;
       var d = CollaborationService.diagnostics();
       // "Nobody else is here" is not a fault; everything else is.
       var problem = d.firstProblem && d.firstProblem.key !== 'peers' ? d.firstProblem.key : null;
+      var transient = !!problem && !!TRANSIENT_PROBLEMS[problem] && d.cableStatus !== 'rejected';
+
+      if (transient && unconfirmed !== problem) {
+        unconfirmed = problem;
+        clearTimeout(recheckTimer);
+        recheckTimer = setTimeout(check, 3000);
+        return;
+      }
+      unconfirmed = transient ? problem : null;
       setCollabTrouble(function (prev) { return prev === problem ? prev : problem; });
     }
     check();
     var id = setInterval(check, 10000);
-    return function () { clearInterval(id); };
+    return function () { clearInterval(id); clearTimeout(recheckTimer); };
   }, []);
 
   var collabPeerIds = Object.keys(collabRoster);
@@ -2965,7 +3041,14 @@ var MbeditorApp = function MbeditorApp() {
         })["catch"](function () {});
       }
 
-      GitService.fetchStatusLite({ background: true });
+      // The server broadcasts files_changed for this very write, and the
+      // coalesced handler refreshes git status there — so firing here too ran
+      // the git work twice per save, and this copy is the one a burst cannot
+      // coalesce. fetchStatusLite escalates to the full /git_info fan-out
+      // whenever the working tree signature moved, which saving a different
+      // file every time does by definition, so the duplicate was the expensive
+      // one. Without a socket no broadcast arrives, so keep it for that case.
+      if (!_socketWillBroadcast()) GitService.fetchStatusLite({ background: true });
     })["catch"](function (err) {
       EditorStore.setStatus("Save failed: " + err.message, "error");
     })["finally"](function () {
@@ -3805,6 +3888,40 @@ var MbeditorApp = function MbeditorApp() {
       });
   };
 
+  // Downloads go straight through /raw?download=1 — the browser's own save
+  // flow, so nothing is buffered client-side and a 5 MB file costs no memory.
+  // A synthetic anchor rather than location.href: navigating away from the
+  // editor to an attachment response leaves the page in a half-unloaded state
+  // in Safari.
+  var handleDownloadFile = function handleDownloadFile(node) {
+    if (!node || node.type !== 'file') return;
+    var link = document.createElement('a');
+    link.href = window.mbeditorBasePath() + '/raw?download=1&path=' + encodeURIComponent(node.path);
+    link.download = node.name;
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    EditorStore.setStatus('Downloading ' + node.name + '...', 'info');
+  };
+
+  // A file node means "upload alongside this file", so the dialog opens on its
+  // parent — right-clicking a file to upload next to it is the common gesture.
+  var openImportDialog = function openImportDialog(node) {
+    var folder = '';
+    if (node && node.type === 'folder') {
+      folder = node.path;
+    } else if (node && node.path) {
+      folder = node.path.split('/').slice(0, -1).join('/');
+    }
+    setImportDialog({ initialFolder: folder });
+  };
+
+  var confirmImportDialog = function confirmImportDialog(entries, destFolder, meta) {
+    setImportDialog(null);
+    handleImportFiles(entries, destFolder, meta);
+  };
+
   var openContextMenu = function openContextMenu(e, node) {
     setContextMenu({ x: e.clientX, y: e.clientY, node: node });
     handleNodeSelect(node);
@@ -3831,6 +3948,12 @@ var MbeditorApp = function MbeditorApp() {
     }
     if (action === 'delete') {
       handleDeletePath(node);return;
+    }
+    if (action === 'download' && node) {
+      handleDownloadFile(node);return;
+    }
+    if (action === 'upload') {
+      openImportDialog(node);return;
     }
     if (action === 'copyPath' && node) {
       if (navigator.clipboard) {
@@ -4047,8 +4170,27 @@ var MbeditorApp = function MbeditorApp() {
       FileService.createFile(path, '').then(function (res) {
         var createdPath = res && res.path || path;
         var createdName = createdPath.split('/').pop();
+        // We just wrote this file and know it is empty, so opening it does not
+        // need to ask the server what is in it. noteLocalSave records the write
+        // for the same reason a save does: the create's own broadcast comes
+        // straight back as a files_changed naming this path, and without this
+        // the external-change check read the file back off disk to ask whether
+        // it had changed since we wrote it a moment earlier.
+        if (FileService.seedPrefetch) FileService.seedPrefetch(createdPath, '');
+        noteLocalSave(createdPath, '');
         handleNodeSelect({ path: createdPath, name: createdName, type: 'file' });
         EditorStore.setStatus('Created file: ' + createdName, 'success');
+        // The optimistic node is already in the tree and the server's
+        // structural broadcast refreshes it for real a moment later, so
+        // walking the workspace here as well made one create cost three full
+        // tree walks — and every write invalidates the server's tree cache, so
+        // each one is a fresh recursive scan of the whole checkout. Same for
+        // git status, which the same broadcast handler already refreshes.
+        // Without a socket neither happens on its own, so keep both for that.
+        if (_socketWillBroadcast()) {
+          handleSelectFile(createdPath, createdName);
+          return;
+        }
         return refreshProjectTree().then(function () {
           handleSelectFile(createdPath, createdName);
           GitService.fetchStatusLite({ background: true });
@@ -4071,6 +4213,8 @@ var MbeditorApp = function MbeditorApp() {
         var createdPath = res && res.path || path;
         handleNodeSelect({ path: createdPath, name: createdPath.split('/').pop(), type: 'folder' });
         EditorStore.setStatus('Created folder: ' + createdPath, 'success');
+        // See handleCreateConfirm's file branch — the broadcast covers both.
+        if (_socketWillBroadcast()) return;
         return refreshProjectTree().then(function () {
           return GitService.fetchStatusLite({ background: true });
         });
@@ -4432,7 +4576,8 @@ var MbeditorApp = function MbeditorApp() {
           "button",
           { className: "statusbar-btn", onClick: function () {
               return activeTab && handleSave(focusedPane.id, activeTab);
-            }, disabled: loading.save || !activeTab || !activeTab.dirty, 'aria-busy': !!loading.save },
+            }, disabled: loading.save || !activeTab || !activeTab.dirty, 'aria-busy': !!loading.save,
+            title: "Save the active file (Ctrl+S)" },
           !loading.save && React.createElement("i", { className: "fas fa-save" }),
           !toolbarIconOnly && !loading.save && " Save",
           !loading.save && activeTab && activeTab.dirty ? " ●" : ""
@@ -4443,7 +4588,7 @@ var MbeditorApp = function MbeditorApp() {
               return p.tabs;
             }).some(function (t) {
               return t.dirty;
-            }), 'aria-busy': !!loading.saveAll },
+            }), 'aria-busy': !!loading.saveAll, title: "Save every file with unsaved changes" },
           !loading.saveAll && React.createElement(
             "i",
             { className: "fas fa-save", style: { position: 'relative' } },
@@ -4487,7 +4632,8 @@ var MbeditorApp = function MbeditorApp() {
           React.createElement("div", { className: "statusbar-sep" }),
           React.createElement(
             "button",
-            { type: "button", className: "statusbar-btn", onClick: toggleGitPanel },
+            { type: "button", className: "statusbar-btn", onClick: toggleGitPanel,
+              title: (showGitPanel ? "Hide" : "Show") + " the git panel (Ctrl+Shift+G)" },
             React.createElement("i", { className: "fas fa-code-branch" }),
             !toolbarIconOnly && " Git"
           )
@@ -4845,6 +4991,9 @@ var MbeditorApp = function MbeditorApp() {
                         {
                           key: tab.id,
                           className: "tree-item " + (pane.activeTabId === tab.id && state.focusedPaneId === pane.id ? "active" : ""),
+                          // The name ellipsises in a narrow sidebar, so the row
+                          // carries the full path the way file-tree rows do.
+                          title: tab.path || tab.name,
                           onClick: function () {
                             if (tab.path && !tab.path.startsWith('mbeditor://') && tab.path !== '__settings__') {
                               handleNodeSelect({ path: tab.path, name: tab.name, type: 'file' });
@@ -4877,7 +5026,10 @@ var MbeditorApp = function MbeditorApp() {
                             "div",
                             { className: "tab-close", onClick: function (e) {
                                 e.stopPropagation();requestCloseTab(pane.id, tab.id);
-                              }, style: { padding: '0 4px', cursor: 'pointer', opacity: 0.6 } },
+                              }, style: { padding: '0 4px', cursor: 'pointer', opacity: 0.6 },
+                              // See TabBar: role="button" would pick up Pico's
+                              // button skin from the host app and square this off.
+                              title: "Close " + tab.name + (tab.dirty ? " (unsaved changes)" : "") },
                             React.createElement("i", { className: "fas fa-times" })
                           )
                         )
@@ -4936,6 +5088,13 @@ var MbeditorApp = function MbeditorApp() {
                     return handleCreateDir();
                   },
                   disabled: !!loading.createDir
+                }),
+                React.createElement(SidebarActionButton, {
+                  title: "Upload files",
+                  iconClass: 'fas fa-upload',
+                  onClick: function () {
+                    return openImportDialog(selectedTreeNode);
+                  }
                 }),
                 React.createElement(SidebarActionButton, {
                   title: "Rename selected",
@@ -5970,6 +6129,7 @@ var MbeditorApp = function MbeditorApp() {
                       {
                         className: 'ide-settings-reset-btn',
                         type: 'button',
+                        title: 'Restore every editor preference on this page to its default',
                         onClick: function() { setEditorPrefs(Object.assign({}, DEFAULT_EDITOR_PREFS)); }
                       },
                       React.createElement('i', { className: 'fas fa-undo', style: { marginRight: 6 } }),
@@ -6596,6 +6756,23 @@ var MbeditorApp = function MbeditorApp() {
           " Delete"
         ),
         React.createElement("div", { className: "context-menu-divider" }),
+        contextMenu.node && contextMenu.node.type === 'file' && React.createElement(
+          "div",
+          { className: "context-menu-item", onClick: function () {
+              return handleContextMenuAction('download');
+            } },
+          React.createElement("i", { className: "fas fa-download context-menu-icon" }),
+          " Download"
+        ),
+        React.createElement(
+          "div",
+          { className: "context-menu-item", onClick: function () {
+              return handleContextMenuAction('upload');
+            } },
+          React.createElement("i", { className: "fas fa-upload context-menu-icon" }),
+          " Upload Files Here..."
+        ),
+        React.createElement("div", { className: "context-menu-divider" }),
         React.createElement(
           "div",
           { className: "context-menu-item", onClick: function () {
@@ -6670,6 +6847,14 @@ var MbeditorApp = function MbeditorApp() {
         )
       )
     ),
+
+    /* ── Upload dialog ─────────────────────────────────────────────────── */
+    importDialog && React.createElement(ImportDialog, {
+      initialFolder: importDialog.initialFolder,
+      docs: SearchService.allDocs(),
+      onCancel: function () { setImportDialog(null); },
+      onImport: confirmImportDialog
+    }),
 
     /* ── Import conflict modal ─────────────────────────────────────────── */
     importConflict && React.createElement(ImportConflictModal, {

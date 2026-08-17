@@ -7,12 +7,10 @@
 //
 // Errors from the same pass render here too, so a drop that both conflicts
 // and fails needs one dialog rather than two.
-var ImportConflictModal = function ImportConflictModal(_ref) {
-  var conflicts = _ref.conflicts || [];
-  var errors = _ref.errors || [];
-  var onResolve = _ref.onResolve;
-  var modalRef = React.useRef(null);
-
+// Focus containment for a modal: initial focus in, Tab cycles inside, Escape
+// dismisses, focus restored on unmount. Shared with ImportDialog — both are
+// overlays over an editor that will happily steal focus back otherwise.
+window.useModalFocusTrap = function useModalFocusTrap(modalRef, onDismiss) {
   React.useEffect(function () {
     var previouslyFocused = document.activeElement;
     var modal = modalRef.current;
@@ -25,7 +23,7 @@ var ImportConflictModal = function ImportConflictModal(_ref) {
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
-        onResolve('skip');
+        onDismiss();
         return;
       }
       if (e.key !== 'Tab' || !modal) return;
@@ -57,7 +55,16 @@ var ImportConflictModal = function ImportConflictModal(_ref) {
         previouslyFocused.focus();
       }
     };
-  }, [onResolve]);
+  }, [onDismiss]);
+};
+
+var ImportConflictModal = function ImportConflictModal(_ref) {
+  var conflicts = _ref.conflicts || [];
+  var errors = _ref.errors || [];
+  var onResolve = _ref.onResolve;
+  var modalRef = React.useRef(null);
+
+  window.useModalFocusTrap(modalRef, React.useCallback(function () { onResolve('skip'); }, [onResolve]));
 
   var button = function (label, mode, className) {
     return React.createElement(

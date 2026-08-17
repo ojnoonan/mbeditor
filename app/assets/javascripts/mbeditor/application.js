@@ -33,6 +33,11 @@
 //= require mbeditor/components/GitPanel
 //= require mbeditor/components/QuickOpenDialog
 //= require mbeditor/components/TabBar
+// Both import modals must be required *inside* the IIFE: React is an IIFE
+// parameter (window.React is deliberately never set), so a component file
+// placed after the tail resolves a bare `React` to undefined and takes the
+// whole app down the first time it renders.
+//= require mbeditor/components/ImportConflictModal
+//= require mbeditor/components/ImportDialog
 //= require mbeditor/components/MbeditorApp
 //= require mbeditor/application_iife_tail
-//= require mbeditor/components/ImportConflictModal
