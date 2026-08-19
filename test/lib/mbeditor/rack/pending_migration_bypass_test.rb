@@ -10,6 +10,19 @@ module Mbeditor
     # halves of the contract — editor traffic must get through, host traffic
     # must still be stopped exactly as Rails intends.
     class PendingMigrationBypassTest < ActiveSupport::TestCase
+      # Multi-line like the real thing, which is what the header test is about.
+      # Built with an explicit `pending_migrations:` so the initializer does not
+      # reach for a connection to list them — CI runs these without a database,
+      # and every supported Rails (7.1-8.x) accepts the keyword.
+      PENDING_MESSAGE = "Migrations are pending. To resolve this issue, run:\n\n" \
+                        "        bin/rails db:migrate\n\n" \
+                        "You have 1 pending migration:\n\n" \
+                        "db/migrate/20260101000000_add_orders.rb\n"
+
+      def self.pending_migration_error
+        ActiveRecord::PendingMigrationError.new(PENDING_MESSAGE, pending_migrations: [])
+      end
+
       # Stands in for ActiveRecord::Migration::CheckPending: raises until told
       # otherwise, and records whether the downstream app was reached.
       class FakeCheck
@@ -23,7 +36,7 @@ module Mbeditor
 
         def call(env)
           @calls += 1
-          raise ActiveRecord::PendingMigrationError if @raising
+          raise PendingMigrationBypassTest.pending_migration_error if @raising
 
           @app.call(env)
         end
