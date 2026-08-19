@@ -22,6 +22,50 @@ var TestRunPanel = (function () {
 
   function isFailure(t) { return t.status === 'fail' || t.status === 'error'; }
 
+  // Closing the drawer unmounts it, so the result is kept outside the
+  // component. localStorage rather than a module variable, to match the
+  // per-file test cache in MbeditorApp — a suite run is the most expensive
+  // thing the editor can ask for, and losing it to a page reload is the same
+  // annoyance as losing it to a close.
+  var CACHE_KEY = 'mbeditor_test_result_suite';
+  // The runner's raw output is unbounded — a verbose suite easily runs to
+  // megabytes, and a quota error means nothing is cached at all, which is the
+  // exact failure this is here to prevent. The tail is the part worth keeping:
+  // failures and the summary line are at the end.
+  var RAW_CACHE_LIMIT = 200000;
+
+  function loadCached() {
+    try {
+      var stored = window.localStorage.getItem(CACHE_KEY);
+      return stored ? JSON.parse(stored) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function saveCached(result) {
+    try {
+      var raw = result && result.raw;
+      var slim = (raw && raw.length > RAW_CACHE_LIMIT)
+        ? Object.assign({}, result, { raw: '…output truncated…\n' + raw.slice(-RAW_CACHE_LIMIT) })
+        : result;
+      window.localStorage.setItem(CACHE_KEY, JSON.stringify(slim));
+    } catch (e) { /* quota or storage blocked — the run still shows, just isn't kept */ }
+  }
+
+  function clearCached() {
+    try { window.localStorage.removeItem(CACHE_KEY); } catch (e) {}
+  }
+
+  function ranAtLabel(result) {
+    if (!result || !result.cachedAt) return null;
+    try {
+      return 'ran ' + new Date(result.cachedAt).toLocaleTimeString();
+    } catch (e) {
+      return null;
+    }
+  }
+
   // Failures grouped by the file they live in — the unit you actually open.
   // Anything the server could not resolve to a workspace-relative path is
   // still listed, just not openable.
@@ -40,7 +84,7 @@ var TestRunPanel = (function () {
     var onClose = _ref.onClose;
     var onOpenFile = _ref.onOpenFile;
 
-    var _result = React.useState(null);
+    var _result = React.useState(loadCached);
     var result = _result[0], setResult = _result[1];
     var _running = React.useState(false);
     var running = _running[0], setRunning = _running[1];
@@ -64,11 +108,16 @@ var TestRunPanel = (function () {
       if (running) return;
       setRunning(true);
       setElapsed(0);
+      var finish = function (data) {
+        var stamped = Object.assign({}, data, { cachedAt: Date.now() });
+        setResult(stamped);
+        saveCached(stamped);
+      };
       FileService.runAllTests()
-        .then(function (data) { setResult(data); })
+        .then(finish)
         ["catch"](function (e) {
           var res = e && e.response && e.response.data;
-          setResult(res || { ok: false, error: (e && e.message) || 'Test run failed', tests: [] });
+          finish(res || { ok: false, error: (e && e.message) || 'Test run failed', tests: [] });
         })
         .then(function () { setRunning(false); });
     };
@@ -87,7 +136,7 @@ var TestRunPanel = (function () {
     // dropped rather than left looking current — same rule as the RuboCop
     // snapshot in the Problems panel.
     React.useEffect(function () {
-      var onBranchChanged = function () { setResult(null); };
+      var onBranchChanged = function () { setResult(null); clearCached(); };
       window.addEventListener('mbeditor:branch-changed', onBranchChanged);
       return function () { window.removeEventListener('mbeditor:branch-changed', onBranchChanged); };
     }, []);
@@ -143,7 +192,9 @@ var TestRunPanel = (function () {
           (summary.skipped || 0) > 0 && React.createElement('span', { className: 'ide-testrun-stat' },
             summary.skipped + ' skipped'),
           summary.duration != null && React.createElement('span', { className: 'ide-testrun-stat' },
-            summary.duration + 's')
+            summary.duration + 's'),
+          ranAtLabel(result) && React.createElement('span', { className: 'ide-testrun-stat' },
+            ranAtLabel(result))
         ),
         React.createElement(
           'div',
