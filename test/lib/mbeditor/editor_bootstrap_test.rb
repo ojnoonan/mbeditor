@@ -45,6 +45,16 @@ module Mbeditor
       assert_includes js, "window._monacoVimPromise = null;"
     end
 
+    # A cached rejected promise disabled Format for the rest of the session, and
+    # restoring window.define from one script's onerror let siblings still in
+    # flight register as AMD modules instead of setting their globals.
+    test "boot_js lets a failed Prettier load be retried" do
+      js = boot_js
+
+      assert_includes js, "window._prettierLoadPromise = null;"
+      assert_includes js, "if (--pending > 0) return;"
+    end
+
     test "embedded values cannot terminate the inline script element" do
       js = Mbeditor::EditorBootstrap.setup_js("/evil</script><script>")
 
@@ -60,6 +70,19 @@ module Mbeditor
       # The fallback must keep parity with the layout's error handling.
       assert_includes html, "monacoScript.onerror"
       assert_includes html, "window._monacoVimPromise = null;"
+    end
+
+    # Sprockets serves at /assets, not under the engine mount, so a prefixed
+    # asset URL 404s and the fallback shell renders without CSS or JS. Only the
+    # engine-served /monaco-editor URLs carry the mount prefix.
+    test "the fallback shell points asset URLs at Sprockets, not the engine mount" do
+      html = Mbeditor::Rack::HandlePendingMigrations.new(nil).send(:editor_shell_html, BASE)
+
+      refute_includes html, "#{BASE}/assets/"
+      assert_includes html, %(href="/assets/mbeditor/application.css")
+      assert_includes html, %(appScript.src = "/assets/mbeditor/application.js";)
+      assert_includes html, %(var prettierScripts = ["/assets/prettier-standalone.js")
+      assert_includes html, "#{BASE}/monaco-editor/monaco.css"
     end
   end
 end

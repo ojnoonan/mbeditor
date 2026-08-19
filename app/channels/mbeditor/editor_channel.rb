@@ -50,8 +50,10 @@ module Mbeditor
     def save_state(data)
       state = data["state"] || data
       EditorStateService.new(workspace_root).write_state(state)
-    rescue StandardError
-      # Never let a state-save failure crash the WebSocket connection
+    rescue StandardError => e
+      # Never let a state-save failure crash the WebSocket connection — but a
+      # silently dropped save looked exactly like a working one.
+      Rails.logger.warn("[mbeditor] EditorChannel#save_state failed: #{e.class}: #{e.message}")
     end
 
     def save_branch_state(data)
@@ -62,8 +64,9 @@ module Mbeditor
       # A misbehaving client sent a malformed branch name. Don't crash the
       # connection, but log it so the misconfiguration is observable.
       Rails.logger.warn("[mbeditor] EditorChannel#save_branch_state: rejected invalid branch name #{branch.inspect}")
-    rescue StandardError
+    rescue StandardError => e
       # Never let a state-save failure crash the WebSocket connection
+      Rails.logger.warn("[mbeditor] EditorChannel#save_branch_state failed: #{e.class}: #{e.message}")
     end
 
     def start_log_tail(data)

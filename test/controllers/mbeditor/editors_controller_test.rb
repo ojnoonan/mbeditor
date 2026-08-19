@@ -815,6 +815,31 @@ module Mbeditor
       files.each   { |f| assert f["size"] >= 0 }
     end
 
+    # The tree is ~1 MB and polled every 10s; an unchanged poll must cost a
+    # digest comparison, not the whole body.
+    test "files answers 304 when the tree has not changed" do
+      get "/mbeditor/files"
+      assert_response :ok
+      etag = response.headers["ETag"]
+      assert etag.present?
+
+      get "/mbeditor/files", headers: { "If-None-Match" => etag }
+      assert_response :not_modified
+      assert_empty response.body
+    end
+
+    test "files sends a fresh body and ETag after the tree changes" do
+      get "/mbeditor/files"
+      etag = response.headers["ETag"]
+
+      File.write(File.join(@workspace, "brand_new.rb"), "x\n")
+      get "/mbeditor/files?refresh=1", headers: { "If-None-Match" => etag }
+
+      assert_response :ok
+      assert_includes json.map { |n| n["name"] }, "brand_new.rb"
+      assert_not_equal etag, response.headers["ETag"]
+    end
+
     test "files shows excluded_paths in the explorer (only search excludes them)" do
       get "/mbeditor/files"
       assert_response :ok
@@ -2363,6 +2388,25 @@ module Mbeditor
       get "/mbeditor/workspace"
       assert_response :ok
       assert_equal true, json["testAvailable"]
+    end
+
+    # ---------------------------------------------------------------------------
+    # model_schema
+    # ---------------------------------------------------------------------------
+
+    # The name is joined into a file path inside SchemaService, so anything that
+    # is not a plain constant name is refused before it gets there.
+    test "model_schema rejects a model name that is not a constant" do
+      ["../../etc/passwd", "user/../../secret", "db/schema.rb"].each do |bad|
+        get "/mbeditor/model_schema", params: { model: bad }
+        assert_response :bad_request, "expected #{bad.inspect} to be refused"
+        assert_match(/invalid model/i, json["error"])
+      end
+    end
+
+    test "model_schema still accepts a namespaced constant" do
+      get "/mbeditor/model_schema", params: { model: "Admin::User" }
+      assert_response :not_found
     end
 
     # ---------------------------------------------------------------------------

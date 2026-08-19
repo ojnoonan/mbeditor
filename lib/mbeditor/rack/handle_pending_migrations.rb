@@ -18,7 +18,7 @@ module Mbeditor
         raise unless defined?(ActiveRecord::PendingMigrationError) && e.is_a?(ActiveRecord::PendingMigrationError)
 
         path = "#{env["SCRIPT_NAME"]}#{env["PATH_INFO"]}"
-        raise unless path.start_with?("/mbeditor")
+        raise unless path.start_with?(Mbeditor::MountPath.resolve)
 
         if env["HTTP_X_MBEDITOR_CLIENT"] == "1"
           # XHR from the editor frontend — structured JSON error.
@@ -55,14 +55,14 @@ module Mbeditor
           prettier-plugin-html.js
           prettier-plugin-postcss.js
           prettier-plugin-markdown.js
-        ].map { |f| "#{base}/assets/#{f}" }
+        ].map { |f| "/assets/#{f}" }
 
         # Bootstrap JS shared with the standard layout — see Mbeditor::EditorBootstrap
         setup_js = Mbeditor::EditorBootstrap.setup_js(base)
         boot_js  = Mbeditor::EditorBootstrap.boot_js(
           base: base,
           prettier_script_urls: prettier_script_urls,
-          application_js_url: "#{base}/assets/mbeditor/application.js"
+          application_js_url: "/assets/mbeditor/application.js"
         )
 
         <<~HTML
@@ -72,16 +72,16 @@ module Mbeditor
             <meta charset="UTF-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1.0" />
             <title>Mbeditor</title>
-            <link rel="stylesheet" href="#{base}/assets/fontawesome.min.css" />
-            <link rel="stylesheet" href="#{base}/assets/mbeditor/application.css" />
-            <script defer src="#{base}/assets/react.min.js"></script>
-            <script defer src="#{base}/assets/react-dom.min.js"></script>
-            <script defer src="#{base}/assets/axios.min.js"></script>
-            <script defer src="#{base}/assets/lodash.min.js"></script>
-            <script defer src="#{base}/assets/minisearch.min.js"></script>
-            <script defer src="#{base}/assets/marked.min.js"></script>
-            <script defer src="#{base}/assets/emmet.js"></script>
-            <script defer src="#{base}/assets/monaco-themes-bundle.js"></script>
+            <link rel="stylesheet" href="/assets/fontawesome.min.css" />
+            <link rel="stylesheet" href="/assets/mbeditor/application.css" />
+            <script defer src="/assets/react.min.js"></script>
+            <script defer src="/assets/react-dom.min.js"></script>
+            <script defer src="/assets/axios.min.js"></script>
+            <script defer src="/assets/lodash.min.js"></script>
+            <script defer src="/assets/minisearch.min.js"></script>
+            <script defer src="/assets/marked.min.js"></script>
+            <script defer src="/assets/emmet.js"></script>
+            <script defer src="/assets/monaco-themes-bundle.js"></script>
             <link rel="stylesheet" href="#{base}/monaco-editor/monaco.css" />
           </head>
           <body>

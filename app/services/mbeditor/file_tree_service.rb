@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "digest"
+
 module Mbeditor
   class FileTreeService
     MUTEX = Mutex.new
@@ -26,6 +28,26 @@ module Mbeditor
       data
     end
 
+    # The tree already serialized, plus a digest of that body, memoized inside
+    # the same cache entry. /files is polled every 10s and the payload is ~1 MB,
+    # so the digest is what turns an unchanged poll into a 304.
+    def self.cached_json(workspace_root)
+      root = workspace_root.to_s
+      data = build(root)
+
+      MUTEX.synchronize do
+        entry = (@cache ||= {})[root]
+        return entry[:json] if entry && entry[:json] && entry[:data].equal?(data)
+
+        # to_json, not JSON.generate: `render json:` used ActiveSupport's
+        # encoder, and the body must stay byte-identical.
+        body = data.to_json
+        payload = { body: body, digest: Digest::SHA1.hexdigest(body) }
+        entry[:json] = payload if entry
+        payload
+      end
+    end
+
     def self.invalidate(workspace_root)
       MUTEX.synchronize do
         @cache ||= {}
@@ -49,14 +71,20 @@ module Mbeditor
         rel  = "" if rel == workspace_root
         is_excl = matcher.excluded?(rel)
 
-        if File.directory?(full) && !File.symlink?(full)
+        # One lstat instead of directory?/symlink?/size — three stats per entry
+        # over a whole tree. lstat does not follow, so a symlink is never a
+        # folder here, exactly as the directory?-and-not-symlink? test intended;
+        # a symlinked file still reports its *target's* size, as it always did.
+        st = (File.lstat(full) rescue nil)
+
+        if st&.directory?
           children = is_excl ? [] : traverse(full, workspace_root, matcher, max_depth: max_depth, depth: depth + 1)
           node = { name: name, type: "folder", path: rel, children: children }
           node[:excluded] = true if is_excl
           node
         else
           node = { name: name, type: "file", path: rel }
-          node[:size] = (File.size(full) rescue nil) unless is_excl
+          node[:size] = ((st&.symlink? ? File.size(full) : st&.size) rescue nil) unless is_excl
           node[:excluded] = true if is_excl
           node
         end

@@ -174,8 +174,9 @@ module Mbeditor
 
       @exception_subscriber = ActiveSupport::Notifications.subscribe(
         "process_action.action_controller"
-      ) do |*args|
-        payload = ActiveSupport::Notifications::Event.new(*args).payload
+      ) do |_name, _started, _finished, _id, payload|
+        # 5-arity: the block runs for every host request, and building an Event
+        # just to read its payload allocated one per request for nothing.
         exception = payload[:exception_object]
         next unless exception
 

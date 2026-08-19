@@ -12,7 +12,6 @@ require "uri"
 module Mbeditor
   class EditorsController < ApplicationController
     skip_before_action :verify_authenticity_token
-    before_action :ensure_allowed_environment!
     before_action :verify_mbeditor_client, unless: -> { request.get? || request.head? }
 
     IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
@@ -21,6 +20,8 @@ module Mbeditor
     RUBY_DEFS_WARM_MUTEX = Mutex.new
     TOTAL_LINES_CACHE_MAX = 50
     TOTAL_LINES_MUTEX = Mutex.new
+    GIT_STATUS_TTL = 3
+    GIT_STATUS_MUTEX = Mutex.new
     # Kept below Rack's multipart_part_limit (128 file parts in Rack 3.2), which
     # is enforced during param parsing — outside the action, where this
     # controller's rescue cannot turn it into a clean 422. A batch larger than
@@ -46,6 +47,28 @@ module Mbeditor
           cache[path] = { mtime: mtime, total: total }
           cache.delete(cache.keys.first) while cache.length > TOTAL_LINES_CACHE_MAX
         end
+      end
+
+      # git_status is polled every 5s by every open tab and costs two git
+      # subprocesses. A 3s TTL collapses the duplicates while staying inside one
+      # poll interval; any mutation drops it outright (broadcast_files_changed).
+      def cached_git_status(root)
+        now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        GIT_STATUS_MUTEX.synchronize do
+          entry = (@git_status_cache ||= {})[root]
+          return entry[:value] if entry && (now - entry[:ts]) < GIT_STATUS_TTL
+        end
+
+        value = yield
+        GIT_STATUS_MUTEX.synchronize do
+          (@git_status_cache ||= {})[root] = { ts: now, value: value }
+        end
+        value
+      end
+
+      def invalidate_git_status(root)
+        GIT_STATUS_MUTEX.synchronize { (@git_status_cache ||= {}).delete(root) }
+        nil
       end
     end
 
@@ -100,7 +123,8 @@ module Mbeditor
         FileTreeService.invalidate(workspace_root.to_s)
         SearchReplaceService.invalidate_cache(workspace_root.to_s)
       end
-      render json: FileTreeService.build(workspace_root)
+      tree = FileTreeService.cached_json(workspace_root)
+      render json: tree[:body] if stale?(etag: tree[:digest], public: false)
     end
 
     # GET /mbeditor/state — load workspace state
@@ -340,8 +364,9 @@ module Mbeditor
       return render json: { error: "Forbidden" }, status: :forbidden unless path
       return render json: { error: "Not found" }, status: :not_found unless File.file?(path)
 
-      size = File.size(path)
-      return render_file_too_large(size) if size > FileOperationService::MAX_FILE_SIZE_BYTES
+      stat = File.stat(path)
+      return render_file_too_large(stat.size) if stat.size > FileOperationService::MAX_FILE_SIZE_BYTES
+      return unless stale?(last_modified: stat.mtime, public: false)
 
       send_file path, disposition: params[:download].present? ? "attachment" : "inline"
     end
@@ -866,7 +891,7 @@ module Mbeditor
       )
 
       if result.key?(:error)
-        render json: { error: result[:error] }, status: :unprocessable_entity
+        render json: { error: result[:error] }, status: :unprocessable_content
       else
         render json: result
       end
@@ -876,10 +901,14 @@ module Mbeditor
 
     # GET /mbeditor/git_status
     def git_status
-      output, status = GitService.run_git(workspace_root.to_s, "status", "--porcelain")
-      branch = GitService.current_branch(workspace_root.to_s) || ""
-      files = GitService.parse_porcelain_status(output)
-      render json: { ok: status.success?, files: files, branch: branch }
+      root = workspace_root.to_s
+      payload = self.class.cached_git_status(root) do
+        output, status = GitService.run_git(root, "status", "--porcelain")
+        { ok: status.success?,
+          files: GitService.parse_porcelain_status(output),
+          branch: GitService.current_branch(root) || "" }
+      end
+      render json: payload
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -895,6 +924,9 @@ module Mbeditor
       relative = request.path_info.delete_prefix("/")
       path = resolve_monaco_asset_path(relative)
       return head :not_found unless path
+
+      # ~14 MB of bundle, re-sent on every page load without this.
+      return unless stale?(last_modified: File.mtime(path), public: false)
 
       send_file path, disposition: "inline", type: Mime::Type.lookup_by_extension(File.extname(path).delete_prefix(".")) || "application/octet-stream"
     end
@@ -922,6 +954,7 @@ module Mbeditor
     def pwa_sw
       path = Mbeditor::Engine.root.join("public", "sw.js").to_s
       return render plain: "Not found", status: :not_found unless File.file?(path)
+      return unless stale?(last_modified: File.mtime(path), public: false)
 
       send_file path, disposition: "inline", type: "application/javascript"
     end
@@ -930,6 +963,7 @@ module Mbeditor
     def pwa_icon
       path = Mbeditor::Engine.root.join("public", "mbeditor-icon.svg").to_s
       return render plain: "Not found", status: :not_found unless File.file?(path)
+      return unless stale?(last_modified: File.mtime(path), public: false)
 
       send_file path, disposition: "inline", type: "image/svg+xml"
     end
@@ -1053,7 +1087,7 @@ module Mbeditor
 
         cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
-        _out, _err, status = Open3.capture3(env, *cmd)
+        status = run_lint_command(env, cmd)[:exit_status]
 
         # exit 0 = no offenses, exit 1 = offenses corrected, exit 2 = error
         unless status.success? || status.exitstatus == 1
@@ -1084,6 +1118,8 @@ module Mbeditor
       # the client re-check every open tab, which is exactly what's wanted.
       broadcast_files_changed(nil, structural: false) if mode == :autocorrect && result[:ok]
       render json: result
+    rescue StandardError => e
+      render json: { ok: false, error: e.message, files: [] }, status: :unprocessable_content
     end
 
     # POST /mbeditor/test_all — run the whole suite
@@ -1101,6 +1137,8 @@ module Mbeditor
         timeout: (config.test_all_timeout || 1800).to_i
       )
       render json: result
+    rescue StandardError => e
+      render json: { ok: false, error: e.message }, status: :unprocessable_content
     end
 
     # POST /mbeditor/test — run tests for the given file
@@ -1184,6 +1222,11 @@ module Mbeditor
     def model_schema
       model_name = params[:model].to_s.strip
       return render json: { error: "model required" }, status: :bad_request if model_name.blank?
+      # SchemaService derives a file path from this name, so it is validated the
+      # same way #module_members validates its own: a constant name, nothing that
+      # could carry a "..".
+      return render json: { error: "Invalid model" }, status: :bad_request \
+        unless model_name.match?(/\A[A-Z][A-Za-z0-9_:]*\z/)
 
       schema = SchemaService.new(model_name, workspace_root.to_s).call
       if schema
@@ -1216,7 +1259,7 @@ module Mbeditor
 
         cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "-A", "--no-color", tmpfile]
         env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
-        _out, _err, status = Open3.capture3(env, *cmd)
+        status = run_lint_command(env, cmd)[:exit_status]
         unless status.success? || status.exitstatus == 1
           return render json: { ok: false, content: code }
         end
@@ -1320,16 +1363,17 @@ module Mbeditor
       root = workspace_root.to_s
       FileTreeService.invalidate(root)
       SearchReplaceService.invalidate_cache(root)
-      JsGlobalsService.invalidate(root)
-      JsProgramService.invalidate(root)
+      if js_related_paths?(changed_paths)
+        JsGlobalsService.invalidate(root)
+        JsProgramService.invalidate(root)
+      end
       # Cheap, and it means editing config/routes.rb refreshes the inline route
       # hints on the next look rather than after the TTL.
       RouteService.invalidate
-      Thread.new do
-        GitInfoService.invalidate(root)
-      rescue => e
-        Rails.logger.warn("[mbeditor] GitInfoService.invalidate failed: #{e}")
-      end
+      # Both are mutex-guarded Hash#deletes; a thread per save cost more than
+      # the work it deferred.
+      GitInfoService.invalidate(root)
+      self.class.invalidate_git_status(root)
 
       return unless defined?(ActionCable.server)
 
@@ -1339,6 +1383,20 @@ module Mbeditor
       ActionCable.server.broadcast("mbeditor_editor", payload)
     rescue StandardError
       # Never let a broadcast failure affect the HTTP response
+    end
+
+    # Everything either JS cache indexes: JsProgramService::SOURCE_EXT plus the
+    # .erb-templated variants CodeSearchService::JS_GLOBS feeds JsGlobalsService.
+    JS_SOURCE_NAME = /\.(js|jsx|mjs|cjs|ts|tsx)(\.erb)?\z/i
+
+    # Rebuilding the JS program costs ~93ms/MB, so saving a .rb file must not
+    # throw it away. A path with no extension at all — a directory, a rename
+    # target — stays conservative, as does an omitted path list.
+    def js_related_paths?(changed_paths)
+      paths = Array(changed_paths).compact.map(&:to_s).reject(&:empty?)
+      return true if paths.empty?
+
+      paths.any? { |p| File.extname(p).empty? || p.match?(JS_SOURCE_NAME) }
     end
 
     # Tells every peer that this file's shared buffer was just saved to disk so
@@ -1502,10 +1560,16 @@ module Mbeditor
     end
 
     def run_with_timeout(env, cmd, stdin_data:)
+      run_lint_command(env, cmd, stdin_data: stdin_data)[:stdout]
+    end
+
+    # Same lint_timeout ceiling as #lint. quick_fix, format_file and haml-lint
+    # used to spawn with Open3.capture3 and no timeout at all, so a wedged
+    # rubocop held a request thread until the client gave up.
+    def run_lint_command(env, cmd, stdin_data: nil)
       timeout_seconds = Mbeditor.configuration.lint_timeout&.to_i
       timeout = timeout_seconds && timeout_seconds > 0 ? timeout_seconds : nil
-      result = ProcessRunner.call(cmd, timeout: timeout, env: env, stdin_data: stdin_data)
-      result[:stdout]
+      ProcessRunner.call(cmd, timeout: timeout, env: env, stdin_data: stdin_data)
     end
 
     def apply_rename_changes(result, open_paths)
@@ -1616,6 +1680,11 @@ module Mbeditor
 
     URI_KEYS = %w[uri targetUri].freeze
 
+    # URI::DEFAULT_PARSER became the RFC3986 parser in Ruby 4.0, where #unescape
+    # is deprecated; URI::RFC2396_PARSER only exists from Ruby 3.4. The gem
+    # supports >= 3.0, so take whichever this Ruby has.
+    URI_UNESCAPER = defined?(URI::RFC2396_PARSER) ? URI::RFC2396_PARSER : URI::DEFAULT_PARSER
+
     def sanitize_lsp_uris(node, depth = 0)
       return nil if depth > MAX_LSP_DEPTH
 
@@ -1664,7 +1733,10 @@ module Mbeditor
     def workspace_relative_uri(uri)
       return nil unless uri.start_with?("file://")
 
-      path = uri.delete_prefix("file://")
+      # ruby-lsp percent-escapes its URIs; workspace_root is a raw path. A
+      # checkout with a space (or any other escaped character) in its path
+      # matched nothing here, so every result was silently dropped.
+      path = URI_UNESCAPER.unescape(uri.delete_prefix("file://"))
       prefix = "#{workspace_root}/"
       return nil unless path.start_with?(prefix)
 
@@ -1681,7 +1753,7 @@ module Mbeditor
         range = loc["range"] || loc["targetSelectionRange"] || loc["targetRange"]
         next unless uri.to_s.start_with?("file://")
 
-        fpath = uri.delete_prefix("file://")
+        fpath = URI_UNESCAPER.unescape(uri.delete_prefix("file://"))
         # Drop gem/stdlib locations the editor can't open; an empty list makes
         # the frontend fall back to the legacy services (ri covers stdlib).
         next unless fpath.start_with?("#{root}/")
@@ -1858,7 +1930,8 @@ module Mbeditor
       Tempfile.create(["mbeditor_haml", ".haml"]) do |f|
         f.write(code)
         f.flush
-        output, _err, _status = Open3.capture3(*AvailabilityProbe.haml_lint_command(workspace_root), "--reporter", "json", "--no-color", f.path)
+        cmd = AvailabilityProbe.haml_lint_command(workspace_root) + ["--reporter", "json", "--no-color", f.path]
+        output = run_lint_command({}, cmd)[:stdout]
         idx = output.index("{")
         result = idx ? JSON.parse(output[idx..]) : {}
         result = {} unless result.is_a?(Hash)

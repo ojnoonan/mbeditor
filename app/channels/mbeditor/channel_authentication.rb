@@ -19,6 +19,13 @@ module Mbeditor
     # True when the connection is allowed (or no hook is configured); otherwise
     # rejects the subscription and returns false.
     def mbeditor_authenticated?
+      # The same gate the controllers apply. Without it the cable channels were
+      # reachable in any environment, hook or no hook.
+      unless Array(Mbeditor.configuration.allowed_environments).map(&:to_sym).include?(Rails.env.to_sym)
+        mbeditor_reject_subscription
+        return false
+      end
+
       hook = mbeditor_auth_hook
       return true unless hook
 
