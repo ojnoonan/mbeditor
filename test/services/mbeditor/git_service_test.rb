@@ -114,6 +114,14 @@ module Mbeditor
       refute_match GitService::SAFE_GIT_REF, 'not-valid!!'
     end
 
+    # A ref starting with - is read as a command-line option by the git it is
+    # interpolated into (`git show --output=/tmp/x` writes a file).
+    def test_safe_git_ref_rejects_a_leading_dash
+      refute_match GitService::SAFE_GIT_REF, '--output=/tmp/pwned'
+      refute_match GitService::SAFE_GIT_REF, '-U'
+      assert_match GitService::SAFE_GIT_REF, 'a-branch'
+    end
+
     # -------------------------------------------------------------------------
     # Broken / degenerate repo states
     # -------------------------------------------------------------------------
@@ -252,6 +260,42 @@ module Mbeditor
       result = GitService.parse_porcelain_status(output)
       assert_equal 1, result.length
       assert_equal "app/foo.rb", result[0][:path]
+    end
+
+    # Without -z git quotes any path with a space or a non-ASCII byte and writes
+    # a rename as `old -> new`, so the path the editor got back could not be
+    # opened and never matched a numstat entry.
+    def test_parse_porcelain_status_reads_real_z_output_for_awkward_paths
+      Dir.mktmpdir("mbeditor_porcelain_z_") do |dir|
+        make_repo(dir)
+        File.write(File.join(dir, "old name.rb"), "x\n")
+        File.write(File.join(dir, "café.rb"), "x\n")
+        system("git", "-C", dir, "add", ".", out: File::NULL, err: File::NULL)
+        system("git", "-C", dir, "commit", "-m", "awkward", out: File::NULL, err: File::NULL)
+        system("git", "-C", dir, "mv", "old name.rb", "new name.rb", out: File::NULL, err: File::NULL)
+        File.write(File.join(dir, "café.rb"), "y\n")
+        File.write(File.join(dir, "un tracked.rb"), "z\n")
+
+        out, = GitService.run_git(dir, "status", "--porcelain", "-z")
+        paths = GitService.parse_porcelain_status(out).map { |f| f[:path] }
+
+        assert_includes paths, "new name.rb", "a rename must report the new name, unquoted"
+        refute_includes paths, "old name.rb", "the old name is a second -z record, not an entry"
+        assert_includes paths, "café.rb"
+        assert_includes paths, "un tracked.rb"
+        paths.each { |p| assert_path_exists File.join(dir, p) }
+      end
+    end
+
+    def test_parse_numstat_pairs_z_output_by_the_new_path
+      output = "0\t0\t\0old name.rb\0new name.rb\0" \
+               "3\t1\tcafé.rb\0"
+
+      result = GitService.parse_numstat(output)
+
+      assert_equal({ added: 0, removed: 0 }, result["new name.rb"])
+      assert_equal({ added: 3, removed: 1 }, result["café.rb"])
+      refute result.key?("old name.rb")
     end
 
     # -------------------------------------------------------------------------

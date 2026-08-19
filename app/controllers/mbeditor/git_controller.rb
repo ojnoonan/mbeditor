@@ -14,7 +14,6 @@ module Mbeditor
   # GET  /mbeditor/redmine/issue/:id
   class GitController < ApplicationController
     skip_before_action :verify_authenticity_token
-    before_action :ensure_allowed_environment!
 
     # GET /mbeditor/git/diff?file=<path>[&base=<sha>&head=<sha>]
     def diff
@@ -27,8 +26,9 @@ module Mbeditor
       head = nil if head == 'WORKING'
       # Allow full/short SHA hashes plus common git ref formats: branch names,
       # HEAD, remote tracking refs, parent notation (sha^, sha~N) and tags.
-      # @ is excluded to block reflog syntax like @{-1} or HEAD@{2}.
-      valid_ref = /\A[a-zA-Z0-9._\-\/\^~]+\z/
+      # @ is excluded to block reflog syntax like @{-1} or HEAD@{2}, and a
+      # leading - so the ref cannot be read as an option by the git it reaches.
+      valid_ref = /\A(?!-)[a-zA-Z0-9._\-\/\^~]+\z/
       if [base, head].any? { |s| s && (s.length > 200 || !s.match?(valid_ref)) }
         return render json: { error: 'Invalid ref' }, status: :bad_request
       end

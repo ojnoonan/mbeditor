@@ -5,6 +5,7 @@ require "json"
 require "digest"
 require "shellwords"
 require "timeout"
+require "uri"
 
 module Mbeditor
   # Manages a persistent ruby-lsp process per workspace and speaks the
@@ -88,10 +89,13 @@ module Mbeditor
 
     # A snapshot for the editor's status indicator. Deliberately does not start
     # the process — asking "how are you?" must not be what boots the server.
+    #
+    # Deliberately lock-free: @state_mutex is held for the whole of a start
+    # (up to INIT_TIMEOUT) and a restart, and a status chip polled every 10s
+    # must not queue behind a handshake. Each field is one reference read, so
+    # the worst case is a snapshot that is one transition out of date.
     def health
-      @state_mutex.synchronize do
-        { state: @state, restarts: @crash_times.length, error: @last_error }
-      end
+      { state: @state, restarts: @crash_times.length, error: @last_error }
     end
 
     # Clears the crash budget so a client latched at :failed can be revived
@@ -109,22 +113,37 @@ module Mbeditor
     end
 
     # Syncs the document (didOpen / full-text didChange) and issues a request
-    # against it under one mutex, so concurrent Puma threads can't interleave
-    # a positional request with a stale document.
+    # against it, so concurrent Puma threads can't interleave a positional
+    # request with a stale document.
     # +params+ is an explicit hash (not keywords) so it can't collide with the
     # +timeout:+ keyword.
+    #
+    # @doc_mutex covers the sync and the write, not the wait: LSP processes
+    # messages in order, so once the request is on the wire behind its didOpen
+    # the server already sees the right document. Holding it across the
+    # round-trip serialised every ruby-lsp request in the process for up to the
+    # full request timeout.
     def request_with_document(method, path, content, params = {}, timeout: nil)
       raise NotReadyError, "ruby-lsp is not running" unless ready?
 
-      uri = "file://#{path}"
-      @doc_mutex.synchronize do
+      uri = file_uri(path)
+      timeout ||= (Mbeditor.configuration.ruby_lsp_timeout || 3).to_f
+      id, queue = @doc_mutex.synchronize do
         sync_document(uri, content)
-        request(method, params.merge(textDocument: { uri: uri }), timeout: timeout)
+        send_request(method, params.merge(textDocument: { uri: uri }))
       end
+      await_response(method, id, queue, timeout)
     end
 
     def request(method, params, timeout: nil)
       timeout ||= (Mbeditor.configuration.ruby_lsp_timeout || 3).to_f
+      id, queue = send_request(method, params)
+      await_response(method, id, queue, timeout)
+    end
+
+    # Registers a response queue and puts the request on the wire. Returns
+    # [id, queue] for #await_response.
+    def send_request(method, params)
       queue = Queue.new
       id = @pending_mutex.synchronize do
         @next_id += 1
@@ -132,15 +151,29 @@ module Mbeditor
         @next_id
       end
 
-      write_message({ jsonrpc: "2.0", id: id, method: method, params: params })
+      begin
+        write_message({ jsonrpc: "2.0", id: id, method: method, params: params })
+      rescue StandardError
+        @pending_mutex.synchronize { @pending.delete(id) }
+        raise
+      end
 
+      [id, queue]
+    end
+
+    def await_response(method, id, queue, timeout)
       msg = pop_with_timeout(queue, timeout)
-      raise TimeoutError, "#{method} timed out after #{timeout}s" if msg.nil?
+      if msg.nil?
+        # Nobody is going to read this answer; tell the server to stop
+        # computing it rather than leave it indexing for an abandoned caller.
+        cancel_request(id)
+        raise TimeoutError, "#{method} timed out after #{timeout}s"
+      end
       raise Error, msg["error"]["message"].to_s if msg["error"]
 
       msg["result"]
     ensure
-      @pending_mutex.synchronize { @pending.delete(id) } if id
+      @pending_mutex.synchronize { @pending.delete(id) }
     end
 
     # Queue#pop only accepts a timeout: keyword from Ruby 3.2 onwards, and the
@@ -187,6 +220,24 @@ module Mbeditor
 
     private
 
+    # Ruby 3.4 renamed the RFC2396 parser and deprecated escape on the RFC3986
+    # one DEFAULT_PARSER now points at, so name it explicitly where it exists.
+    URI_PARSER = defined?(URI::RFC2396_PARSER) ? URI::RFC2396_PARSER : URI::DEFAULT_PARSER
+    private_constant :URI_PARSER
+
+    # A workspace path is not a URI: a space raises URI::InvalidURIError inside
+    # ruby-lsp and a `#` silently truncates the path at the fragment. Every
+    # file:// URI this class builds goes through here.
+    def file_uri(path)
+      "file://#{URI_PARSER.escape(path.to_s)}"
+    end
+
+    def cancel_request(id)
+      write_message({ jsonrpc: "2.0", method: "$/cancelRequest", params: { id: id } })
+    rescue StandardError
+      nil
+    end
+
     def ensure_started
       @state_mutex.synchronize do
         return if @state == :ready || @state == :failed
@@ -221,7 +272,7 @@ module Mbeditor
 
       result = request("initialize", {
         processId: Process.pid,
-        rootUri: "file://#{@root}",
+        rootUri: file_uri(@root),
         capabilities: {
           textDocument: {
             synchronization: { didSave: false },
@@ -365,6 +416,14 @@ module Mbeditor
     end
 
     def cleanup_process
+      # A failed handshake (INIT_TIMEOUT on a large app) otherwise orphans a
+      # ruby-lsp that is still indexing. No-op once the child has exited.
+      begin
+        Process.kill("-KILL", @wait_thr.pid) if @wait_thr
+      rescue StandardError
+        nil
+      end
+
       [@stdin, @stdout, @stderr].each do |io|
         begin
           io&.close

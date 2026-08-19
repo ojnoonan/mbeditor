@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "timeout"
+
 module Mbeditor
   module GitInfoService
     module_function
@@ -16,19 +18,26 @@ module Mbeditor
       cached = cached_git_info(repo_path)
       return cached if cached
 
-      owner = nil
+      flight = nil
       GIT_INFO_MUTEX.synchronize do
         @git_info_flights ||= {}
-        owner = @git_info_flights[repo_path]
-        @git_info_flights[repo_path] = Thread.current unless owner
+        flight = @git_info_flights[repo_path]
+        @git_info_flights[repo_path] = Queue.new unless flight
       end
 
-      if owner
+      if flight
         # Another thread is already running the fan-out; don't duplicate it.
         stale = stale_git_info(repo_path)
         return stale if stale
 
-        owner.join(CACHE_TTL)
+        # The owner closes this queue when it is done, which releases every
+        # waiter at once. Waiting on the owner *thread* was the old mechanism,
+        # but a Puma pool thread never exits, so join always ran to CACHE_TTL.
+        begin
+          Timeout.timeout(CACHE_TTL) { flight.pop }
+        rescue Timeout::Error
+          nil
+        end
         return cached_git_info(repo_path) || stale_git_info(repo_path) ||
                { ok: false, error: "git info computation in progress" }
       end
@@ -36,7 +45,8 @@ module Mbeditor
       begin
         compute(repo_path)
       ensure
-        GIT_INFO_MUTEX.synchronize { @git_info_flights.delete(repo_path) }
+        done = GIT_INFO_MUTEX.synchronize { @git_info_flights.delete(repo_path) }
+        done&.close
       end
     end
 
@@ -47,8 +57,10 @@ module Mbeditor
       end
 
       # Wave 1: all independent git reads run in parallel
-      status_t   = Thread.new { safe_git(repo_path, "status", "--porcelain") }
-      numstat_t  = Thread.new { safe_git(repo_path, "diff", "--numstat", "HEAD") }
+      # -z on both: it is the only form that leaves paths with spaces or
+      # non-ASCII bytes unquoted, and the two lists are paired by path below.
+      status_t   = Thread.new { safe_git(repo_path, "status", "--porcelain", "-z") }
+      numstat_t  = Thread.new { safe_git(repo_path, "diff", "--numstat", "-z", "HEAD") }
       upstream_t = Thread.new { safe_git(repo_path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}") }
       base_t     = Thread.new { GitService.find_branch_base(repo_path, branch) }
 

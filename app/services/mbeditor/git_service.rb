@@ -10,17 +10,19 @@ module Mbeditor
     module_function
 
     # Safe pattern for git ref names (branch, remote/branch, tag).
-    # Excludes @ to prevent reflog syntax like @{-1} or @{u}.
-    SAFE_GIT_REF = %r{\A[\w./-]+\z}
+    # Excludes @ to prevent reflog syntax like @{-1} or @{u}, and a leading -
+    # so a ref can never be read as a command-line option by the git it is
+    # interpolated into.
+    SAFE_GIT_REF = %r{\A(?!-)[\w./-]+\z}
 
     # Run an arbitrary git command inside +repo_path+.
     # Returns [stdout, Process::Status]. stderr is discarded to prevent git
     # diagnostic messages from leaking into the Rails server log.
     # Honors config.git_timeout (seconds) when set.
-    def run_git(repo_path, *args)
+    def run_git(repo_path, *args, max_bytes: nil)
       timeout_secs = Mbeditor.configuration.git_timeout&.to_i
       timeout = timeout_secs && timeout_secs > 0 ? timeout_secs : nil
-      result = ProcessRunner.call(["git", "-C", repo_path, *args], timeout: timeout)
+      result = ProcessRunner.call(["git", "-C", repo_path, *args], timeout: timeout, max_bytes: max_bytes)
       [result[:stdout], result[:exit_status]]
     rescue ProcessRunner::TimeoutError
       raise Timeout::Error, "git timed out after #{timeout_secs}s"
@@ -70,12 +72,18 @@ module Mbeditor
     def find_branch_base(repo_path, current_branch, candidates: nil)
       candidates ||= Mbeditor.configuration.base_branch_candidates
 
+      # One listing instead of a rev-parse per candidate: with six defaults
+      # that was up to twelve sequential spawns on a path the git panel polls.
+      refs_out, refs_st = run_git(repo_path, "for-each-ref", "--format=%(refname:short)",
+                                  "refs/heads", "refs/remotes")
+      return [nil, nil] unless refs_st.success?
+
+      existing = refs_out.split("\n").map(&:strip)
+
       candidates.each do |ref|
         short = ref.delete_prefix("origin/")
         next if short == current_branch || ref == current_branch
-
-        _o, st = run_git(repo_path, "rev-parse", "--verify", "--quiet", ref)
-        next unless st.success?
+        next unless existing.include?(ref)
 
         base_out, base_st = run_git(repo_path, "merge-base", "HEAD", ref)
         next unless base_st.success?
@@ -101,17 +109,34 @@ module Mbeditor
       candidates.any? { |ref| ref == current_branch || ref.delete_prefix("origin/") == current_branch }
     end
 
-    # Parse `git status --porcelain` output.
+    # Parse `git status --porcelain` output, in either the newline form or the
+    # NUL-delimited `-z` form.
+    #
+    # Only `-z` gives usable paths: without it git quotes anything containing a
+    # space or a non-ASCII byte (`"caf\303\251.rb"`) and writes a rename as
+    # `old -> new`, so the path came back unopenable and never matched numstat.
+    # In `-z` a rename/copy spans two records and the NEW name comes first.
+    #
     # Returns Array of { status: String, path: String }.
     def parse_porcelain_status(output)
-      output.lines.filter_map do |line|
-        next if line.length < 4
+      nul = output.include?("\0")
+      records = nul ? output.split("\0") : output.lines.map(&:chomp)
 
-        path = line[3..].to_s.strip
+      result = []
+      i = 0
+      while i < records.length
+        record = records[i]
+        i += 1
+        next if record.length < 4
+
+        status = record[0..1].strip
+        i += 1 if nul && status.start_with?("R", "C") # skip the old name
+        path = nul ? record[3..].to_s : record[3..].to_s.strip
         next if path.blank?
 
-        { status: line[0..1].strip, path: path }
+        result << { status: status, path: path }
       end
+      result
     end
 
     # Parse `git diff --name-status` output.
@@ -129,15 +154,40 @@ module Mbeditor
       end
     end
 
-    # Parse `git diff --numstat` output.
+    # Parse `git diff --numstat` output, in either the newline form or the
+    # NUL-delimited `-z` form (which is what pairs with `status --porcelain -z`,
+    # since only it leaves non-ASCII paths unquoted).
     # Returns Hash of path => { added: Integer, removed: Integer }.
     def parse_numstat(output)
-      (output || "").lines.each_with_object({}) do |line, map|
+      out = (output || "")
+      return parse_numstat_z(out) if out.include?("\0")
+
+      out.lines.each_with_object({}) do |line, map|
         parts = line.strip.split("\t", 3)
         next if parts.length < 3 || parts[0] == "-"
 
         map[parts[2].strip] = { added: parts[0].to_i, removed: parts[1].to_i }
       end
+    end
+
+    # In `-z` form a rename leaves the path field empty and follows the record
+    # with the old name then the new name, each NUL-terminated.
+    def parse_numstat_z(output)
+      records = output.split("\0")
+      map = {}
+      i = 0
+      while i < records.length
+        added, removed, path = records[i].split("\t", 3)
+        i += 1
+        if path.to_s.empty?
+          path = records[i + 1]
+          i += 2
+        end
+        next if path.nil? || added == "-"
+
+        map[path] = { added: added.to_i, removed: removed.to_i }
+      end
+      map
     end
 
     # Parse compact `git log --pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%aI%x1e` output.
