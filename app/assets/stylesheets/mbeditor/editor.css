@@ -3241,6 +3241,20 @@ button:not(.pico-btn) { margin-bottom: 0; }
 .ide-problems-btn:disabled:hover { color: var(--ide-fg-muted, #ccc); }
 .ide-problems-actions { display: flex; gap: 2px; }
 .ide-problems-actions .ide-problems-btn { white-space: nowrap; }
+.ide-problems-btn.is-on { color: var(--ide-accent, #0a84ff); }
+.ide-testrun-stat { font-size: 11px; color: var(--ide-text-muted, #858585); }
+.ide-testrun-pass { color: #4ec9b0; }
+.ide-testrun-fail { color: #f14c4c; }
+.ide-testrun-raw {
+  margin: 0;
+  padding: 8px 14px;
+  font-family: var(--ide-mono, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--ide-fg, #eee);
+}
 .ide-problems-body { flex: 1; overflow: auto; padding: 4px 0; font-size: 12px; }
 .ide-problems-empty {
   padding: 10px 14px;

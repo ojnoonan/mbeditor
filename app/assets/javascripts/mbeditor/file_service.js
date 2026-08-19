@@ -276,10 +276,30 @@ var FileService = (function () {
 
   // line (1-based, optional) narrows the run to the single test at that line;
   // the server ignores it unless `path` IS the test file.
+  // Server-reported ceilings (seconds), seeded from /workspace. The request
+  // timeout is derived from them rather than hard-coded: two independent
+  // numbers meant that raising config.test_timeout past the client's own cap
+  // made the browser abort a run the server was still executing, and the user
+  // saw a generic network error instead of the server's message.
+  var testTimeouts = { test: 180, testAll: 1800 };
+  function setTestTimeouts(t) {
+    if (t && t.test > 0) testTimeouts.test = t.test;
+    if (t && t.testAll > 0) testTimeouts.testAll = t.testAll;
+  }
+  // Margin for boot, JSON encoding and the trip back, so the server's own
+  // timeout is always the one that fires first and reports why.
+  function requestTimeout(seconds) { return (seconds + 30) * 1000; }
+
   function runTests(path, line) {
     var payload = { path: path };
     if (line) payload.line = line;
-    return axios.post(window.mbeditorBasePath() + '/test', payload, { timeout: 120000 }).then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/test', payload,
+      { timeout: requestTimeout(testTimeouts.test) }).then(function(res) { return res.data; });
+  }
+
+  function runAllTests() {
+    return axios.post(window.mbeditorBasePath() + '/test_all', {},
+      { timeout: requestTimeout(testTimeouts.testAll) }).then(function(res) { return res.data; });
   }
 
   function ping() {
@@ -565,6 +585,8 @@ var FileService = (function () {
     rubyRename: rubyRename,
     getModelGraph: getModelGraph,
     runRubocop: runRubocop,
+    runAllTests: runAllTests,
+    setTestTimeouts: setTestTimeouts,
     getExceptions: getExceptions,
     clearExceptions: clearExceptions,
     getRelatedFiles: getRelatedFiles,

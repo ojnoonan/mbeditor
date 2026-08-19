@@ -512,5 +512,77 @@ module Mbeditor
         assert_equal File.join(dir, "test/user_test.rb"), cmd.last
       end
     end
+
+    # -------------------------------------------------------------------------
+    # whole-suite runs
+    # -------------------------------------------------------------------------
+
+    test "build_suite_command takes no file argument and prefers bin/rails" do
+      Dir.mktmpdir do |dir|
+        FileUtils.mkdir_p(File.join(dir, "bin"))
+        File.write(File.join(dir, "bin", "rails"), "")
+
+        assert_equal [File.join(dir, "bin", "rails"), "test", "--verbose"],
+                     TestRunnerService.build_suite_command(dir, :minitest, nil)
+      end
+    end
+
+    test "build_suite_command falls back to rake test without bin/rails" do
+      Dir.mktmpdir do |dir|
+        assert_equal %w[bundle exec rake test],
+                     TestRunnerService.build_suite_command(dir, :minitest, nil)
+      end
+    end
+
+    test "detect_suite_framework reads the project layout, not a filename" do
+      Dir.mktmpdir do |dir|
+        assert_nil TestRunnerService.detect_suite_framework(dir)
+
+        FileUtils.mkdir_p(File.join(dir, "test"))
+        assert_equal :minitest, TestRunnerService.detect_suite_framework(dir)
+
+        FileUtils.mkdir_p(File.join(dir, "spec"))
+        assert_equal :rspec, TestRunnerService.detect_suite_framework(dir)
+      end
+    end
+
+    # "Open failing files" is only as good as this: a failure with no
+    # workspace-relative path is a row you cannot click.
+    test "parse_minitest_output extracts the failing file, absolute or relative" do
+      raw = <<~OUT
+        UserTest#test_broken = 0.01 s = F
+        OrderTest#test_also_broken = 0.02 s = F
+
+          1) Failure:
+        UserTest#test_broken [/repo/test/models/user_test.rb:12]:
+        Expected true to be false.
+
+          2) Failure:
+        OrderTest#test_also_broken [test/models/order_test.rb:34]:
+        Nope.
+
+        2 runs, 2 assertions, 2 failures, 0 errors, 0 skips
+      OUT
+
+      tests, summary = TestRunnerService.parse_minitest_output(raw, repo_path: "/repo")
+      by_name = tests.to_h { |t| [t[:name], t] }
+
+      assert_equal "test/models/user_test.rb", by_name["UserTest#test_broken"][:file]
+      assert_equal 12, by_name["UserTest#test_broken"][:line]
+      assert_equal "test/models/order_test.rb", by_name["OrderTest#test_also_broken"][:file]
+      assert_equal 2, summary[:failed]
+    end
+
+    test "parse_minitest_output drops a path outside the workspace" do
+      raw = <<~OUT
+          1) Error:
+        GemTest#test_x [/usr/lib/ruby/gems/foo/test_foo.rb:9]:
+        Boom.
+      OUT
+
+      tests, = TestRunnerService.parse_minitest_output(raw, repo_path: "/repo")
+      assert_nil tests.first[:file]
+      assert_equal 9, tests.first[:line]
+    end
   end
 end

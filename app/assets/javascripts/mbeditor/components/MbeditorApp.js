@@ -560,6 +560,11 @@ var MbeditorApp = function MbeditorApp() {
   var showProblemsPanel = _useStateProblems2[0];
   var setShowProblemsPanel = _useStateProblems2[1];
 
+  var _useStateTestRun = useState(false);
+  var _useStateTestRun2 = _slicedToArray(_useStateTestRun, 2);
+  var showTestRunPanel = _useStateTestRun2[0];
+  var setShowTestRunPanel = _useStateTestRun2[1];
+
   // Error/warning tallies across the open tabs, mirrored into the status bar.
   var _useStateProblemCounts = useState({ errors: 0, warnings: 0 });
   var _useStateProblemCounts2 = _slicedToArray(_useStateProblemCounts, 2);
@@ -1260,6 +1265,12 @@ var MbeditorApp = function MbeditorApp() {
       }
       if (workspace && typeof workspace.redmineEnabled === 'boolean') {
         setRedmineEnabled(workspace.redmineEnabled);
+      }
+      if (workspace && (workspace.testTimeout || workspace.testAllTimeout)) {
+        FileService.setTestTimeouts({
+          test: workspace.testTimeout,
+          testAll: workspace.testAllTimeout
+        });
       }
       if (workspace && typeof workspace.testAvailable === 'boolean') {
         setTestAvailable(workspace.testAvailable);
@@ -3726,6 +3737,10 @@ var MbeditorApp = function MbeditorApp() {
 
   var toggleLogPanel = function toggleLogPanel() {
     setShowLogPanel(function (prev) { return !prev; });
+  };
+
+  var toggleTestRunPanel = function toggleTestRunPanel() {
+    setShowTestRunPanel(function (prev) { return !prev; });
   };
 
   var toggleProblemsPanel = function toggleProblemsPanel() {
@@ -6369,6 +6384,12 @@ var MbeditorApp = function MbeditorApp() {
         onOpenFile: function (path, line, col) {
           handleSelectFile(path, path.split('/').pop(), line, col);
         }
+      }),
+      showTestRunPanel && !zenMode && React.createElement(window.TestRunPanel, {
+        onClose: function () { setShowTestRunPanel(false); },
+        onOpenFile: function (path, line, col) {
+          handleSelectFile(path, path.split('/').pop(), line, col);
+        }
       })
       ),
 
@@ -6434,6 +6455,19 @@ var MbeditorApp = function MbeditorApp() {
           style: { marginLeft: "8px" }
         }),
         React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.warnings)
+      ),
+      // Gated on the same probe as the per-file Test button: a project with no
+      // test directory has nothing for this to run.
+      testAvailable && React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "statusbar-btn statusbar-testrun" + (showTestRunPanel ? " active" : ""),
+          onClick: toggleTestRunPanel,
+          title: "Run the whole test suite"
+        },
+        React.createElement("i", { className: "fas fa-flask" }),
+        React.createElement("span", null, " Tests")
       ),
       // ruby-lsp indicator. Hidden entirely when ruby-lsp was never available
       // and nothing has gone wrong — a permanent "off" badge in a project with
