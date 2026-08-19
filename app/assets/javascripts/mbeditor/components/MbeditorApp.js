@@ -6389,6 +6389,14 @@ var MbeditorApp = function MbeditorApp() {
         onClose: function () { setShowTestRunPanel(false); },
         onOpenFile: function (path, line, col) {
           handleSelectFile(path, path.split('/').pop(), line, col);
+        },
+        // A suite result spans many files, so there is no single testPanelFile
+        // for it — each entry carries its own, and EditorPanel matches per
+        // entry. Clearing it here keeps the per-file modal from labelling a
+        // suite result with a file it did not come from.
+        onResult: function (res) {
+          setTestResult(res);
+          setTestPanelFile(null);
         }
       })
       ),

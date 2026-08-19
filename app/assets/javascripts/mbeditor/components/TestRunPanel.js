@@ -83,9 +83,25 @@ var TestRunPanel = (function () {
   var Panel = function TestRunPanelComponent(_ref) {
     var onClose = _ref.onClose;
     var onOpenFile = _ref.onOpenFile;
+    // Hands the result to the app so the editors can draw the same inline
+    // pass/fail zones a per-file run draws. Without it, opening a failing file
+    // from this drawer showed a bare editor.
+    var onResult = _ref.onResult;
 
     var _result = React.useState(loadCached);
     var result = _result[0], setResult = _result[1];
+
+    // Kept in a ref so the publish effect below can fire on mount without
+    // listing onResult (a fresh closure every render) as a dependency.
+    var onResultRef = React.useRef(onResult);
+    onResultRef.current = onResult;
+
+    // Publish whatever the drawer is showing, including a result restored from
+    // the cache on mount — reopening the drawer should put the decorations
+    // back, not just the list.
+    React.useEffect(function () {
+      if (onResultRef.current) onResultRef.current(result);
+    }, [result]);
     var _running = React.useState(false);
     var running = _running[0], setRunning = _running[1];
     var _showRaw = React.useState(false);
