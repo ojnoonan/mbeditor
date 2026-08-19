@@ -10,6 +10,11 @@ module Mbeditor
   # Follows the same process-group kill pattern used by the lint endpoint to
   # enforce a configurable timeout.
   module TestRunnerService
+    # Cap on the output shipped to the browser. A whole-suite run emits
+    # megabytes of it, and the tail is the part that matters (the failure list
+    # and the summary). Parsing still sees the full output.
+    MAX_RAW_BYTES = 256_000
+
     module_function
 
     # Run the test file at +test_path+ inside +repo_path+.
@@ -32,7 +37,7 @@ module Mbeditor
         framework: framework.to_s,
         summary: summary,
         tests: tests,
-        raw: raw
+        raw: truncate_raw(raw)
       }
     rescue ProcessRunner::TimeoutError
       error_result("Test run timed out after #{timeout} seconds")
@@ -58,7 +63,7 @@ module Mbeditor
         framework: framework.to_s,
         summary: summary,
         tests: tests,
-        raw: raw
+        raw: truncate_raw(raw)
       }
     rescue ProcessRunner::TimeoutError
       error_result("Test run timed out after #{timeout} seconds")
@@ -227,6 +232,14 @@ module Mbeditor
     def execute_with_timeout(repo_path, cmd, timeout)
       result = ProcessRunner.call(cmd, timeout: timeout, chdir: repo_path)
       result[:stdout] + result[:stderr]
+    end
+
+    # Keeps the tail. byteslice can cut a multi-byte character in half, so the
+    # result is scrubbed before it goes anywhere near JSON.
+    def truncate_raw(raw)
+      return raw if raw.bytesize <= MAX_RAW_BYTES
+
+      raw.byteslice(-MAX_RAW_BYTES, MAX_RAW_BYTES).scrub
     end
 
     def parse_output(raw, framework, repo_path: nil)

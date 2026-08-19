@@ -218,6 +218,12 @@ module Mbeditor
       def scope_lint(workspace_root, source)
         return [] unless available? && Mbeditor.configuration.js_scope_lint != false
 
+        # Gathered before taking MUTEX: both walk the workspace under their own
+        # locks, and holding this one across them serialises every JS save
+        # behind whichever save is rebuilding the program.
+        program = JsProgramService.call(workspace_root.to_s)
+        globals = JsGlobalsService.call(workspace_root.to_s)
+
         MUTEX.synchronize do
           begin
             ctx = context
@@ -227,7 +233,7 @@ module Mbeditor
             @lint_helpers_loaded = true
             return [] unless ctx.eval("typeof __mbLint !== 'undefined'")
 
-            names = whitelist(ctx, workspace_root)
+            names = whitelist(ctx, program, globals)
             findings = ctx.eval("__mbLint.lint(#{source.to_json}, #{names.to_json}, #{MAX_SCOPE_FINDINGS})")
 
             @checks_run = (@checks_run || 0) + 1
@@ -268,6 +274,13 @@ module Mbeditor
       end
 
       def reset_context!
+        # Dropping the reference leaks the V8 isolate until the GC finalizer
+        # runs; dispose releases it now.
+        begin
+          @context&.dispose
+        rescue StandardError
+          nil
+        end
         @context = nil
         @checks_run = 0
         @lint_helpers_loaded = false
@@ -278,12 +291,11 @@ module Mbeditor
       # plus the browser and React layers. Per-file declaration names are
       # cached by content digest, so a steady-state save re-parses only the
       # files that changed since the last lint.
-      def whitelist(ctx, workspace_root)
+      def whitelist(ctx, program, globals)
         names = []
         @decl_cache ||= {}
         live = {}
 
-        program = JsProgramService.call(workspace_root.to_s)
         Array(program[:files]).each do |f|
           digest = f[:content].hash
           entry = @decl_cache[f[:path]]
@@ -293,7 +305,6 @@ module Mbeditor
         end
         @decl_cache = live
 
-        globals = JsGlobalsService.call(workspace_root.to_s)
         names.concat(Array(globals[:symbols]).map { |s| s[:name].to_s })
 
         (names + BROWSER_GLOBALS + REACT_GLOBALS).uniq

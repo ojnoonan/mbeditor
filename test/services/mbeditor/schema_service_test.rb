@@ -184,6 +184,26 @@ module Mbeditor
       assert_equal false, name_col[:null]
     end
 
+    test "structure.sql indexes carry unique only for CREATE UNIQUE INDEX" do
+      FileUtils.rm(File.join(@workspace, "db", "schema.rb"))
+
+      structure_sql = <<~SQL
+        CREATE TABLE public.users (
+            id bigint NOT NULL,
+            email character varying NOT NULL
+        );
+
+        CREATE UNIQUE INDEX index_users_on_email ON public.users (email);
+        CREATE INDEX index_users_on_id ON public.users (id);
+      SQL
+
+      File.write(File.join(@workspace, "db", "structure.sql"), structure_sql)
+
+      indexes = call("User")[:indexes]
+      assert indexes.find { |i| i[:name] == "index_users_on_email" }[:unique]
+      refute indexes.find { |i| i[:name] == "index_users_on_id" }[:unique]
+    end
+
     test "parses structure.sql (MySQL format)" do
       FileUtils.rm(File.join(@workspace, "db", "schema.rb"))
 

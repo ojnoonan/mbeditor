@@ -87,23 +87,25 @@ module Mbeditor
     # case is folded. Defaults to the resolved workspace root.
     def initialize(patterns, root: nil)
       @fold_case = self.class.case_insensitive_filesystem?(root || WorkspaceRootResolver.call)
-      @patterns  = patterns.map { |pattern| normalize(pattern.to_s) }.reject(&:empty?)
+      normalized = patterns.map { |pattern| normalize(pattern.to_s) }.reject(&:empty?)
+      # Split by shape once: a path pattern is compared against the whole
+      # relative path, a bare name against its segments. This runs per file of
+      # a workspace walk, so neither the split nor the basename belongs in the
+      # per-pattern loop.
+      @path_patterns, @name_patterns = normalized.partition { |pattern| pattern.include?("/") }
     end
 
     def excluded?(relative_path)
       rel = normalize(relative_path.to_s)
-      @patterns.any? { |pattern| matches?(pattern, rel) }
+      return true if @path_patterns.any? { |pattern| rel == pattern || rel.start_with?("#{pattern}/") }
+      return false if @name_patterns.empty?
+
+      segments = rel.split("/")
+      basename = File.basename(rel)
+      @name_patterns.any? { |pattern| basename == pattern || segments.include?(pattern) }
     end
 
     private
-
-    def matches?(pattern, rel)
-      if pattern.include?("/")
-        rel == pattern || rel.start_with?("#{pattern}/")
-      else
-        File.basename(rel) == pattern || rel.split("/").include?(pattern)
-      end
-    end
 
     # "/" is ASCII and survives both steps, so the caller can normalize a whole
     # path in one pass and split it afterwards.

@@ -355,6 +355,19 @@ module Mbeditor
       end
     end
 
+    test "truncate_raw caps oversized output at the tail and keeps it valid UTF-8" do
+      short = "all good\n"
+      assert_same short, TestRunnerService.truncate_raw(short)
+
+      # An odd byte offset so the cut lands mid-character.
+      raw = "x" + ("é" * 200_000)
+      out = TestRunnerService.truncate_raw(raw)
+
+      assert_operator out.bytesize, :<=, TestRunnerService::MAX_RAW_BYTES
+      assert out.valid_encoding?, "a split multi-byte character must be scrubbed"
+      assert out.end_with?("é")
+    end
+
     test "execute_with_timeout raises ProcessRunner::TimeoutError when subprocess exceeds timeout" do
       Dir.mktmpdir do |dir|
         assert_raises(ProcessRunner::TimeoutError) do

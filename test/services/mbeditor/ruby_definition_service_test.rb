@@ -412,6 +412,22 @@ module Mbeditor
       end
     end
 
+    test "persisting is debounced so back-to-back lookups don't rewrite the whole cache" do
+      2.times { |i| write_rb("d#{i}.rb", "def d#{i}\nend\n") }
+
+      with_cache_path do |path|
+        svc = RubyDefinitionService.new(@workspace, nil)
+        svc.send(:cache_entry_for, File.join(@workspace, "d0.rb"))
+        RubyDefinitionService.send(:persist_cache)
+        assert_equal 1, JSON.parse(File.read(path)).length
+
+        svc.send(:cache_entry_for, File.join(@workspace, "d1.rb"))
+        RubyDefinitionService.send(:persist_cache)
+        assert_equal 1, JSON.parse(File.read(path)).length,
+                     "a second write inside PERSIST_INTERVAL is skipped"
+      end
+    end
+
     test "definitions still resolve after the cache has been trimmed" do
       write_rb("target.rb", "def findable_method\nend\n")
 

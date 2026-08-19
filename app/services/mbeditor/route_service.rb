@@ -12,13 +12,6 @@ module Mbeditor
   module RouteService
     module_function
 
-    # Actions with no route are worth calling out, but only for controllers Rails
-    # would actually dispatch to. These are the inherited ones every controller
-    # has and nobody routes.
-    NON_ACTION_METHODS = %w[
-      new inspect method_of to_s hash class dup freeze
-    ].freeze
-
     # "app/controllers/admin/users_controller.rb" -> "admin/users", which is the
     # key Rails stores in a route's defaults.
     def controller_key(relative_path)

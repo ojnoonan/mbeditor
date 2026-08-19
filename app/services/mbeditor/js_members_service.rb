@@ -18,6 +18,8 @@ module Mbeditor
     def initialize(symbol, workspace_root)
       @symbol         = symbol.to_s
       @workspace_root = workspace_root.to_s.chomp("/")
+      # Compiled once: this is matched against every line of search output.
+      @member_regex   = /#{Regexp.escape(@symbol)}\.(?:prototype\.)?([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/
     end
 
     def call
@@ -50,8 +52,7 @@ module Mbeditor
         snippet  = m[3].strip
         next unless abs_path.start_with?(@workspace_root)
 
-        s = Regexp.escape(@symbol)
-        member_match = snippet.match(/#{s}\.(?:prototype\.)?([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/)
+        member_match = snippet.match(@member_regex)
         next unless member_match
 
         name = member_match[1]

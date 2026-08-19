@@ -23,6 +23,12 @@ module Mbeditor
     MAX_RESULTS = 10_000
     RESULT_CACHE_TTL = 30 # seconds; also invalidated on mbeditor file mutations
     RESULT_CACHE_MAX_ENTRIES = 3
+    # A user-supplied regex is matched in-process, and Timeout.timeout cannot
+    # interrupt a CRuby regex — only Regexp's own timeout (Ruby >= 3.2) can.
+    # Below that the gemspec floor (3.0) leaves a catastrophic pattern
+    # unguarded, which is the pre-existing behaviour.
+    REGEXP_TIMEOUT = 1 # seconds
+    REGEXP_TIMEOUT_SUPPORTED = Regexp.method_defined?(:timeout)
 
     STATE_MUTEX = Mutex.new
     private_constant :STATE_MUTEX
@@ -112,6 +118,10 @@ module Mbeditor
           else
             @result_cache = {}
           end
+          # Bumped so a scan already in flight can tell its results are stale
+          # and skip filling the cache it just emptied. One counter for every
+          # root: an unrelated invalidation only costs a cache miss.
+          @cache_generation = (@cache_generation || 0) + 1
         end
       end
 
@@ -153,7 +163,14 @@ module Mbeditor
               content = File.binread(full_path).force_encoding("UTF-8")
                            .encode("UTF-8", invalid: :replace, undef: :replace)
               replacements_in_file = content.scan(pattern).length
-              new_content = content.gsub(pattern, replacement)
+              # Block form for a literal search: the two-argument gsub expands
+              # \1, \& and \\ in the replacement, which a non-regex replace
+              # must insert verbatim.
+              new_content = if use_regex
+                content.gsub(pattern, replacement)
+              else
+                content.gsub(pattern) { replacement }
+              end
               if new_content != content
                 File.binwrite(full_path, new_content.encode("UTF-8", invalid: :replace, undef: :replace))
                 files_affected << rel_path
@@ -185,10 +202,12 @@ module Mbeditor
         key = [workspace_root.to_s, query, use_regex, match_case, whole_word,
                Array(excluded_paths).map(&:to_s).sort]
         now = monotonic
-        STATE_MUTEX.synchronize do
+        generation = STATE_MUTEX.synchronize do
           @result_cache ||= {}
           entry = @result_cache[key]
           return entry[:data] if entry && (now - entry[:ts]) < RESULT_CACHE_TTL
+
+          @cache_generation ||= 0
         end
 
         data = scan(workspace_root, query, use_regex: use_regex, match_case: match_case,
@@ -198,6 +217,10 @@ module Mbeditor
         # Don't cache superseded scans — their results are truncated by the kill.
         unless data[:superseded]
           STATE_MUTEX.synchronize do
+            # A save landed while this scan ran: these rows predate it, and
+            # storing them now would serve pre-save matches for a full TTL.
+            next if (@cache_generation ||= 0) != generation
+
             @result_cache[key] = { ts: monotonic, data: data }
             @result_cache.delete(@result_cache.keys.first) while @result_cache.length > RESULT_CACHE_MAX_ENTRIES
           end
@@ -446,11 +469,14 @@ module Mbeditor
 
       def build_pattern(query, use_regex:, match_case:, whole_word:)
         flags = match_case ? 0 : Regexp::IGNORECASE
-        if use_regex
-          Regexp.new(whole_word ? "\\b(?:#{query})\\b" : query, flags)
+        source = if use_regex
+          whole_word ? "\\b(?:#{query})\\b" : query
         else
-          Regexp.new(whole_word ? "\\b#{Regexp.escape(query)}\\b" : Regexp.escape(query), flags)
+          whole_word ? "\\b#{Regexp.escape(query)}\\b" : Regexp.escape(query)
         end
+        return Regexp.new(source, flags, timeout: REGEXP_TIMEOUT) if REGEXP_TIMEOUT_SUPPORTED
+
+        Regexp.new(source, flags)
       end
 
       def relative_path(absolute_path, workspace_root)

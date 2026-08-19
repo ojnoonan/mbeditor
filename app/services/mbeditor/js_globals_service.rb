@@ -67,6 +67,13 @@ module Mbeditor
         symbols = {}
         truncated = false
 
+        # Seeded first so the cap can never drop them: they are the names the
+        # host app declared it needs, and appending them after the scan meant
+        # first(MAX_SYMBOLS) silently discarded every one on a big workspace.
+        configured_identifiers.each do |name|
+          symbols[name] = { name: name, file: nil, line: nil, kind: "configured" }
+        end
+
         CodeSearchService.call(PATTERN, root).each do |raw|
           if symbols.length >= MAX_SYMBOLS
             truncated = true
@@ -88,10 +95,6 @@ module Mbeditor
           extract_identifiers(snippet).each do |name, kind|
             symbols[name] ||= { name: name, file: rel, line: line, kind: kind }
           end
-        end
-
-        configured_identifiers.each do |name|
-          symbols[name] ||= { name: name, file: nil, line: nil, kind: "configured" }
         end
 
         {

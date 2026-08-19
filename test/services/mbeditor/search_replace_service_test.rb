@@ -90,6 +90,15 @@ module Mbeditor
       assert_equal "bar\nbar\nbaz\n", File.read(File.join(@workspace, "lib/app.rb"))
     end
 
+    test ".replace inserts a literal replacement verbatim when use_regex is false" do
+      write_file("lib/paths.rb", "PREFIX\n")
+
+      result = replace("PREFIX", "C:\\\\dir \\1 \\& \\0")
+
+      assert_equal 1, result[:replaced_count]
+      assert_equal "C:\\\\dir \\1 \\& \\0\n", File.read(File.join(@workspace, "lib/paths.rb"))
+    end
+
     test ".replace with whole_word:true only replaces complete words" do
       write_file("lib/words.rb", "admin administrator superadmin\n")
 
@@ -647,6 +656,37 @@ module Mbeditor
                                                 use_regex: false, match_case: true, whole_word: false, excluded_paths: [])
       assert_equal 2, second[:total_count]
     ensure
+      SearchReplaceService.invalidate_cache(@workspace)
+    end
+
+    test "a user regex compiles with a Regexp-level timeout" do
+      skip "Regexp timeout needs Ruby >= 3.2" unless SearchReplaceService::REGEXP_TIMEOUT_SUPPORTED
+
+      pattern = SearchReplaceService.send(:build_pattern, "(a+)+b",
+                                          use_regex: true, match_case: true, whole_word: false)
+      assert_equal SearchReplaceService::REGEXP_TIMEOUT, pattern.timeout
+    end
+
+    test "a scan that finishes after an invalidation does not fill the cache" do
+      write_file("app.rb", "RACE_NEEDLE\n")
+      scans = 0
+      singleton = class << SearchReplaceService; self; end
+      singleton.alias_method :__orig_scan, :scan
+      SearchReplaceService.define_singleton_method(:scan) do |*args, **kwargs|
+        result = __orig_scan(*args, **kwargs)
+        scans += 1
+        # Stands in for a save landing while the subprocess was still running.
+        SearchReplaceService.invalidate_cache(args.first)
+        result
+      end
+
+      2.times { search("RACE_NEEDLE") }
+
+      assert_equal 2, scans, "results predating the invalidation must not be cached"
+    ensure
+      singleton.remove_method :scan
+      singleton.alias_method :scan, :__orig_scan
+      singleton.remove_method :__orig_scan
       SearchReplaceService.invalidate_cache(@workspace)
     end
 

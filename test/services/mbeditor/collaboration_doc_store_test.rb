@@ -166,7 +166,7 @@ module Mbeditor
 
     def test_concurrent_record_update_records_all_deltas
       threads = 20
-      per_thread = 100
+      per_thread = 20 # stays under MAX_DELTAS so nothing is dropped by the cap
 
       workers = Array.new(threads) do |t|
         Thread.new do
@@ -176,6 +176,16 @@ module Mbeditor
       workers.each(&:join)
 
       assert_equal threads * per_thread, CollaborationDocStore.state_for("hot.rb")[:deltas].size
+    end
+
+    # the delta buffer is capped, dropping the oldest first
+
+    def test_record_update_caps_the_delta_buffer
+      (CollaborationDocStore::MAX_DELTAS + 10).times { |i| CollaborationDocStore.record_update("hot.rb", "d#{i}") }
+
+      deltas = CollaborationDocStore.state_for("hot.rb")[:deltas]
+      assert_equal CollaborationDocStore::MAX_DELTAS, deltas.size
+      assert_equal "d10", deltas.first
     end
 
     # reset! drops all cached rooms (test hook)

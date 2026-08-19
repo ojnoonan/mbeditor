@@ -34,6 +34,8 @@ module Mbeditor
     # Upper bound on cached files. Entries carry full file contents, so this
     # caps both the on-disk JSON and the resident hash.
     MAX_CACHE_ENTRIES = 2_000
+    # Minimum gap between disk writes of that cache (seconds).
+    PERSIST_INTERVAL = 30
 
     # In-process file-index cache.
     # Structure: { absolute_path => {
@@ -63,6 +65,7 @@ module Mbeditor
       def clear_cache!
         @mutex.synchronize { @file_cache.clear; @cache_loaded = false }
         @last_evict_at = nil
+        @last_persist_at = nil
         path = @cache_path.to_s
         File.delete(path) if !path.empty? && File.exist?(path)
       rescue StandardError
@@ -154,10 +157,18 @@ module Mbeditor
       end
 
       # Atomically write the in-memory cache to disk (tmp-file + rename).
+      # Debounced: the snapshot carries every cached file's full source, so a
+      # lookup that parsed one new file would otherwise rewrite tens of MB of
+      # JSON. Skipping a write only delays it — the entries stay in memory and
+      # a later lookup flushes them.
       def persist_cache
         path = @cache_path.to_s
         return if path.empty?
 
+        now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        return if @last_persist_at && (now - @last_persist_at) < PERSIST_INTERVAL
+
+        @last_persist_at = now
         snapshot = @mutex.synchronize do
           # Each entry holds the file's full source lines, so an uncapped cache
           # grows to tens of MB on a large workspace and is rewritten in full on
@@ -263,7 +274,10 @@ module Mbeditor
                 signature: (cached[:lines][def_line - 1] || "").strip,
                 comments:  extract_comments(cached[:lines], def_line)
               }
-              return results if results.length >= MAX_RESULTS
+              if results.length >= MAX_RESULTS
+                persist_cache if @new_entries
+                return results
+              end
             end
           rescue StandardError
             # Malformed file or unreadable; skip silently
@@ -284,14 +298,19 @@ module Mbeditor
 
     def evict_deleted_cache_entries
       now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      stale_keys = @shared_mutex.synchronize do
+      keys = @shared_mutex.synchronize do
         last = self.class.instance_variable_get(:@last_evict_at)
         next nil if last && (now - last) < EVICT_INTERVAL
 
         self.class.instance_variable_set(:@last_evict_at, now)
-        @shared_cache.keys.select { |p| !File.exist?(p) }
+        @shared_cache.keys
       end
-      return if stale_keys.nil? || stale_keys.empty?
+      return if keys.nil?
+
+      # stat()ing outside the lock: up to MAX_CACHE_ENTRIES syscalls, and every
+      # other cache reader would otherwise wait on them.
+      stale_keys = keys.reject { |p| File.exist?(p) }
+      return if stale_keys.empty?
 
       @shared_mutex.synchronize { stale_keys.each { |k| @shared_cache.delete(k) } }
       @new_entries = true

@@ -83,8 +83,8 @@ module Mbeditor
         skipped = []
         total   = 0
 
-        each_candidate(root) do |rel, abs|
-          if File.size(abs) > MAX_FILE_BYTES
+        each_candidate(root) do |rel, abs, stat|
+          if stat.size > MAX_FILE_BYTES
             skipped << { path: rel, reason: "larger than #{MAX_FILE_BYTES} bytes" }
             next
           end
@@ -127,12 +127,16 @@ module Mbeditor
             abs = File.join(dir, name)
             rel = abs.delete_prefix(root).delete_prefix("/")
             next if m.excluded?(rel)
-            next if File.symlink?(abs)
 
-            if File.directory?(abs)
+            # One lstat answers symlink?, directory? and size — and lstat is
+            # exactly right here, since a symlink must not be followed.
+            stat = lstat(abs)
+            next if stat.nil? || stat.symlink?
+
+            if stat.directory?
               stack.push(abs)
             elsif name.match?(SOURCE_EXT) && !name.match?(MINIFIED_NAME)
-              yield rel, abs
+              yield rel, abs, stat
             end
           end
         end
@@ -142,6 +146,12 @@ module Mbeditor
         Dir.children(dir)
       rescue SystemCallError
         []
+      end
+
+      def lstat(abs)
+        File.lstat(abs)
+      rescue SystemCallError
+        nil
       end
 
       def matcher(root)

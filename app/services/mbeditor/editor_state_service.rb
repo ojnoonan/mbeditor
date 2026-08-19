@@ -22,18 +22,13 @@ module Mbeditor
     end
 
     def read_state
-      path = workspace_path
-      return {} unless File.exist?(path)
-      JSON.parse(File.read(path))
+      read_json(workspace_path)
     rescue JSON::ParserError, Errno::ENOENT
       {}
     end
 
     def read_branch_state(branch)
-      path = branch_states_path
-      return {} unless File.exist?(path)
-      all = JSON.parse(File.read(path))
-      all[branch] || {}
+      read_json(branch_states_path)[branch] || {}
     rescue JSON::ParserError, Errno::ENOENT
       {}
     end
@@ -44,17 +39,14 @@ module Mbeditor
       raise PayloadTooLargeError, "State payload too large" if payload_json.bytesize > STATE_MAX_BYTES
       path = branch_states_path
       FileUtils.mkdir_p(path.dirname)
-      File.open(path, File::RDWR | File::CREAT) do |f|
-        lock_exclusive!(f)
-        existing = f.size > 0 ? JSON.parse(f.read) : {}
+      with_lock(path) do
+        existing = read_json(path)
         # Auto-save fires on a timer even with no changes; skip the full-file
         # rewrite when this branch's entry is already identical.
-        break if existing[branch] == JSON.parse(payload_json)
+        next if existing[branch] == JSON.parse(payload_json)
 
         existing[branch] = state
-        f.truncate(0)
-        f.rewind
-        f.write(existing.to_json)
+        atomic_write(path, existing.to_json)
       end
       nil
     end
@@ -63,10 +55,9 @@ module Mbeditor
       path = branch_states_path
       return [] unless File.exist?(path)
       pruned = []
-      File.open(path, File::RDWR) do |f|
-        lock_exclusive!(f)
+      with_lock(path) do
         all = begin
-          JSON.parse(f.read)
+          read_json(path)
         rescue JSON::ParserError => e
           Rails.logger.error("[mbeditor] EditorStateService#prune_branch_states: discarding corrupt branch_states JSON at #{path}: #{e.message}")
           {}
@@ -74,9 +65,7 @@ module Mbeditor
         pruned = all.keys - active_branches
         if pruned.any?
           pruned.each { |b| all.delete(b) }
-          f.truncate(0)
-          f.rewind
-          f.write(all.to_json)
+          atomic_write(path, all.to_json)
         end
       end
       pruned
@@ -87,16 +76,37 @@ module Mbeditor
       raise PayloadTooLargeError, "State payload too large" if payload.bytesize > STATE_MAX_BYTES
       path = workspace_path
       FileUtils.mkdir_p(path.dirname)
-      File.open(path, File::RDWR | File::CREAT) do |f|
-        lock_exclusive!(f)
-        f.truncate(0)
-        f.rewind
-        f.write(payload)
-      end
+      with_lock(path) { atomic_write(path, payload) }
       nil
     end
 
     private
+
+    # Readers take no lock at all: every write lands by rename, so a read sees
+    # either the whole previous file or the whole new one — never the empty
+    # window a truncate-then-write leaves, which readers swallowed as {}.
+    def read_json(path)
+      return {} unless File.exist?(path)
+
+      raw = File.read(path)
+      raw.empty? ? {} : JSON.parse(raw)
+    end
+
+    def atomic_write(path, payload)
+      tmp = "#{path}.tmp"
+      File.write(tmp, payload)
+      File.rename(tmp, path)
+    end
+
+    # The lock sits on a sidecar file, not on the state file: the state file is
+    # replaced by rename, so a lock held on the inode it had before the write
+    # would exclude nobody afterwards.
+    def with_lock(path)
+      File.open("#{path}.lock", File::RDWR | File::CREAT) do |f|
+        lock_exclusive!(f)
+        yield
+      end
+    end
 
     # Acquire an exclusive lock without blocking forever. Retries the
     # non-blocking flock until @lock_timeout elapses, then raises so the caller
