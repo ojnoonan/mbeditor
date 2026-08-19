@@ -90,6 +90,82 @@ var FileImport = (function () {
     return readBatch();
   }
 
+  // <input type="file"> equivalent of collectEntries. A directory pick fills
+  // webkitRelativePath with the path *below* the chosen folder, including that
+  // folder's own name; a plain multi-file pick leaves it empty.
+  function entriesFromFileList(fileList) {
+    var out = [];
+    for (var i = 0; i < (fileList || []).length; i++) {
+      var f = fileList[i];
+      out.push({ file: f, relativePath: stripLeadingSlash(f.webkitRelativePath || f.name) });
+    }
+    return {
+      entries: out.slice(0, MAX_ENTRIES),
+      truncated: out.length > MAX_ENTRIES,
+      foldersSkipped: false
+    };
+  }
+
+  // Where in the workspace does this set of files already live?
+  //
+  // A folder picked as `ux/component/` is almost never meant for the workspace
+  // root — its real home is whatever prefix makes the path resolve, e.g.
+  // `app/assets/javascripts`. So every entry's relative path is matched as a
+  // *suffix* of the existing tree: a file suffix hit means "this exact file is
+  // already there" (the replace case), a directory hit on the entry's parent
+  // means "the structure is there, this file is new". Files score higher so
+  // an exact replace target sorts above a merely plausible folder.
+  //
+  // docs: [{ path, type: 'file' | 'dir' }] — SearchService's index, which
+  // already has excluded paths removed.
+  // => [{ prefix, files, dirs, score }] best first, root ('') never included.
+  //
+  // ponytail: O(entries x docs) scan — 100 x ~2000 measures well under a
+  // frame. Index docs by basename if a tree ever makes it drag.
+  function suggestDestinations(entries, docs, limit) {
+    var scores = {};
+
+    var note = function (prefix, key) {
+      if (!prefix) return; // the root is always offered separately
+      var s = scores[prefix] || (scores[prefix] = { prefix: prefix, files: 0, dirs: 0 });
+      s[key] += 1;
+    };
+
+    // The prefix that makes `suffix` land on `path`, or null if it doesn't.
+    var prefixFor = function (path, suffix) {
+      if (!suffix || path.length <= suffix.length) return null;
+      var cut = path.length - suffix.length;
+      if (path.charAt(cut - 1) !== '/') return null;
+      return path.slice(cut) === suffix ? path.slice(0, cut - 1) : null;
+    };
+
+    (entries || []).forEach(function (e) {
+      var rel = stripLeadingSlash(e.relativePath);
+      var slash = rel.lastIndexOf('/');
+      var dir = slash === -1 ? '' : rel.slice(0, slash);
+
+      (docs || []).forEach(function (doc) {
+        if (doc.type === 'file') {
+          note(prefixFor(doc.path, rel), 'files');
+        } else if (dir) {
+          note(prefixFor(doc.path, dir), 'dirs');
+        }
+      });
+    });
+
+    return Object.keys(scores)
+      .map(function (k) {
+        var s = scores[k];
+        s.score = s.files * 2 + s.dirs;
+        return s;
+      })
+      .sort(function (a, b) {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.prefix.length - b.prefix.length;
+      })
+      .slice(0, limit || 5);
+  }
+
   function stripLeadingSlash(p) {
     return String(p || '').replace(/^\/+/, '');
   }
@@ -136,6 +212,8 @@ var FileImport = (function () {
     MAX_ENTRIES: MAX_ENTRIES,
     hasExternalFiles: hasExternalFiles,
     collectEntries: collectEntries,
+    entriesFromFileList: entriesFromFileList,
+    suggestDestinations: suggestDestinations,
     joinPath: joinPath,
     buildFormData: buildFormData,
     conflictedEntries: conflictedEntries

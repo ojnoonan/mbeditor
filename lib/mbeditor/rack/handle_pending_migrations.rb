@@ -30,12 +30,22 @@ module Mbeditor
           # files. Assets are referenced by their unfingerprinted paths, which
           # Sprockets resolves in development (the only env mbeditor runs in).
           # The banner appears as soon as the first XHR fires.
-          base = env["SCRIPT_NAME"].to_s.sub(%r{/$}, "")
-          [200, { "Content-Type" => "text/html; charset=utf-8" }, [editor_shell_html(base)]]
+          #
+          # The base comes from MountPath, not SCRIPT_NAME: this middleware runs
+          # above the router, so SCRIPT_NAME is still "" and the engine-served
+          # URLs in the shell (/monaco-editor/...) were emitted without the
+          # mount prefix and 404'd.
+          [200, { "Content-Type" => "text/html; charset=utf-8" }, [editor_shell_html(mount_base)]]
         end
       end
 
       private
+
+      def mount_base
+        Mbeditor::MountPath.resolve.to_s.sub(%r{/$}, "")
+      rescue StandardError
+        ""
+      end
 
       def editor_shell_html(base)
         prettier_script_urls = %w[

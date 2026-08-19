@@ -29,17 +29,61 @@ module Mbeditor
       match[1]
     end
 
+    MUTEX = Mutex.new
+    private_constant :MUTEX
+
+    # Matches the other read-through caches in this engine (FileTreeService 15s,
+    # GitInfoService 10s). A write invalidates it outright, so the TTL only ever
+    # bounds staleness from a route change made outside the editor.
+    CACHE_TTL = 10
+
     # => { "show" => [{ verb:, path:, name: }], ... }
+    #
+    # Cached because every call walks the host app's ENTIRE route set, and the
+    # caller is the inline route hints — which re-request on every activation of
+    # a controller tab and on every external content change. Switching between
+    # two controllers repeatedly was therefore a full O(routes) scan per switch,
+    # and a large app has thousands of routes. The scan itself is unchanged;
+    # it just stops happening once per glance.
     def for_controller(key)
       return {} if key.nil? || key.empty?
       return {} unless defined?(Rails) && Rails.respond_to?(:application) && Rails.application
 
-      routes_for(key)
+      cached = cached_routes(key)
+      return cached if cached
+
+      # Built outside the mutex: it runs arbitrary host-app route code, and
+      # holding the lock across it would serialise every other controller's
+      # lookup behind the slowest one.
+      computed = routes_for(key)
+      store_routes(key, computed)
+      computed
     rescue StandardError
       # A broken route set must not take the editor down with it — the file still
       # opens, just without hints.
       {}
     end
+
+    def invalidate
+      MUTEX.synchronize { @cache = {} }
+      nil
+    end
+
+    def cached_routes(key)
+      MUTEX.synchronize do
+        entry = (@cache ||= {})[key]
+        return entry[:data] if entry && (Process.clock_gettime(Process::CLOCK_MONOTONIC) - entry[:ts]) < CACHE_TTL
+      end
+      nil
+    end
+    private_class_method :cached_routes
+
+    def store_routes(key, data)
+      MUTEX.synchronize do
+        (@cache ||= {})[key] = { ts: Process.clock_gettime(Process::CLOCK_MONOTONIC), data: data }
+      end
+    end
+    private_class_method :store_routes
 
     def routes_for(key)
       out = {}

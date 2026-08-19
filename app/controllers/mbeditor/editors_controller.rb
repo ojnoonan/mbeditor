@@ -316,6 +316,10 @@ module Mbeditor
     end
 
     # GET /mbeditor/raw?path=... — send raw file directly (for images)
+    #
+    # ?download=1 flips the disposition to attachment, which is the whole of
+    # the explorer's "Download" action: the browser's own save dialog does the
+    # rest, so there is no separate endpoint and no client-side blob.
     def raw
       path = resolve_path(params[:path])
       return render json: { error: "Forbidden" }, status: :forbidden unless path
@@ -324,7 +328,7 @@ module Mbeditor
       size = File.size(path)
       return render_file_too_large(size) if size > FileOperationService::MAX_FILE_SIZE_BYTES
 
-      send_file path, disposition: "inline"
+      send_file path, disposition: params[:download].present? ? "attachment" : "inline"
     end
 
     # POST /mbeditor/file — save file
@@ -1268,6 +1272,9 @@ module Mbeditor
       SearchReplaceService.invalidate_cache(root)
       JsGlobalsService.invalidate(root)
       JsProgramService.invalidate(root)
+      # Cheap, and it means editing config/routes.rb refreshes the inline route
+      # hints on the next look rather than after the TTL.
+      RouteService.invalidate
       Thread.new do
         GitInfoService.invalidate(root)
       rescue => e

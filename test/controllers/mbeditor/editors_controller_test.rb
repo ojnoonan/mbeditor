@@ -1193,6 +1193,19 @@ module Mbeditor
       assert_equal "# Hello\n", response.body
     end
 
+    test "raw serves an attachment when download is requested" do
+      get "/mbeditor/raw", params: { path: "README.md", download: "1" }
+      assert_response :ok
+      assert_match(/\Aattachment/, response.headers["Content-Disposition"])
+      assert_match(/README\.md/, response.headers["Content-Disposition"])
+      assert_equal "# Hello\n", response.body
+    end
+
+    test "raw download still refuses a path outside the workspace" do
+      get "/mbeditor/raw", params: { path: "../secret", download: "1" }
+      assert_response :forbidden
+    end
+
     test "raw returns 404 for missing file" do
       get "/mbeditor/raw", params: { path: "nope.txt" }
       assert_response :not_found

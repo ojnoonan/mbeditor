@@ -302,6 +302,7 @@ var ProblemsPanel = (function () {
                     type: 'button',
                     className: 'ide-problems-item ide-problems-frame',
                     key: ex.id + ':' + i,
+                    title: 'Open ' + f.file + ':' + f.line,
                     'aria-label': 'Open ' + f.file + ' line ' + f.line,
                     onClick: function () { if (onOpenFile) onOpenFile(f.file, f.line, 1); }
                   },
@@ -340,6 +341,10 @@ var ProblemsPanel = (function () {
                         type: 'button',
                         className: 'ide-problems-item ide-problems-item-' + kind,
                         key: entry.path + ':' + marker.startLineNumber + ':' + index,
+                        // The message ellipsises in a short panel, so the full
+                        // text is on hover as well as on the label.
+                        title: marker.message + '\n' + entry.path + ':' + marker.startLineNumber +
+                          (item.code ? ' — ' + item.code : ''),
                         'aria-label': SEVERITY_LABEL[kind] + ': ' + marker.message +
                           ', ' + entry.path + ' line ' + marker.startLineNumber +
                           (item.code ? ', source: ' + item.code : ''),

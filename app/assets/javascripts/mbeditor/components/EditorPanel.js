@@ -1493,8 +1493,19 @@ var EditorPanel = function EditorPanel(_ref) {
     gitLineRefreshRef.current = refresh;
 
     // Immediate path for writes mbeditor made itself.
+    //
+    // Only when *this* file is one of the ones that changed: saving some other
+    // file cannot move this file's diff against HEAD. Refreshing regardless
+    // meant every open pane ran a git diff on every save anywhere in the
+    // workspace, so the cost of a save scaled with how many editors were open.
+    // A broadcast that names no paths still refreshes — that is the "something
+    // happened, re-check everything" case (a commit, a branch switch), which
+    // genuinely can change this file's diff without touching it.
     var hasSocket = typeof WebSocketService !== 'undefined' && WebSocketService.onFilesChanged;
-    var onChanged = hasSocket ? function () { refresh(); } : null;
+    var onChanged = hasSocket ? function (payload) {
+      if (payload && payload.paths && payload.paths.indexOf(tab.path) === -1) return;
+      refresh();
+    } : null;
     if (onChanged) WebSocketService.onFilesChanged(onChanged);
 
     return function () {
