@@ -4881,7 +4881,7 @@ var MbeditorApp = function MbeditorApp() {
     React.createElement(
       "div",
       { className: "ide-body", id: "ide-body-container" },
-      /* Activity bar — always visible, 48px wide */
+      /* Activity bar — always visible, 60px wide */
       !zenMode && React.createElement(
         "div",
         { className: "ide-activity-bar" },
