@@ -1823,8 +1823,12 @@ module Mbeditor
       singleton = class << Mbeditor::SearchReplaceService; self; end
       singleton.alias_method :__orig_rg_available?, :rg_available?
       Mbeditor::SearchReplaceService.define_singleton_method(:rg_available?) { false }
-      original_rg = Mbeditor::AvailabilityProbe.method(:rg)
-      Mbeditor::AvailabilityProbe.define_singleton_method(:rg) { false }
+      # Aliased rather than captured as a Method: a reload between here and the
+      # ensure re-points the constant at a new class, and rebinding the old
+      # Method to it raises "can't bind singleton method to a different class".
+      probe_singleton = class << Mbeditor::AvailabilityProbe; self; end
+      probe_singleton.alias_method :__orig_rg, :rg
+      probe_singleton.define_method(:rg) { false }
 
       get "/mbeditor/search", params: { q: "NEEDLE_TOKEN" }
       assert_response :ok
@@ -1839,8 +1843,9 @@ module Mbeditor
       singleton.remove_method :rg_available?
       singleton.alias_method :rg_available?, :__orig_rg_available?
       singleton.remove_method :__orig_rg_available?
-      Mbeditor::AvailabilityProbe.singleton_class.send(:remove_method, :rg)
-      Mbeditor::AvailabilityProbe.define_singleton_method(:rg, original_rg)
+      probe_singleton.remove_method :rg
+      probe_singleton.alias_method :rg, :__orig_rg
+      probe_singleton.remove_method :__orig_rg
     end
 
     test 'search accepts query of exactly 500 characters' do
