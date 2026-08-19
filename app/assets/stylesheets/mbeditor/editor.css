@@ -3237,6 +3237,10 @@ button:not(.pico-btn) { margin-bottom: 0; }
   padding: 2px 6px;
 }
 .ide-problems-btn:hover { color: var(--ide-fg, #fff); }
+.ide-problems-btn:disabled { opacity: 0.4; cursor: default; }
+.ide-problems-btn:disabled:hover { color: var(--ide-fg-muted, #ccc); }
+.ide-problems-actions { display: flex; gap: 2px; }
+.ide-problems-actions .ide-problems-btn { white-space: nowrap; }
 .ide-problems-body { flex: 1; overflow: auto; padding: 4px 0; font-size: 12px; }
 .ide-problems-empty {
   padding: 10px 14px;

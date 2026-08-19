@@ -1053,6 +1053,24 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
+    # POST /mbeditor/rubocop — whole-workspace `rubocop` run
+    #
+    # mode=autocorrect adds `-a` (safe corrections only) and writes to disk, so
+    # the response doubles as the post-correction offense list.
+    def rubocop_run
+      unless AvailabilityProbe.rubocop(workspace_root)
+        return render json: { ok: false, error: "RuboCop is not available", files: [] }, status: :unprocessable_content
+      end
+
+      mode = params[:mode].to_s == "autocorrect" ? :autocorrect : :check
+      result = RubocopRunService.run(workspace_root, mode: mode)
+      # `-a` writes to disk behind every open tab's back. No path list: a
+      # whole-project run can touch anything, and the omitted-paths form makes
+      # the client re-check every open tab, which is exactly what's wanted.
+      broadcast_files_changed(nil, structural: false) if mode == :autocorrect && result[:ok]
+      render json: result
+    end
+
     # POST /mbeditor/test — run tests for the given file
     def run_test
       path = resolve_path(params[:path])

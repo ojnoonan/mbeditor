@@ -448,6 +448,15 @@ var FileService = (function () {
     }).then(function (res) { return res.data; });
   }
 
+  // Whole-workspace rubocop. mode 'autocorrect' runs `-a` and writes to disk.
+  // Generous timeout: a cold run over a large app is slow, and there is no
+  // progress stream to fall back on.
+  function runRubocop(mode) {
+    return axios.post(window.mbeditorBasePath() + '/rubocop',
+      { mode: mode || 'check' }, { timeout: 300000 }
+    ).then(function (res) { return res.data; });
+  }
+
   // Exceptions raised by the host app, newest first. The cable push is the
   // live path; this seeds the panel and covers hosts without ActionCable.
   function getExceptions() {
@@ -552,6 +561,7 @@ var FileService = (function () {
     lspDiagnostics: lspDiagnostics,
     rubyRename: rubyRename,
     getModelGraph: getModelGraph,
+    runRubocop: runRubocop,
     getExceptions: getExceptions,
     clearExceptions: clearExceptions,
     getRelatedFiles: getRelatedFiles,
