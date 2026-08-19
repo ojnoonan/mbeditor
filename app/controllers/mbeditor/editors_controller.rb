@@ -84,7 +84,16 @@ module Mbeditor
     end
 
     # GET /mbeditor/files — recursive file tree
+    # refresh=1 means "my view of the workspace is stale, drop your caches" —
+    # the client sends it after an external `git checkout`, which rewrites the
+    # tree without going through any mutation endpoint, so nothing here knows
+    # to invalidate. Without it the 15s tree TTL kept serving the old branch's
+    # file list, and the search cache the old branch's hits.
     def files
+      if params[:refresh].present?
+        FileTreeService.invalidate(workspace_root.to_s)
+        SearchReplaceService.invalidate_cache(workspace_root.to_s)
+      end
       render json: FileTreeService.build(workspace_root)
     end
 

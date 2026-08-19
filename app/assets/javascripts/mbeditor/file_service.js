@@ -209,6 +209,9 @@ var FileService = (function () {
   // asked for, so it can be skipped while the server is unreachable.
   function getTree(opts) {
     var cfg = (opts && opts.background) ? { mbeditorBackground: true } : {};
+    // opts.refresh bypasses the server's tree cache. The 10s poll must not set
+    // it — the cache is what keeps that poll cheap.
+    if (opts && opts.refresh) cfg.params = { refresh: 1 };
     return axios.get(window.mbeditorBasePath() + '/files', cfg).then(function(res) { return res.data; });
   }
 

@@ -183,6 +183,16 @@ var ProblemsPanel = (function () {
         .then(function () { setRunning(null); });
     };
 
+    // The workspace list is a snapshot of one run against one working tree.
+    // After a checkout it describes files that may no longer have those
+    // offenses — or no longer exist — so it is dropped rather than left to
+    // look current.
+    React.useEffect(function () {
+      var onBranchChanged = function () { setWorkspace(null); };
+      window.addEventListener('mbeditor:branch-changed', onBranchChanged);
+      return function () { window.removeEventListener('mbeditor:branch-changed', onBranchChanged); };
+    }, []);
+
     var openAllOffending = function () {
       if (!workspace || !onOpenFile) return;
       var files = workspace.files || [];

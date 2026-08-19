@@ -69,6 +69,18 @@ var GitService = (function () {
         var branchChanged = (data.branch || "") !== (st.gitBranch || "");
         var treeChanged = gitSig(files) !== gitSig(st.gitFiles || []);
 
+        // A checkout rewrites the working tree wholesale, and nothing else
+        // tells the editor: the files_changed push only ever announces
+        // mbeditor's own writes, and the 10s poll refreshes the tree's shape,
+        // not the contents behind open tabs. So every buffer stayed on the old
+        // branch's text until something happened to touch it. Announce it and
+        // let the app re-read what it is showing.
+        if (branchChanged && st.gitBranch) {
+          window.dispatchEvent(new CustomEvent('mbeditor:branch-changed', {
+            detail: { from: st.gitBranch, to: data.branch || "" }
+          }));
+        }
+
         // No full snapshot yet, or the branch changed under us (external
         // `git checkout`) — run the full fan-out.
         if (!prevInfo || !prevInfo.ok || branchChanged) return fetchInfo();

@@ -1863,6 +1863,24 @@ var MbeditorApp = function MbeditorApp() {
     };
   }, []);
 
+  // A branch switch changes every tracked file at once, and no push announces
+  // it — the broadcast only covers mbeditor's own writes. Re-read the tree and
+  // every open tab, the same work a manual workspace refresh does. Clean tabs
+  // take the new branch's content; dirty ones queue the usual reload prompt,
+  // so unsaved work is never overwritten.
+  useEffect(function () {
+    function onBranchChanged() {
+      SearchService.invalidate();
+      FileService.getTree({ refresh: true }).then(function (data) {
+        setTreeData(_treeUpdater(data || []));
+      })["catch"](function () {})["finally"](function () {
+        checkOpenTabsForExternalChanges();
+      });
+    }
+    window.addEventListener('mbeditor:branch-changed', onBranchChanged);
+    return function () { window.removeEventListener('mbeditor:branch-changed', onBranchChanged); };
+  }, []);
+
   // WebSocket push — when a peer saves a collaboratively-bound file, the CRDT has
   // already kept our buffer byte-identical, so the single on-disk write is enough
   // for everyone. Reset that tab's clean baseline and clear its dirty indicator
@@ -3240,7 +3258,7 @@ var MbeditorApp = function MbeditorApp() {
       return _extends({}, prev, { refreshWorkspace: true });
     });
     GitService.fetchStatus()["catch"](function () {});
-    FileService.getTree().then(function (data) {
+    FileService.getTree({ refresh: true }).then(function (data) {
       setTreeData(_treeUpdater(data || []));
       checkOpenTabsForExternalChanges();
       EditorStore.setStatus("Workspace refreshed", "success");

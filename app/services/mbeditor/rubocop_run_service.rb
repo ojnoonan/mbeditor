@@ -14,6 +14,7 @@ module Mbeditor
     module_function
 
     def run(workspace_root, mode: :check, timeout: 300)
+      matcher = ExclusionMatcher.new(Mbeditor.configuration.excluded_paths, root: workspace_root)
       cmd = AvailabilityProbe.rubocop_command(workspace_root) +
             [AvailabilityProbe.rubocop_server_flag(workspace_root), "--format", "json", "--no-color"]
       cmd << "-a" if mode.to_sym == :autocorrect
@@ -24,7 +25,7 @@ module Mbeditor
         chdir: workspace_root.to_s,
         env: { "RUBOCOP_CACHE_ROOT" => File.join(Dir.tmpdir, "rubocop") }
       )
-      parse(result[:stdout], result[:stderr])
+      parse(result[:stdout], result[:stderr], matcher)
     rescue ProcessRunner::TimeoutError
       error("RuboCop timed out after #{timeout}s")
     rescue StandardError => e
@@ -34,12 +35,22 @@ module Mbeditor
     # RuboCop writes its JSON to stdout, but anything the host app prints while
     # loading (a deprecation warning, a bundler notice) lands in front of it —
     # hence the seek to the first brace, same as the /lint path.
-    def parse(stdout, stderr = nil)
+    # +matcher+ drops offenses in paths the workspace excludes — vendored gems
+    # above all. RuboCop's own defaults exclude `vendor/**/*`, but a host
+    # .rubocop.yml that sets AllCops/Exclude without `inherit_mode: merge`
+    # silently replaces them, and the panel then fills with gem source.
+    #
+    # ponytail: filtered after the fact, so a host in that state still pays for
+    # the walk. Generate a config that inherits from theirs and re-adds the
+    # excludes if the run time ever becomes the complaint.
+    def parse(stdout, stderr = nil, matcher = nil)
       idx = stdout.index("{")
       return error(stderr.to_s.strip.split("\n").last || "RuboCop produced no output") unless idx
 
       data = JSON.parse(stdout[idx..])
       files = (data["files"] || []).filter_map do |file|
+        next if matcher&.excluded?(file["path"].to_s)
+
         offenses = file["offenses"] || []
         next if offenses.empty?
 
