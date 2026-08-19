@@ -202,6 +202,11 @@
 
   function queueJsGlobalLookup(sym, modelPath) {
     if (jsLookupQueue.length >= JS_LOOKUP_QUEUE_MAX) return;
+    // Marked here rather than at the call site: marking before the cap check
+    // spent the symbol's one attempt on a job that was then dropped, so a name
+    // unlucky enough to arrive while the queue was full was never looked up at
+    // all — not on the next keystroke, not for the rest of the page's life.
+    attemptedJsGlobals[sym] = true;
     jsLookupQueue.push({ sym: sym, modelPath: modelPath });
     pumpJsLookupQueue();
   }
@@ -303,13 +308,23 @@
     var mts = monaco && monaco.languages && monaco.languages.typescript;
     if (!mts || !mts.javascriptDefaults) return;
     if (typeof FileService === 'undefined' || !FileService.getJsProgramFile) return;
-    (paths || []).forEach(function (path) {
-      if (!path || !/\.(js|jsx|ts|tsx)$/i.test(path)) return;
-      FileService.getJsProgramFile(path).then(function (data) {
+    var wanted = (paths || []).filter(function (path) {
+      return path && /\.(js|jsx|ts|tsx)$/i.test(path);
+    });
+    if (!wanted.length) return;
+
+    // Collected first, applied in one synchronous pass. addExtraLib invalidates
+    // the TypeScript worker and re-validates every open model, so applying a
+    // burst of saves one response at a time paid that cost per file — the same
+    // reason flushDiscoveredGlobals coalesces.
+    Promise.all(wanted.map(function (path) {
+      return FileService.getJsProgramFile(path).catch(function () { return null; });
+    })).then(function (responses) {
+      responses.forEach(function (data) {
         if (!data || !data.ok || !data.file) return;
         programPaths[data.file.path] = true;
         mts.javascriptDefaults.addExtraLib(data.file.content, programUri(data.file.path));
-      }).catch(function () {});
+      });
     });
   }
 
@@ -390,15 +405,20 @@
 
   // Send a raw-passthrough request and hand back result.result, or null when
   // the legacy path should run instead.
-  function rawRubyLsp(lspMethod, model, position) {
-    return tryRubyLsp(lspMethod, model, position || { lineNumber: 1, column: 1 });
+  function rawRubyLsp(lspMethod, model, position, token) {
+    return tryRubyLsp(lspMethod, model, position || { lineNumber: 1, column: 1 }, null, token);
   }
 
   // Requests that go through RuboCop rather than just Prism need more than the
   // 6s default: the server's own budget for them is 10s.
   var LSP_SLOW_METHODS = { diagnostics: 15000, formatting: 15000 };
 
-  function tryRubyLsp(lspMethod, model, position, extraBody) {
+  // `token` is Monaco's CancellationToken, when the calling provider has one.
+  // Every provider fires on a gesture the user can abandon — moving the cursor
+  // off a word, typing another character — and Monaco cancels the outstanding
+  // request when that happens. Without this the request ran to completion
+  // anyway: a subprocess on the server, and the answer thrown away here.
+  function tryRubyLsp(lspMethod, model, position, extraBody, token) {
     try {
       if (!window.MBEDITOR_RUBY_LSP_AVAILABLE || lspBackedOff()) return Promise.resolve(null);
       if (typeof FileService === 'undefined' || !FileService.rubyLspRequest) return Promise.resolve(null);
@@ -410,7 +430,16 @@
       // common case rather than an edge one. null is already this function's
       // "no result" answer, so callers need no change.
       if (model.getValueLength() === 0) return Promise.resolve(null);
+      if (token && token.isCancellationRequested) return Promise.resolve(null);
+
       var config = LSP_SLOW_METHODS[lspMethod] ? { timeout: LSP_SLOW_METHODS[lspMethod] } : null;
+      var controller = (token && typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var cancelSub = null;
+      if (controller && token.onCancellationRequested) {
+        cancelSub = token.onCancellationRequested(function () { controller.abort(); });
+        config = Object.assign({}, config, { signal: controller.signal });
+      }
+
       return FileService.rubyLspRequest(lspMethod, model._mbeditorPath, model.getValue(),
                                         position.lineNumber, position.column, config, extraBody)
         .then(function (data) {
@@ -432,6 +461,12 @@
         .catch(function (err) {
           noteLspFailure(err);
           return null;
+        })
+        // Settled either way: drop the cancellation listener (Monaco's token
+        // outlives the request) and answer nothing to a cancelled caller.
+        .then(function (result) {
+          if (cancelSub && cancelSub.dispose) cancelSub.dispose();
+          return (token && token.isCancellationRequested) ? null : result;
         });
     } catch (e) {
       return Promise.resolve(null);
@@ -572,12 +607,22 @@
         // Genuinely ambiguous — the same name declared at top level in more
         // than one other file — so choose rather than guess.
         if (!here && elsewhere.length > 1) {
-          pendingJsDefinitionPeek = elsewhere.map(function (x) {
-            return {
-              uri: lspUri(x.file),
-              range: new window.monaco.Range(x.line || 1, 1, x.line || 1, 1)
-            };
-          });
+          // Stamped with the model and cursor position the reveal below will
+          // ask about, so a candidate list whose reveal never fired cannot
+          // surface on an unrelated gesture later.
+          var gestureModel = editor.getModel && editor.getModel();
+          var gesturePos = editor.getPosition && editor.getPosition();
+          pendingJsDefinitionPeek = {
+            uri: gestureModel ? gestureModel.uri.toString() : '',
+            lineNumber: gesturePos ? gesturePos.lineNumber : 0,
+            column: gesturePos ? gesturePos.column : 0,
+            locations: elsewhere.map(function (x) {
+              return {
+                uri: lspUri(x.file),
+                range: new window.monaco.Range(x.line || 1, 1, x.line || 1, 1)
+              };
+            })
+          };
           editor.trigger('mbeditor', 'editor.action.revealDefinition', null);
           return true;
         }
@@ -1140,7 +1185,12 @@
       }
       if (typeof WebSocketService !== 'undefined' && WebSocketService.onFilesChanged) {
         WebSocketService.onFilesChanged(function (payload) {
-          if (payload && payload.paths) refreshProgramPaths(monaco, payload.paths);
+          if (payload && payload.paths) {
+            refreshProgramPaths(monaco, payload.paths);
+            // An edited file's include list is wrong the moment it is saved,
+            // and the TTL alone would keep serving it for another 30 s.
+            payload.paths.forEach(function (p) { delete includesCache[p]; });
+          }
           refreshWorkspaceGlobals();
         });
       }
@@ -1259,7 +1309,10 @@
       }
 
       var _severityPatchActive = false;
-      function patchSeverities(uris) {
+      // jsMarkers, when given, is a uri-string -> javascript markers map the
+      // caller has already fetched; getModelMarkers filters the whole marker
+      // store per call and the TS2304 sweep below wants the same list.
+      function patchSeverities(uris, jsMarkers) {
         if (_severityPatchActive) return;
         _severityPatchActive = true;
         try {
@@ -1270,7 +1323,8 @@
               { owner: 'javascript', keep: keepJsMarker, warn: JS_WARN_CODES },
               { owner: 'typescript', keep: null,         warn: TS_WARN_CODES }
             ].forEach(function(entry) {
-              var markers = monaco.editor.getModelMarkers({ resource: uri, owner: entry.owner });
+              var markers = (entry.owner === 'javascript' && jsMarkers && jsMarkers[uri.toString()]) ||
+                monaco.editor.getModelMarkers({ resource: uri, owner: entry.owner });
               var patched = markers.filter(function(m) {
                 return entry.keep ? entry.keep(m) : true;
               }).map(function(m) {
@@ -1334,7 +1388,13 @@
       };
 
       monaco.editor.onDidChangeMarkers(function(uris) {
-        patchSeverities(uris);
+        // One fetch per uri, shared by the severity patch and the TS2304 sweep.
+        var jsMarkers = {};
+        uris.forEach(function (uri) {
+          jsMarkers[uri.toString()] = monaco.editor.getModelMarkers({ resource: uri, owner: 'javascript' });
+        });
+
+        patchSeverities(uris, jsMarkers);
 
         // Auto-resolve TS2304 ("Cannot find name 'X'") for JS files by
         // looking up the symbol in the workspace. If found, addDiscoveredGlobal
@@ -1345,13 +1405,11 @@
           uris.forEach(function(uri) {
             var model = monaco.editor.getModel(uri);
             if (!model) return;
-            var markers = monaco.editor.getModelMarkers({ resource: uri, owner: 'javascript' });
-            markers.forEach(function(m) {
+            (jsMarkers[uri.toString()] || []).forEach(function(m) {
               if (String(m.code) !== '2304') return;
               var sym = missingNameOf(m.message);
               if (!sym) return;
               if (attemptedJsGlobals[sym]) return;
-              attemptedJsGlobals[sym] = true;
               queueJsGlobalLookup(sym, model._mbeditorPath);
             });
           });
@@ -1765,7 +1823,7 @@
             command: {
               id: 'mbeditor.applyRubocopFix',
               title: 'Apply RuboCop fix for ' + cop,
-              arguments: [model, cop, model.getValue(), modelPath]
+              arguments: [model, cop, modelPath]
             }
           });
         });
@@ -1786,9 +1844,14 @@
     });
 
     // Command handler that fetches the fix from the backend and applies it.
-    monaco.editor.registerCommand('mbeditor.applyRubocopFix', function(_accessor, model, copName, code, modelPath) {
+    // The buffer is read here, at click time, rather than captured in the
+    // action's arguments: a whole copy of the document per marker per lightbulb
+    // pass is wasteful, and the copy went stale — the server autocorrected text
+    // the buffer had already moved past, and the returned edit landed on the
+    // new one.
+    monaco.editor.registerCommand('mbeditor.applyRubocopFix', function(_accessor, model, copName, modelPath) {
       if (typeof FileService === 'undefined' || !FileService.quickFixOffense) return;
-      FileService.quickFixOffense(modelPath, code, copName).then(function(data) {
+      FileService.quickFixOffense(modelPath, model.getValue(), copName).then(function(data) {
         if (!data || !data.fix) return;
         var fix = data.fix;
         model.pushEditOperations([], [{
@@ -1815,10 +1878,14 @@
     // Monaco merges providers without deduping, so a second opinion here would
     // show a picker listing one definition twice.
     monaco.languages.registerDefinitionProvider('javascript', {
-      provideDefinition: function () {
+      provideDefinition: function (model, position) {
         var pending = pendingJsDefinitionPeek;
         pendingJsDefinitionPeek = null;
-        return pending || null;
+        if (!pending) return null;
+        if (pending.uri !== model.uri.toString() ||
+            pending.lineNumber !== position.lineNumber ||
+            pending.column !== position.column) return null;
+        return pending.locations;
       }
     });
 
@@ -1916,10 +1983,10 @@
     // text grep, not a reference index — so an empty list is the honest answer
     // when ruby-lsp can't help.
     monaco.languages.registerReferenceProvider('ruby', {
-      provideReferences: function provideReferences(model, position) {
+      provideReferences: function provideReferences(model, position, _context, token) {
         if (!rubyNavigableWord(model, position, false)) return null;
 
-        return rawRubyLsp('references', model, position).then(function (locations) {
+        return rawRubyLsp('references', model, position, token).then(function (locations) {
           if (!Array.isArray(locations)) return null;
           return locations.filter(function (loc) { return loc && loc.uri; }).map(function (loc) {
             return { uri: lspUri(loc.uri), range: lspRange(loc.range) };
@@ -1931,13 +1998,28 @@
     // Occurrences of the symbol under the cursor. Monaco has a built-in
     // word-match highlighter, but it cannot tell a local named `id` from a
     // method named `id`; ruby-lsp resolves the actual symbol.
+    //
+    // This one fires on every cursor move, so a caret walking through a word
+    // would otherwise cost a request per keypress. One memo entry is enough:
+    // the repeat is always the immediately preceding position. Keyed on the
+    // exact occurrence rather than the word text — the same name in two scopes
+    // is two different symbols with two different highlight sets — and on the
+    // model version, so an edit invalidates it.
+    var _highlightMemo = null;
     monaco.languages.registerDocumentHighlightProvider('ruby', {
-      provideDocumentHighlights: function provideDocumentHighlights(model, position) {
-        return rawRubyLsp('document_highlight', model, position).then(function (highlights) {
+      provideDocumentHighlights: function provideDocumentHighlights(model, position, token) {
+        var wordInfo = model.getWordAtPosition(position);
+        var key = wordInfo && (model.uri.toString() + '@' + model.getVersionId() + ':' +
+          position.lineNumber + ':' + wordInfo.startColumn + ':' + wordInfo.word);
+        if (key && _highlightMemo && _highlightMemo.key === key) return _highlightMemo.result;
+
+        return rawRubyLsp('document_highlight', model, position, token).then(function (highlights) {
           if (!Array.isArray(highlights)) return null;
-          return highlights.filter(Boolean).map(function (h) {
+          var result = highlights.filter(Boolean).map(function (h) {
             return { range: lspRange(h.range), kind: h.kind };
           });
+          if (key) _highlightMemo = { key: key, result: result };
+          return result;
         });
       }
     });
@@ -1977,8 +2059,8 @@
 
     monaco.languages.registerDocumentSymbolProvider('ruby', {
       displayName: 'Ruby',
-      provideDocumentSymbols: function provideDocumentSymbols(model) {
-        return rawRubyLsp('document_symbol', model).then(function (symbols) {
+      provideDocumentSymbols: function provideDocumentSymbols(model, token) {
+        return rawRubyLsp('document_symbol', model, null, token).then(function (symbols) {
           if (!Array.isArray(symbols)) return null;
           return toMonacoSymbols(symbols, 0);
         });
@@ -1991,11 +2073,11 @@
     // for when ruby-lsp is unavailable.
     monaco.languages.registerDocumentFormattingEditProvider('ruby', {
       displayName: 'RuboCop',
-      provideDocumentFormattingEdits: function provideDocumentFormattingEdits(model, options) {
+      provideDocumentFormattingEdits: function provideDocumentFormattingEdits(model, options, token) {
         var opts = { tab_size: (options && options.tabSize) || 2,
                      insert_spaces: !options || options.insertSpaces !== false };
 
-        return tryRubyLsp('formatting', model, { lineNumber: 1, column: 1 }, opts)
+        return tryRubyLsp('formatting', model, { lineNumber: 1, column: 1 }, opts, token)
           .then(function (edits) {
             if (Array.isArray(edits)) {
               return edits.map(function (e) {
@@ -2099,8 +2181,8 @@
     // Parameter hints while typing a call's arguments.
     monaco.languages.registerSignatureHelpProvider('ruby', {
       signatureHelpTriggerCharacters: ['(', ','],
-      provideSignatureHelp: function provideSignatureHelp(model, position) {
-        return rawRubyLsp('signature_help', model, position).then(function (help) {
+      provideSignatureHelp: function provideSignatureHelp(model, position, token) {
+        return rawRubyLsp('signature_help', model, position, token).then(function (help) {
           if (!help || !Array.isArray(help.signatures) || !help.signatures.length) return null;
           // LSP's SignatureHelp is structurally identical to Monaco's, and
           // MarkupContent {kind, value} is accepted where an IMarkdownString is.
@@ -2111,12 +2193,12 @@
 
     // Smart expand/shrink selection (Shift+Alt+Right / Left).
     monaco.languages.registerSelectionRangeProvider('ruby', {
-      provideSelectionRanges: function provideSelectionRanges(model, positions) {
+      provideSelectionRanges: function provideSelectionRanges(model, positions, token) {
         // LSP takes a list of positions and answers one linked list per
         // position; the bridge sends a single position, so ask per position and
         // flatten each chain into the array Monaco wants.
         return Promise.all(positions.map(function (position) {
-          return rawRubyLsp('selection_range', model, position).then(function (result) {
+          return rawRubyLsp('selection_range', model, position, token).then(function (result) {
             var node = Array.isArray(result) ? result[0] : null;
             var ranges = [];
             // Bounded: the chain comes from a subprocess and a cycle would spin.
@@ -2136,8 +2218,8 @@
     // declines anything else up front — otherwise F2 on a method name would
     // open the input box and then fail after you'd typed a new name.
     monaco.languages.registerRenameProvider('ruby', {
-      resolveRenameLocation: function resolveRenameLocation(model, position) {
-        return rawRubyLsp('prepare_rename', model, position).then(function (result) {
+      resolveRenameLocation: function resolveRenameLocation(model, position, token) {
+        return rawRubyLsp('prepare_rename', model, position, token).then(function (result) {
           if (!result) {
             return { rejectReason: 'Only Ruby constants can be renamed here.' };
           }
@@ -2215,8 +2297,8 @@
     // folding provider, so the vim-marker provider registered further down
     // keeps working alongside this one.
     monaco.languages.registerFoldingRangeProvider('ruby', {
-      provideFoldingRanges: function provideFoldingRanges(model) {
-        return rawRubyLsp('folding_range', model).then(function (ranges) {
+      provideFoldingRanges: function provideFoldingRanges(model, _context, token) {
+        return rawRubyLsp('folding_range', model, null, token).then(function (ranges) {
           if (!Array.isArray(ranges)) return null;
           return ranges.filter(Boolean).map(function (r) {
             return {
@@ -2239,6 +2321,20 @@
     var hoverCache = {};
     var HOVER_CACHE_TTL_MS = 60000;
     var HOVER_MEMBER_LIMIT = 20;
+
+    // Store an entry, stamping it and sweeping expired keys as it goes. The TTL
+    // was only ever consulted on read, and nothing else ever removed a key, so
+    // every symbol hovered in a session stayed resident for the life of the
+    // page. The sweep is O(entries) on a miss, which at these sizes is free.
+    function cacheWrite(cache, ttlMs, key, entry) {
+      var now = Date.now();
+      Object.keys(cache).forEach(function (k) {
+        if (now - cache[k].ts >= ttlMs) delete cache[k];
+      });
+      entry.ts = now;
+      cache[key] = entry;
+      return entry;
+    }
 
     // ruby-lsp's hover for a constant is a title, a Definitions link and any
     // doc comments — it never lists what the class/module defines. Keep the
@@ -2265,7 +2361,7 @@
           }
           markdown = '\n\n' + lines.join('\n');
         }
-        hoverCache[key] = { ts: Date.now(), markdown: markdown };
+        cacheWrite(hoverCache, HOVER_CACHE_TTL_MS, key, { markdown: markdown });
         return markdown;
       }).catch(function() { return ''; });
     }
@@ -2308,11 +2404,11 @@
                     range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
                     contents: [{ value: lsp.markdown + members, isTrusted: true }]
                   };
-                  hoverCache[lspKey] = { ts: Date.now(), result: lspResult };
+                  cacheWrite(hoverCache, HOVER_CACHE_TTL_MS, lspKey, { result: lspResult });
                   return lspResult;
                 });
               }
-              hoverCache[lspKey] = { ts: Date.now(), result: null };
+              cacheWrite(hoverCache, HOVER_CACHE_TTL_MS, lspKey, { result: null });
               return legacyRubyHover(model, position, token, wordInfo);
             });
           }
@@ -2341,7 +2437,7 @@
           return FileService.getModuleMembers(word, modController ? { signal: modController.signal } : {}).then(function(data) {
             if (token && token.isCancellationRequested) return null;
             if (!data || !data.methods || data.methods.length === 0) {
-              hoverCache[modKey] = { ts: Date.now(), result: null };
+              cacheWrite(hoverCache, HOVER_CACHE_TTL_MS, modKey, { result: null });
               return null;
             }
             var lines = ['**' + data.name + '**  `' + (data.file || '') + '`\n'];
@@ -2349,7 +2445,7 @@
               lines.push('- `' + (m.signature || m.name) + '`');
             });
             var result = { contents: [{ value: lines.join('\n') }] };
-            hoverCache[modKey] = { ts: Date.now(), result: result };
+            cacheWrite(hoverCache, HOVER_CACHE_TTL_MS, modKey, { result: result });
             return result;
           }).catch(function() { return null; });
         }
@@ -2382,7 +2478,7 @@
 
           var results = data && Array.isArray(data.results) ? data.results : [];
           // Cache the raw results (before current-file filter).
-          hoverCache[word] = { ts: Date.now(), results: results };
+          cacheWrite(hoverCache, HOVER_CACHE_TTL_MS, word, { results: results });
 
           if (currentFile) {
             results = results.filter(function(r) { return r.file !== currentFile; });
@@ -2527,7 +2623,7 @@
         }
 
         return FileService.getFileIncludes(path).then(function(result) {
-          includesCache[path] = { ts: Date.now(), data: result };
+          cacheWrite(includesCache, INCLUDES_CACHE_TTL_MS, path, { data: result });
           return buildSuggestions(result);
         }).catch(function() { return { suggestions: [] }; });
       }
@@ -2613,29 +2709,38 @@
         if (!discoveredJsGlobals[symbol] && !/^[A-Z]/.test(symbol)) return { suggestions: [] };
         if (typeof FileService === 'undefined' || !FileService.getJsMembers) return { suggestions: [] };
 
+        // Only the raw member list is cached. Suggestions carry the insert
+        // `range`, which is where the completion is about to be written — the
+        // same trap the hover provider's makeHoverRange avoids. Cached
+        // suggestions inserted at the position of the invocation that filled
+        // the cache, so a hit anywhere else in the file was misapplied or
+        // silently dropped by Monaco.
+        function buildSuggestions(members) {
+          return members.map(function(m) {
+            return {
+              label: m.name,
+              kind: monaco.languages.CompletionItemKind.Method,
+              detail: symbol,
+              documentation: m.snippet,
+              insertText: m.name,
+              range: {
+                startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
+                startColumn: position.column, endColumn: position.column
+              }
+            };
+          });
+        }
+
         var cached = jsMembersCache[symbol];
         if (cached && (Date.now() - cached.ts) < JS_MEMBERS_CACHE_TTL_MS) {
-          return { suggestions: cached.suggestions };
+          return { suggestions: buildSuggestions(cached.members) };
         }
 
         return FileService.getJsMembers(symbol)
           .then(function(data) {
             var members = (data && data.members) || [];
-            var suggestions = members.map(function(m) {
-              return {
-                label: m.name,
-                kind: monaco.languages.CompletionItemKind.Method,
-                detail: symbol,
-                documentation: m.snippet,
-                insertText: m.name,
-                range: {
-                  startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
-                  startColumn: position.column, endColumn: position.column
-                }
-              };
-            });
-            jsMembersCache[symbol] = { ts: Date.now(), suggestions: suggestions };
-            return { suggestions: suggestions };
+            jsMembersCache[symbol] = { ts: Date.now(), members: members };
+            return { suggestions: buildSuggestions(members) };
           }).catch(function() { return { suggestions: [] }; });
       }
     });

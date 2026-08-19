@@ -1,7 +1,21 @@
 var GitService = (function () {
   function applyGitInfo(data) {
     var files = data.workingTree || data.files || [];
-    var current = EditorStore.getState().gitFiles;
+    var st = EditorStore.getState();
+    var current = st.gitFiles;
+
+    // /git_info runs on every window focus, and the payload is a fresh object
+    // every time — writing it unconditionally re-rendered the whole app for a
+    // repository that had not moved. Same trap, same fix as the file-tree poll
+    // (see _treeUpdater in MbeditorApp.js). The comparison has to be the whole
+    // payload, not the scalars: unpushedCommits and branchCommits move on their
+    // own (an amend leaves branch/ahead/behind untouched), and the panel reads
+    // all of them.
+    if (st.gitInfoError == null && JSON.stringify(data) === JSON.stringify(st.gitInfo)) {
+      clearHistoryCache();
+      return;
+    }
+
     var stateUpdate = {
       gitBranch: data.branch || "",
       gitInfo: data,

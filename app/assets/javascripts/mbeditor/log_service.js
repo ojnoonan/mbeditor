@@ -59,6 +59,10 @@ var LogService = (function () {
     _offset = null;
     _lines = [];
     _fetchOnce().then(function () {
+      // A stop() while that first fetch was in flight already ran the teardown;
+      // starting the transport now would leave the poll interval running (and
+      // the server tailing) with nothing to stop it.
+      if (!_active) return;
       if (window.WebSocketService && WebSocketService.isConnected()) {
         _usingWs = true;
         WebSocketService.onLogLines(_onWsLog);

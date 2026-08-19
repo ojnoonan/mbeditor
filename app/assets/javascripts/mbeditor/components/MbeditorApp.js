@@ -10,6 +10,7 @@ var _React = React;
 var useState = _React.useState;
 var useEffect = _React.useEffect;
 var useRef = _React.useRef;
+var useMemo = _React.useMemo;
 
 // Functional setTreeData updater shared by every path that re-fetches the tree
 // (WebSocket push, the 10s poll, the manual refresh button).
@@ -894,6 +895,13 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
+  // filterDotFiles rebuilds the whole tree, so calling it inline in the render
+  // handed FileTreeMemo a fresh array every time and its `prev.items ===
+  // next.items` check never held — the memo was there but never fired.
+  var fileTreeItems = useMemo(function () {
+    return editorPrefs.showDotFiles ? treeData : filterDotFiles(treeData || []);
+  }, [treeData, editorPrefs.showDotFiles]);
+
   var normalizeRelativePath = function normalizeRelativePath(input) {
     return (input || "").replace(/\\/g, "/").trim().replace(/^\/+/, "").replace(/\/+$/, "").replace(/\/+/g, "/");
   };
@@ -949,8 +957,9 @@ var MbeditorApp = function MbeditorApp() {
 
   var refreshProjectTree = function refreshProjectTree() {
     return FileService.getTree().then(function (data) {
-      setTreeData(data || []);
-      SearchService.buildIndex(data || []);
+      // _treeUpdater keeps the previous array (and skips the index rebuild)
+      // when the tree is unchanged; going round it re-rendered the whole app.
+      setTreeData(_treeUpdater(data || []));
       SearchService.invalidate();
       if (searchQueryRef.current && searchPanelVisibleRef.current) {
         _debouncedSearch(searchQueryRef.current);
@@ -1072,15 +1081,18 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
-  var applyMarkersForTab = function applyMarkersForTab(paneId, tabId, nextMarkers) {
-    var currentPane = EditorStore.getState().panes.find(function (p) {
-      return p.id === paneId;
-    });
-    var current = currentPane ? currentPane.tabs.find(function (t) {
-      return t.id === tabId;
-    }) : null;
-    if (current) current.markers = nextMarkers;
+  // The one writer for the markers map. Two things it must not do:
+  //
+  //   * write a fresh map when nothing changed — the auto-lint fires per
+  //     keystroke on JS files and re-clearing an already-empty marker list
+  //     would re-render the whole app every time;
+  //   * mutate the tab object in the store — EditorStore's contract is that
+  //     every nested value is replaced, never edited in place, or
+  //     subscribeToSlice cannot see the change. TabBar reads this map instead.
+  var applyMarkersForTab = function applyMarkersForTab(tabId, nextMarkers) {
     setMarkers(function (prev) {
+      var cur = prev[tabId];
+      if (cur && cur.length === 0 && nextMarkers.length === 0) return prev;
       return _extends({}, prev, _defineProperty({}, tabId, nextMarkers));
     });
   };
@@ -1099,7 +1111,7 @@ var MbeditorApp = function MbeditorApp() {
     // marker-clearing below intact, so deleting a file's contents still clears
     // its squiggles.
     if (!String(tab.content || '').trim()) {
-      applyMarkersForTab(paneId, tab.id, []);
+      applyMarkersForTab(tab.id, []);
       if (options.showStatus) EditorStore.setStatus('No RuboCop offenses!', 'success');
       return Promise.resolve({ markers: [] });
     }
@@ -1135,7 +1147,7 @@ var MbeditorApp = function MbeditorApp() {
 
     return lintRequest.then(function (res) {
       var nextMarkers = res.markers || [];
-      applyMarkersForTab(paneId, tab.id, nextMarkers);
+      applyMarkersForTab(tab.id, nextMarkers);
 
       if (options.showStatus) {
         var count = res.summary && res.summary.offense_count || 0;
@@ -1173,16 +1185,7 @@ var MbeditorApp = function MbeditorApp() {
     if (parserName && window.prettier && window.prettierPlugins) {
       var prefs = EditorStore.getState().editorPrefs || DEFAULT_EDITOR_PREFS;
       window.prettier.format(tab.content, prettierOptions(prefs, parserName)).then(function () {
-        var currentPane = EditorStore.getState().panes.find(function (p) {
-          return p.id === paneId;
-        });
-        var current = currentPane ? currentPane.tabs.find(function (t) {
-          return t.id === tab.id;
-        }) : null;
-        if (current) current.markers = [];
-        setMarkers(function (prev) {
-          return _extends({}, prev, _defineProperty({}, tab.id, []));
-        });
+        applyMarkersForTab(tab.id, []);
       })["catch"](function (err) {
         var newMarkers = [];
         if (err && err.loc) {
@@ -1199,16 +1202,7 @@ var MbeditorApp = function MbeditorApp() {
             endCol: endLoc ? endLoc.column : loc.column + 1
           });
         }
-        var currentPane = EditorStore.getState().panes.find(function (p) {
-          return p.id === paneId;
-        });
-        var current = currentPane ? currentPane.tabs.find(function (t) {
-          return t.id === tab.id;
-        }) : null;
-        if (current) current.markers = newMarkers;
-        setMarkers(function (prev) {
-          return _extends({}, prev, _defineProperty({}, tab.id, newMarkers));
-        });
+        applyMarkersForTab(tab.id, newMarkers);
       });
     }
   }, 600)).current;
@@ -2112,7 +2106,13 @@ var MbeditorApp = function MbeditorApp() {
       if (timer) clearTimeout(timer);
       timer = setTimeout(function () {
         timer = null;
-        setProblemCounts(window.ProblemsPanel.counts());
+        var next = window.ProblemsPanel.counts();
+        // Two object literals are never Object.is-equal, so handing React a
+        // fresh {errors, warnings} re-rendered the app on every marker change
+        // — which for a JS file is every keystroke. Compare the fields.
+        setProblemCounts(function (prev) {
+          return (prev && prev.errors === next.errors && prev.warnings === next.warnings) ? prev : next;
+        });
       }, 250);
     };
 
@@ -2154,6 +2154,33 @@ var MbeditorApp = function MbeditorApp() {
     handleNodeSelect({ path: path, name: name || path.split('/').pop(), type: 'file' });
   };
 
+  // Both of these are keyed by something that dies with the tab — markers by
+  // tab id, the external-change baseline by path — and nothing dropped them, so
+  // a long session held a full copy of every file it had ever opened. Run after
+  // a close (single or bulk) and reconcile against what is still open: a path
+  // the other pane still shows keeps its baseline, which a per-tab delete
+  // would have got wrong.
+  var forgetClosedTabs = function forgetClosedTabs() {
+    var openIds = {};
+    var openPaths = {};
+    EditorStore.getState().panes.forEach(function (p) {
+      p.tabs.forEach(function (t) {
+        openIds[t.id] = true;
+        if (t.path) openPaths[t.path] = true;
+      });
+    });
+    Object.keys(lastDiskContentRef.current).forEach(function (path) {
+      if (!openPaths[path]) delete lastDiskContentRef.current[path];
+    });
+    setMarkers(function (prev) {
+      var stale = Object.keys(prev).filter(function (id) { return !openIds[id]; });
+      if (stale.length === 0) return prev;
+      var next = _extends({}, prev);
+      stale.forEach(function (id) { delete next[id]; });
+      return next;
+    });
+  };
+
   var requestCloseTab = function requestCloseTab(paneId, id) {
     var pane = state.panes.find(function (p) {
       return p.id === paneId;
@@ -2173,6 +2200,7 @@ var MbeditorApp = function MbeditorApp() {
           });
         })
       });
+      forgetClosedTabs();
     }
   };
 
@@ -2226,6 +2254,7 @@ var MbeditorApp = function MbeditorApp() {
             });
           })
         });
+        forgetClosedTabs();
       })["catch"](function (err) {
         EditorStore.setStatus("Save failed: " + err.message, "error");
       })["finally"](function () {
@@ -2245,6 +2274,7 @@ var MbeditorApp = function MbeditorApp() {
           });
         })
       });
+      forgetClosedTabs();
       setClosingTabId(null);
       setClosingPaneId(null);
     }
@@ -2269,6 +2299,7 @@ var MbeditorApp = function MbeditorApp() {
     if (!confirmBulkClose(allTabs, "all editors")) return;
 
     TabManager.closeAllTabs();
+    forgetClosedTabs();
     setClosingTabId(null);
     setClosingPaneId(null);
     EditorStore.setStatus("Closed " + allTabs.length + " editor" + (allTabs.length === 1 ? "" : "s"), "info");
@@ -2282,6 +2313,7 @@ var MbeditorApp = function MbeditorApp() {
     if (!confirmBulkClose(pane.tabs, "all editors in Group " + paneId)) return;
 
     TabManager.closeAllTabsInPane(paneId);
+    forgetClosedTabs();
     setClosingTabId(null);
     setClosingPaneId(null);
     EditorStore.setStatus("Closed " + pane.tabs.length + " editor" + (pane.tabs.length === 1 ? "" : "s") + " in Group " + paneId, "info");
@@ -2294,6 +2326,7 @@ var MbeditorApp = function MbeditorApp() {
     if (others.length === 0) return;
     if (!confirmBulkClose(others, "other editors")) return;
     TabManager.closeOtherTabsInPane(paneId, keepId);
+    forgetClosedTabs();
     EditorStore.setStatus("Closed " + others.length + " editor" + (others.length === 1 ? "" : "s"), "info");
   };
 
@@ -2303,6 +2336,7 @@ var MbeditorApp = function MbeditorApp() {
     var saved = pane.tabs.filter(function (t) { return !t.dirty; });
     if (saved.length === 0) return;
     TabManager.closeSavedTabsInPane(paneId);
+    forgetClosedTabs();
     EditorStore.setStatus("Closed " + saved.length + " saved editor" + (saved.length === 1 ? "" : "s"), "info");
   };
 
@@ -2320,6 +2354,7 @@ var MbeditorApp = function MbeditorApp() {
       GitService.fetchStatusLite({ background: true });
       FileService.getTree().then(function (data) { setTreeData(_treeUpdater(data || [])); })["catch"](function () {});
       TabManager.closeTab(paneId, tab.id);
+      forgetClosedTabs();
       if (!(opts && opts.close)) {
         TabManager.openTab(newPath, newPath.split('/').pop(), null, paneId);
       }
@@ -2482,7 +2517,10 @@ var MbeditorApp = function MbeditorApp() {
   var RAILS_MAX_RESOURCES = 10;
 
   // Map resource label → representative path (capped at RAILS_MAX_RESOURCES, focused pane first)
-  var railsResourceDeps = (function() {
+  // Memoised: all three of these walk every tab in every pane and were rebuilt
+  // on every render, including the ones a keystroke causes.
+  // resourceLabelFromPath reads customPathsRef, hence customPaths in the deps.
+  var railsResourceDeps = useMemo(function() {
     var deps = {};
     var panesOrdered = state.panes.slice().sort(function(a, b) {
       return a.id === state.focusedPaneId ? -1 : b.id === state.focusedPaneId ? 1 : 0;
@@ -2499,10 +2537,10 @@ var MbeditorApp = function MbeditorApp() {
       });
     });
     return deps;
-  })();
+  }, [state.panes, state.focusedPaneId, customPaths]);
   var railsResourceDepStr = Object.keys(railsResourceDeps).sort().join('|');
 
-  var railsOverflow = (function() {
+  var railsOverflow = useMemo(function() {
     var all = {};
     state.panes.forEach(function(p) {
       p.tabs.forEach(function(t) {
@@ -2512,9 +2550,9 @@ var MbeditorApp = function MbeditorApp() {
       });
     });
     return Math.max(0, Object.keys(all).length - Object.keys(railsResourceDeps).length);
-  })();
+  }, [state.panes, railsResourceDeps, customPaths]);
 
-  var dirtyPaths = (function() {
+  var dirtyPaths = useMemo(function() {
     var set = {};
     state.panes.forEach(function(p) {
       p.tabs.forEach(function(t) {
@@ -2522,7 +2560,7 @@ var MbeditorApp = function MbeditorApp() {
       });
     });
     return set;
-  })();
+  }, [state.panes]);
 
   useEffect(function() {
     if (activeSidebarTab !== 'rails') return;
@@ -2901,7 +2939,7 @@ var MbeditorApp = function MbeditorApp() {
 
     // Clear markers and skip auto-lint when RuboCop linting is disabled
     if (isRubyPath(activeTab.path) && editorPrefs.rubocopLintEnabled === false) {
-      setMarkers(function(prev) { return _extends({}, prev, _defineProperty({}, activeTab.id, [])); });
+      applyMarkersForTab(activeTab.id, []);
       return;
     }
 
@@ -2979,7 +3017,18 @@ var MbeditorApp = function MbeditorApp() {
     return runPrettier(tab.content, editorPrefs, parserName)["catch"](function () { return null; });
   };
 
+  // Re-read a tab from the store after flushing TabManager's throttled content
+  // write. `tab` here is whatever the render captured, so flushing alone is not
+  // enough — the fresh text lands in the store, not in this object.
+  var _freshTab = function _freshTab(paneId, tab) {
+    TabManager.flushContent();
+    var pane = EditorStore.getState().panes.find(function (p) { return p.id === paneId; });
+    var live = pane && pane.tabs.find(function (t) { return t.id === tab.id; });
+    return live || tab;
+  };
+
   var handleSave = function handleSave(paneId, tab) {
+    tab = _freshTab(paneId, tab);
     if (editorPrefs.formatOnSave === true) {
       EditorStore.setStatus("Formatting " + tab.name + "...", "info");
       _formatContentForSave(tab).then(function (formatted) {
@@ -3056,16 +3105,13 @@ var MbeditorApp = function MbeditorApp() {
         FileService.lintFile(tab.path, tab.content, 'javascript').then(function (res) {
           var babelMarkers = (res && res.markers) || [];
           if (babelMarkers.length > 0) {
-            applyMarkersForTab(paneId, tab.id, babelMarkers);
+            applyMarkersForTab(tab.id, babelMarkers);
             EditorStore.setStatus('Saved — babel: ' + babelMarkers[0].message, 'warning');
           } else {
             // Clear any previous babel marker for this tab (keep others none —
             // JS tabs have no rubocop markers, so replacing is safe).
-            var existing = (EditorStore.getState().panes.find(function (p) { return p.id === paneId; }) || { tabs: [] })
-              .tabs.find(function (t) { return t.id === tab.id; });
-            if (existing && existing.markers && existing.markers.length) {
-              applyMarkersForTab(paneId, tab.id, []);
-            }
+            // applyMarkersForTab keeps the previous map when it is already empty.
+            applyMarkersForTab(tab.id, []);
           }
         })["catch"](function () {});
       }
@@ -3151,7 +3197,10 @@ var MbeditorApp = function MbeditorApp() {
   }
 
   var handleSaveAll = function handleSaveAll() {
-    var dirtyTabs = state.panes.flatMap(function (p) {
+    // Flush first, then read the panes back out of the store — the render's
+    // `state` predates the flush. See TabManager's flush contract.
+    TabManager.flushContent();
+    var dirtyTabs = EditorStore.getState().panes.flatMap(function (p) {
       return p.tabs;
     }).filter(function (t) {
       // Untitled scratch tabs need a save-as prompt each — Ctrl+S them
@@ -3386,8 +3435,8 @@ var MbeditorApp = function MbeditorApp() {
   var handleFormat = function handleFormat() {
     if (!activeTab) return;
 
-    var tab = activeTab;
     var paneId = focusedPane.id;
+    var tab = _freshTab(paneId, activeTab);
     var originalContent = tab.content;
 
     setLoading(function (prev) { return _extends({}, prev, { format: true }); });
@@ -3425,6 +3474,8 @@ var MbeditorApp = function MbeditorApp() {
   // thrown, so one unparseable file cannot stop the rest. Virtual tabs (diffs,
   // settings, the changelog) have no path on disk and are skipped.
   var handleFormatAll = function handleFormatAll() {
+    // See TabManager's flush contract — the panes are read straight after.
+    TabManager.flushContent();
     var targets = [];
     EditorStore.getState().panes.forEach(function (p) {
       p.tabs.forEach(function (t) {
@@ -3692,8 +3743,13 @@ var MbeditorApp = function MbeditorApp() {
       // Update any open Monaco models whose content changed.
       if (files.length && window.__mbeditorModels) {
         files.forEach(function(relPath) {
-          var model = window.__mbeditorModels[relPath];
-          if (!model) return;
+          // The registry holds {model, aviBase, ...} entries, not models. This
+          // used to call setValue/isDisposed straight on the entry, which threw
+          // into the .catch below — so an open tab kept its pre-replace text and
+          // could save it back over the replacement.
+          var entry = window.__mbeditorModels[relPath];
+          var model = entry && entry.model;
+          if (!model || model.isDisposed()) return;
           FileService.getFile(relPath).then(function(res) {
             if (res && res.content != null && !model.isDisposed()) {
               model.setValue(res.content);
@@ -4136,15 +4192,7 @@ var MbeditorApp = function MbeditorApp() {
       activeTabId: activePane ? activePane.activeTabId : null
     });
 
-    if (removedTabIds.length) {
-      setMarkers(function (prev) {
-        var next = _extends({}, prev);
-        removedTabIds.forEach(function (tabId) {
-          return delete next[tabId];
-        });
-        return next;
-      });
-    }
+    if (removedTabIds.length) forgetClosedTabs();
   };
 
   // Reveal a folder path in the explorer: switch to explorer tab and expand
@@ -4408,6 +4456,9 @@ var MbeditorApp = function MbeditorApp() {
       tabs: tabs,
       activeId: activeId,
       paneId: paneId,
+      // Diagnostics live in this map, not on the tab object — writing them onto
+      // the tab would mutate a value inside EditorStore.
+      markers: markers,
       tabDisplayMode: editorPrefs.tabDisplayMode || 'scroll',
       onSelect: function (id) {
         // Sync explorer selection with the newly active tab so there's only one highlight
@@ -5151,7 +5202,7 @@ var MbeditorApp = function MbeditorApp() {
               )
             },
             React.createElement(FileTree, {
-              items: editorPrefs.showDotFiles ? treeData : filterDotFiles(treeData || []),
+              items: fileTreeItems,
               onSelect: handleSoftOpenFile,
               activePath: editorPrefs.autoRevealInExplorer !== false ? (activeTab && activeTab.path) : null,
               selectedPaths: selectedPaths,

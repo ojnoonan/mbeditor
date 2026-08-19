@@ -682,6 +682,13 @@ var ModelGraph = (function () {
     var centreRef = React.useRef(centreOn);
     centreRef.current = centreOn;
 
+    // Same reason as centreRef: MbeditorApp passes a fresh closure on every one
+    // of its renders, and listing onOpenModel in the scene memo's deps rebuilt
+    // all ~10,000 SVG elements each time — once per keystroke, whenever this
+    // tab happened to be open.
+    var openModelRef = React.useRef(onOpenModel);
+    openModelRef.current = onOpenModel;
+
     var fitRef = React.useRef(fitToPane);
     fitRef.current = fitToPane;
 
@@ -762,7 +769,6 @@ var ModelGraph = (function () {
             var b = placed.positions[e.to];
             if (!a || !b || e.from === e.to) return null;
             var d = edgePath(a, b);
-            var isHovered = hovered && hovered.index === i;
             return React.createElement(
               'g',
               // Tagged so a node hover can find its own edges with one DOM query
@@ -774,16 +780,29 @@ var ModelGraph = (function () {
               React.createElement('path', {
                 d: d,
                 className: 'mg-edge-hit',
-                onMouseEnter: function () { setHovered({ index: i, edge: e }); },
+                // The lit class goes on the DOM node directly, the way
+                // enterModel/litRef do. `hovered` is React state read from
+                // inside this memo, and it is deliberately not a dep — putting
+                // it there would rebuild the whole scene on every edge hover —
+                // so a className derived from it never updated at all.
+                onMouseEnter: function (ev) {
+                  var line = ev.currentTarget.nextElementSibling;
+                  if (line) line.classList.add('mg-edge-hovered');
+                  setHovered({ index: i, edge: e });
+                },
                 onMouseMove: function (ev) {
                   var rect = svgRef.current.getBoundingClientRect();
                   setPointer({ x: ev.clientX - rect.left, y: ev.clientY - rect.top });
                 },
-                onMouseLeave: function () { setHovered(null); }
+                onMouseLeave: function (ev) {
+                  var line = ev.currentTarget.nextElementSibling;
+                  if (line) line.classList.remove('mg-edge-hovered');
+                  setHovered(null);
+                }
               }),
               React.createElement('path', {
                 d: d,
-                className: 'mg-edge ' + (MACRO_CLASS[e.macro] || '') + (isHovered ? ' mg-edge-hovered' : ''),
+                className: 'mg-edge ' + (MACRO_CLASS[e.macro] || ''),
                 markerEnd: 'url(#mg-arrow)'
               })
             );
@@ -831,7 +850,7 @@ var ModelGraph = (function () {
                   onClick: function (ev) {
                     ev.stopPropagation();
                     if (dragRef.current && dragRef.current.moved) return;
-                    if (onOpenModel) onOpenModel(m);
+                    if (openModelRef.current) openModelRef.current(m);
                   }
                 },
                 React.createElement('title', null, 'Open the full schema for ' + m.name),
@@ -868,7 +887,7 @@ var ModelGraph = (function () {
             );
           })
       ];
-    }, [placed, graph, focused, onOpenModel]);
+    }, [placed, graph, focused]);
 
     if (loading) {
       return React.createElement('div', { className: 'ide-model-graph-empty' }, 'Building the model graph…');

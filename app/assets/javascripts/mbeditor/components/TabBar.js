@@ -22,6 +22,7 @@ var TabBar = function TabBar(_ref) {
   var onCloseSaved = _ref.onCloseSaved;
   var onCloseAll = _ref.onCloseAll;
   var onNewFile = _ref.onNewFile;
+  var markers = _ref.markers || {};
   var tabDisplayMode = _ref.tabDisplayMode || 'scroll';
 
   var containerRef = useRef(null);
@@ -51,7 +52,7 @@ var TabBar = function TabBar(_ref) {
   var setDropTargetSide = _useState8[1];
 
   var getTabMarkerClass = function getTabMarkerClass(tab) {
-    var tabMarkers = tab.markers || [];
+    var tabMarkers = markers[tab.id] || [];
     if (!tabMarkers.length) return '';
 
     var hasError = tabMarkers.some(function (marker) {
@@ -79,7 +80,10 @@ var TabBar = function TabBar(_ref) {
         activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
       }
     }
-  }, [activeId, tabs]);
+  // tabs.length, not tabs: the array is fresh on every content change, so
+  // depending on it fired a smooth scroll per keystroke. Only opening, closing
+  // or switching a tab can move the active one out of view.
+  }, [activeId, tabs.length]);
 
   // Close context menu on outside click (bubble phase so onMouseDown on the menu can stop it)
   useEffect(function () {

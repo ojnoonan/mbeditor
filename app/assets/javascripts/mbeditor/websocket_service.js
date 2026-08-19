@@ -8,8 +8,14 @@
 // otherwise prevent reconnection.
 var WebSocketService = (function () {
   var _consumer = null;
+  // True only when _consumer is one we created ourselves; a consumer borrowed
+  // from the host app (window.App.cable) is not ours to disconnect.
+  var _ownsConsumer = false;
   var _subscription = null;
   var _connected = false;
+  // Distinguishes the first successful handshake from a reconnect, which is the
+  // point at which collaboration rooms have to be re-established.
+  var _everConnected = false;
   // Why collaboration is or is not working, so the editor can say so instead of
   // failing silently. A rejected subscription used to just schedule a reconnect
   // and tell nobody, which made a blocked cable indistinguishable from an empty
@@ -62,8 +68,10 @@ var WebSocketService = (function () {
     // Reuse an existing consumer the host app may have already created (App.cable
     // is the Rails default).  Fall back to creating our own.
     if (typeof window.App !== 'undefined' && window.App.cable) {
+      _ownsConsumer = false;
       return window.App.cable;
     }
+    _ownsConsumer = true;
     return window.ActionCable.createConsumer(_cableUrl());
   }
 
@@ -72,10 +80,14 @@ var WebSocketService = (function () {
       try { _subscription.unsubscribe(); } catch (e) { /* ignore */ }
       _subscription = null;
     }
-    if (_consumer && typeof _consumer.disconnect === 'function') {
+    // Only ever disconnect a consumer we created. When the host app already had
+    // one (window.App.cable) it is shared: disconnecting it on any mbeditor
+    // cable blip took down the host's own channels with it.
+    if (_ownsConsumer && _consumer && typeof _consumer.disconnect === 'function') {
       try { _consumer.disconnect(); } catch (e) { /* ignore */ }
     }
     _consumer = null;
+    _ownsConsumer = false;
     _connected = false;
   }
 
@@ -139,11 +151,21 @@ var WebSocketService = (function () {
         { channel: 'Mbeditor::EditorChannel' },
         {
           connected: function () {
+            var reconnected = _everConnected;
+            _everConnected = true;
             _connected = true;
             _status = 'connected';
             // Back to fast retries for the next blip.
             _reconnectAttempts = 0;
             if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+            // The drop took the old consumer down and every CollaborationChannel
+            // subscription made on it with it. Nothing else notices — cable
+            // availability is about support, not liveness — so the rooms would
+            // stay silently dead until each file was closed and reopened.
+            if (reconnected && typeof CollaborationService !== 'undefined' &&
+                typeof CollaborationService.rejoinRooms === 'function') {
+              try { CollaborationService.rejoinRooms(); } catch (e) { /* ignore */ }
+            }
           },
           disconnected: function () {
             _status = _status === 'rejected' ? 'rejected' : 'dropped';

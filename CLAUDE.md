@@ -6,14 +6,14 @@ Mbeditor (Mini Browser Editor) is a **mountable Rails engine** gem providing a b
 
 ```bash
 bundle install
-bundle exec rake test          # 495 tests, 1681 assertions
+bundle exec rake test          # ~1050 tests; browser suite via `rake system_test`
 cd test/dummy && rails server  # http://localhost:3000/mbeditor
 ```
 
 ## Architecture
 
 **Backend:** Rails engine. Controllers are thin renderers; business logic lives in `app/services/mbeditor/`. Key services:
-- `GitInfoService` — concurrent git metadata fetch (wave orchestration, 5 s TTL cache)
+- `GitInfoService` — concurrent git metadata fetch (wave orchestration, 10 s TTL cache — must exceed the frontend's 5 s lite poll)
 - `SearchReplaceService` — rg/grep subprocess execution, ReDoS guards, replace-in-files (supersedes `CodeSearchService`). Three tiers: rg > `git grep` > grep. **Every tier must put `excluded_paths` on the subprocess command line** — as `--glob=!`, `:(exclude)` pathspecs, and (grep tier) `find` prune expressions feeding `xargs -P grep`; `--exclude-dir` cannot express slashed exclusions like `vendor/bundle`, which made the grep tier walk them in full (measured 7.2 s → 0.09 s on a 350 MB tree). Post-filtering the results is not equivalent: the walk has already happened, and the git tier silently omitted them for a long time, which is what made search unusable on host apps without ripgrep. `GET /workspace` reports `searchBackend` so the live tier is visible. No `LC_ALL=C` on the git tier — measured neutral for `-F -i` and 2.2x *slower* for `-E`.
 - `EditorStateService` — JSON state persistence with file locking; used by both `EditorsController` and `EditorChannel`
 - `ExclusionMatcher` — unified path exclusion predicate

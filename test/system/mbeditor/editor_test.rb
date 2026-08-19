@@ -170,7 +170,8 @@ module Mbeditor
 
       # Refresh-workspace runs the external-change detection
       # (checkOpenTabsForExternalChanges) against the now-changed file on disk.
-      find("button[title='Refresh workspace']").click
+      # SidebarActionButton keeps its tooltip on a data-tip wrapper, not a title attribute.
+      find("button[aria-label='Refresh workspace']").click
 
       # The live shared buffer wins: the external disk content is NOT applied over
       # the collaborative buffer.

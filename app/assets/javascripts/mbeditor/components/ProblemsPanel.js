@@ -89,9 +89,24 @@ var ProblemsPanel = (function () {
 
   // The status bar deliberately tallies only errors and warnings: a count that
   // included every convention offense would be a number nobody acts on.
+  //
+  // Same scope as collect(), none of its work: the full walk sorts every marker
+  // and reads a source line per marker to build previews the caller then throws
+  // away, and it runs on every marker change — for a JS file, every keystroke.
   function counts() {
-    var all = collect();
-    return { errors: all.errors.length, warnings: all.warnings.length };
+    var monaco = window.monaco;
+    if (!monaco || !monaco.editor) return { errors: 0, warnings: 0 };
+
+    var errors = 0;
+    var warnings = 0;
+    monaco.editor.getModels().forEach(function (model) {
+      if (!model._mbeditorPath || model.isDisposed()) return;
+      monaco.editor.getModelMarkers({ resource: model.uri }).forEach(function (m) {
+        if (m.severity === SEVERITY_ERROR) errors += 1;
+        else if (m.severity === SEVERITY_WARNING) warnings += 1;
+      });
+    });
+    return { errors: errors, warnings: warnings };
   }
 
   var Panel = function ProblemsPanelComponent(_ref) {
@@ -234,10 +249,22 @@ var ProblemsPanel = (function () {
 
     React.useEffect(function () {
       if (!window.monaco || !window.monaco.editor) return;
-      var refresh = function () { setProblems(collect()); };
+      // Debounced for the same reason the status-bar tally is: markers change
+      // on every keystroke in a JS file, and collect() walks every model.
+      var timer = null;
+      var refresh = function () {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(function () {
+          timer = null;
+          setProblems(collect());
+        }, 250);
+      };
       var sub = window.monaco.editor.onDidChangeMarkers(refresh);
-      refresh();
-      return function () { sub.dispose(); };
+      setProblems(collect());
+      return function () {
+        if (timer) clearTimeout(timer);
+        sub.dispose();
+      };
     }, []);
 
     var needle = filter.trim().toLowerCase();

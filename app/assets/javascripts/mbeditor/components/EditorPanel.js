@@ -6,6 +6,7 @@ var _React = React;
 var useState = _React.useState;
 var useEffect = _React.useEffect;
 var useRef = _React.useRef;
+var useMemo = _React.useMemo;
 
 var IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp', 'bmp', 'avif'];
 
@@ -1681,6 +1682,22 @@ var EditorPanel = function EditorPanel(_ref) {
     };
   }, [tab.path, tab.externalContentVersion, monacoReady, editorPrefs.routeHints]);
 
+  // Blame and test view zones are anchored to line numbers, so they only need
+  // rebuilding once an edit has settled. Both effects used to list tab.content
+  // directly, which tore down and re-created every zone in the file on every
+  // keystroke. This ticks 250 ms after the last change instead — the same
+  // treatment the route-hint redraw above already gets.
+  var _useStateZT = useState(0);
+  var _useStateZT2 = _slicedToArray(_useStateZT, 2);
+  var zoneTick = _useStateZT2[0];
+  var setZoneTick = _useStateZT2[1];
+  useEffect(function () {
+    var timer = setTimeout(function () {
+      setZoneTick(function (n) { return n + 1; });
+    }, 250);
+    return function () { clearTimeout(timer); };
+  }, [tab.content]);
+
   // Render Blame block headers (author + summary) above contiguous commit regions.
   useEffect(function () {
     if (!monacoRef.current || !window.monaco || !isBlameVisible || !blameData) return;
@@ -1767,8 +1784,8 @@ var EditorPanel = function EditorPanel(_ref) {
       blameDecorationsRef.current = editor.deltaDecorations(blameDecorationsRef.current, []);
     }
 
-  // Include tab.content so blame re-renders once async file contents finish loading.
-  }, [blameData, isBlameVisible, tab.id, tab.content]);
+  // zoneTick, not tab.content: the zones follow the content, 250 ms behind it.
+  }, [blameData, isBlameVisible, tab.id, zoneTick]);
 
   // Check whether the current tab is the source file for the test that was run.
   // e.g. testPanelFile = "test/controllers/theme_controller_test.rb"
@@ -1845,6 +1862,14 @@ var EditorPanel = function EditorPanel(_ref) {
 
     return null;
   };
+
+  // treeHasPath walks the whole file tree once per candidate, and the Test
+  // button asked for this on every render — so once per keystroke. treeData is
+  // deliberately outside the React.memo comparator below, so it can only change
+  // on a render this component was going to do anyway.
+  var testFileForTab = useMemo(function () {
+    return matchingTestFilePath(tab.path);
+  }, [tab.path, treeData]);
 
   // Map a test method name to the best-matching line in the source file.
   // Extracts keywords from the test name and scores each source line.
@@ -1974,8 +1999,9 @@ var EditorPanel = function EditorPanel(_ref) {
       testDecorationIdsRef.current = editor.deltaDecorations(testDecorationIdsRef.current, []);
     }
 
-  // Include tab.content so zones re-render once async file content loads (same as blame).
-  }, [testResult, testInlineVisible, testPanelFile, tab.id, tab.path, tab.content]);
+  // zoneTick, not tab.content — see the blame effect. The effect still reads
+  // tab.content for mapTestToSourceLine; the tick only decides when it re-runs.
+  }, [testResult, testInlineVisible, testPanelFile, tab.id, tab.path, zoneTick]);
 
   var sourceTab = tab.isPreview ? findTabByPath(tab.previewFor) : null;
   var markdownContent = tab.isPreview ? sourceTab && sourceTab.content || tab.content || '' : tab.content || '';
@@ -2304,7 +2330,7 @@ var EditorPanel = function EditorPanel(_ref) {
         React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
         !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, isBlameLoading ? 'Loading...' : 'Blame')
       ),
-      testAvailable && matchingTestFilePath(tab.path) && React.createElement(
+      testAvailable && testFileForTab && React.createElement(
         'button',
         {
           className: 'ide-icon-btn',

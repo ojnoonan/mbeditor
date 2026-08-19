@@ -159,20 +159,40 @@ var SearchService = (function () {
 
   // Fetch a specific page by index without touching EditorStore.
   // Used by the random-access virtual scroll loader.
+  //
+  // Shares projectSearch's cache (same query, same page, same default options →
+  // same key) and de-dupes in flight: the loader asks for whatever page the
+  // scroll position lands on, and a scroll that crosses one page boundary
+  // several times used to stack several identical requests.
+  var _pageRequests = {};
+
   function fetchPage(query, pageIndex) {
     if (!query) return Promise.resolve({ results: [], hasMore: false });
     var offset = pageIndex * SEARCH_PAGE_SIZE;
-    return axios.get(window.mbeditorBasePath() + '/search', {
+    var key = _cacheKey(query, {}, offset);
+
+    var cached = _cacheGet(key);
+    if (cached) return Promise.resolve(cached);
+    if (_pageRequests[key]) return _pageRequests[key];
+
+    var request = axios.get(window.mbeditorBasePath() + '/search', {
       params: { q: query, offset: offset, limit: SEARCH_PAGE_SIZE }
     }).then(function(res) {
+      delete _pageRequests[key];
       var data = res.data;
       var results = Array.isArray(data) ? data : (data && data.results || []);
       var hasMore = !Array.isArray(data) && !!(data && data.has_more);
-      return { results: results, hasMore: hasMore };
+      var payload = { results: results, hasMore: hasMore, totalCount: null };
+      _cacheSet(key, payload);
+      return payload;
     }).catch(function(err) {
+      delete _pageRequests[key];
       EditorStore.setStatus("Search failed: " + err.message, "error");
       return { results: [], hasMore: false };
     });
+
+    _pageRequests[key] = request;
+    return request;
   }
 
   // Re-scan a single changed file for the active query and splice its rows
