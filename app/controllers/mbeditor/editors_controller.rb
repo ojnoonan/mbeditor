@@ -73,6 +73,12 @@ module Mbeditor
         blameAvailable: AvailabilityProbe.git(workspace_root),
         redmineEnabled: Mbeditor.configuration.redmine_enabled == true,
         testAvailable: test_available?,
+        # The client derives its request timeouts from these. Two independently
+        # hard-coded numbers is how you get the browser aborting a run the
+        # server is still happily executing, reported as a generic network
+        # error instead of the server's own message.
+        testTimeout: (Mbeditor.configuration.test_timeout || 180).to_i,
+        testAllTimeout: (Mbeditor.configuration.test_all_timeout || 1800).to_i,
         actionCableEnabled: action_cable_enabled?,
         jsSyntaxCheckAvailable: JsSyntaxCheckService.available?,
         rubyLspAvailable: AvailabilityProbe.ruby_lsp(workspace_root),
@@ -84,7 +90,16 @@ module Mbeditor
     end
 
     # GET /mbeditor/files — recursive file tree
+    # refresh=1 means "my view of the workspace is stale, drop your caches" —
+    # the client sends it after an external `git checkout`, which rewrites the
+    # tree without going through any mutation endpoint, so nothing here knows
+    # to invalidate. Without it the 15s tree TTL kept serving the old branch's
+    # file list, and the search cache the old branch's hits.
     def files
+      if params[:refresh].present?
+        FileTreeService.invalidate(workspace_root.to_s)
+        SearchReplaceService.invalidate_cache(workspace_root.to_s)
+      end
       render json: FileTreeService.build(workspace_root)
     end
 
@@ -1053,6 +1068,41 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
+    # POST /mbeditor/rubocop — whole-workspace `rubocop` run
+    #
+    # mode=autocorrect adds `-a` (safe corrections only) and writes to disk, so
+    # the response doubles as the post-correction offense list.
+    def rubocop_run
+      unless AvailabilityProbe.rubocop(workspace_root)
+        return render json: { ok: false, error: "RuboCop is not available", files: [] }, status: :unprocessable_content
+      end
+
+      mode = params[:mode].to_s == "autocorrect" ? :autocorrect : :check
+      result = RubocopRunService.run(workspace_root, mode: mode)
+      # `-a` writes to disk behind every open tab's back. No path list: a
+      # whole-project run can touch anything, and the omitted-paths form makes
+      # the client re-check every open tab, which is exactly what's wanted.
+      broadcast_files_changed(nil, structural: false) if mode == :autocorrect && result[:ok]
+      render json: result
+    end
+
+    # POST /mbeditor/test_all — run the whole suite
+    #
+    # No path: the framework's own default target applies. Deliberately a plain
+    # blocking request like /test, just with the suite ceiling — streaming would
+    # need a channel, a buffer and a cancel protocol for a button most people
+    # press a handful of times a day.
+    def run_all_tests
+      config = Mbeditor.configuration
+      result = TestRunnerService.run_all(
+        workspace_root.to_s,
+        framework: config.test_framework&.to_sym,
+        command: config.test_all_command,
+        timeout: (config.test_all_timeout || 1800).to_i
+      )
+      render json: result
+    end
+
     # POST /mbeditor/test — run tests for the given file
     def run_test
       path = resolve_path(params[:path])
@@ -1081,7 +1131,7 @@ module Mbeditor
         test_file,
         framework: config.test_framework&.to_sym,
         command: config.test_command,
-        timeout: config.test_timeout || 60,
+        timeout: (config.test_timeout || 180).to_i,
         line: line
       )
 

@@ -209,6 +209,9 @@ var FileService = (function () {
   // asked for, so it can be skipped while the server is unreachable.
   function getTree(opts) {
     var cfg = (opts && opts.background) ? { mbeditorBackground: true } : {};
+    // opts.refresh bypasses the server's tree cache. The 10s poll must not set
+    // it — the cache is what keeps that poll cheap.
+    if (opts && opts.refresh) cfg.params = { refresh: 1 };
     return axios.get(window.mbeditorBasePath() + '/files', cfg).then(function(res) { return res.data; });
   }
 
@@ -273,10 +276,30 @@ var FileService = (function () {
 
   // line (1-based, optional) narrows the run to the single test at that line;
   // the server ignores it unless `path` IS the test file.
+  // Server-reported ceilings (seconds), seeded from /workspace. The request
+  // timeout is derived from them rather than hard-coded: two independent
+  // numbers meant that raising config.test_timeout past the client's own cap
+  // made the browser abort a run the server was still executing, and the user
+  // saw a generic network error instead of the server's message.
+  var testTimeouts = { test: 180, testAll: 1800 };
+  function setTestTimeouts(t) {
+    if (t && t.test > 0) testTimeouts.test = t.test;
+    if (t && t.testAll > 0) testTimeouts.testAll = t.testAll;
+  }
+  // Margin for boot, JSON encoding and the trip back, so the server's own
+  // timeout is always the one that fires first and reports why.
+  function requestTimeout(seconds) { return (seconds + 30) * 1000; }
+
   function runTests(path, line) {
     var payload = { path: path };
     if (line) payload.line = line;
-    return axios.post(window.mbeditorBasePath() + '/test', payload, { timeout: 120000 }).then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/test', payload,
+      { timeout: requestTimeout(testTimeouts.test) }).then(function(res) { return res.data; });
+  }
+
+  function runAllTests() {
+    return axios.post(window.mbeditorBasePath() + '/test_all', {},
+      { timeout: requestTimeout(testTimeouts.testAll) }).then(function(res) { return res.data; });
   }
 
   function ping() {
@@ -448,6 +471,15 @@ var FileService = (function () {
     }).then(function (res) { return res.data; });
   }
 
+  // Whole-workspace rubocop. mode 'autocorrect' runs `-a` and writes to disk.
+  // Generous timeout: a cold run over a large app is slow, and there is no
+  // progress stream to fall back on.
+  function runRubocop(mode) {
+    return axios.post(window.mbeditorBasePath() + '/rubocop',
+      { mode: mode || 'check' }, { timeout: 300000 }
+    ).then(function (res) { return res.data; });
+  }
+
   // Exceptions raised by the host app, newest first. The cable push is the
   // live path; this seeds the panel and covers hosts without ActionCable.
   function getExceptions() {
@@ -552,6 +584,9 @@ var FileService = (function () {
     lspDiagnostics: lspDiagnostics,
     rubyRename: rubyRename,
     getModelGraph: getModelGraph,
+    runRubocop: runRubocop,
+    runAllTests: runAllTests,
+    setTestTimeouts: setTestTimeouts,
     getExceptions: getExceptions,
     clearExceptions: clearExceptions,
     getRelatedFiles: getRelatedFiles,

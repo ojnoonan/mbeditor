@@ -205,57 +205,66 @@ html, body, #mbeditor-root {
 
 /* ── Activity Bar (VSCode-style, always visible) ───────── */
 .ide-activity-bar {
-  width: 48px;
-  min-width: 48px;
+  width: 60px;
+  min-width: 60px;
   flex-shrink: 0;
   background: var(--ide-panel-bg);
   border-right: 1px solid var(--ide-border);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 4px 0;
+  /* stretch, not center: the buttons fill the bar edge to edge so the active
+     indicator can sit flush against the left of the screen. Centering them
+     left a gutter the indicator was inset by. */
+  align-items: stretch;
+  padding: 0;
   z-index: 10;
 }
 
 .ide-activity-bar-top {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2px;
+  align-items: stretch;
+  gap: 0;
   flex: 1;
 }
 
 .ide-activity-bar-bottom {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding-bottom: 4px;
+  align-items: stretch;
+  gap: 0;
 }
 
-.ide-activity-btn {
-  width: 36px;
-  height: 36px;
+/* Scoped through the bar so the glyph size outranks the global
+   `button:not(.pico-btn) { font-size: 12px }` reset, which is more specific
+   than a bare class and was silently winning. */
+.ide-activity-bar .ide-activity-btn {
+  width: 100%;
+  height: 60px;
   background: transparent;
   border: none;
+  /* Always reserve the indicator's width so the glyph does not shift sideways
+     by a pixel the moment a panel is opened. */
+  border-left: 2px solid transparent;
   border-radius: 0;
   color: var(--ide-text-muted);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 15px;
-  transition: background 0.12s ease, color 0.12s ease;
+  font-size: 25px;
+  transition: color 0.12s ease;
 }
 
-.ide-activity-btn:hover {
-  background: var(--ide-hover-bg);
+/* The glyph carries the state, not a filled box behind it. */
+.ide-activity-bar .ide-activity-btn:hover {
+  background: transparent;
   color: var(--ide-text);
 }
 
-.ide-activity-btn.active {
+.ide-activity-bar .ide-activity-btn.active {
   color: var(--ide-accent-fg);
-  border-left: 2px solid var(--ide-accent-fg);
+  border-left-color: var(--ide-accent-fg);
 }
 
 .sidebar-panel-title {
@@ -376,25 +385,25 @@ html, body, #mbeditor-root {
   border: 1px solid var(--ide-accent);
   border-radius: 3px;
   color: var(--ide-text);
-  font-size: 12px;
+  font-size: 14px;
   font-family: inherit;
   padding: 1px 4px;
   outline: none;
-  height: 18px;
-  line-height: 18px;
+  height: 21px;
+  line-height: 21px;
 }
 
 .tree-item-icon {
-  width: 16px;
-  margin-right: 5px;
-  font-size: 12px;
+  width: 20px;
+  margin-right: 6px;
+  font-size: 14px;
   flex-shrink: 0;
   text-align: center;
 }
 
 .tree-folder-icon { color: #dcb67a; }
 .tree-file-icon   { color: #78b4e0; }
-.tree-item-name   { flex: 1; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.tree-item-name   { flex: 1; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
 
 /* ── Custom File Icons ───────────────────────────────────── */
 .ruby-icon { color: #f26262 !important; }
@@ -3237,6 +3246,24 @@ button:not(.pico-btn) { margin-bottom: 0; }
   padding: 2px 6px;
 }
 .ide-problems-btn:hover { color: var(--ide-fg, #fff); }
+.ide-problems-btn:disabled { opacity: 0.4; cursor: default; }
+.ide-problems-btn:disabled:hover { color: var(--ide-fg-muted, #ccc); }
+.ide-problems-actions { display: flex; gap: 2px; }
+.ide-problems-actions .ide-problems-btn { white-space: nowrap; }
+.ide-problems-btn.is-on { color: var(--ide-accent, #0a84ff); }
+.ide-testrun-stat { font-size: 11px; color: var(--ide-text-muted, #858585); }
+.ide-testrun-pass { color: #4ec9b0; }
+.ide-testrun-fail { color: #f14c4c; }
+.ide-testrun-raw {
+  margin: 0;
+  padding: 8px 14px;
+  font-family: var(--ide-mono, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--ide-fg, #eee);
+}
 .ide-problems-body { flex: 1; overflow: auto; padding: 4px 0; font-size: 12px; }
 .ide-problems-empty {
   padding: 10px 14px;

@@ -969,7 +969,15 @@
       monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
         noSemanticValidation: false,
         noSyntaxValidation: false,
-        noSuggestionDiagnostics: false
+        // Suggestion diagnostics are TypeScript's advice to a TypeScript
+        // author: nearly all of them on plain JS/JSX are 7044, "Parameter 'x'
+        // implicitly has an 'any' type, but a better type may be inferred from
+        // usage" — one per untyped parameter in the file, in a language that
+        // has no types to annotate. They arrive as Hint/Info, which the marker
+        // patcher below never inspected (it only ever filtered Errors), so
+        // every one of them reached the Problems panel. Semantic and syntax
+        // checking, which is what actually catches mistakes here, stay on.
+        noSuggestionDiagnostics: true
         // No diagnosticCodesToIgnore here on purpose: JS/JSX markers are
         // filtered by category in the marker patcher below (see JS_KEEP_CODES),
         // which is a closed rule rather than a list that grows by one code

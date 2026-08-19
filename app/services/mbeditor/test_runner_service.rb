@@ -26,7 +26,7 @@ module Mbeditor
 
       cmd = build_command(repo_path, test_path, framework, command, line: line)
       raw = execute_with_timeout(repo_path, cmd, timeout)
-      tests, summary = parse_output(raw, framework)
+      tests, summary = parse_output(raw, framework, repo_path: repo_path)
       {
         ok: true,
         framework: framework.to_s,
@@ -38,6 +38,59 @@ module Mbeditor
       error_result("Test run timed out after #{timeout} seconds")
     rescue StandardError => e
       error_result(e.message)
+    end
+
+    # Run the whole suite in +repo_path+ — no file argument, so the framework's
+    # own default target applies (test/ for Rails, spec/ for RSpec).
+    #
+    # Same return shape as +run+, so the panel renders one result type. The
+    # framework is detected from the project rather than from a filename,
+    # since there isn't one.
+    def run_all(repo_path, framework: nil, command: nil, timeout: 1800)
+      framework = detect_suite_framework(repo_path) if framework.nil?
+      return error_result("Could not detect test framework") unless framework
+
+      cmd = build_suite_command(repo_path, framework, command)
+      raw = execute_with_timeout(repo_path, cmd, timeout)
+      tests, summary = parse_output(raw, framework, repo_path: repo_path)
+      {
+        ok: true,
+        framework: framework.to_s,
+        summary: summary,
+        tests: tests,
+        raw: raw
+      }
+    rescue ProcessRunner::TimeoutError
+      error_result("Test run timed out after #{timeout} seconds")
+    rescue StandardError => e
+      error_result(e.message)
+    end
+
+    # No test_path to go on, so this reads the project layout only. RSpec wins
+    # a tie: a project with both usually keeps `test/` for legacy fixtures.
+    def detect_suite_framework(repo_path)
+      return :rspec if File.exist?(File.join(repo_path, ".rspec"))
+      return :rspec if File.directory?(File.join(repo_path, "spec"))
+      return :minitest if File.directory?(File.join(repo_path, "test"))
+
+      nil
+    end
+
+    def build_suite_command(repo_path, framework, custom_command)
+      return Shellwords.split(custom_command) if custom_command.present?
+
+      case framework.to_sym
+      when :rspec
+        bin = File.join(repo_path, "bin", "rspec")
+        (File.exist?(bin) ? [bin] : ["bundle", "exec", "rspec"]) + ["--format", "json"]
+      else
+        bin = File.join(repo_path, "bin", "rails")
+        # `bin/rails test` with no path runs the default suite. Without it,
+        # `rake test` is the portable fallback for a non-Rails project.
+        return [bin, "test", "--verbose"] if File.exist?(bin)
+
+        ["bundle", "exec", "rake", "test"]
+      end
     end
 
     # Given a source file path, resolve it to its matching test/spec file.
@@ -176,18 +229,36 @@ module Mbeditor
       result[:stdout] + result[:stderr]
     end
 
-    def parse_output(raw, framework)
+    def parse_output(raw, framework, repo_path: nil)
       case framework.to_sym
       when :rspec
-        parse_rspec_output(raw)
+        parse_rspec_output(raw, repo_path: repo_path)
       when :minitest
-        parse_minitest_output(raw)
+        parse_minitest_output(raw, repo_path: repo_path)
       else
         [[], empty_summary]
       end
     end
 
-    def parse_rspec_output(raw)
+    # Failure blocks name an absolute path in some runners and a repo-relative
+    # one in others. The editor can only open the relative form, so both are
+    # normalized here; anything that escapes the workspace is dropped rather
+    # than handed to the client as an unopenable path.
+    def relativize(path, repo_path)
+      return nil if path.nil? || path.empty?
+
+      rel = path.to_s
+      rel = rel.delete_prefix("./")
+      if repo_path
+        root = File.join(repo_path.to_s.chomp("/"), "")
+        rel = rel.delete_prefix(root)
+      end
+      return nil if rel.start_with?("/", "../")
+
+      rel
+    end
+
+    def parse_rspec_output(raw, repo_path: nil)
       # RSpec with --format json embeds JSON in the output
       json_match = raw.match(/(\{.*"summary_line".*\})/m)
       if json_match
@@ -205,18 +276,19 @@ module Mbeditor
             name: ex["full_description"] || ex["description"],
             status: ex["status"] == "passed" ? "pass" : (ex["status"] == "pending" ? "skip" : "fail"),
             line: ex.dig("line_number"),
+            file: relativize(ex["file_path"], repo_path),
             message: ex.dig("exception", "message")
           }
         end
         [tests, summary]
       else
-        parse_minitest_output(raw) # fallback to text parsing
+        parse_minitest_output(raw, repo_path: repo_path) # fallback to text parsing
       end
     rescue JSON::ParserError
-      parse_minitest_output(raw)
+      parse_minitest_output(raw, repo_path: repo_path)
     end
 
-    def parse_minitest_output(raw)
+    def parse_minitest_output(raw, repo_path: nil)
       lines = raw.lines
 
       # First pass: collect per-test results from verbose output.
@@ -232,7 +304,7 @@ module Mbeditor
                  when "E" then "error"
                  when "S" then "skip"
                  end
-        verbose_results[m[1]] = { name: m[1], status: status, line: nil, message: nil }
+        verbose_results[m[1]] = { name: m[1], status: status, line: nil, file: nil, message: nil }
       end
 
       # Second pass: parse failure/error blocks for messages and line numbers.
@@ -246,6 +318,7 @@ module Mbeditor
 
         name = name_line.strip.split(" [").first.chomp(":")
         line_num = name_line[/:(\d+)\]/, 1]&.to_i
+        file = relativize(name_line[/\[([^\]]+):\d+\]/, 1], repo_path)
         msg_lines = []
         (idx + 2...lines.length).each do |j|
           break if lines[j].strip.empty? || lines[j].match?(/^\s+\d+\)\s+/)
@@ -256,11 +329,13 @@ module Mbeditor
           name: name,
           status: line.include?("Error") ? "error" : "fail",
           line: line_num,
+          file: file,
           message: msg_lines.join("\n")
         }
 
         if verbose_results.key?(name)
           verbose_results[name][:line]    = line_num
+          verbose_results[name][:file]    = file
           verbose_results[name][:message] = msg_lines.join("\n")
         else
           failure_entries << entry

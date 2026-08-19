@@ -560,6 +560,11 @@ var MbeditorApp = function MbeditorApp() {
   var showProblemsPanel = _useStateProblems2[0];
   var setShowProblemsPanel = _useStateProblems2[1];
 
+  var _useStateTestRun = useState(false);
+  var _useStateTestRun2 = _slicedToArray(_useStateTestRun, 2);
+  var showTestRunPanel = _useStateTestRun2[0];
+  var setShowTestRunPanel = _useStateTestRun2[1];
+
   // Error/warning tallies across the open tabs, mirrored into the status bar.
   var _useStateProblemCounts = useState({ errors: 0, warnings: 0 });
   var _useStateProblemCounts2 = _slicedToArray(_useStateProblemCounts, 2);
@@ -1261,6 +1266,12 @@ var MbeditorApp = function MbeditorApp() {
       if (workspace && typeof workspace.redmineEnabled === 'boolean') {
         setRedmineEnabled(workspace.redmineEnabled);
       }
+      if (workspace && (workspace.testTimeout || workspace.testAllTimeout)) {
+        FileService.setTestTimeouts({
+          test: workspace.testTimeout,
+          testAll: workspace.testAllTimeout
+        });
+      }
       if (workspace && typeof workspace.testAvailable === 'boolean') {
         setTestAvailable(workspace.testAvailable);
       }
@@ -1861,6 +1872,24 @@ var MbeditorApp = function MbeditorApp() {
       window.removeEventListener('pagehide', cancelPending);
       WebSocketService.offFilesChanged(handleFilesChanged);
     };
+  }, []);
+
+  // A branch switch changes every tracked file at once, and no push announces
+  // it — the broadcast only covers mbeditor's own writes. Re-read the tree and
+  // every open tab, the same work a manual workspace refresh does. Clean tabs
+  // take the new branch's content; dirty ones queue the usual reload prompt,
+  // so unsaved work is never overwritten.
+  useEffect(function () {
+    function onBranchChanged() {
+      SearchService.invalidate();
+      FileService.getTree({ refresh: true }).then(function (data) {
+        setTreeData(_treeUpdater(data || []));
+      })["catch"](function () {})["finally"](function () {
+        checkOpenTabsForExternalChanges();
+      });
+    }
+    window.addEventListener('mbeditor:branch-changed', onBranchChanged);
+    return function () { window.removeEventListener('mbeditor:branch-changed', onBranchChanged); };
   }, []);
 
   // WebSocket push — when a peer saves a collaboratively-bound file, the CRDT has
@@ -3240,7 +3269,7 @@ var MbeditorApp = function MbeditorApp() {
       return _extends({}, prev, { refreshWorkspace: true });
     });
     GitService.fetchStatus()["catch"](function () {});
-    FileService.getTree().then(function (data) {
+    FileService.getTree({ refresh: true }).then(function (data) {
       setTreeData(_treeUpdater(data || []));
       checkOpenTabsForExternalChanges();
       EditorStore.setStatus("Workspace refreshed", "success");
@@ -3708,6 +3737,10 @@ var MbeditorApp = function MbeditorApp() {
 
   var toggleLogPanel = function toggleLogPanel() {
     setShowLogPanel(function (prev) { return !prev; });
+  };
+
+  var toggleTestRunPanel = function toggleTestRunPanel() {
+    setShowTestRunPanel(function (prev) { return !prev; });
   };
 
   var toggleProblemsPanel = function toggleProblemsPanel() {
@@ -4848,7 +4881,7 @@ var MbeditorApp = function MbeditorApp() {
     React.createElement(
       "div",
       { className: "ide-body", id: "ide-body-container" },
-      /* Activity bar — always visible, 48px wide */
+      /* Activity bar — always visible, 60px wide */
       !zenMode && React.createElement(
         "div",
         { className: "ide-activity-bar" },
@@ -6351,6 +6384,20 @@ var MbeditorApp = function MbeditorApp() {
         onOpenFile: function (path, line, col) {
           handleSelectFile(path, path.split('/').pop(), line, col);
         }
+      }),
+      showTestRunPanel && !zenMode && React.createElement(window.TestRunPanel, {
+        onClose: function () { setShowTestRunPanel(false); },
+        onOpenFile: function (path, line, col) {
+          handleSelectFile(path, path.split('/').pop(), line, col);
+        },
+        // A suite result spans many files, so there is no single testPanelFile
+        // for it — each entry carries its own, and EditorPanel matches per
+        // entry. Clearing it here keeps the per-file modal from labelling a
+        // suite result with a file it did not come from.
+        onResult: function (res) {
+          setTestResult(res);
+          setTestPanelFile(null);
+        }
       })
       ),
 
@@ -6416,6 +6463,19 @@ var MbeditorApp = function MbeditorApp() {
           style: { marginLeft: "8px" }
         }),
         React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.warnings)
+      ),
+      // Gated on the same probe as the per-file Test button: a project with no
+      // test directory has nothing for this to run.
+      testAvailable && React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "statusbar-btn statusbar-testrun" + (showTestRunPanel ? " active" : ""),
+          onClick: toggleTestRunPanel,
+          title: "Run the whole test suite"
+        },
+        React.createElement("i", { className: "fas fa-flask" }),
+        React.createElement("span", null, " Tests")
       ),
       // ruby-lsp indicator. Hidden entirely when ruby-lsp was never available
       // and nothing has gone wrong — a permanent "off" badge in a project with

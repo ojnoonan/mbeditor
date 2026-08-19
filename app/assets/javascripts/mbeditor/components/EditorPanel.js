@@ -1882,9 +1882,17 @@ var EditorPanel = function EditorPanel(_ref) {
     var model = editor.getModel();
     var lineCount = model ? model.getLineCount() : 0;
 
-    var showHere = testPanelFile && tab.path && isSourceForTest(tab.path, testPanelFile);
+    // Which test file a result entry belongs to. A whole-suite run spans many
+    // of them and stamps each entry with its own `file`, so there is no single
+    // testPanelFile to gate on; a per-file run leaves `file` unset on the
+    // passing entries and testPanelFile is the answer for those.
+    var testFileFor = function (t) { return (t && t.file) || testPanelFile; };
+    var relevantTests = ((testResult && testResult.tests) || []).filter(function (t) {
+      var file = testFileFor(t);
+      return file && tab.path && isSourceForTest(tab.path, file);
+    });
 
-    if (!testResult || !testInlineVisible || !showHere) {
+    if (!testResult || !testInlineVisible || relevantTests.length === 0) {
       clearTestZones(editor);
       testDecorationIdsRef.current = editor.deltaDecorations(testDecorationIdsRef.current, []);
       return;
@@ -1895,10 +1903,8 @@ var EditorPanel = function EditorPanel(_ref) {
       testDecorationIdsRef.current = editor.deltaDecorations(testDecorationIdsRef.current, []);
 
       var normPath = function(p) { return p ? p.replace(/^\/+/, '') : ''; };
-      var viewingTestFile = normPath(tab.path) === normPath(testPanelFile);
 
-      var tests = testResult.tests || [];
-      var testsWithStatus = tests.filter(function (t) {
+      var testsWithStatus = relevantTests.filter(function (t) {
         return t.status === 'pass' || t.status === 'fail' || t.status === 'error';
       });
 
@@ -1907,6 +1913,9 @@ var EditorPanel = function EditorPanel(_ref) {
       // Determine line number for each test
       var sourceContent = tab.content || '';
       var mapped = testsWithStatus.map(function(t) {
+        // Per entry, not per panel: in a suite run this tab is the test file
+        // for some entries and the source counterpart for others.
+        var viewingTestFile = normPath(tab.path) === normPath(testFileFor(t));
         var line;
         if (viewingTestFile && t.line && t.line >= 1 && t.line <= lineCount) {
           line = t.line;

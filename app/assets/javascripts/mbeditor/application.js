@@ -27,6 +27,7 @@
 //= require mbeditor/components/TestResultsPanel
 //= require mbeditor/components/LogPanel
 //= require mbeditor/components/ProblemsPanel
+//= require mbeditor/components/TestRunPanel
 //= require mbeditor/components/CodeReviewPanel
 //= require mbeditor/components/EditorPanel
 //= require mbeditor/components/FileTree
