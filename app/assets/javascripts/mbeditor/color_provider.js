@@ -87,6 +87,11 @@
   function provideDocumentColors(model) {
     var colors = [];
     var lineCount = model.getLineCount();
+    // Registered for every language and re-run on every change, so a big file
+    // pays two regex passes per line for every keystroke. Same threshold
+    // EditorPanel's applyLargeFileTuning uses to switch off the other
+    // whole-document decorations.
+    if (lineCount > 2500) return [];
     for (var ln = 1; ln <= lineCount; ln++) {
       var line = model.getLineContent(ln);
       if (line.length > 2000) continue; // skip pathological lines

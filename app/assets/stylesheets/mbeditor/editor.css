@@ -8,10 +8,86 @@
   box-shadow: none !important;
 }
 
-/* Prevent Pico CSS from applying its primary-colour focus/active state to IDE buttons.
-   Pico sets --pico-background-color and --pico-border-color to its primary blue on
-   button:focus, which bleeds through as a blue tint on any button not explicitly
-   overriding its background with a literal value. */
+/* ── Pico containment ──────────────────────────────────────────────────────
+ *
+ * The host app's stylesheet loads alongside this one, and when it is Pico (the
+ * dummy app's is) it styles bare element and ARIA selectors — `button`,
+ * `[role=button]`, `[role=group]`, `[disabled]` — every one of which matches
+ * this UI's markup. Two shipped bugs came from exactly that: `[role=button]`
+ * painted the tab close buttons as filled primary squares, and
+ * `[disabled] { pointer-events: none }` stopped disabled toolbar buttons from
+ * receiving hover at all, so their tooltips never appeared.
+ *
+ * The technique is to zero Pico's own custom properties: every Pico button
+ * declaration reads from them, so neutralising the variables disarms the whole
+ * ruleset at once, which beats fighting each declaration on specificity. Only
+ * the few properties Pico hard-codes need explicit overrides.
+ *
+ * Two things make this safe to widen, and both depend on where the block sits:
+ *
+ *  - The root is wrapped in :where(), so these rules carry exactly Pico's own
+ *    specificity, no more. They win over Pico only because the whole of
+ *    editor.css is bundled after the whole of Pico.
+ *  - The block lives at the TOP of this file, so every component rule below —
+ *    .statusbar-btn, .project-actions, .tab-close — is later at equal or
+ *    greater specificity and still wins.
+ *
+ * That combination is what makes this a floor rather than a new source of
+ * truth: it can only remove Pico's opinions, never override this file's own.
+ * Moving it further down would silently invert that.
+ *
+ * Deliberately NOT reset: Pico's `*` box-sizing and background-repeat rules
+ * (this UI assumes border-box, which is what Pico sets), and `position` on
+ * [role=group] (Pico's `relative` is the safer value for any absolutely
+ * positioned descendant, and nothing here needs it to be static).
+ *
+ * Monaco is listed separately because its widgets portal out of the shell to
+ * document.body (.context-view, .action-widget), so a #mbeditor-root scope
+ * would miss them. Monaco renders its own actions as <a role="button">.
+ */
+:where(#mbeditor-root) :is(button, [type="button"], [type="submit"], [type="reset"], [role="button"], [role="group"]),
+.monaco-hover [role=button],
+.action-widget [role=button],
+.context-view [role=button],
+.monaco-editor [role=button],
+.monaco-diff-editor [role=button] {
+  --pico-background-color: transparent;
+  --pico-border-color: transparent;
+  --pico-color: inherit;
+  --pico-box-shadow: none;
+  --pico-form-element-spacing-vertical: 0;
+  --pico-form-element-spacing-horizontal: 0;
+}
+
+/* Properties Pico hard-codes, which the variable reset above cannot reach. */
+
+/* Pico's `[disabled] { pointer-events: none }` means a disabled control never
+ * receives hover, so neither a title attribute nor a CSS hover tooltip can
+ * fire on it — and a disabled button is exactly when a user most wants to be
+ * told what it is. */
+:where(#mbeditor-root) [disabled],
+:where(#mbeditor-root) [aria-disabled="true"] {
+  pointer-events: auto;
+}
+
+/* Pico lays [role=group] out as a full-width bordered input group. It is used
+ * here only to label toolbars for screen readers. */
+:where(#mbeditor-root) [role="group"] {
+  display: inline-flex;
+  width: auto;
+  margin-bottom: 0;
+}
+
+/* Pico gives every button a bottom margin to space form controls. */
+:where(#mbeditor-root) :is(button, [type="button"], [type="submit"], [type="reset"]) {
+  margin: 0;
+}
+
+/* Pico's focus/active state sets its primary blue on --pico-background-color
+   and --pico-border-color, which bleeds through as a blue tint on any button
+   not overriding its background with a literal value. Kept separate from the
+   block above: this one is intentionally more specific than a component rule,
+   because no component should be able to opt back into a Pico focus colour. */
 #mbeditor-root button:not(.pico-btn):focus,
 #mbeditor-root button:not(.pico-btn):focus-visible,
 #mbeditor-root button:not(.pico-btn):active {
@@ -129,57 +205,66 @@ html, body, #mbeditor-root {
 
 /* ── Activity Bar (VSCode-style, always visible) ───────── */
 .ide-activity-bar {
-  width: 48px;
-  min-width: 48px;
+  width: 60px;
+  min-width: 60px;
   flex-shrink: 0;
   background: var(--ide-panel-bg);
   border-right: 1px solid var(--ide-border);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 4px 0;
+  /* stretch, not center: the buttons fill the bar edge to edge so the active
+     indicator can sit flush against the left of the screen. Centering them
+     left a gutter the indicator was inset by. */
+  align-items: stretch;
+  padding: 0;
   z-index: 10;
 }
 
 .ide-activity-bar-top {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2px;
+  align-items: stretch;
+  gap: 0;
   flex: 1;
 }
 
 .ide-activity-bar-bottom {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding-bottom: 4px;
+  align-items: stretch;
+  gap: 0;
 }
 
-.ide-activity-btn {
-  width: 36px;
-  height: 36px;
+/* Scoped through the bar so the glyph size outranks the global
+   `button:not(.pico-btn) { font-size: 12px }` reset, which is more specific
+   than a bare class and was silently winning. */
+.ide-activity-bar .ide-activity-btn {
+  width: 100%;
+  height: 60px;
   background: transparent;
   border: none;
+  /* Always reserve the indicator's width so the glyph does not shift sideways
+     by a pixel the moment a panel is opened. */
+  border-left: 2px solid transparent;
   border-radius: 0;
   color: var(--ide-text-muted);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 15px;
-  transition: background 0.12s ease, color 0.12s ease;
+  font-size: 25px;
+  transition: color 0.12s ease;
 }
 
-.ide-activity-btn:hover {
-  background: var(--ide-hover-bg);
+/* The glyph carries the state, not a filled box behind it. */
+.ide-activity-bar .ide-activity-btn:hover {
+  background: transparent;
   color: var(--ide-text);
 }
 
-.ide-activity-btn.active {
+.ide-activity-bar .ide-activity-btn.active {
   color: var(--ide-accent-fg);
-  border-left: 2px solid var(--ide-accent-fg);
+  border-left-color: var(--ide-accent-fg);
 }
 
 .sidebar-panel-title {
@@ -300,25 +385,25 @@ html, body, #mbeditor-root {
   border: 1px solid var(--ide-accent);
   border-radius: 3px;
   color: var(--ide-text);
-  font-size: 12px;
+  font-size: 14px;
   font-family: inherit;
   padding: 1px 4px;
   outline: none;
-  height: 18px;
-  line-height: 18px;
+  height: 21px;
+  line-height: 21px;
 }
 
 .tree-item-icon {
-  width: 16px;
-  margin-right: 5px;
-  font-size: 12px;
+  width: 20px;
+  margin-right: 6px;
+  font-size: 14px;
   flex-shrink: 0;
   text-align: center;
 }
 
 .tree-folder-icon { color: #dcb67a; }
 .tree-file-icon   { color: #78b4e0; }
-.tree-item-name   { flex: 1; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.tree-item-name   { flex: 1; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
 
 /* ── Custom File Icons ───────────────────────────────────── */
 .ruby-icon { color: #f26262 !important; }
@@ -1412,7 +1497,90 @@ html, body, #mbeditor-root {
   cursor: pointer;
 }
 .import-conflict-btn:hover { background: var(--ide-hover-bg, #4a4a4a); }
+.import-conflict-btn:disabled { opacity: 0.45; cursor: default; }
 .import-conflict-btn-danger { border-color: var(--ide-error, #f48771); color: var(--ide-error, #f48771); }
+.import-conflict-btn-primary {
+  background: var(--ide-accent, #0e639c);
+  border-color: var(--ide-accent, #0e639c);
+  color: #fff;
+}
+.import-conflict-btn-primary:hover:not(:disabled) { background: var(--ide-accent-hover, #1177bb); }
+
+/* Upload dialog — the pointed-at half of drag-and-drop import */
+.import-dialog { min-width: 460px; max-width: 620px; }
+.import-dialog .schema-modal-body { padding: 12px 16px; }
+.import-pick-row { display: flex; gap: 8px; }
+.import-pick-btn {
+  background: var(--ide-input-bg, #3c3c3c);
+  color: var(--ide-text, #d4d4d4);
+  border: 1px solid var(--ide-border, #3c3c3c);
+  border-radius: 3px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.import-pick-btn:hover { background: var(--ide-hover-bg, #4a4a4a); }
+.import-pick-btn i { margin-right: 6px; opacity: 0.75; }
+.import-dialog-empty,
+.import-dialog-warning {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--ide-text-muted, #888);
+}
+.import-dialog-warning { color: var(--ide-warning, #cca700); }
+.import-dialog-section-title {
+  margin: 16px 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ide-text-muted, #888);
+}
+.import-dest-options { display: flex; flex-direction: column; gap: 2px; }
+.import-dest-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  padding: 4px 6px;
+  color: var(--ide-text, #d4d4d4);
+  font-size: 12px;
+  cursor: pointer;
+}
+.import-dest-option:hover { background: var(--ide-hover, rgba(255,255,255,0.06)); }
+.import-dest-option.active { background: var(--ide-selection-bg, rgba(14,99,156,0.35)); }
+.import-dest-radio { opacity: 0.7; font-size: 11px; }
+.import-dest-label {
+  font-family: var(--ide-mono-font, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.import-dest-hint { color: var(--ide-text-muted, #888); font-size: 11px; margin-left: auto; flex-shrink: 0; }
+.import-dest-input {
+  width: 100%;
+  margin-top: 8px;
+  box-sizing: border-box;
+  background: var(--ide-input-bg, #3c3c3c);
+  color: var(--ide-text, #d4d4d4);
+  border: 1px solid var(--ide-border, #3c3c3c);
+  border-radius: 3px;
+  padding: 5px 8px;
+  font-family: var(--ide-mono-font, monospace);
+  font-size: 12px;
+}
+.import-dest-input:focus { outline: 1px solid var(--ide-accent, #0e639c); }
+.import-target-replaces {
+  margin-left: 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ide-warning, #cca700);
+}
 .schema-table {
   width: 100%;
   border-collapse: collapse;
@@ -1969,12 +2137,20 @@ html, body, #mbeditor-root {
   flex-shrink: 0;
 }
 
+/* The title yields the header to the action buttons rather than wrapping.
+ *
+ * It used to break-word onto three lines ("SAMPLE_ / WORKSPA / CE") because a
+ * long workspace name plus six buttons genuinely does not fit a 300px sidebar.
+ * flex-shrink against a `flex-shrink: 0` action group means the buttons always
+ * win: full title, then ellipsis, then gone. No JS measuring, and it adapts on
+ * its own to sections with fewer buttons — the Open Editors header keeps its
+ * title at the same width where Explorer has already dropped it. */
 .collapsible-title {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
-  word-break: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .collapsible-actions {
@@ -1989,6 +2165,45 @@ html, body, #mbeditor-root {
   display: inline-flex;
   align-items: center;
   gap: 0;
+}
+
+/* Tooltip for the icon-only sidebar action buttons. See SidebarActionButton
+ * for why this is not a title attribute. Anchored to the button's right edge
+ * because .ide-sidebar-scrollable is overflow-x: hidden — a left-anchored or
+ * centred tooltip on the rightmost button would be clipped by the sidebar. */
+.sb-tip {
+  position: relative;
+  display: inline-flex;
+}
+.sb-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 4000;
+  padding: 4px 7px;
+  background: var(--ide-panel-bg, #252526);
+  border: 1px solid var(--ide-border, #3c3c3c);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  color: var(--ide-text, #d4d4d4);
+  /* The section header sets uppercase, 600 weight and letter-spacing; a
+     tooltip inheriting those reads as another heading. */
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.08s ease 0.3s;
+}
+.sb-tip:hover::after,
+.sb-tip:focus-within::after {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-tip::after { transition: none; }
 }
 
 /* Open-editors panel: height is controlled by the --open-editors-height CSS variable
@@ -2652,26 +2867,8 @@ button:not(.pico-btn) {
   font-size: 12px;
 }
 
-/* Monaco widget isolation — Pico's [role=button] selector matches Monaco's
- * internal action elements (View Problem, Quick Fix…, lightbulb actions)
- * because Monaco renders them as <a role="button">. Without this reset, Pico
- * applies its primary-colour background, white text, and large form-element
- * padding, making those buttons huge and unreadable on certain themes.
- * Resetting the Pico CSS variables here is lower-impact than fighting
- * per-property specificity battles with Monaco's --vscode-* rules.
- */
-.monaco-hover [role=button],
-.action-widget [role=button],
-.context-view [role=button],
-.monaco-editor [role=button],
-.monaco-diff-editor [role=button] {
-  --pico-background-color: transparent;
-  --pico-border-color: transparent;
-  --pico-color: inherit;
-  --pico-box-shadow: none;
-  --pico-form-element-spacing-vertical: 0;
-  --pico-form-element-spacing-horizontal: 0;
-}
+/* Pico containment lives at the top of this file — see the block there. It has
+ * to sit above every component rule to stay a floor rather than an override. */
 
 /* Inputs and selects — keep compact but styled */
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
@@ -3049,6 +3246,24 @@ button:not(.pico-btn) { margin-bottom: 0; }
   padding: 2px 6px;
 }
 .ide-problems-btn:hover { color: var(--ide-fg, #fff); }
+.ide-problems-btn:disabled { opacity: 0.4; cursor: default; }
+.ide-problems-btn:disabled:hover { color: var(--ide-fg-muted, #ccc); }
+.ide-problems-actions { display: flex; gap: 2px; }
+.ide-problems-actions .ide-problems-btn { white-space: nowrap; }
+.ide-problems-btn.is-on { color: var(--ide-accent, #0a84ff); }
+.ide-testrun-stat { font-size: 11px; color: var(--ide-text-muted, #858585); }
+.ide-testrun-pass { color: #4ec9b0; }
+.ide-testrun-fail { color: #f14c4c; }
+.ide-testrun-raw {
+  margin: 0;
+  padding: 8px 14px;
+  font-family: var(--ide-mono, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--ide-fg, #eee);
+}
 .ide-problems-body { flex: 1; overflow: auto; padding: 4px 0; font-size: 12px; }
 .ide-problems-empty {
   padding: 10px 14px;

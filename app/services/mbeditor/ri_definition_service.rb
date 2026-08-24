@@ -30,6 +30,10 @@ module Mbeditor
       Struct Set Time File IO Exception Proc Method NilClass
     ].freeze
 
+    # Keyed by symbol, so a long session accumulates one entry per name ever
+    # hovered. Cleared wholesale at the cap — the next lookups just re-run ri.
+    MAX_CACHE_ENTRIES = 500
+
     @cache = {}
     @mutex = Mutex.new
 
@@ -39,7 +43,10 @@ module Mbeditor
         return cached unless cached.nil?
 
         result = new(symbol).call
-        @mutex.synchronize { @cache[symbol] = result }
+        @mutex.synchronize do
+          @cache.clear if @cache.size >= MAX_CACHE_ENTRIES
+          @cache[symbol] = result
+        end
         result
       end
 

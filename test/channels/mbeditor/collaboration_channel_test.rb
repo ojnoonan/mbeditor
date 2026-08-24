@@ -8,6 +8,9 @@ module Mbeditor
     tests Mbeditor::CollaborationChannel
 
     def setup
+      # The channels are environment-gated like the controllers, and the gem
+      # default allows :development only.
+      Mbeditor.configure { |c| c.allowed_environments = %i[test development] }
       CollaborationDocStore.reset!
     end
 

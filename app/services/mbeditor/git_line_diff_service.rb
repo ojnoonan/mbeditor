@@ -32,11 +32,15 @@ module Mbeditor
     end
 
     def call
-      return untracked_result if untracked?
-
       output, status = GitService.run_git(
         repo_path, "diff", "--no-color", "--no-ext-diff", "-U0", "HEAD", "--", file_path
       )
+
+      # ls-files only distinguishes "no changes" from "never tracked", so it
+      # runs solely when the diff produced nothing. Asking first doubled the
+      # subprocess count on a path the editor polls every 10s.
+      return untracked_result if (!status.success? || output.empty?) && untracked?
+
       # A non-zero status here means the diff could not be produced at all (no
       # HEAD yet, path outside the repo). Report a clean file rather than
       # raising: line colouring is decoration, never a reason to fail a load.

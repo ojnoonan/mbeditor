@@ -62,8 +62,14 @@ module Mbeditor
 
     %w[debug info warn error fatal unknown].each do |level|
       define_method(level) do |message = nil, &block|
-        msg = message.nil? && block ? block.call : message.to_s
-        return if suppress_message?(msg)
+        # Evaluate the block exactly once. It used to be called for the
+        # suppression check and then handed to super as well, so every message
+        # that got through was built twice.
+        if message.nil? && block
+          message = block.call
+          block = nil
+        end
+        return if suppress_message?(message.to_s)
 
         super(message, &block)
       end

@@ -27,10 +27,17 @@ module Mbeditor
     # idle room is reclaimed soon after its grace window elapses.
     SWEEP_INTERVAL = 60
 
+    # Hard cap on buffered deltas per room; a long editing session on one file
+    # would otherwise grow it without limit. Over the cap the oldest go, which
+    # costs a late joiner an incomplete replay — it then waits for the next
+    # snapshot instead of syncing from the buffer.
+    MAX_DELTAS = 500
+
     def record_update(path, bytes, now: monotonic)
       MUTEX.synchronize do
         room = touch(path, now)
         room[:deltas] << bytes
+        room[:deltas].shift while room[:deltas].size > MAX_DELTAS
       end
       nil
     end

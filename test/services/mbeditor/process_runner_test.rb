@@ -44,6 +44,24 @@ module Mbeditor
       end
     end
 
+    # A timer thread used to race normal exit: it could flag a timeout after the
+    # process had already succeeded. Run something that finishes well inside a
+    # short timeout, repeatedly, and no run may raise.
+    def test_process_finishing_just_inside_the_timeout_is_not_reported_as_timed_out
+      20.times do
+        result = ProcessRunner.call(["true"], timeout: 0.05)
+        assert result[:exit_status].success?
+      end
+    end
+
+    def test_max_bytes_caps_retained_output_without_blocking_the_subprocess
+      result = ProcessRunner.call(["bash", "-c", "head -c 500000 /dev/zero | tr '\\0' 'a'"], max_bytes: 1000)
+
+      assert result[:exit_status].success?, "the producer must run to completion, not block on a full pipe"
+      assert_operator result[:stdout].bytesize, :<, 500_000
+      assert_operator result[:stdout].bytesize, :>=, 1000
+    end
+
     def test_chdir_sets_working_directory_for_subprocess
       Dir.mktmpdir do |dir|
         real_dir = File.realpath(dir)

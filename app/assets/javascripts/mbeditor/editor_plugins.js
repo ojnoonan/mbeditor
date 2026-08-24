@@ -58,6 +58,35 @@
   var jsHoverCache = {};
   var jsMembersCache = {};
 
+  // Symbols the workspace lookup came back empty on — a component or variable
+  // that genuinely does not exist. Their TS2304 is graded Error rather than
+  // Warning: "Cannot find name" is only ever a guess until the lookup answers,
+  // because host-app globals are invisible to the language service, but once
+  // it has answered there is nothing tentative left about it.
+  //
+  // Held per page rather than per model: the answer is about the workspace,
+  // and every open file referencing the name is equally wrong.
+  var unknownJsSymbols = {};
+  // Assigned by registerGlobalExtensions, which owns the marker rules. A
+  // negative lookup changes no model and no extra lib, so nothing would
+  // re-fire onDidChangeMarkers on its own and the grade would not be applied
+  // until the next keystroke.
+  var repatchJsMarkerSeverities = null;
+  var _unknownRepatchTimer = null;
+
+  function noteUnknownJsSymbol(sym) {
+    if (unknownJsSymbols[sym]) return;
+    unknownJsSymbols[sym] = true;
+    // Coalesced for the same reason addExtraLib is: a file full of unknown
+    // names resolves them one after another, and re-grading every open model
+    // per answer is the same wasted pass repeated.
+    if (_unknownRepatchTimer) return;
+    _unknownRepatchTimer = setTimeout(function () {
+      _unknownRepatchTimer = null;
+      if (repatchJsMarkerSeverities) repatchJsMarkerSeverities();
+    }, 300);
+  }
+
   // Enumerate window for user-defined globals and return a TypeScript declaration string.
   // Sprockets exposes every top-level var/function as a window property before Monaco
   // initialises, so scanning at registration time captures all components and helpers.
@@ -150,10 +179,22 @@
     FileService.getJsDefinition(job.sym)
       .then(function (data) {
         var results = data && data.results;
-        if (results && results.length && results[0].file !== job.modelPath) {
+        var hit = results && results[0];
+        // `topLevel` matters, and its absence was a hole: any match anywhere
+        // counted, so a `var x` nested inside a function in an unrelated file
+        // earned `x` an ambient `declare var` and the reference here stopped
+        // being reported at all. A local in another file is not in scope in
+        // this one. The hover and goto-definition paths always required
+        // top-level; this one is now consistent with them.
+        if (hit && hit.topLevel && hit.file !== job.modelPath) {
           addDiscoveredGlobal(job.sym);
-        } else if (!results || !results.length) {
-          if (isRuntimeWindowGlobal(job.sym)) addDiscoveredGlobal(job.sym);
+        } else if (isRuntimeWindowGlobal(job.sym)) {
+          addDiscoveredGlobal(job.sym);
+        } else {
+          // Nothing declares this name: not the TypeScript program, not the
+          // workspace globals, not a top-level definition anywhere on disk,
+          // not a live window property. The answer is in — it does not exist.
+          noteUnknownJsSymbol(job.sym);
         }
       })
       .then(done, done);
@@ -161,6 +202,11 @@
 
   function queueJsGlobalLookup(sym, modelPath) {
     if (jsLookupQueue.length >= JS_LOOKUP_QUEUE_MAX) return;
+    // Marked here rather than at the call site: marking before the cap check
+    // spent the symbol's one attempt on a job that was then dropped, so a name
+    // unlucky enough to arrive while the queue was full was never looked up at
+    // all — not on the next keystroke, not for the rest of the page's life.
+    attemptedJsGlobals[sym] = true;
     jsLookupQueue.push({ sym: sym, modelPath: modelPath });
     pumpJsLookupQueue();
   }
@@ -233,6 +279,11 @@
       data.symbols.forEach(function (s) {
         var name = s && s.name;
         if (!name || !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name)) return;
+        // This name exists now, whatever an earlier lookup concluded. Writing
+        // the component you were being told was missing is the normal way that
+        // happens, and the verdict has to expire with the evidence — this list
+        // is refreshed on every files_changed.
+        delete unknownJsSymbols[name];
         if (REACT_MINI_UMD_GLOBALS[name]) return;
         if (discoveredJsGlobals[name]) return; // already in discovered-globals.d.ts
         // The program already declares this one, with a real type.
@@ -257,13 +308,23 @@
     var mts = monaco && monaco.languages && monaco.languages.typescript;
     if (!mts || !mts.javascriptDefaults) return;
     if (typeof FileService === 'undefined' || !FileService.getJsProgramFile) return;
-    (paths || []).forEach(function (path) {
-      if (!path || !/\.(js|jsx|ts|tsx)$/i.test(path)) return;
-      FileService.getJsProgramFile(path).then(function (data) {
+    var wanted = (paths || []).filter(function (path) {
+      return path && /\.(js|jsx|ts|tsx)$/i.test(path);
+    });
+    if (!wanted.length) return;
+
+    // Collected first, applied in one synchronous pass. addExtraLib invalidates
+    // the TypeScript worker and re-validates every open model, so applying a
+    // burst of saves one response at a time paid that cost per file — the same
+    // reason flushDiscoveredGlobals coalesces.
+    Promise.all(wanted.map(function (path) {
+      return FileService.getJsProgramFile(path).catch(function () { return null; });
+    })).then(function (responses) {
+      responses.forEach(function (data) {
         if (!data || !data.ok || !data.file) return;
         programPaths[data.file.path] = true;
         mts.javascriptDefaults.addExtraLib(data.file.content, programUri(data.file.path));
-      }).catch(function () {});
+      });
     });
   }
 
@@ -344,21 +405,41 @@
 
   // Send a raw-passthrough request and hand back result.result, or null when
   // the legacy path should run instead.
-  function rawRubyLsp(lspMethod, model, position) {
-    return tryRubyLsp(lspMethod, model, position || { lineNumber: 1, column: 1 });
+  function rawRubyLsp(lspMethod, model, position, token) {
+    return tryRubyLsp(lspMethod, model, position || { lineNumber: 1, column: 1 }, null, token);
   }
 
   // Requests that go through RuboCop rather than just Prism need more than the
   // 6s default: the server's own budget for them is 10s.
   var LSP_SLOW_METHODS = { diagnostics: 15000, formatting: 15000 };
 
-  function tryRubyLsp(lspMethod, model, position, extraBody) {
+  // `token` is Monaco's CancellationToken, when the calling provider has one.
+  // Every provider fires on a gesture the user can abandon — moving the cursor
+  // off a word, typing another character — and Monaco cancels the outstanding
+  // request when that happens. Without this the request ran to completion
+  // anyway: a subprocess on the server, and the answer thrown away here.
+  function tryRubyLsp(lspMethod, model, position, extraBody, token) {
     try {
       if (!window.MBEDITOR_RUBY_LSP_AVAILABLE || lspBackedOff()) return Promise.resolve(null);
       if (typeof FileService === 'undefined' || !FileService.rubyLspRequest) return Promise.resolve(null);
       if (!model || !model._mbeditorPath || !position) return Promise.resolve(null);
       if (model.getValueLength() > 5 * 1024 * 1024) return Promise.resolve(null);
+      // Nothing in the buffer means nothing to fold, outline, highlight or
+      // resolve, so every one of these is a round trip that can only come back
+      // empty. A newly created file is opened while empty, so this is the
+      // common case rather than an edge one. null is already this function's
+      // "no result" answer, so callers need no change.
+      if (model.getValueLength() === 0) return Promise.resolve(null);
+      if (token && token.isCancellationRequested) return Promise.resolve(null);
+
       var config = LSP_SLOW_METHODS[lspMethod] ? { timeout: LSP_SLOW_METHODS[lspMethod] } : null;
+      var controller = (token && typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var cancelSub = null;
+      if (controller && token.onCancellationRequested) {
+        cancelSub = token.onCancellationRequested(function () { controller.abort(); });
+        config = Object.assign({}, config, { signal: controller.signal });
+      }
+
       return FileService.rubyLspRequest(lspMethod, model._mbeditorPath, model.getValue(),
                                         position.lineNumber, position.column, config, extraBody)
         .then(function (data) {
@@ -380,6 +461,12 @@
         .catch(function (err) {
           noteLspFailure(err);
           return null;
+        })
+        // Settled either way: drop the cancellation listener (Monaco's token
+        // outlives the request) and answer nothing to a cancelled caller.
+        .then(function (result) {
+          if (cancelSub && cancelSub.dispose) cancelSub.dispose();
+          return (token && token.isCancellationRequested) ? null : result;
         });
     } catch (e) {
       return Promise.resolve(null);
@@ -459,6 +546,43 @@
     return null;
   }
 
+  // The definition in the file you are already in wins. Sprockets puts every
+  // top-level name in one global scope, so the same helper defined in two
+  // files is ordinary rather than exceptional — and the server returns them in
+  // scan order, which is alphabetical by path and has nothing to do with which
+  // one you meant. Taking the first sent you to whichever file happened to
+  // sort earliest: Monaco's own provider would reveal the local definition,
+  // then this lookup landed and navigated away from it.
+  function preferCurrentFile(results, currentPath) {
+    if (!currentPath) return null;
+    for (var i = 0; i < results.length; i++) {
+      if (results[i].file === currentPath) return results[i];
+    }
+    return null;
+  }
+
+  // Candidates for the peek list, one entry per file. Several hits in the same
+  // file are the same answer as far as "which file did you mean" goes, and a
+  // picker that lists the same path three times is a worse question.
+  function distinctByFile(results) {
+    var seen = Object.create(null);
+    var out = [];
+    results.forEach(function (r) {
+      if (seen[r.file]) return;
+      seen[r.file] = true;
+      out.push(r);
+    });
+    return out;
+  }
+
+  // Monaco's peek list is fed by a DefinitionProvider, and it does NOT dedupe
+  // across providers — measured: a provider returning the same location the
+  // TypeScript worker resolves turns an ordinary local jump into a two-entry
+  // picker for one definition. So this provider stays silent except for the
+  // one case that actually needs it, which navigateToJsWord hands over here
+  // immediately before asking Monaco to reveal.
+  var pendingJsDefinitionPeek = null;
+
   function navigateToJsWord(editor, word, parent) {
     if (typeof FileService === 'undefined' || !FileService.getJsDefinition) return Promise.resolve(false);
     var currentPath = editor.getModel && editor.getModel() && editor.getModel()._mbeditorPath;
@@ -469,11 +593,40 @@
           if (isRuntimeWindowGlobal(word)) addDiscoveredGlobal(word);
           return false;
         }
-        var r = results[0];
+        var here = preferCurrentFile(results, currentPath);
+        var elsewhere = distinctByFile(results.filter(function (x) { return x.file !== currentPath; }));
+
+        // Defined right here: that is the answer, and asking which one you
+        // meant would be noise.
+        var r = here || elsewhere[0];
         // Only declare as a global when the definition is itself a top-level
         // (Sprockets-global) declaration in a different file. Nested/member
         // definitions must not get an ambient declare var.
         if (r.topLevel && r.file !== currentPath) addDiscoveredGlobal(word);
+
+        // Genuinely ambiguous — the same name declared at top level in more
+        // than one other file — so choose rather than guess.
+        if (!here && elsewhere.length > 1) {
+          // Stamped with the model and cursor position the reveal below will
+          // ask about, so a candidate list whose reveal never fired cannot
+          // surface on an unrelated gesture later.
+          var gestureModel = editor.getModel && editor.getModel();
+          var gesturePos = editor.getPosition && editor.getPosition();
+          pendingJsDefinitionPeek = {
+            uri: gestureModel ? gestureModel.uri.toString() : '',
+            lineNumber: gesturePos ? gesturePos.lineNumber : 0,
+            column: gesturePos ? gesturePos.column : 0,
+            locations: elsewhere.map(function (x) {
+              return {
+                uri: lspUri(x.file),
+                range: new window.monaco.Range(x.line || 1, 1, x.line || 1, 1)
+              };
+            })
+          };
+          editor.trigger('mbeditor', 'editor.action.revealDefinition', null);
+          return true;
+        }
+
         if (typeof TabManager !== 'undefined' && TabManager.openTab) {
           TabManager.openTab(r.file, r.file.split('/').pop(), r.line);
         }
@@ -816,47 +969,34 @@
       return handled;
     });
 
-    // ── Indent on paste ──────────────────────────────────────────────────────
+    // ── Paste is left alone, deliberately ────────────────────────────────────
     //
-    // Pasted code is re-indented to match where it landed, and nothing else is
-    // touched. This deliberately does NOT run the formatter: routing paste
-    // through Prettier reprinted the whole enclosing statement (and, for a
-    // paste that filled the document, every line of it), so pasting a snippet
-    // rewrote code the user never touched and buried the paste in an unrelated
-    // diff.
+    // There was an indent-on-paste handler here that ran
+    // `editor.action.reindentselectedlines` over the pasted range. It did not
+    // adjust the paste — it recomputed every line's indent from the language's
+    // indentation rules, which model bracket depth and nothing else. Any
+    // structure those rules cannot derive was therefore destroyed on arrival:
     //
-    // `editor.action.reindentselectedlines` is Monaco's own re-indenter — it
-    // uses the language's indentation rules, the same ones that already run
-    // when you press Enter, and it only ever changes leading whitespace.
-    // Monaco's `formatOnPaste` option stays off (EditorPanel passes false):
-    // its contribution declines to run here anyway.
-    var pasteDisposable = editor.onDidPaste(function (e) {
-      var prefs = (typeof EditorStore !== 'undefined' && EditorStore.getState().editorPrefs) || {};
-      if (prefs.indentOnPaste === false) return;
-
-      var pasteModel = editor.getModel();
-      if (!pasteModel || pasteModel.isDisposed()) return;
-
-      var action = editor.getAction('editor.action.reindentselectedlines');
-      if (!action) return;
-
-      // The action works on the selection, so point it at the pasted range and
-      // put the cursor back where the paste left it.
-      var restore = editor.getSelections();
-      editor.setSelection(e.range);
-      action.run()["catch"](function () {})["finally"](function () {
-        var m = editor.getModel();
-        if (restore && restore.length && m && !m.isDisposed()) editor.setSelections(restore);
-      });
-    });
-
+    //     <Row>            pasted        <Row>
+    //       <Cell a={1} />    ────►      <Cell a={1} />
+    //       <Cell b={2} />                <Cell b={2} />
+    //     </Row>                         </Row>
+    //
+    // JSX nesting flattened; the same happened to method chains, ternaries and
+    // wrapped arguments. It was right only for brace-structured code, which in
+    // a React codebase is the minority of what gets pasted.
+    //
+    // Preserving what was copied is what every other editor does by default,
+    // and it is never destructive: the worst case is a block at the wrong
+    // depth, which Tab / Shift+Tab on the still-selected paste fixes, and
+    // Format fixes properly. Monaco's own `formatOnPaste` stays off too
+    // (EditorPanel passes false) — its contribution declines to run here.
     return {
       dispose: function dispose() {
         if (keydownDisposable) keydownDisposable.dispose();
         if (emmetTabDisposable) emmetTabDisposable.dispose();
         if (jsGotoMouseDisposable) jsGotoMouseDisposable.dispose();
         if (jsGotoActionDisposable) jsGotoActionDisposable.dispose();
-        if (pasteDisposable) pasteDisposable.dispose();
         contentDisposable.dispose();
       }
     };
@@ -874,7 +1014,15 @@
       monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
         noSemanticValidation: false,
         noSyntaxValidation: false,
-        noSuggestionDiagnostics: false
+        // Suggestion diagnostics are TypeScript's advice to a TypeScript
+        // author: nearly all of them on plain JS/JSX are 7044, "Parameter 'x'
+        // implicitly has an 'any' type, but a better type may be inferred from
+        // usage" — one per untyped parameter in the file, in a language that
+        // has no types to annotate. They arrive as Hint/Info, which the marker
+        // patcher below never inspected (it only ever filtered Errors), so
+        // every one of them reached the Problems panel. Semantic and syntax
+        // checking, which is what actually catches mistakes here, stay on.
+        noSuggestionDiagnostics: true
         // No diagnosticCodesToIgnore here on purpose: JS/JSX markers are
         // filtered by category in the marker patcher below (see JS_KEEP_CODES),
         // which is a closed rule rather than a list that grows by one code
@@ -1037,7 +1185,12 @@
       }
       if (typeof WebSocketService !== 'undefined' && WebSocketService.onFilesChanged) {
         WebSocketService.onFilesChanged(function (payload) {
-          if (payload && payload.paths) refreshProgramPaths(monaco, payload.paths);
+          if (payload && payload.paths) {
+            refreshProgramPaths(monaco, payload.paths);
+            // An edited file's include list is wrong the moment it is saved,
+            // and the TTL alone would keep serving it for another 30 s.
+            payload.paths.forEach(function (p) { delete includesCache[p]; });
+          }
           refreshWorkspaceGlobals();
         });
       }
@@ -1080,10 +1233,50 @@
       //
       // .ts/.tsx keeps full checking: there the types are hand-written, so a
       // type error is a statement about code the author actually wrote.
-      var JS_KEEP_CODES  = { '2304': true, '6133': true };
+      //
+      // ── Call-shape diagnostics ───────────────────────────────────────────
+      //
+      // These are kept even though the blanket rule above drops type
+      // diagnostics, because they are not inference guesses: they compare a
+      // call against a signature the author wrote. 2554 counts declared
+      // parameters. The JSX codes only have anything to say when the
+      // component carries a JSDoc `@param {{...}} props` annotation — with a
+      // bare `function Card(props)` the props type is `any` and nothing is
+      // reported at all, so this can only ever fire against a contract
+      // someone stated on purpose.
+      //
+      // Measured before enabling, over 49 real files (the gem's own 39 JS/JSX
+      // sources plus the sample workspace): zero occurrences of any of them,
+      // including in spread_props_test.jsx — the spread case that defeated
+      // the old denylist. 2345 (argument type) is deliberately NOT here: it
+      // fired 3 times on that corpus, every one of them on `isNaN(dateObj)`,
+      // which is a working idiom. That is the arbitrary-inference category
+      // this filter exists to keep out.
+      var JS_CALL_CODES = { '2554': true, '2769': true, '2741': true, '2322': true };
+      var JS_KEEP_CODES  = { '2304': true, '6133': true, '2554': true, '2769': true, '2741': true, '2322': true };
       var JS_SYNTAX_CODE = /^(?:1\d{3}|17\d{3})$/;
-      var JS_WARN_CODES  = { '2304': true, '6133': true };
+      var JS_WARN_CODES  = { '2304': true, '6133': true, '2554': true, '2769': true, '2741': true, '2322': true };
       var TS_WARN_CODES  = { '6133': true };
+
+      // Graded by what the mistake does when the code runs, which is the only
+      // distinction worth drawing here. An argument past the end of the
+      // parameter list is dropped; a prop the component never reads is inert.
+      // A required prop that was never passed arrives as undefined, and a
+      // value of the wrong type flows straight into the component — both of
+      // those break something, so they read as errors.
+      //
+      // TypeScript folds all three JSX cases into 2769 ("No overload matches
+      // this call") once React's types are in play, so the distinction has to
+      // come from the message chain, which Monaco flattens into the marker.
+      var JS_UNKNOWN_PROPERTY  = /does not exist on type/;
+      var JS_MISSING_REQUIRED  = /is missing in type .* but required in type/;
+      function callDiagnosticSeverity(code, message) {
+        if (code === '2554') return monaco.MarkerSeverity.Warning;
+        var text = message || '';
+        if (JS_MISSING_REQUIRED.test(text)) return monaco.MarkerSeverity.Error;
+        if (JS_UNKNOWN_PROPERTY.test(text)) return monaco.MarkerSeverity.Warning;
+        return monaco.MarkerSeverity.Error;
+      }
 
       function keepJsMarker(marker) {
         if (marker.severity !== monaco.MarkerSeverity.Error) return true;
@@ -1109,8 +1302,17 @@
         return JS_ASSIGN_AFTER.test(rest);
       }
 
+      // "Cannot find name 'Foo'." → "Foo"
+      function missingNameOf(message) {
+        var match = message && message.match(/Cannot find name '([^']+)'/);
+        return match ? match[1] : null;
+      }
+
       var _severityPatchActive = false;
-      monaco.editor.onDidChangeMarkers(function(uris) {
+      // jsMarkers, when given, is a uri-string -> javascript markers map the
+      // caller has already fetched; getModelMarkers filters the whole marker
+      // store per call and the TS2304 sweep below wants the same list.
+      function patchSeverities(uris, jsMarkers) {
         if (_severityPatchActive) return;
         _severityPatchActive = true;
         try {
@@ -1121,15 +1323,48 @@
               { owner: 'javascript', keep: keepJsMarker, warn: JS_WARN_CODES },
               { owner: 'typescript', keep: null,         warn: TS_WARN_CODES }
             ].forEach(function(entry) {
-              var markers = monaco.editor.getModelMarkers({ resource: uri, owner: entry.owner });
+              var markers = (entry.owner === 'javascript' && jsMarkers && jsMarkers[uri.toString()]) ||
+                monaco.editor.getModelMarkers({ resource: uri, owner: entry.owner });
               var patched = markers.filter(function(m) {
                 return entry.keep ? entry.keep(m) : true;
               }).map(function(m) {
-                if (m.severity !== monaco.MarkerSeverity.Error || !entry.warn[String(m.code)]) return m;
-                if (String(m.code) === '2304' && isUndeclaredAssignment(model, m)) {
-                  return m.message.indexOf(JS_IMPLICIT_GLOBAL_HINT) !== -1 ? m
-                    : Object.assign({}, m, { message: m.message + JS_IMPLICIT_GLOBAL_HINT });
+                var code = String(m.code);
+                if (!entry.warn[code]) return m;
+
+                // 2304 is graded from the evidence rather than from what the
+                // marker currently says, because the verdict can move in both
+                // directions: it starts as a Warning and becomes an Error once
+                // the workspace lookup reports the name does not exist. A rule
+                // that only ever fired on an incoming Error could never make
+                // that second move — it had already downgraded the marker on
+                // the first pass.
+                if (code === '2304') {
+                  if (isUndeclaredAssignment(model, m)) {
+                    return m.message.indexOf(JS_IMPLICIT_GLOBAL_HINT) !== -1 ? m
+                      : Object.assign({}, m, {
+                          severity: monaco.MarkerSeverity.Error,
+                          message: m.message + JS_IMPLICIT_GLOBAL_HINT
+                        });
+                  }
+                  var sym = missingNameOf(m.message);
+                  // Lenient only while the answer is outstanding: host-app
+                  // globals are invisible to the language service, so an
+                  // unresolved name is a question until the lookup answers it.
+                  var want = (sym && unknownJsSymbols[sym])
+                    ? monaco.MarkerSeverity.Error
+                    : monaco.MarkerSeverity.Warning;
+                  return m.severity === want ? m : Object.assign({}, m, { severity: want });
                 }
+
+                // Graded from the evidence for the same reason 2304 is: the
+                // verdict is a property of the message, not of whatever the
+                // marker happens to say on this pass.
+                if (JS_CALL_CODES[code] && entry.owner === 'javascript') {
+                  var callWant = callDiagnosticSeverity(code, m.message);
+                  return m.severity === callWant ? m : Object.assign({}, m, { severity: callWant });
+                }
+
+                if (m.severity !== monaco.MarkerSeverity.Error) return m;
                 return Object.assign({}, m, { severity: monaco.MarkerSeverity.Warning });
               });
               // Re-applying an unchanged set would re-enter this handler
@@ -1143,23 +1378,38 @@
         } finally {
           _severityPatchActive = false;
         }
+      }
+
+      // A lookup answering "no such symbol" changes no model, so it produces no
+      // marker event of its own — the new grade has to be pushed over the open
+      // models explicitly.
+      repatchJsMarkerSeverities = function () {
+        patchSeverities(monaco.editor.getModels().map(function (m) { return m.uri; }));
+      };
+
+      monaco.editor.onDidChangeMarkers(function(uris) {
+        // One fetch per uri, shared by the severity patch and the TS2304 sweep.
+        var jsMarkers = {};
+        uris.forEach(function (uri) {
+          jsMarkers[uri.toString()] = monaco.editor.getModelMarkers({ resource: uri, owner: 'javascript' });
+        });
+
+        patchSeverities(uris, jsMarkers);
 
         // Auto-resolve TS2304 ("Cannot find name 'X'") for JS files by
         // looking up the symbol in the workspace. If found, addDiscoveredGlobal
-        // declares it via addExtraLib and Monaco re-validates, removing the warning.
+        // declares it via addExtraLib and Monaco re-validates, removing the
+        // warning; if not found, the name is recorded as unknown and its
+        // marker is re-graded to an Error.
         if (typeof FileService !== 'undefined' && FileService.getJsDefinition) {
           uris.forEach(function(uri) {
             var model = monaco.editor.getModel(uri);
             if (!model) return;
-            var markers = monaco.editor.getModelMarkers({ resource: uri, owner: 'javascript' });
-            markers.forEach(function(m) {
+            (jsMarkers[uri.toString()] || []).forEach(function(m) {
               if (String(m.code) !== '2304') return;
-              // Extract symbol name from message: "Cannot find name 'ReactWindow'."
-              var match = m.message && m.message.match(/Cannot find name '([^']+)'/);
-              if (!match) return;
-              var sym = match[1];
+              var sym = missingNameOf(m.message);
+              if (!sym) return;
               if (attemptedJsGlobals[sym]) return;
-              attemptedJsGlobals[sym] = true;
               queueJsGlobalLookup(sym, model._mbeditorPath);
             });
           });
@@ -1177,11 +1427,14 @@
       });
     }
 
-    // Monaco ships no indentationRules for JavaScript, which makes
-    // `editor.action.reindentselectedlines` — what indent-on-paste runs — a
-    // silent no-op in JS/JSX files. These are VS Code's own JS rules.
-    // setLanguageConfiguration merges, so this adds indentation without
-    // disturbing the brackets/comments config the bundle already registers.
+    // These drive `editor.action.reindentLines`, which the Format command
+    // falls back to for .ts/.tsx — the only open languages with no Prettier
+    // parser. They do NOT affect typing: Monaco's built-in bracket handling
+    // already produces the same indent on Enter with or without them, verified
+    // case by case. Nothing else should be routed through them, because
+    // bracket depth is all they model — JSX nesting and continuation lines
+    // (method chains, ternaries, wrapped arguments) are invisible to them, and
+    // re-indenting from these rules alone flattens both.
     ['javascript', 'typescript'].forEach(function (langId) {
       monaco.languages.setLanguageConfiguration(langId, {
         indentationRules: {
@@ -1570,7 +1823,7 @@
             command: {
               id: 'mbeditor.applyRubocopFix',
               title: 'Apply RuboCop fix for ' + cop,
-              arguments: [model, cop, model.getValue(), modelPath]
+              arguments: [model, cop, modelPath]
             }
           });
         });
@@ -1591,9 +1844,14 @@
     });
 
     // Command handler that fetches the fix from the backend and applies it.
-    monaco.editor.registerCommand('mbeditor.applyRubocopFix', function(_accessor, model, copName, code, modelPath) {
+    // The buffer is read here, at click time, rather than captured in the
+    // action's arguments: a whole copy of the document per marker per lightbulb
+    // pass is wasteful, and the copy went stale — the server autocorrected text
+    // the buffer had already moved past, and the returned edit landed on the
+    // new one.
+    monaco.editor.registerCommand('mbeditor.applyRubocopFix', function(_accessor, model, copName, modelPath) {
       if (typeof FileService === 'undefined' || !FileService.quickFixOffense) return;
-      FileService.quickFixOffense(modelPath, code, copName).then(function(data) {
+      FileService.quickFixOffense(modelPath, model.getValue(), copName).then(function(data) {
         if (!data || !data.fix) return;
         var fix = data.fix;
         model.pushEditOperations([], [{
@@ -1612,6 +1870,24 @@
     });
 
     // ── ruby-lsp navigation ──────────────────────────────────────────────────
+
+    // Serves exactly one thing: the candidate list navigateToJsWord hands over
+    // when a name is declared at top level in several other files. It is empty
+    // the rest of the time, so the TypeScript worker remains the only voice on
+    // an ordinary jump and a local definition still goes straight there —
+    // Monaco merges providers without deduping, so a second opinion here would
+    // show a picker listing one definition twice.
+    monaco.languages.registerDefinitionProvider('javascript', {
+      provideDefinition: function (model, position) {
+        var pending = pendingJsDefinitionPeek;
+        pendingJsDefinitionPeek = null;
+        if (!pending) return null;
+        if (pending.uri !== model.uri.toString() ||
+            pending.lineNumber !== position.lineNumber ||
+            pending.column !== position.column) return null;
+        return pending.locations;
+      }
+    });
 
     // Teaches Monaco how to open a file:// resource in this editor. Without it
     // every provider below can find a location but nothing can go there:
@@ -1707,10 +1983,10 @@
     // text grep, not a reference index — so an empty list is the honest answer
     // when ruby-lsp can't help.
     monaco.languages.registerReferenceProvider('ruby', {
-      provideReferences: function provideReferences(model, position) {
+      provideReferences: function provideReferences(model, position, _context, token) {
         if (!rubyNavigableWord(model, position, false)) return null;
 
-        return rawRubyLsp('references', model, position).then(function (locations) {
+        return rawRubyLsp('references', model, position, token).then(function (locations) {
           if (!Array.isArray(locations)) return null;
           return locations.filter(function (loc) { return loc && loc.uri; }).map(function (loc) {
             return { uri: lspUri(loc.uri), range: lspRange(loc.range) };
@@ -1722,13 +1998,28 @@
     // Occurrences of the symbol under the cursor. Monaco has a built-in
     // word-match highlighter, but it cannot tell a local named `id` from a
     // method named `id`; ruby-lsp resolves the actual symbol.
+    //
+    // This one fires on every cursor move, so a caret walking through a word
+    // would otherwise cost a request per keypress. One memo entry is enough:
+    // the repeat is always the immediately preceding position. Keyed on the
+    // exact occurrence rather than the word text — the same name in two scopes
+    // is two different symbols with two different highlight sets — and on the
+    // model version, so an edit invalidates it.
+    var _highlightMemo = null;
     monaco.languages.registerDocumentHighlightProvider('ruby', {
-      provideDocumentHighlights: function provideDocumentHighlights(model, position) {
-        return rawRubyLsp('document_highlight', model, position).then(function (highlights) {
+      provideDocumentHighlights: function provideDocumentHighlights(model, position, token) {
+        var wordInfo = model.getWordAtPosition(position);
+        var key = wordInfo && (model.uri.toString() + '@' + model.getVersionId() + ':' +
+          position.lineNumber + ':' + wordInfo.startColumn + ':' + wordInfo.word);
+        if (key && _highlightMemo && _highlightMemo.key === key) return _highlightMemo.result;
+
+        return rawRubyLsp('document_highlight', model, position, token).then(function (highlights) {
           if (!Array.isArray(highlights)) return null;
-          return highlights.filter(Boolean).map(function (h) {
+          var result = highlights.filter(Boolean).map(function (h) {
             return { range: lspRange(h.range), kind: h.kind };
           });
+          if (key) _highlightMemo = { key: key, result: result };
+          return result;
         });
       }
     });
@@ -1768,8 +2059,8 @@
 
     monaco.languages.registerDocumentSymbolProvider('ruby', {
       displayName: 'Ruby',
-      provideDocumentSymbols: function provideDocumentSymbols(model) {
-        return rawRubyLsp('document_symbol', model).then(function (symbols) {
+      provideDocumentSymbols: function provideDocumentSymbols(model, token) {
+        return rawRubyLsp('document_symbol', model, null, token).then(function (symbols) {
           if (!Array.isArray(symbols)) return null;
           return toMonacoSymbols(symbols, 0);
         });
@@ -1782,11 +2073,11 @@
     // for when ruby-lsp is unavailable.
     monaco.languages.registerDocumentFormattingEditProvider('ruby', {
       displayName: 'RuboCop',
-      provideDocumentFormattingEdits: function provideDocumentFormattingEdits(model, options) {
+      provideDocumentFormattingEdits: function provideDocumentFormattingEdits(model, options, token) {
         var opts = { tab_size: (options && options.tabSize) || 2,
                      insert_spaces: !options || options.insertSpaces !== false };
 
-        return tryRubyLsp('formatting', model, { lineNumber: 1, column: 1 }, opts)
+        return tryRubyLsp('formatting', model, { lineNumber: 1, column: 1 }, opts, token)
           .then(function (edits) {
             if (Array.isArray(edits)) {
               return edits.map(function (e) {
@@ -1890,8 +2181,8 @@
     // Parameter hints while typing a call's arguments.
     monaco.languages.registerSignatureHelpProvider('ruby', {
       signatureHelpTriggerCharacters: ['(', ','],
-      provideSignatureHelp: function provideSignatureHelp(model, position) {
-        return rawRubyLsp('signature_help', model, position).then(function (help) {
+      provideSignatureHelp: function provideSignatureHelp(model, position, token) {
+        return rawRubyLsp('signature_help', model, position, token).then(function (help) {
           if (!help || !Array.isArray(help.signatures) || !help.signatures.length) return null;
           // LSP's SignatureHelp is structurally identical to Monaco's, and
           // MarkupContent {kind, value} is accepted where an IMarkdownString is.
@@ -1902,12 +2193,12 @@
 
     // Smart expand/shrink selection (Shift+Alt+Right / Left).
     monaco.languages.registerSelectionRangeProvider('ruby', {
-      provideSelectionRanges: function provideSelectionRanges(model, positions) {
+      provideSelectionRanges: function provideSelectionRanges(model, positions, token) {
         // LSP takes a list of positions and answers one linked list per
         // position; the bridge sends a single position, so ask per position and
         // flatten each chain into the array Monaco wants.
         return Promise.all(positions.map(function (position) {
-          return rawRubyLsp('selection_range', model, position).then(function (result) {
+          return rawRubyLsp('selection_range', model, position, token).then(function (result) {
             var node = Array.isArray(result) ? result[0] : null;
             var ranges = [];
             // Bounded: the chain comes from a subprocess and a cycle would spin.
@@ -1927,8 +2218,8 @@
     // declines anything else up front — otherwise F2 on a method name would
     // open the input box and then fail after you'd typed a new name.
     monaco.languages.registerRenameProvider('ruby', {
-      resolveRenameLocation: function resolveRenameLocation(model, position) {
-        return rawRubyLsp('prepare_rename', model, position).then(function (result) {
+      resolveRenameLocation: function resolveRenameLocation(model, position, token) {
+        return rawRubyLsp('prepare_rename', model, position, token).then(function (result) {
           if (!result) {
             return { rejectReason: 'Only Ruby constants can be renamed here.' };
           }
@@ -2006,8 +2297,8 @@
     // folding provider, so the vim-marker provider registered further down
     // keeps working alongside this one.
     monaco.languages.registerFoldingRangeProvider('ruby', {
-      provideFoldingRanges: function provideFoldingRanges(model) {
-        return rawRubyLsp('folding_range', model).then(function (ranges) {
+      provideFoldingRanges: function provideFoldingRanges(model, _context, token) {
+        return rawRubyLsp('folding_range', model, null, token).then(function (ranges) {
           if (!Array.isArray(ranges)) return null;
           return ranges.filter(Boolean).map(function (r) {
             return {
@@ -2030,6 +2321,20 @@
     var hoverCache = {};
     var HOVER_CACHE_TTL_MS = 60000;
     var HOVER_MEMBER_LIMIT = 20;
+
+    // Store an entry, stamping it and sweeping expired keys as it goes. The TTL
+    // was only ever consulted on read, and nothing else ever removed a key, so
+    // every symbol hovered in a session stayed resident for the life of the
+    // page. The sweep is O(entries) on a miss, which at these sizes is free.
+    function cacheWrite(cache, ttlMs, key, entry) {
+      var now = Date.now();
+      Object.keys(cache).forEach(function (k) {
+        if (now - cache[k].ts >= ttlMs) delete cache[k];
+      });
+      entry.ts = now;
+      cache[key] = entry;
+      return entry;
+    }
 
     // ruby-lsp's hover for a constant is a title, a Definitions link and any
     // doc comments — it never lists what the class/module defines. Keep the
@@ -2056,7 +2361,7 @@
           }
           markdown = '\n\n' + lines.join('\n');
         }
-        hoverCache[key] = { ts: Date.now(), markdown: markdown };
+        cacheWrite(hoverCache, HOVER_CACHE_TTL_MS, key, { markdown: markdown });
         return markdown;
       }).catch(function() { return ''; });
     }
@@ -2099,11 +2404,11 @@
                     range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
                     contents: [{ value: lsp.markdown + members, isTrusted: true }]
                   };
-                  hoverCache[lspKey] = { ts: Date.now(), result: lspResult };
+                  cacheWrite(hoverCache, HOVER_CACHE_TTL_MS, lspKey, { result: lspResult });
                   return lspResult;
                 });
               }
-              hoverCache[lspKey] = { ts: Date.now(), result: null };
+              cacheWrite(hoverCache, HOVER_CACHE_TTL_MS, lspKey, { result: null });
               return legacyRubyHover(model, position, token, wordInfo);
             });
           }
@@ -2132,7 +2437,7 @@
           return FileService.getModuleMembers(word, modController ? { signal: modController.signal } : {}).then(function(data) {
             if (token && token.isCancellationRequested) return null;
             if (!data || !data.methods || data.methods.length === 0) {
-              hoverCache[modKey] = { ts: Date.now(), result: null };
+              cacheWrite(hoverCache, HOVER_CACHE_TTL_MS, modKey, { result: null });
               return null;
             }
             var lines = ['**' + data.name + '**  `' + (data.file || '') + '`\n'];
@@ -2140,7 +2445,7 @@
               lines.push('- `' + (m.signature || m.name) + '`');
             });
             var result = { contents: [{ value: lines.join('\n') }] };
-            hoverCache[modKey] = { ts: Date.now(), result: result };
+            cacheWrite(hoverCache, HOVER_CACHE_TTL_MS, modKey, { result: result });
             return result;
           }).catch(function() { return null; });
         }
@@ -2173,7 +2478,7 @@
 
           var results = data && Array.isArray(data.results) ? data.results : [];
           // Cache the raw results (before current-file filter).
-          hoverCache[word] = { ts: Date.now(), results: results };
+          cacheWrite(hoverCache, HOVER_CACHE_TTL_MS, word, { results: results });
 
           if (currentFile) {
             results = results.filter(function(r) { return r.file !== currentFile; });
@@ -2318,7 +2623,7 @@
         }
 
         return FileService.getFileIncludes(path).then(function(result) {
-          includesCache[path] = { ts: Date.now(), data: result };
+          cacheWrite(includesCache, INCLUDES_CACHE_TTL_MS, path, { data: result });
           return buildSuggestions(result);
         }).catch(function() { return { suggestions: [] }; });
       }
@@ -2371,7 +2676,9 @@
               jsHoverCache[cacheKey] = { ts: Date.now(), contents: null };
               return null;
             }
-            var r = results[0];
+            // Same preference as Ctrl+click, so the file the hover names is
+            // the file the jump would take you to.
+            var r = preferCurrentFile(results, model._mbeditorPath) || results[0];
             // Only declare as global when the definition is a top-level
             // (Sprockets-global) declaration in a different file — nested and
             // member definitions must not get a duplicate declare var.
@@ -2402,29 +2709,38 @@
         if (!discoveredJsGlobals[symbol] && !/^[A-Z]/.test(symbol)) return { suggestions: [] };
         if (typeof FileService === 'undefined' || !FileService.getJsMembers) return { suggestions: [] };
 
+        // Only the raw member list is cached. Suggestions carry the insert
+        // `range`, which is where the completion is about to be written — the
+        // same trap the hover provider's makeHoverRange avoids. Cached
+        // suggestions inserted at the position of the invocation that filled
+        // the cache, so a hit anywhere else in the file was misapplied or
+        // silently dropped by Monaco.
+        function buildSuggestions(members) {
+          return members.map(function(m) {
+            return {
+              label: m.name,
+              kind: monaco.languages.CompletionItemKind.Method,
+              detail: symbol,
+              documentation: m.snippet,
+              insertText: m.name,
+              range: {
+                startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
+                startColumn: position.column, endColumn: position.column
+              }
+            };
+          });
+        }
+
         var cached = jsMembersCache[symbol];
         if (cached && (Date.now() - cached.ts) < JS_MEMBERS_CACHE_TTL_MS) {
-          return { suggestions: cached.suggestions };
+          return { suggestions: buildSuggestions(cached.members) };
         }
 
         return FileService.getJsMembers(symbol)
           .then(function(data) {
             var members = (data && data.members) || [];
-            var suggestions = members.map(function(m) {
-              return {
-                label: m.name,
-                kind: monaco.languages.CompletionItemKind.Method,
-                detail: symbol,
-                documentation: m.snippet,
-                insertText: m.name,
-                range: {
-                  startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
-                  startColumn: position.column, endColumn: position.column
-                }
-              };
-            });
-            jsMembersCache[symbol] = { ts: Date.now(), suggestions: suggestions };
-            return { suggestions: suggestions };
+            jsMembersCache[symbol] = { ts: Date.now(), members: members };
+            return { suggestions: buildSuggestions(members) };
           }).catch(function() { return { suggestions: [] }; });
       }
     });

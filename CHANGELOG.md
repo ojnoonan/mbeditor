@@ -7,6 +7,158 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-20
+
+### Added
+- **Whole-suite test run, in a drawer.** `POST /test_all` runs the suite with
+  no file argument under its own `test_all_timeout` (30 min) — a suite run is
+  minutes, not seconds, and forcing `test_timeout` up to cover it would let one
+  hung example block for half an hour. It renders as a bottom drawer beside
+  Problems and the log rather than a modal: a backdrop that blocks the editor
+  for the length of a suite run turns the wait into dead time. Failures group
+  by file, each row jumps to its line, and "Open failing" opens them all at
+  once. The result survives closing the drawer and a reload, and a branch
+  switch drops it.
+- **Whole-workspace RuboCop run in the Problems panel.** The panel could only
+  ever show diagnostics for files Monaco had open, because markers are
+  per-model. Three buttons now cover the rest of the project: RuboCop (a full
+  `rubocop --format json` run), Fix (`-a`, safe corrections only), and Open all.
+
+### Changed
+- **Activity bar and explorer are larger.** Activity buttons go 36px to 60px
+  with a 25px glyph and fill the bar edge to edge, so the active indicator sits
+  flush at the screen edge; state is carried by glyph colour alone and the
+  hover box is gone. Explorer rows and icons go 12px to 14px.
+- **Per-file test timeout raised 60s to 180s**, and the client now derives its
+  request timeout from the server's (`/workspace` reports both ceilings)
+  instead of a hard-coded 120s. Raising the server timeout past the client's
+  used to make the browser abort a run the server was still executing.
+
+### Security
+- **Every entry point is gated on `allowed_environments`.** The check moved to
+  `ApplicationController` ahead of `run_authentication`. `LogsController`
+  declared no gate at all, so `GET /mbeditor/logs/tail` returned the tail of
+  `log/<env>.log` in any environment the engine was mounted in; both cable
+  channels checked only the (nil by default) authentication hook, so anything
+  reaching the host's `/cable` could subscribe and start a log tail or write
+  state. Running the host's auth proc now happens after the environment check,
+  so a disallowed environment 404s without it.
+- **`model_schema` validates its parameter.** The model name flowed into a file
+  path without a format check, so `..` segments escaped the workspace.
+- **Git ref patterns reject a leading dash**, and `git show` takes
+  `--end-of-options` — a ref beginning with `-` was argument injection into a
+  documented git option.
+
+### Performance
+- **Typing no longer re-renders the whole application.** Every keystroke wrote
+  the full document into the store, which re-rendered an app subscribed to all
+  of it. Content writes are now throttled (250 ms, trailing) with a documented
+  flush-on-save contract, and the dirty flag is written only on a clean/dirty
+  transition. On top of that: the file tree is no longer deep-copied per render,
+  the model-graph scene (~10k SVG elements) no longer rebuilds when unrelated
+  state moves, and blame/test view zones, the tab strip's smooth scroll, and the
+  problem counts no longer churn per keypress.
+- **Monaco's ruby-lsp providers honour cancellation.** `documentHighlight`
+  fires per cursor move and was POSTing the entire buffer with no way to cancel
+  it, so superseded requests stayed in flight; all eight raw providers now
+  thread Monaco's `CancellationToken` through one shared path, and highlights
+  memoise per word occurrence.
+- **ruby-lsp requests pipeline again.** The document mutex was held across the
+  whole request/response round-trip, so a single diagnostics call (10 s budget)
+  or rename (30 s) blocked every hover and highlight in the process. It is now
+  held only across the write, which is what actually needs ordering. Abandoned
+  requests send `$/cancelRequest` rather than leaving a single-threaded server
+  computing a result nobody will read.
+- **Conditional GETs on the polled and static routes.** Monaco's 14 MB of
+  assets carried no validators and were re-fetched on every page load; `/files`
+  shipped roughly 1 MB of JSON on a 10 s poll and now answers 304 from a digest
+  memoised with the existing tree cache. `/git_status`, hit every 5 s, is TTL
+  cached instead of spawning two git subprocesses per poll.
+- **`find_branch_base` costs 2 git spawns instead of up to 12**, resolving the
+  candidate list with one `for-each-ref`. Commit detail drops from 3 spawns to
+  2, and the line-diff probe only asks whether a file is untracked when the
+  diff came back empty.
+- **A JS save no longer rebuilds the whole workspace JS program behind a global
+  lock**, and a `.rb` save no longer invalidates the JS program and globals
+  caches at all. Go-to-definition no longer rewrites the entire on-disk cache
+  (tens of MB of JSON) on any lookup that parsed something new.
+- Smaller: one `lstat` per tree entry instead of three stats, unbounded
+  subprocess output capped, and the exclusion matcher splits each path once
+  rather than once per pattern.
+
+### Fixed
+- **Pending migrations no longer lock the editor.** `CheckPending` is swapped
+  for a wrapper that runs the identical check for host traffic but records
+  rather than raises for the editor's, so the tree, opening a file and saving
+  one keep working — including saving the migration causing it. The warning
+  rides a response header, so it appears for a migration created mid-session
+  and clears once migrated without a reload. Host traffic is still blocked
+  exactly as Rails intends. The fallback shell also requested its Sprockets
+  assets under the engine mount, where they 404, and hardcoded `/mbeditor`
+  instead of the configured mount path.
+- **Saves no longer degrade under a burst.** A timeout was counted as an
+  unreachable server, which suppressed the polls that would have proven it up;
+  `files_changed` is coalesced once at the WebSocket dispatch (15 writes: 15
+  dispatches to 1); panes re-ran `git diff` on every save anywhere in the
+  workspace; and the lite git poll escalated to the full fan-out twice per save
+  (12 saves: 12 fan-outs to 1).
+- **Replace All left open tabs showing pre-replace text.** The refresh treated
+  a model-registry entry as a Monaco model, so the update silently no-opped
+  into a bare `catch` — and saving that tab afterwards wrote the stale content
+  back over the replacement.
+- **A dropped cable connection disconnected the host application's own
+  ActionCable consumer** when the host provided one, taking its channels down
+  with it, and left collaboration rooms bound to the dead consumer with no
+  indication they were dead. Consumers are disconnected only when mbeditor
+  created them, and rooms rejoin on reconnect.
+- **ruby-lsp failed entirely for any workspace path containing a space** or
+  other character needing escaping: the `file://` URI was built by
+  interpolation, so ruby-lsp's own `URI` parse raised and every request fell
+  back silently. Return-path comparisons unescape before matching the
+  workspace root.
+- **Git status mangled paths with spaces, non-ASCII characters, or renames.**
+  Porcelain output was read verbatim, so quoted and octal-escaped paths arrived
+  unopenable and missed their numstat enrichment; both sides now use `-z`.
+- **Saves and editor state are written atomically.** Both truncated in place,
+  so a reader landing mid-write parsed an empty file and silently reported no
+  open tabs, and a crash mid-write left the file empty for good. Writes go to a
+  temporary file and rename, resolving through symlinks so a linked file stays
+  a link.
+- **Literal (non-regex) replace corrupted replacements containing
+  backslashes** — `\1`, `\&` and `\\` were interpreted as backreferences across
+  up to 500 files.
+- **A user-supplied search regex could pin a worker indefinitely.** Patterns
+  are compiled with `Regexp.timeout` where the Ruby version supports it;
+  `Timeout.timeout` cannot interrupt a regex match, which is what the previous
+  guard relied on.
+- **A failed ruby-lsp handshake orphaned the child process**, leaving it
+  indexing and holding memory, and up to three could accumulate.
+- **Branch switches left stale buffers and diagnostics.** A checkout rewrites
+  the working tree and nothing told the editor; the git poll now announces it,
+  the app re-reads the tree and every open tab (dirty ones still prompt rather
+  than being clobbered), and `/files?refresh=1` bypasses the 15 s tree cache.
+- **The Problems panel filled with vendored gem source** when a host
+  `.rubocop.yml` replaced RuboCop's default excludes, and reported TypeScript's
+  implicit-any advice on plain JS/JSX, where there are no annotations to add.
+- **`HistoryService` rejected an empty base**, so the first history entry for a
+  file 400'd.
+- Also: a V8 isolate leak in the JS syntax checker, unbounded growth in the
+  collaboration delta log and several per-path caches, JS member completions
+  cached with a stale insert range, `quick_fix`/format/haml-lint running with
+  no timeout, a negative log offset returning a 500, and configured JS globals
+  being dropped when the symbol cap was reached.
+
+### Tests
+- The pending-migration middleware tests built `ActiveRecord::PendingMigrationError`
+  with no arguments, whose initializer lists the pending migrations and so needs
+  a database connection; every CI runner without one failed all six.
+- Two stubs restored `AvailabilityProbe.rg` by rebinding a captured `Method`,
+  which raises `can't bind singleton method to a different class` if the class
+  is reloaded in between — leaving `rg` undefined and failing every later search
+  and workspace test in that process. They alias instead.
+
+## [0.12.9] - 2026-08-07
+
 ### Added
 - **Problems panel severity filter.** Three toggle chips — errors, warnings,
   info — each showing its live count, filtering the list independently of the
@@ -21,6 +173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   short by the indent on every indented hit.
 
 ### Changed
+- **The Problems header no longer restates its counts in prose.** The severity
+  chips carry the same three numbers.
 - **Paste re-indents instead of reformatting.** Pasting ran the pasted range
   through Prettier, which reprinted the whole enclosing statement — and for a
   paste that filled the document, every line of it — so pasting a snippet

@@ -20,6 +20,39 @@ module Mbeditor
       File.write(File.join(@workspace, "Gemfile"), "source \"https://rubygems.org\"\n")
       File.write(File.join(@workspace, "Gemfile.lock"), "GEM\n  specs:\n")
       File.write(File.join(@workspace, "app", "models", "user.rb"), "class User; end\n")
+      # Go-to-definition fixtures. `sharedHelperXyz` is defined at top level in
+      # BOTH files — ordinary under Sprockets — and the other file sorts first
+      # in the server's scan order, so "first result wins" would leave the file
+      # you are in. `onlyOverThereXyz` exists only in the other file.
+      File.write(File.join(@workspace, "aaa_goto_other.js"), <<~JS)
+        function sharedHelperXyz(a) {
+          return 'other file: ' + a;
+        }
+        function onlyOverThereXyz() {
+          return 'only over there';
+        }
+      JS
+      File.write(File.join(@workspace, "goto_here.js"), <<~JS)
+        function sharedHelperXyz(a) {
+          return 'this file: ' + a;
+        }
+        function callsLocal() {
+          return sharedHelperXyz(1);
+        }
+        function callsRemote() {
+          return onlyOverThereXyz();
+        }
+      JS
+      # Route-hint fixture. The dummy app routes `resources :orders`, so these
+      # actions resolve against a real route set.
+      FileUtils.mkdir_p(File.join(@workspace, "app", "controllers"))
+      File.write(File.join(@workspace, "app", "controllers", "orders_controller.rb"), <<~RUBY)
+        class OrdersController < ApplicationController
+          def index
+            render plain: "orders"
+          end
+        end
+      RUBY
       File.write(File.join(@workspace, "nested_example.rb"), "class Demo\n    def call\nend")
       # Task 2 tokenizer fixture. Keep it outside Task 3's test/ and spec/
       # outline fixtures so each task owns its own setup data.
@@ -137,7 +170,8 @@ module Mbeditor
 
       # Refresh-workspace runs the external-change detection
       # (checkOpenTabsForExternalChanges) against the now-changed file on disk.
-      find("button[title='Refresh workspace']").click
+      # SidebarActionButton keeps its tooltip on a data-tip wrapper, not a title attribute.
+      find("button[aria-label='Refresh workspace']").click
 
       # The live shared buffer wins: the external disk content is NOT applied over
       # the collaborative buffer.
@@ -488,6 +522,252 @@ module Mbeditor
       find(".search-adornment-clear").click
       assert_equal "", find(".search-input").value
       assert_no_selector ".search-loading-overlay", wait: 5
+    end
+
+    # The result list is windowed because a project-wide query can return up to
+    # SearchReplaceService::MAX_RESULTS rows at five elements each. Rendering
+    # them all built enough DOM to kill the tab, so the invariant worth pinning
+    # is that the node count stays bounded while the scroll extent still
+    # describes the whole list — that is what keeps the scrollbar honest and
+    # keeps every row reachable.
+    test "search results render a bounded window over the full result set" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".ide-activity-btn[title='Search']").click
+
+      # Feed the store directly: this is about rendering 2_000 rows, not about
+      # making the workspace contain 2_000 matches.
+      page.execute_script(<<~'JS')
+        var rows = [];
+        for (var i = 0; i < 2000; i++) {
+          rows.push({ file: 'app/models/thing_' + (i % 50) + '.rb', line: i + 1, col: 1, end_col: 5, text: 'row ' + i });
+        }
+        window.EditorStore.setState({ searchResults: rows });
+      JS
+
+      assert_selector ".search-result-item", wait: 5
+      rendered = page.evaluate_script("document.querySelectorAll('.search-result-item').length")
+      assert_operator rendered, :<, 100,
+                      "expected a windowed list, got #{rendered} rows in the DOM"
+
+      # 2_000 rows at the fixed 40px row height, so the scrollbar spans the
+      # whole set even though almost none of it exists as DOM.
+      scroll_height = page.evaluate_script("document.querySelector('.search-results').scrollHeight")
+      assert_operator scroll_height, :>=, 2000 * 40,
+                      "scroll extent should cover every row, got #{scroll_height}"
+
+      # Rows further down are reachable and land at the right offset.
+      page.execute_script(<<~'JS')
+        var box = document.querySelector('.search-results');
+        box.scrollTop = 40000;
+        box.dispatchEvent(new Event('scroll', { bubbles: true }));
+      JS
+      tops = page.evaluate_script(
+        "Array.from(document.querySelectorAll('.search-result-item')).map(function (e) { return parseInt(e.style.top, 10); })"
+      )
+      assert tops.any? { |t| t >= 39_000 },
+             "expected rows positioned near the scrolled offset, got: #{tops.first(5).inspect}"
+      assert_operator tops.length, :<, 100, "the window should stay bounded after scrolling"
+    end
+
+    # The hint is a zero-width decoration pinned at the end of the `def` line.
+    # Monaco carries that position through an edit rather than re-deriving it,
+    # so replacing the method — pasting over the selection is the usual way —
+    # used to leave the hint at a column that now lands mid-token, rendering as
+    # `def sho  GET /orders/:idw`. Nothing recomputed it, so it survived a save
+    # and only cleared on reopen.
+    def route_hint_columns
+      page.evaluate_script(<<~'JS')
+        (function () {
+          var m = window.__mbeditorActiveEditor && window.__mbeditorActiveEditor.getModel();
+          if (!m) return [];
+          return m.getAllDecorations()
+            .filter(function (d) {
+              var o = d.options || {};
+              return o.after && /route/.test(o.after.inlineClassName || '');
+            })
+            .map(function (d) { return { line: d.range.startLineNumber, col: d.range.startColumn }; });
+        })()
+      JS
+    end
+
+    test "a route hint follows its def line when the method is replaced" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item[data-path='app']").click
+      find(".tree-item[data-path='app/controllers']").click
+      find(".tree-item[data-path='app/controllers/orders_controller.rb']").click
+      assert_selector ".monaco-editor", wait: 10
+
+      hints = wait_for_condition("the route hint to be drawn") do
+        found = route_hint_columns
+        found if found.any?
+      end
+      index_hint = hints.find { |h| h["line"] == 2 }
+      assert index_hint, "expected a hint on the `def index` line, got: #{hints.inspect}"
+      assert_equal 12, index_hint["col"], "hint should sit at the end of `  def index`"
+
+      # Replace the method with one whose `def` line is a different length.
+      page.execute_script(<<~'JS')
+        var ed = window.__mbeditorActiveEditor;
+        ed.setSelection(new monaco.Range(2, 1, 4, 6));
+        ed.trigger('keyboard', 'paste', { text: '      def index\n        head :ok\n      end' });
+      JS
+
+      moved = wait_for_condition("the hint to be redrawn at the new end of line") do
+        found = route_hint_columns.find { |h| h["line"] == 2 }
+        found if found && found["col"] == 16
+      end
+      assert_equal 16, moved["col"],
+                   "the hint must track the rewritten line, not stay at its old column"
+    end
+
+    test "controller route hints can be switched off" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item[data-path='app']").click
+      find(".tree-item[data-path='app/controllers']").click
+      find(".tree-item[data-path='app/controllers/orders_controller.rb']").click
+      assert_selector ".monaco-editor", wait: 10
+
+      wait_for_condition("the route hint to be drawn") { route_hint_columns.any? || nil }
+
+      find("button[title='Editor Preferences']").click
+      find(".ide-settings-label", text: "Controller route hints", wait: 10)
+        .find(:xpath, "..").find("input[type=checkbox]").click
+
+      # Back to the controller: the hints must be gone.
+      find(".tab-item", text: "orders_controller.rb").click
+      assert wait_for_condition("the hints to clear") { route_hint_columns.empty? || nil },
+             "expected no route decorations once the preference is off"
+    end
+
+    # Sprockets puts every top-level name in one global scope, so the same
+    # helper defined in two files is ordinary. The workspace lookup returns
+    # both in scan order — alphabetical by path, unrelated to which one you
+    # meant — so taking the first sent you out of the file you were reading.
+    # Monaco's own provider resolves the local one, which is why this showed up
+    # as jumping to the definition and then being taken somewhere else.
+    # The cursor has to land *inside the symbol*, not merely on the line: an
+    # off-by-a-few puts it in `return`, the lookup finds nothing, nothing
+    # navigates, and a test asserting "we stayed put" passes for the wrong
+    # reason. Returns the word Monaco resolved so the caller can assert on it.
+    def run_js_goto(call_fragment, symbol)
+      resolved = page.evaluate_script(<<~JS)
+        (function () {
+          var ed = window.__mbeditorActiveEditor;
+          var m = ed.getModel();
+          var lines = m.getValue().split('\\n');
+          for (var i = 0; i < lines.length; i++) {
+            if (lines[i].indexOf(#{call_fragment.to_json}) === -1) continue;
+            var at = lines[i].indexOf(#{symbol.to_json});
+            if (at === -1) continue;
+            var pos = { lineNumber: i + 1, column: at + 2 };
+            ed.setPosition(pos);
+            var word = m.getWordAtPosition(pos);
+            ed.getAction('mbeditor.gotoJsDefinition').run();
+            return word ? word.word : null;
+          }
+          return null;
+        })()
+      JS
+      assert_equal symbol, resolved,
+                   "the cursor must sit inside #{symbol}, otherwise this test proves nothing"
+      resolved
+    end
+
+    def active_tab_path
+      page.evaluate_script(<<~'JS')
+        (function () {
+          var st = window.EditorStore.getState();
+          var pane = st.panes[0];
+          var tab = pane.tabs.filter(function (t) { return t.id === pane.activeTabId; })[0];
+          return tab ? tab.path : null;
+        })()
+      JS
+    end
+
+    # The lookup response is stubbed rather than left to the real scan: ripgrep
+    # walks in parallel, so which of the two files comes back first is not
+    # deterministic, and a test that only exercises the bug when the ordering
+    # happens to go one way passes on the broken code about half the time.
+    # Ordering the other file first is exactly the case "take the first result"
+    # got wrong.
+    def stub_js_definition(results)
+      page.execute_script(<<~JS)
+        window.FileService.getJsDefinition = function () {
+          return Promise.resolve({ results: #{results.to_json} });
+        };
+      JS
+    end
+
+    test "go to definition prefers the definition in the current file" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item[data-path='goto_here.js']").click
+      assert_selector ".monaco-editor", wait: 10
+      wait_for_formatted_value(matching: /callsLocal/)
+
+      stub_js_definition([
+                           { "file" => "aaa_goto_other.js", "line" => 1, "snippet" => "function sharedHelperXyz(a) {", "topLevel" => true },
+                           { "file" => "goto_here.js",      "line" => 1, "snippet" => "function sharedHelperXyz(a) {", "topLevel" => true }
+                         ])
+
+      run_js_goto("return sharedHelperXyz(1)", "sharedHelperXyz")
+
+      landed = wait_for_condition("go-to-definition to settle") do
+        path = active_tab_path
+        path if path
+      end
+      assert_equal "goto_here.js", landed,
+                   "a name defined in this file must not navigate to another file's copy"
+    end
+
+    test "go to definition still leaves the file when the name is only defined elsewhere" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item[data-path='goto_here.js']").click
+      assert_selector ".monaco-editor", wait: 10
+      wait_for_formatted_value(matching: /callsRemote/)
+
+      stub_js_definition([
+                           { "file" => "aaa_goto_other.js", "line" => 4, "snippet" => "function onlyOverThereXyz() {", "topLevel" => true }
+                         ])
+
+      run_js_goto("return onlyOverThereXyz()", "onlyOverThereXyz")
+
+      landed = wait_for_condition("go-to-definition to reach the other file") do
+        path = active_tab_path
+        path if path == "aaa_goto_other.js"
+      end
+      assert_equal "aaa_goto_other.js", landed
+    end
+
+    # Two other files declare the same top-level name and neither is the one
+    # you are reading, so there is no basis for choosing — Monaco's peek list
+    # asks instead. It is deliberately reached only here: Monaco merges
+    # definition providers without deduping, so offering this list on an
+    # ordinary jump would show one definition twice.
+    test "go to definition offers a picker when several other files define the name" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item[data-path='goto_here.js']").click
+      assert_selector ".monaco-editor", wait: 10
+      wait_for_formatted_value(matching: /callsLocal/)
+
+      stub_js_definition([
+                           { "file" => "aaa_goto_other.js", "line" => 1, "snippet" => "function sharedHelperXyz(a) {", "topLevel" => true },
+                           { "file" => "zzz_third.js",      "line" => 1, "snippet" => "function sharedHelperXyz(a) {", "topLevel" => true }
+                         ])
+
+      run_js_goto("return sharedHelperXyz(1)", "sharedHelperXyz")
+
+      assert wait_for_condition("the definitions peek to open") {
+        page.evaluate_script("!!document.querySelector('.monaco-editor .zone-widget')") || nil
+      }, "expected a picker listing both candidates"
+
+      assert_equal "goto_here.js", active_tab_path,
+                   "the picker must not navigate anywhere until a choice is made"
     end
 
     test "server-online heartbeat shows no offline indicator" do
@@ -1000,18 +1280,18 @@ module Mbeditor
                    "A file with no formatter must be left exactly as it was"
     end
 
-    test "pasting re-indents to the editor's setting without reformatting the code" do
+    test "pasting inserts the clipboard byte-for-byte" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
       find(".tree-item-name", text: "component.jsx").click
       assert_selector ".monaco-editor", wait: 10
 
-      # Paste is driven from onDidPaste (Monaco's own formatOnPaste never ran
-      # the formatter here) and re-indents only. Running Prettier on paste
-      # rewrote code the user never touched, so the pasted text must come back
-      # with its indentation converted to the editor's setting and everything
-      # else byte-identical: no added semicolons, no requoting, no spaces
-      # inserted after commas.
+      # Nothing rewrites a paste — not Prettier, and not the re-indenter that
+      # used to run here. Re-indenting recomputed every line from bracket depth
+      # alone, which flattened JSX nesting and continuation lines; preserving
+      # what was copied is the only behaviour that cannot destroy structure.
+      # The two-space indentation below therefore survives verbatim, as do the
+      # missing semicolons and the tight comma.
       page.execute_script(<<~'JS')
         (function () {
           var ed = window.__mbeditorActiveEditor;
@@ -1025,9 +1305,35 @@ module Mbeditor
         })()
       JS
 
-      pasted = wait_for_formatted_value(matching: /\n\tif/)
-      assert_match(/function greet\(name\)\{\n\tif\(name\)\{\n\t\tconsole\.log\('hi',name\)\n\t\}\n\}/, pasted,
-                   "Expected tab-re-indented but otherwise untouched paste, got: #{pasted.inspect}")
+      pasted = wait_for_formatted_value(matching: /console\.log/)
+      assert_equal "function greet(name){\n  if(name){\n    console.log('hi',name)\n  }\n}\n", pasted,
+                   "Expected the paste to arrive unchanged, got: #{pasted.inspect}"
+    end
+
+    # JSX nesting is the case the old re-indenter destroyed: its rules model
+    # bracket depth, so every line of a pasted element collapsed to one level.
+    test "pasting a jsx block keeps its relative indentation" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      page.execute_script(<<~'JS')
+        (function () {
+          var ed = window.__mbeditorActiveEditor;
+          ed.getModel().setValue("");
+          ed.setPosition({ lineNumber: 1, column: 1 });
+          ed.focus();
+          var dt = new DataTransfer();
+          dt.setData('text/plain', "<Row>\n\t<Cell a={1} />\n\t<Cell b={2} />\n</Row>\n");
+          document.querySelector('.monaco-editor textarea')
+            .dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+        })()
+      JS
+
+      pasted = wait_for_formatted_value(matching: /Cell b/)
+      assert_equal "<Row>\n\t<Cell a={1} />\n\t<Cell b={2} />\n</Row>\n", pasted,
+                   "Expected the Cells to stay nested inside Row, got: #{pasted.inspect}"
     end
 
     test "a cancelled request does not report the server as offline" do

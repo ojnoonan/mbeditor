@@ -295,6 +295,29 @@ var CollaborationService = (function () {
     }
   }
 
+  // Re-open every room's channel subscription on the current consumer.
+  //
+  // A cable drop tears the consumer down and takes every CollaborationChannel
+  // subscription with it — silently, because isAvailable() reports cable
+  // *support*, not liveness. Nothing here noticed: the rooms stayed in _rooms
+  // with dead subscriptions, so edits stopped reaching peers until the file was
+  // closed and reopened. WebSocketService calls this when the EditorChannel
+  // reconnects. Only the wire is replaced; the Yjs doc, the binding and the undo
+  // history all survive, and the re-sent sync snapshot re-applies harmlessly
+  // (Y.applyUpdate is idempotent).
+  function rejoinRooms() {
+    Object.keys(_rooms).forEach(function (path) {
+      var room = _rooms[path];
+      try { if (room.subscription) room.subscription.unsubscribe(); } catch (e) { /* already dead */ }
+      room.subscription = WebSocketService.subscribeCollaboration(path, {
+        // Awareness is never server-persisted, so peers lost our caret with the
+        // connection and would not see it again until we happened to move.
+        connected: function () { _sendLocalAwareness(room); },
+        received: function (data) { _onMessage(room, data); }
+      });
+    });
+  }
+
   // Register the current editor/model for a room and request a binding. Called on
   // every editor (re)creation (tab switch recreates the editor; the model and the
   // Yjs doc persist). opts.onSeeded is invoked once the binding has set the model,
@@ -561,6 +584,7 @@ var CollaborationService = (function () {
   // Client IDs are globally unique, so one shared <style> element covers all open
   // files. Re-runs on any awareness change (cheap; small participant counts).
   var _styleEl = null;
+  var _cursorCss = null;
   function _renderCursorStyles() {
     if (typeof document === 'undefined') return;
     if (!_styleEl) {
@@ -593,6 +617,12 @@ var CollaborationService = (function () {
             'font-family:sans-serif;z-index:10;pointer-events:none;}';
       });
     });
+    // Awareness changes on every caret move and every scroll frame, but the
+    // styles only depend on who is here and what colour they chose — which
+    // almost never changes. Re-assigning textContent invalidates the document's
+    // style rules, so skip the write when the CSS is identical.
+    if (css === _cursorCss) return;
+    _cursorCss = css;
     _styleEl.textContent = css;
   }
 
@@ -739,6 +769,7 @@ var CollaborationService = (function () {
     onAvailabilityChange: onAvailabilityChange,
     isEnabledFor: isEnabledFor,
     ensureRoom: ensureRoom,
+    rejoinRooms: rejoinRooms,
     bindEditor: bindEditor,
     unbindEditor: unbindEditor,
     leaveRoom: leaveRoom,

@@ -48,10 +48,10 @@ module Mbeditor
       private
 
       def build(exception, payload, workspace_root)
-        @seq = (@seq || 0) + 1
+        seq = MUTEX.synchronize { @seq = (@seq || 0) + 1 }
         {
           type: "exception",
-          id: @seq,
+          id: seq,
           at: Time.now.utc.iso8601,
           klass: exception.class.name,
           message: exception.message.to_s[0, 2000],

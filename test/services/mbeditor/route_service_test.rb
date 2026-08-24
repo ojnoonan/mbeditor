@@ -66,5 +66,38 @@ module Mbeditor
       assert_empty RouteService.for_controller(nil)
       assert_empty RouteService.for_controller("")
     end
+
+    # The cache exists because the inline route hints re-request on every
+    # activation of a controller tab, and each miss walks the host app's whole
+    # route set. A cache that never invalidates would be worse than none: it
+    # would answer a routes.rb edit with the pre-edit routes, forever.
+    # A rebuild constructs a fresh Hash, so identity is what separates a cache
+    # hit from a re-scan — equality alone cannot tell them apart here.
+    test "a repeat lookup is served without walking the route set again" do
+      RouteService.invalidate
+      first = RouteService.for_controller("orders")
+
+      assert_same first, RouteService.for_controller("orders")
+    end
+
+    test "invalidate forces the next lookup to rebuild" do
+      first = RouteService.for_controller("orders")
+      RouteService.invalidate
+      rebuilt = RouteService.for_controller("orders")
+
+      refute_same first, rebuilt, "expected a fresh scan after invalidate"
+      assert_equal first, rebuilt, "the rebuilt payload should still be correct"
+      assert rebuilt.key?("index")
+    end
+
+    test "each controller key is cached separately" do
+      RouteService.invalidate
+      orders = RouteService.for_controller("orders")
+      admin  = RouteService.for_controller("admin/users")
+
+      refute_equal orders, admin
+      assert_equal orders, RouteService.for_controller("orders")
+      assert_equal admin, RouteService.for_controller("admin/users")
+    end
   end
 end

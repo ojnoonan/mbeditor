@@ -418,6 +418,8 @@ var TabManager = (function () {
   }
 
   function closeTab(paneId, path) {
+    // A throttled content write must not outlive the tab it belongs to.
+    flushContent();
     if (typeof HistoryService !== 'undefined') {
       HistoryService.flushForPath(path);
     }
@@ -539,23 +541,73 @@ var TabManager = (function () {
     EditorStore.setState({ focusedPaneId: paneId, activeTabId: newActive });
   }
 
+  // Typing calls markDirty/markClean per keystroke, and every store write
+  // re-renders the whole app (MbeditorApp subscribes to the entire store). Two
+  // rules keep that off the keystroke path:
+  //
+  //   * the dirty flag is only written on a clean<->dirty transition;
+  //   * `content` is written on a 250 ms trailing edge, so the store sees at
+  //     most four content updates a second.
+  //
+  // FLUSH CONTRACT: anything that reads `tab.content` immediately after an edit
+  // — save, save-all, format, format-all — must call TabManager.flushContent()
+  // first and then re-read the tab from the store, or it works on text up to
+  // 250 ms old. Everything else (lint, EOL indicator, markdown preview, the
+  // external-change poll) tolerates the lag by design.
+  var CONTENT_WRITE_MS = 250;
+  var _pendingContent = {};   // "<paneId> <tabId>" -> { paneId, path, content, markdown }
+  var _contentTimer = null;
+
+  function _queueContent(paneId, path, content, updates, markdown) {
+    var key = paneId + ' ' + path;
+    if (updates) {
+      // A state transition has to land now, and it takes the content with it.
+      delete _pendingContent[key];
+      updates.content = content;
+      _updateTab(paneId, path, updates);
+      if (markdown) _syncMarkdownPreviewContent(path, content);
+      return;
+    }
+    _pendingContent[key] = { paneId: paneId, path: path, content: content, markdown: markdown };
+    if (_contentTimer === null) {
+      _contentTimer = setTimeout(flushContent, CONTENT_WRITE_MS);
+    }
+  }
+
+  function flushContent() {
+    if (_contentTimer !== null) {
+      clearTimeout(_contentTimer);
+      _contentTimer = null;
+    }
+    var pending = _pendingContent;
+    _pendingContent = {};
+    Object.keys(pending).forEach(function (k) {
+      var p = pending[k];
+      _updateTab(p.paneId, p.path, { content: p.content });
+      if (p.markdown) _syncMarkdownPreviewContent(p.path, p.content);
+    });
+  }
+
   function markDirty(paneId, path, content) {
     // Auto-harden any soft-open tab on first edit.
     var st = EditorStore.getState();
     var paneForTab = st.panes.find(function(p) { return p.id === paneId; });
     var existingTab = paneForTab && paneForTab.tabs.find(function(t) { return t.path === path; });
-    var updates = { content: content, dirty: true };
+    var updates = null;
+    if (!existingTab || !existingTab.dirty) updates = { dirty: true };
     if (existingTab && existingTab.isSoftOpen) {
+      updates = updates || {};
       updates.isSoftOpen = false;
     }
-    _updateTab(paneId, path, updates);
-    if (_isMarkdownPath(path)) {
-      _syncMarkdownPreviewContent(path, content);
-    }
+    _queueContent(paneId, path, content, updates, _isMarkdownPath(path));
   }
 
   function markClean(paneId, path, content) {
-    _updateTab(paneId, path, { content: content, dirty: false });
+    var st = EditorStore.getState();
+    var paneForTab = st.panes.find(function(p) { return p.id === paneId; });
+    var existingTab = paneForTab && paneForTab.tabs.find(function(t) { return t.path === path; });
+    var updates = (existingTab && !existingTab.dirty) ? null : { dirty: false };
+    _queueContent(paneId, path, content, updates, _isMarkdownPath(path));
   }
 
   function hardenTab(paneId, path) {
@@ -694,6 +746,7 @@ var TabManager = (function () {
     focusPane: focusPane,
     markDirty: markDirty,
     markClean: markClean,
+    flushContent: flushContent,
     hardenTab: hardenTab,
     saveTabViewState: saveTabViewState,
     reorderTabInPane: reorderTabInPane,

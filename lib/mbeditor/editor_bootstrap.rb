@@ -55,27 +55,33 @@ module Mbeditor
 
           window.loadPrettierPlugins = function() {
             if (window._prettierLoadPromise) return window._prettierLoadPromise;
-            window._prettierLoadPromise = new Promise(function(resolve, reject) {
+            var promise = new Promise(function(resolve, reject) {
               var savedDefine = window.define;
               window.define = undefined;
               var pending = prettierScripts.length;
+              var failed = null;
+              // Restore window.define only once every script has settled: an
+              // early restore let a sibling still in flight register as an AMD
+              // module instead of setting its window global.
+              function settle() {
+                if (--pending > 0) return;
+                window.define = savedDefine;
+                if (failed) reject(new Error('Failed to load Prettier: ' + failed));
+                else resolve();
+              }
               prettierScripts.forEach(function(src) {
                 var s = document.createElement('script');
                 s.src = src;
-                s.onload = function() {
-                  if (--pending === 0) {
-                    window.define = savedDefine;
-                    resolve();
-                  }
-                };
-                s.onerror = function() {
-                  window.define = savedDefine;
-                  reject(new Error('Failed to load Prettier: ' + src));
-                };
+                s.onload = settle;
+                s.onerror = function() { failed = failed || src; settle(); };
                 document.head.appendChild(s);
               });
             });
-            return window._prettierLoadPromise;
+            window._prettierLoadPromise = promise;
+            // Clear the cached promise so the next Format action retries the
+            // load; caching a rejection disabled Format for the whole session.
+            promise.catch(function() { window._prettierLoadPromise = null; });
+            return promise;
           };
 
           // Lazy-load monaco-vim on first use. Drop-in for the old AMD

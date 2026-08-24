@@ -23,6 +23,13 @@ var ProblemsPanel = (function () {
     info: 'fa-info-circle'
   };
   var SEVERITY_LABEL = { error: 'Error', warning: 'Warning', info: 'Info' };
+  // RuboCop's own severity names (the /rubocop JSON carries strings, not the
+  // numeric Monaco severities the markers use).
+  var COP_SEVERITY_KIND = {
+    fatal: 'error', error: 'error', warning: 'warning',
+    convention: 'info', refactor: 'info', info: 'info'
+  };
+
   // Long enough to recognise the statement, short enough not to push the
   // location off the end of the row.
   var CODE_PREVIEW_LIMIT = 120;
@@ -82,9 +89,24 @@ var ProblemsPanel = (function () {
 
   // The status bar deliberately tallies only errors and warnings: a count that
   // included every convention offense would be a number nobody acts on.
+  //
+  // Same scope as collect(), none of its work: the full walk sorts every marker
+  // and reads a source line per marker to build previews the caller then throws
+  // away, and it runs on every marker change — for a JS file, every keystroke.
   function counts() {
-    var all = collect();
-    return { errors: all.errors.length, warnings: all.warnings.length };
+    var monaco = window.monaco;
+    if (!monaco || !monaco.editor) return { errors: 0, warnings: 0 };
+
+    var errors = 0;
+    var warnings = 0;
+    monaco.editor.getModels().forEach(function (model) {
+      if (!model._mbeditorPath || model.isDisposed()) return;
+      monaco.editor.getModelMarkers({ resource: model.uri }).forEach(function (m) {
+        if (m.severity === SEVERITY_ERROR) errors += 1;
+        else if (m.severity === SEVERITY_WARNING) warnings += 1;
+      });
+    });
+    return { errors: errors, warnings: warnings };
   }
 
   var Panel = function ProblemsPanelComponent(_ref) {
@@ -156,6 +178,47 @@ var ProblemsPanel = (function () {
       if (FileService.clearExceptions) FileService.clearExceptions()["catch"](function () {});
     };
 
+    // Whole-workspace rubocop. Separate from `problems` above: markers only
+    // exist for models Monaco has loaded, so this is the only view that can
+    // see a file nobody has opened.
+    var _workspace = React.useState(null);
+    var workspace = _workspace[0], setWorkspace = _workspace[1];
+    var _running = React.useState(null);
+    var running = _running[0], setRunning = _running[1];
+
+    var runRubocop = function (mode) {
+      if (running) return;
+      setRunning(mode);
+      FileService.runRubocop(mode)
+        .then(function (data) { setWorkspace(data); })
+        ["catch"](function (e) {
+          var res = e && e.response && e.response.data;
+          setWorkspace(res || { ok: false, error: (e && e.message) || 'RuboCop failed', files: [] });
+        })
+        .then(function () { setRunning(null); });
+    };
+
+    // The workspace list is a snapshot of one run against one working tree.
+    // After a checkout it describes files that may no longer have those
+    // offenses — or no longer exist — so it is dropped rather than left to
+    // look current.
+    React.useEffect(function () {
+      var onBranchChanged = function () { setWorkspace(null); };
+      window.addEventListener('mbeditor:branch-changed', onBranchChanged);
+      return function () { window.removeEventListener('mbeditor:branch-changed', onBranchChanged); };
+    }, []);
+
+    var openAllOffending = function () {
+      if (!workspace || !onOpenFile) return;
+      var files = workspace.files || [];
+      // Each open is a Monaco model plus a tab; a default-config run over a
+      // real app returns hundreds, which would wedge the editor silently.
+      if (files.length > 20 && !window.confirm('Open ' + files.length + ' files?')) return;
+      files.forEach(function (f) {
+        onOpenFile(f.path, (f.offenses[0] && f.offenses[0].line) || 1, 1);
+      });
+    };
+
     var MIN_HEIGHT = 120;
     var _height = React.useState(function () {
       var saved = parseInt(window.localStorage.getItem('mbeditorProblemsHeight'), 10);
@@ -186,10 +249,22 @@ var ProblemsPanel = (function () {
 
     React.useEffect(function () {
       if (!window.monaco || !window.monaco.editor) return;
-      var refresh = function () { setProblems(collect()); };
+      // Debounced for the same reason the status-bar tally is: markers change
+      // on every keystroke in a JS file, and collect() walks every model.
+      var timer = null;
+      var refresh = function () {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(function () {
+          timer = null;
+          setProblems(collect());
+        }, 250);
+      };
       var sub = window.monaco.editor.onDidChangeMarkers(refresh);
-      refresh();
-      return function () { sub.dispose(); };
+      setProblems(collect());
+      return function () {
+        if (timer) clearTimeout(timer);
+        sub.dispose();
+      };
     }, []);
 
     var needle = filter.trim().toLowerCase();
@@ -249,6 +324,40 @@ var ProblemsPanel = (function () {
             );
           })
         ),
+        React.createElement(
+          'div',
+          { className: 'ide-problems-actions' },
+          React.createElement('button', {
+            type: 'button', className: 'ide-problems-btn',
+            disabled: !!running,
+            title: 'Run rubocop over the whole workspace',
+            onClick: function () { runRubocop('check'); }
+          },
+            React.createElement('i', { className: running === 'check' ? 'fas fa-spinner fa-spin' : 'fas fa-play' }),
+            React.createElement('span', null, ' RuboCop')),
+          React.createElement('button', {
+            type: 'button', className: 'ide-problems-btn',
+            // Nothing to correct until a run says so, and rerunning `-a` on a
+            // clean tree is a slow no-op.
+            disabled: !!running || !workspace || !workspace.correctable,
+            title: workspace && workspace.correctable
+              ? 'Safe-autocorrect ' + workspace.correctable + ' offense(s) and rerun'
+              : 'Run RuboCop first',
+            onClick: function () { runRubocop('autocorrect'); }
+          },
+            React.createElement('i', { className: running === 'autocorrect' ? 'fas fa-spinner fa-spin' : 'fas fa-magic' }),
+            React.createElement('span', null, ' Fix')),
+          React.createElement('button', {
+            type: 'button', className: 'ide-problems-btn',
+            disabled: !workspace || !(workspace.files || []).length,
+            title: workspace && (workspace.files || []).length
+              ? 'Open all ' + workspace.files.length + ' file(s) with offenses'
+              : 'Run RuboCop first',
+            onClick: openAllOffending
+          },
+            React.createElement('i', { className: 'fas fa-folder-open' }),
+            React.createElement('span', null, ' Open all'))
+        ),
         React.createElement('input', {
           className: 'ide-problems-filter',
           type: 'text',
@@ -264,6 +373,48 @@ var ProblemsPanel = (function () {
       React.createElement(
         'div',
         { className: 'ide-problems-body' },
+        workspace && React.createElement(
+          'div',
+          { className: 'ide-problems-workspace' },
+          workspace.error
+            ? React.createElement('div', { className: 'ide-problems-empty' }, 'RuboCop: ' + workspace.error)
+            : (workspace.files || []).length === 0
+              ? React.createElement('div', { className: 'ide-problems-empty' }, 'RuboCop found no offenses in the workspace')
+              : workspace.files.map(function (file) {
+                  return React.createElement(
+                    'div',
+                    { className: 'ide-problems-file', key: 'ws:' + file.path },
+                    React.createElement(
+                      'div',
+                      { className: 'ide-problems-file-name' },
+                      React.createElement('i', { className: 'fas fa-gavel', 'aria-hidden': 'true' }),
+                      ' ' + file.path,
+                      React.createElement('span', { className: 'ide-problems-file-count' }, file.offenses.length)
+                    ),
+                    file.offenses.map(function (o, i) {
+                      var kind = COP_SEVERITY_KIND[o.severity] || 'info';
+                      return React.createElement(
+                        'button',
+                        {
+                          type: 'button',
+                          className: 'ide-problems-item ide-problems-item-' + kind,
+                          key: 'ws:' + file.path + ':' + i,
+                          title: o.message + '\n' + file.path + ':' + o.line,
+                          'aria-label': SEVERITY_LABEL[kind] + ': ' + o.message + ', ' + file.path + ' line ' + o.line,
+                          onClick: function () { if (onOpenFile) onOpenFile(file.path, o.line, o.column); }
+                        },
+                        React.createElement('i', {
+                          className: 'fas ' + SEVERITY_ICON[kind] + ' ide-problems-icon', 'aria-hidden': 'true'
+                        }),
+                        React.createElement('span', { className: 'ide-problems-msg' }, o.message),
+                        React.createElement('span', { className: 'ide-problems-source' }, o.copName),
+                        o.correctable && React.createElement('span', { className: 'ide-problems-source' }, 'fixable'),
+                        React.createElement('span', { className: 'ide-problems-loc' }, '[' + o.line + ', ' + o.column + ']')
+                      );
+                    })
+                  );
+                })
+        ),
         exceptions.length > 0 && React.createElement(
           'div',
           { className: 'ide-problems-file ide-problems-exceptions' },
@@ -302,6 +453,7 @@ var ProblemsPanel = (function () {
                     type: 'button',
                     className: 'ide-problems-item ide-problems-frame',
                     key: ex.id + ':' + i,
+                    title: 'Open ' + f.file + ':' + f.line,
                     'aria-label': 'Open ' + f.file + ' line ' + f.line,
                     onClick: function () { if (onOpenFile) onOpenFile(f.file, f.line, 1); }
                   },
@@ -312,7 +464,7 @@ var ProblemsPanel = (function () {
             );
           })
         ),
-        total === 0 && exceptions.length > 0
+        total === 0 && (exceptions.length > 0 || workspace)
           ? null
           : total === 0
           ? React.createElement('div', { className: 'ide-problems-empty' }, 'No problems in the open files')
@@ -340,6 +492,10 @@ var ProblemsPanel = (function () {
                         type: 'button',
                         className: 'ide-problems-item ide-problems-item-' + kind,
                         key: entry.path + ':' + marker.startLineNumber + ':' + index,
+                        // The message ellipsises in a short panel, so the full
+                        // text is on hover as well as on the label.
+                        title: marker.message + '\n' + entry.path + ':' + marker.startLineNumber +
+                          (item.code ? ' — ' + item.code : ''),
                         'aria-label': SEVERITY_LABEL[kind] + ': ' + marker.message +
                           ', ' + entry.path + ' line ' + marker.startLineNumber +
                           (item.code ? ', source: ' + item.code : ''),

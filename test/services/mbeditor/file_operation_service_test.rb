@@ -94,6 +94,34 @@ module Mbeditor
       end
     end
 
+    test "rename allows a case-only rename" do
+      Dir.mktmpdir do |dir|
+        service = FileOperationService.new(dir)
+        old_path = File.join(dir, "readme.md")
+        new_path = File.join(dir, "README.md")
+        File.write(old_path, "content")
+        result = service.rename(old_path, new_path)
+        assert_equal "README.md", result[:name]
+        assert_equal "content", File.read(new_path)
+        assert_includes Dir.children(dir), "README.md"
+      end
+    end
+
+    test "save preserves the file's permissions and leaves no temp file behind" do
+      Dir.mktmpdir do |dir|
+        service = FileOperationService.new(dir)
+        path = File.join(dir, "script.sh")
+        File.write(path, "old")
+        File.chmod(0o755, path)
+
+        service.save(path, "new")
+
+        assert_equal "new", File.read(path)
+        assert_equal 0o755, File.stat(path).mode & 0o777
+        assert_equal ["script.sh"], Dir.children(dir)
+      end
+    end
+
     # create_dir
     test "create_dir raises FileExistsError when path already exists" do
       Dir.mktmpdir do |dir|

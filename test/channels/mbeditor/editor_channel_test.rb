@@ -41,6 +41,19 @@ module Mbeditor
       Mbeditor.configuration.authenticate_with = previous
     end
 
+    # The controllers 404 outside allowed_environments; the channels used to be
+    # reachable in any environment, with or without an auth hook.
+    test "subscription is rejected when the environment is not allowed" do
+      Mbeditor.configure { |c| c.allowed_environments = [:production] }
+
+      subscribe
+
+      assert subscription.rejected?
+      assert_no_streams
+    ensure
+      Mbeditor.configure { |c| c.allowed_environments = %i[test development] }
+    end
+
     # ── cable authentication ──────────────────────────────────────────────────
 
     # The failure that made pairing silently impossible: a hook reading state a

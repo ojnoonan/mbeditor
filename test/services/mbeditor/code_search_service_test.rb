@@ -300,12 +300,17 @@ module Mbeditor
     private
 
     def with_rg_available(value)
-      original = AvailabilityProbe.method(:rg)
-      AvailabilityProbe.define_singleton_method(:rg) { value }
+      # Aliased rather than captured as a Method: a reload between here and the
+      # ensure re-points the constant at a new class, and rebinding the old
+      # Method to it raises "can't bind singleton method to a different class".
+      probe_singleton = class << AvailabilityProbe; self; end
+      probe_singleton.alias_method :__orig_rg, :rg
+      probe_singleton.define_method(:rg) { value }
       yield
     ensure
-      AvailabilityProbe.singleton_class.send(:remove_method, :rg)
-      AvailabilityProbe.define_singleton_method(:rg, original)
+      probe_singleton.remove_method :rg
+      probe_singleton.alias_method :rg, :__orig_rg
+      probe_singleton.remove_method :__orig_rg
     end
 
     def with_search_timeout(seconds)

@@ -233,6 +233,42 @@ module Mbeditor
       GitInfoService.invalidate(REPO_PATH)
     end
 
+    # The in-flight registry used to hold Thread.current and waiters joined it.
+    # A Puma pool thread never exits, so the join always ran to CACHE_TTL — the
+    # dedupe turned a 10s stall into the normal case. The owner here stays alive
+    # after computing, exactly like a pool thread.
+    def test_waiter_wakes_when_compute_finishes_not_when_the_owner_thread_dies
+      GitInfoService.invalidate(REPO_PATH)
+
+      singleton = class << GitInfoService; self; end
+      singleton.alias_method :__orig_compute, :compute
+      GitInfoService.define_singleton_method(:compute) do |repo_path|
+        sleep 0.2
+        payload = { ok: true, branch: "stub" }
+        store_git_info(repo_path, payload)
+        payload
+      end
+
+      release = Queue.new
+      owner = Thread.new { GitInfoService.call(REPO_PATH) && release.pop }
+      sleep 0.05 # let the owner claim the flight
+
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      result  = GitInfoService.call(REPO_PATH)
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+      assert result[:ok]
+      assert_operator elapsed, :<, GitInfoService::CACHE_TTL / 2.0,
+                      "the waiter must be released by the owner finishing, not by its thread dying"
+      release << :go
+      owner.join
+    ensure
+      singleton.remove_method :compute
+      singleton.alias_method :compute, :__orig_compute
+      singleton.remove_method :__orig_compute
+      GitInfoService.invalidate(REPO_PATH)
+    end
+
     # -------------------------------------------------------------------------
     # Stale-while-error — compute failure serves the last good payload
     # -------------------------------------------------------------------------

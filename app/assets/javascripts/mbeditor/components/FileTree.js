@@ -423,7 +423,12 @@ var FileTree = function FileTree(_ref) {
     return result;
   };
 
-  var flatItems = flattenVisible(items || [], 0, '');
+  // A per-level localeCompare sort of the whole visible tree, re-run on every
+  // render — including the ones caused by a git poll or a tab switch, neither
+  // of which can change the shape of the tree. Only these three inputs can.
+  var flatItems = useMemo(function () {
+    return flattenVisible(items || [], 0, '');
+  }, [items, expandedDirs, pendingCreate]);
   flatItemsRef.current = flatItems;
 
   var totalHeight = flatItems.length * ROW_HEIGHT;

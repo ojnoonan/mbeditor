@@ -46,6 +46,15 @@ module Mbeditor
       assert_equal 4, result.first.dig("range", "start", "line")
     end
 
+    # A raw path is not a URI: a space raises URI::InvalidURIError inside
+    # ruby-lsp and a `#` truncates the path at the fragment, so every request
+    # against such a file failed.
+    test "a path with characters that are illegal in a URI is percent-escaped" do
+      result = definition_request(path: "has space#hash.rb")
+
+      assert_equal "file://#{@root}/has%20space%23hash.rb", result.first["uri"]
+    end
+
     test "a positionless diagnostics request round-trips a full document report" do
       result = client.request_with_document("textDocument/diagnostic", File.join(@root, "app.rb"), "x=1\n", {})
 

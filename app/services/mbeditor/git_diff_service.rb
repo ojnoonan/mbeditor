@@ -53,8 +53,12 @@ module Mbeditor
     end
 
     # Return the file content at a given git ref, or "" if it doesn't exist.
+    #
+    # --end-of-options (git >= 2.24, safely assumable for dev tooling) stops the
+    # rev being read as a command-line option, e.g. `--output=/tmp/x`, on top of
+    # the caller-side ref validation.
     def file_at_ref(ref, path)
-      out, status = GitService.run_git(repo_path, "show", "#{ref}:#{path}")
+      out, status = GitService.run_git(repo_path, "show", "--end-of-options", "#{ref}:#{path}")
       return "" unless status.success?
 
       out

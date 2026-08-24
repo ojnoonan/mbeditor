@@ -33,8 +33,18 @@ module Mbeditor
     private
 
     def local_diff
-      out, status = GitService.run_git(repo_path, "diff", "HEAD")
+      out, status = git_diff("HEAD")
       status.success? ? cap_diff(out) : ""
+    end
+
+    # --no-color/--no-ext-diff on every invocation: a host gitconfig with
+    # color.ui = always, or a diff.external driver, otherwise feeds escape
+    # codes or foreign output into the viewer's parser. max_bytes stops a
+    # pathological diff being fully materialised just for cap_diff to throw
+    # most of it away.
+    def git_diff(*revs)
+      GitService.run_git(repo_path, "diff", "--no-color", "--no-ext-diff", *revs,
+                         max_bytes: MAX_DIFF_BYTES)
     end
 
     def branch_diff
@@ -43,7 +53,7 @@ module Mbeditor
 
       if base_sha.present?
         @base_ref = ref
-        out, status = GitService.run_git(repo_path, "diff", "#{base_sha}..HEAD")
+        out, status = git_diff("#{base_sha}..HEAD")
         return status.success? ? cap_diff(out) : ""
       end
 
@@ -56,7 +66,7 @@ module Mbeditor
       upstream = GitService.upstream_branch(repo_path)
       if GitService.base_branch?(branch) && upstream.present?
         @base_ref = upstream
-        out, status = GitService.run_git(repo_path, "diff", "#{upstream}..HEAD")
+        out, status = git_diff("#{upstream}..HEAD")
         return status.success? ? cap_diff(out) : ""
       end
 

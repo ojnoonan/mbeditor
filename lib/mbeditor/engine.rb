@@ -2,6 +2,7 @@
 
 require "mbeditor/rack/silence_ping_request"
 require "mbeditor/rack/handle_pending_migrations"
+require "mbeditor/rack/pending_migration_bypass"
 require "mbeditor/rack/resilient_router"
 require "mbeditor/cable_log_filter"
 
@@ -71,7 +72,24 @@ module Mbeditor
                         app.config.active_record[:migration_error]
 
       if defined?(ActiveRecord::Migration::CheckPending) && migration_error == :page_load
-        app.middleware.insert_before ActiveRecord::Migration::CheckPending,
+        # Two layers, and both earn their place.
+        #
+        # The swap is the actual fix: CheckPending is replaced by a wrapper that
+        # runs the identical check for the host's own traffic, but records
+        # rather than raises for the editor's — so a pending migration no longer
+        # blocks the tree, opening a file, saving one, or loading the assets the
+        # page needs. Without it the editor was unusable exactly when it was
+        # needed most.
+        app.middleware.swap ActiveRecord::Migration::CheckPending,
+                            Mbeditor::Rack::PendingMigrationBypass,
+                            file_watcher: app.config.file_watcher
+
+        # HandlePendingMigrations stays above it as a backstop for a
+        # PendingMigrationError raised from anywhere else in the stack (an
+        # engine or initializer that checks on its own). It should now be
+        # unreachable for the ordinary case; it is cheap, and being locked out
+        # of the editor is the failure worth two guards.
+        app.middleware.insert_before Mbeditor::Rack::PendingMigrationBypass,
                                      Mbeditor::Rack::HandlePendingMigrations
       end
     end
@@ -156,8 +174,9 @@ module Mbeditor
 
       @exception_subscriber = ActiveSupport::Notifications.subscribe(
         "process_action.action_controller"
-      ) do |*args|
-        payload = ActiveSupport::Notifications::Event.new(*args).payload
+      ) do |_name, _started, _finished, _id, payload|
+        # 5-arity: the block runs for every host request, and building an Event
+        # just to read its payload allocated one per request for nothing.
         exception = payload[:exception_object]
         next unless exception
 

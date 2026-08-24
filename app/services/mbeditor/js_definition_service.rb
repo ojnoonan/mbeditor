@@ -27,6 +27,8 @@ module Mbeditor
       @symbol         = symbol.to_s
       @workspace_root = workspace_root.to_s.chomp("/")
       @parent         = parent.to_s.empty? ? nil : parent.to_s
+      # Compiled once: top_level? runs on every parsed result line.
+      @window_assign  = /\Awindow\.#{Regexp.escape(@symbol)}\s*=/
     end
 
     def call
@@ -126,7 +128,7 @@ module Mbeditor
     # top-level by grammar.
     def top_level?(indent, snippet)
       return true if indent.empty?
-      return true if snippet.match?(/\Awindow\.#{Regexp.escape(@symbol)}\s*=/)
+      return true if snippet.match?(@window_assign)
       return true if snippet.start_with?("export ")
 
       false

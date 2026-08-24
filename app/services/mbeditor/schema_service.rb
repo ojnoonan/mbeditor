@@ -241,10 +241,11 @@ module Mbeditor
     def parse_sql_indexes(content, table_name)
       indexes = []
 
-      # Match CREATE INDEX ... ON table_name (columns)
-      pattern = /CREATE\s+(?:UNIQUE\s+)?INDEX\s+["`]?(\w+)["`]?\s+ON\s+(?:public\.)?["`]?#{Regexp.escape(table_name)}["`]?\s*\((.*?)\)/mi
+      # Match CREATE INDEX ... ON table_name (columns). UNIQUE is captured here
+      # rather than re-scanned per index with a freshly compiled regex.
+      pattern = /CREATE\s+(UNIQUE\s+)?INDEX\s+["`]?(\w+)["`]?\s+ON\s+(?:public\.)?["`]?#{Regexp.escape(table_name)}["`]?\s*\((.*?)\)/mi
 
-      content.scan(pattern) do |index_name, columns_str|
+      content.scan(pattern) do |unique, index_name, columns_str|
         cols = columns_str.split(',').map { |c| c.strip.gsub(/["`]/, '').split(/\s+/).first }.compact
         next if cols.empty?
 
@@ -252,7 +253,7 @@ module Mbeditor
           name: index_name,
           columns: cols
         }
-        idx[:unique] = true if content.match?(/CREATE\s+UNIQUE\s+INDEX\s+["`]?#{Regexp.escape(index_name)}/mi)
+        idx[:unique] = true if unique
 
         indexes << idx
       end
@@ -261,67 +262,67 @@ module Mbeditor
     end
 
     # Map SQL types to Rails column types
-    def sql_type_to_rails(sql_type)
-      type_map = {
-        'integer' => 'integer',
-        'int' => 'integer',
-        'int4' => 'integer',
-        'int2' => 'integer',
-        'int8' => 'bigint',
-        'bigint' => 'bigint',
-        'smallint' => 'integer',
-        'bigserial' => 'bigint',
-        'serial' => 'integer',
-        'varchar' => 'string',
-        'character varying' => 'string',
-        'character' => 'string',
-        'char' => 'string',
-        'text' => 'text',
-        'citext' => 'string',
-        'boolean' => 'boolean',
-        'bool' => 'boolean',
-        'decimal' => 'decimal',
-        'numeric' => 'decimal',
-        'real' => 'float',
-        'float' => 'float',
-        'float4' => 'float',
-        'float8' => 'float',
-        'double precision' => 'float',
-        'double' => 'float',
-        'money' => 'decimal',
-        'timestamp' => 'datetime',
-        'timestamp without time zone' => 'datetime',
-        'timestamp with time zone' => 'datetime',
-        'timestamptz' => 'datetime',
-        'datetime' => 'datetime',
-        'date' => 'date',
-        'time' => 'time',
-        'time without time zone' => 'time',
-        'time with time zone' => 'time',
-        'interval' => 'string',
-        'json' => 'json',
-        'jsonb' => 'jsonb',
-        'uuid' => 'uuid',
-        'bytea' => 'binary',
-        'bit' => 'string',
-        'bit varying' => 'string',
-        'inet' => 'string',
-        'cidr' => 'string',
-        'macaddr' => 'string',
-        'xml' => 'string',
-        'hstore' => 'hstore',
-        'tsvector' => 'string',
-        'ltree' => 'string',
-        'point' => 'string',
-        'line' => 'string',
-        'lseg' => 'string',
-        'box' => 'string',
-        'path' => 'string',
-        'polygon' => 'string',
-        'circle' => 'string'
-      }
+    SQL_TYPE_TO_RAILS = {
+      'integer' => 'integer',
+      'int' => 'integer',
+      'int4' => 'integer',
+      'int2' => 'integer',
+      'int8' => 'bigint',
+      'bigint' => 'bigint',
+      'smallint' => 'integer',
+      'bigserial' => 'bigint',
+      'serial' => 'integer',
+      'varchar' => 'string',
+      'character varying' => 'string',
+      'character' => 'string',
+      'char' => 'string',
+      'text' => 'text',
+      'citext' => 'string',
+      'boolean' => 'boolean',
+      'bool' => 'boolean',
+      'decimal' => 'decimal',
+      'numeric' => 'decimal',
+      'real' => 'float',
+      'float' => 'float',
+      'float4' => 'float',
+      'float8' => 'float',
+      'double precision' => 'float',
+      'double' => 'float',
+      'money' => 'decimal',
+      'timestamp' => 'datetime',
+      'timestamp without time zone' => 'datetime',
+      'timestamp with time zone' => 'datetime',
+      'timestamptz' => 'datetime',
+      'datetime' => 'datetime',
+      'date' => 'date',
+      'time' => 'time',
+      'time without time zone' => 'time',
+      'time with time zone' => 'time',
+      'interval' => 'string',
+      'json' => 'json',
+      'jsonb' => 'jsonb',
+      'uuid' => 'uuid',
+      'bytea' => 'binary',
+      'bit' => 'string',
+      'bit varying' => 'string',
+      'inet' => 'string',
+      'cidr' => 'string',
+      'macaddr' => 'string',
+      'xml' => 'string',
+      'hstore' => 'hstore',
+      'tsvector' => 'string',
+      'ltree' => 'string',
+      'point' => 'string',
+      'line' => 'string',
+      'lseg' => 'string',
+      'box' => 'string',
+      'path' => 'string',
+      'polygon' => 'string',
+      'circle' => 'string'
+    }.freeze
 
-      type_map[sql_type.downcase] || sql_type
+    def sql_type_to_rails(sql_type)
+      SQL_TYPE_TO_RAILS[sql_type.downcase] || sql_type
     end
   end
 end

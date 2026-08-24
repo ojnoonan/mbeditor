@@ -8,8 +8,14 @@
 // otherwise prevent reconnection.
 var WebSocketService = (function () {
   var _consumer = null;
+  // True only when _consumer is one we created ourselves; a consumer borrowed
+  // from the host app (window.App.cable) is not ours to disconnect.
+  var _ownsConsumer = false;
   var _subscription = null;
   var _connected = false;
+  // Distinguishes the first successful handshake from a reconnect, which is the
+  // point at which collaboration rooms have to be re-established.
+  var _everConnected = false;
   // Why collaboration is or is not working, so the editor can say so instead of
   // failing silently. A rejected subscription used to just schedule a reconnect
   // and tell nobody, which made a blocked cable indistinguishable from an empty
@@ -62,8 +68,10 @@ var WebSocketService = (function () {
     // Reuse an existing consumer the host app may have already created (App.cable
     // is the Rails default).  Fall back to creating our own.
     if (typeof window.App !== 'undefined' && window.App.cable) {
+      _ownsConsumer = false;
       return window.App.cable;
     }
+    _ownsConsumer = true;
     return window.ActionCable.createConsumer(_cableUrl());
   }
 
@@ -72,10 +80,14 @@ var WebSocketService = (function () {
       try { _subscription.unsubscribe(); } catch (e) { /* ignore */ }
       _subscription = null;
     }
-    if (_consumer && typeof _consumer.disconnect === 'function') {
+    // Only ever disconnect a consumer we created. When the host app already had
+    // one (window.App.cable) it is shared: disconnecting it on any mbeditor
+    // cable blip took down the host's own channels with it.
+    if (_ownsConsumer && _consumer && typeof _consumer.disconnect === 'function') {
       try { _consumer.disconnect(); } catch (e) { /* ignore */ }
     }
     _consumer = null;
+    _ownsConsumer = false;
     _connected = false;
   }
 
@@ -139,11 +151,21 @@ var WebSocketService = (function () {
         { channel: 'Mbeditor::EditorChannel' },
         {
           connected: function () {
+            var reconnected = _everConnected;
+            _everConnected = true;
             _connected = true;
             _status = 'connected';
             // Back to fast retries for the next blip.
             _reconnectAttempts = 0;
             if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+            // The drop took the old consumer down and every CollaborationChannel
+            // subscription made on it with it. Nothing else notices — cable
+            // availability is about support, not liveness — so the rooms would
+            // stay silently dead until each file was closed and reopened.
+            if (reconnected && typeof CollaborationService !== 'undefined' &&
+                typeof CollaborationService.rejoinRooms === 'function') {
+              try { CollaborationService.rejoinRooms(); } catch (e) { /* ignore */ }
+            }
           },
           disconnected: function () {
             _status = _status === 'rejected' ? 'rejected' : 'dropped';
@@ -178,10 +200,69 @@ var WebSocketService = (function () {
     }
   }
 
-  function _emitFilesChanged(data) {
-    _filesChangedCallbacks.forEach(function (fn) {
-      try { fn(data); } catch (e) { /* ignore */ }
+  // ── files_changed coalescing ───────────────────────────────────────────────
+  //
+  // The server broadcasts once per written file, and each subscriber turns a
+  // broadcast into HTTP work: the app refreshes the tree and git status, the
+  // Monaco plugin refreshes the TypeScript program, every open editor pane
+  // re-runs git line-diff. Saving several files in a row — paste, save, next
+  // file — therefore multiplied one write into a fan-out per save, and past
+  // the point where the dev server could keep up the queue simply grew: saves
+  // got slower and slower until requests hit the axios timeout.
+  //
+  // MbeditorApp already debounced its own handler for exactly this reason, but
+  // a debounce there cannot help the other subscribers. Coalescing here fixes
+  // every subscriber at once, including any added later.
+  var FILES_CHANGED_COALESCE_MS = 150;
+  var _filesChangedTimer = null;
+  var _filesChangedAcc = null;
+
+  // Merge a broadcast into the accumulator. Pure so it can be tested directly;
+  // the two invariants are easy to get wrong and both have teeth:
+  //
+  //   - A broadcast with no paths means "something changed, re-check
+  //     everything". It must not be narrowed by paths that happen to land in
+  //     the same window, or the re-check silently covers only those files.
+  //   - `structural` is a union: one structural broadcast in the burst makes
+  //     the whole flush structural, because a tree walk that gets skipped
+  //     leaves a created or deleted file missing from the explorer.
+  function _mergeFilesChanged(acc, data) {
+    var next = acc || { paths: [], pathless: false, structural: false };
+    if (data && data.paths) next.paths = next.paths.concat(data.paths);
+    else next.pathless = true;
+    // Absent `structural` means an older server — the conservative read is true.
+    if (!data || data.structural !== false) next.structural = true;
+    return next;
+  }
+
+  function _coalescedPayload(acc) {
+    var payload = { type: 'files_changed', structural: acc.structural };
+    if (!acc.pathless && acc.paths.length) {
+      var seen = {};
+      payload.paths = acc.paths.filter(function (p) {
+        if (seen['$' + p]) return false;
+        seen['$' + p] = true;
+        return true;
+      });
+    }
+    return payload;
+  }
+
+  function _flushFilesChanged() {
+    _filesChangedTimer = null;
+    var acc = _filesChangedAcc;
+    _filesChangedAcc = null;
+    if (!acc) return;
+    var payload = _coalescedPayload(acc);
+    _filesChangedCallbacks.slice().forEach(function (fn) {
+      try { fn(payload); } catch (e) { /* ignore */ }
     });
+  }
+
+  function _emitFilesChanged(data) {
+    _filesChangedAcc = _mergeFilesChanged(_filesChangedAcc, data);
+    if (_filesChangedTimer) return;
+    _filesChangedTimer = setTimeout(_flushFilesChanged, FILES_CHANGED_COALESCE_MS);
   }
 
   function _emitFileSaved(data) {
@@ -342,6 +423,9 @@ var WebSocketService = (function () {
     subscribeCollaboration: subscribeCollaboration,
     perform: perform,
     onFilesChanged: onFilesChanged,
+    // Exposed for tests — the burst-merge invariants above are worth pinning.
+    _mergeFilesChanged: _mergeFilesChanged,
+    _coalescedPayload: _coalescedPayload,
     offFilesChanged: offFilesChanged,
     onFileSaved: onFileSaved,
     offFileSaved: offFileSaved,

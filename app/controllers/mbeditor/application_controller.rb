@@ -6,6 +6,11 @@ require "pathname"
 module Mbeditor
   class ApplicationController < ActionController::Base
     protect_from_forgery with: :exception
+    # Before the auth hook, and on every controller: a disallowed environment is
+    # "this engine is not here", so it must 404 without running the host app's
+    # authenticate_with proc. Declaring it per-controller meant LogsController
+    # missed it entirely and served the environment's log file anywhere.
+    before_action :ensure_allowed_environment!
     before_action :run_authentication
 
     private

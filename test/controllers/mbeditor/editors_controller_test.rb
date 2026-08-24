@@ -815,6 +815,31 @@ module Mbeditor
       files.each   { |f| assert f["size"] >= 0 }
     end
 
+    # The tree is ~1 MB and polled every 10s; an unchanged poll must cost a
+    # digest comparison, not the whole body.
+    test "files answers 304 when the tree has not changed" do
+      get "/mbeditor/files"
+      assert_response :ok
+      etag = response.headers["ETag"]
+      assert etag.present?
+
+      get "/mbeditor/files", headers: { "If-None-Match" => etag }
+      assert_response :not_modified
+      assert_empty response.body
+    end
+
+    test "files sends a fresh body and ETag after the tree changes" do
+      get "/mbeditor/files"
+      etag = response.headers["ETag"]
+
+      File.write(File.join(@workspace, "brand_new.rb"), "x\n")
+      get "/mbeditor/files?refresh=1", headers: { "If-None-Match" => etag }
+
+      assert_response :ok
+      assert_includes json.map { |n| n["name"] }, "brand_new.rb"
+      assert_not_equal etag, response.headers["ETag"]
+    end
+
     test "files shows excluded_paths in the explorer (only search excludes them)" do
       get "/mbeditor/files"
       assert_response :ok
@@ -947,6 +972,33 @@ module Mbeditor
       assert_response :ok
       assert_equal "class User; end\n", json["base"]
       assert_equal [[1,1,1,1,"hello"]], json["ops"]
+    end
+
+    # The client begins tracking when the editor mounts, before the content has
+    # arrived, so the load itself is the first op against an empty document.
+    # Rejecting that base made the initial POST for every file fail.
+    test "file_history accepts an empty base and replays the content from ops" do
+      post "/mbeditor/file_history", params: {
+        branch: "main",
+        path: "app/models/user.rb",
+        ops: [[1,1,1,1,"class User; end\n"]],
+        base: ""
+      }, as: :json
+      assert_response :no_content
+
+      get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }
+      assert_response :ok
+      assert_equal "", json["base"]
+      assert_equal [[1,1,1,1,"class User; end\n"]], json["ops"]
+    end
+
+    test "file_history still rejects an absent base for initial history" do
+      post "/mbeditor/file_history", params: {
+        branch: "main",
+        path: "app/models/user.rb",
+        ops: [[1,1,1,1,"hello"]]
+      }, as: :json
+      assert_response :bad_request
     end
 
     test "file_history prunes and returns empty when history is older than 7 days" do
@@ -1166,6 +1218,19 @@ module Mbeditor
       assert_equal "# Hello\n", response.body
     end
 
+    test "raw serves an attachment when download is requested" do
+      get "/mbeditor/raw", params: { path: "README.md", download: "1" }
+      assert_response :ok
+      assert_match(/\Aattachment/, response.headers["Content-Disposition"])
+      assert_match(/README\.md/, response.headers["Content-Disposition"])
+      assert_equal "# Hello\n", response.body
+    end
+
+    test "raw download still refuses a path outside the workspace" do
+      get "/mbeditor/raw", params: { path: "../secret", download: "1" }
+      assert_response :forbidden
+    end
+
     test "raw returns 404 for missing file" do
       get "/mbeditor/raw", params: { path: "nope.txt" }
       assert_response :not_found
@@ -1236,6 +1301,31 @@ module Mbeditor
         post "/mbeditor/file", params: { path: "../../evil.rb", code: "bad" }, as: :json
       end
       assert_response :forbidden
+    end
+
+    # The client skips its whole-workspace tree walk and quick-open re-index
+    # when a change cannot have altered the shape of the tree. Getting this
+    # flag wrong is silent: too eager and the explorer stops noticing new
+    # files, too conservative and every save pays for a full walk again.
+    test "save broadcasts files_changed as non-structural" do
+      assert_broadcast_on("mbeditor_editor", type: "files_changed", structural: false, paths: ["README.md"]) do
+        post "/mbeditor/file", params: { path: "README.md", code: "# Updated\n" }, as: :json
+      end
+      assert_response :ok
+    end
+
+    test "creating a file broadcasts files_changed as structural" do
+      assert_broadcast_on("mbeditor_editor", type: "files_changed", structural: true, paths: ["fresh.rb"]) do
+        post "/mbeditor/create_file", params: { path: "fresh.rb", code: "" }, as: :json
+      end
+      assert_response :ok
+    end
+
+    test "deleting a file broadcasts files_changed as structural" do
+      assert_broadcast_on("mbeditor_editor", type: "files_changed", structural: true, paths: ["README.md"]) do
+        delete "/mbeditor/delete", params: { path: "README.md" }, as: :json
+      end
+      assert_response :ok
     end
 
     # ---------------------------------------------------------------------------
@@ -1733,8 +1823,12 @@ module Mbeditor
       singleton = class << Mbeditor::SearchReplaceService; self; end
       singleton.alias_method :__orig_rg_available?, :rg_available?
       Mbeditor::SearchReplaceService.define_singleton_method(:rg_available?) { false }
-      original_rg = Mbeditor::AvailabilityProbe.method(:rg)
-      Mbeditor::AvailabilityProbe.define_singleton_method(:rg) { false }
+      # Aliased rather than captured as a Method: a reload between here and the
+      # ensure re-points the constant at a new class, and rebinding the old
+      # Method to it raises "can't bind singleton method to a different class".
+      probe_singleton = class << Mbeditor::AvailabilityProbe; self; end
+      probe_singleton.alias_method :__orig_rg, :rg
+      probe_singleton.define_method(:rg) { false }
 
       get "/mbeditor/search", params: { q: "NEEDLE_TOKEN" }
       assert_response :ok
@@ -1749,8 +1843,9 @@ module Mbeditor
       singleton.remove_method :rg_available?
       singleton.alias_method :rg_available?, :__orig_rg_available?
       singleton.remove_method :__orig_rg_available?
-      Mbeditor::AvailabilityProbe.singleton_class.send(:remove_method, :rg)
-      Mbeditor::AvailabilityProbe.define_singleton_method(:rg, original_rg)
+      probe_singleton.remove_method :rg
+      probe_singleton.alias_method :rg, :__orig_rg
+      probe_singleton.remove_method :__orig_rg
     end
 
     test 'search accepts query of exactly 500 characters' do
@@ -2298,6 +2393,25 @@ module Mbeditor
       get "/mbeditor/workspace"
       assert_response :ok
       assert_equal true, json["testAvailable"]
+    end
+
+    # ---------------------------------------------------------------------------
+    # model_schema
+    # ---------------------------------------------------------------------------
+
+    # The name is joined into a file path inside SchemaService, so anything that
+    # is not a plain constant name is refused before it gets there.
+    test "model_schema rejects a model name that is not a constant" do
+      ["../../etc/passwd", "user/../../secret", "db/schema.rb"].each do |bad|
+        get "/mbeditor/model_schema", params: { model: bad }
+        assert_response :bad_request, "expected #{bad.inspect} to be refused"
+        assert_match(/invalid model/i, json["error"])
+      end
+    end
+
+    test "model_schema still accepts a namespaced constant" do
+      get "/mbeditor/model_schema", params: { model: "Admin::User" }
+      assert_response :not_found
     end
 
     # ---------------------------------------------------------------------------

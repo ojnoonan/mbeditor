@@ -30,6 +30,11 @@ Mbeditor.configure do |config|
   config.test_framework = :minitest
   config.test_command   = "bundle exec ruby -Itest"
   config.test_timeout   = 30
+  # Whole-suite run. The sample workspace has no Rakefile or bin/rails, so the
+  # auto-detected `bundle exec rake test` has nothing to hook into — load every
+  # sample test file and let minitest's autorun take it from there.
+  config.test_all_command =
+    %q(bundle exec ruby -Itest -e "Dir['test/**/*_test.rb'].sort.each { |f| load(f) }" -- --verbose)
 
   # No authentication required for the dummy development server.
 

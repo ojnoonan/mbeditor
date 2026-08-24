@@ -6,6 +6,7 @@ var _React = React;
 var useState = _React.useState;
 var useEffect = _React.useEffect;
 var useRef = _React.useRef;
+var useMemo = _React.useMemo;
 
 var IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp', 'bmp', 'avif'];
 
@@ -611,7 +612,7 @@ var EditorPanel = function EditorPanel(_ref) {
       var _histBranch = EditorStore.getState().gitBranch || '';
       if (_histBranch) {
         if (_reusingModel) {
-          HistoryService.resumeTracking(_histBranch, tab.path);
+          HistoryService.resumeTracking(_histBranch, tab.path, modelObj.getValue());
         } else {
           HistoryService.beginTracking(_histBranch, tab.path, tab.content || '');
         }
@@ -647,9 +648,8 @@ var EditorPanel = function EditorPanel(_ref) {
       autoClosingBrackets: editorPrefs.autoClosingBrackets || 'always',
       autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
       autoIndent: editorPrefs.autoIndent || 'full',
-      // Monaco own format-on-paste is left off: it never ran the formatter
-      // here. attachEditorFeatures drives re-indent-on-paste from onDidPaste
-      // instead, gated on editorPrefs.indentOnPaste.
+      // Paste inserts what was copied, unchanged. See attachEditorFeatures for
+      // why re-indenting it was removed rather than repaired.
       formatOnPaste: false,
       formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
       quickSuggestions: editorPrefs.quickSuggestions !== false,
@@ -1213,10 +1213,9 @@ var EditorPanel = function EditorPanel(_ref) {
         autoClosingBrackets: editorPrefs.autoClosingBrackets || 'always',
         autoClosingQuotes: editorPrefs.autoClosingQuotes || 'always',
         autoIndent: editorPrefs.autoIndent || 'full',
-        // Monaco own format-on-paste is left off: it never ran the formatter
-      // here. attachEditorFeatures drives re-indent-on-paste from onDidPaste
-      // instead, gated on editorPrefs.indentOnPaste.
-      formatOnPaste: false,
+        // Paste inserts what was copied, unchanged. See attachEditorFeatures
+        // for why re-indenting it was removed rather than repaired.
+        formatOnPaste: false,
         formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
         quickSuggestions: editorPrefs.quickSuggestions !== false,
         wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',
@@ -1495,8 +1494,19 @@ var EditorPanel = function EditorPanel(_ref) {
     gitLineRefreshRef.current = refresh;
 
     // Immediate path for writes mbeditor made itself.
+    //
+    // Only when *this* file is one of the ones that changed: saving some other
+    // file cannot move this file's diff against HEAD. Refreshing regardless
+    // meant every open pane ran a git diff on every save anywhere in the
+    // workspace, so the cost of a save scaled with how many editors were open.
+    // A broadcast that names no paths still refreshes — that is the "something
+    // happened, re-check everything" case (a commit, a branch switch), which
+    // genuinely can change this file's diff without touching it.
     var hasSocket = typeof WebSocketService !== 'undefined' && WebSocketService.onFilesChanged;
-    var onChanged = hasSocket ? function () { refresh(); } : null;
+    var onChanged = hasSocket ? function (payload) {
+      if (payload && payload.paths && payload.paths.indexOf(tab.path) === -1) return;
+      refresh();
+    } : null;
     if (onChanged) WebSocketService.onFilesChanged(onChanged);
 
     return function () {
@@ -1572,6 +1582,16 @@ var EditorPanel = function EditorPanel(_ref) {
   //
   // Decorations, not view zones: a hint belongs on the line, and a zone would
   // push the code around every time a file was opened.
+  //
+  // Redrawn whenever the text changes, not only when the file is opened. A
+  // decoration is a zero-width range pinned at the end of the `def` line, and
+  // Monaco keeps that position through an edit rather than re-deriving it — so
+  // replacing a method (a paste over the selection is the usual way) left the
+  // hint at a column that now falls in the middle of whatever text took its
+  // place, rendering as `def sho  GET /orders/:idw`. Nothing recomputed it,
+  // so saving did not clear it either; it survived until the file was
+  // reopened. The route data itself only depends on the route set, so an edit
+  // redraws from the cached response without asking the server again.
   useEffect(function () {
     var editor = monacoRef.current;
     if (!editor || !window.monaco) return;
@@ -1581,17 +1601,19 @@ var EditorPanel = function EditorPanel(_ref) {
       routeDecorationsRef.current = editor.deltaDecorations(routeDecorationsRef.current, []);
     };
 
-    if (!tab.path || !/^app\/controllers\/.+_controller\.rb$/.test(tab.path)) {
+    if (editorPrefs.routeHints === false ||
+        !tab.path || !/^app\/controllers\/.+_controller\.rb$/.test(tab.path)) {
       clear();
       return;
     }
 
     var cancelled = false;
-    FileService.getRoutes(tab.path).then(function (data) {
+    var redrawTimer = null;
+
+    var draw = function (actions) {
       if (cancelled) return;
-      var actions = (data && data.actions) || {};
       var model = editor.getModel();
-      if (!model) return;
+      if (!model || model.isDisposed()) return;
 
       var decorations = [];
       var text = model.getValue().split('\n');
@@ -1634,10 +1656,47 @@ var EditorPanel = function EditorPanel(_ref) {
       });
 
       routeDecorationsRef.current = editor.deltaDecorations(routeDecorationsRef.current, decorations);
+    };
+
+    var contentSub = null;
+    FileService.getRoutes(tab.path).then(function (data) {
+      if (cancelled) return;
+      var actions = (data && data.actions) || {};
+      draw(actions);
+
+      // Debounced: a redraw per keystroke would rebuild every decoration in
+      // the file for an edit that usually cannot have moved one.
+      var model = editor.getModel();
+      if (!model || !model.onDidChangeContent) return;
+      contentSub = model.onDidChangeContent(function () {
+        clearTimeout(redrawTimer);
+        redrawTimer = setTimeout(function () { draw(actions); }, 250);
+      });
     }).catch(function () { /* hints are additive; a failure just means none */ });
 
-    return function () { cancelled = true; clear(); };
-  }, [tab.path, tab.externalContentVersion, monacoReady]);
+    return function () {
+      cancelled = true;
+      clearTimeout(redrawTimer);
+      if (contentSub) contentSub.dispose();
+      clear();
+    };
+  }, [tab.path, tab.externalContentVersion, monacoReady, editorPrefs.routeHints]);
+
+  // Blame and test view zones are anchored to line numbers, so they only need
+  // rebuilding once an edit has settled. Both effects used to list tab.content
+  // directly, which tore down and re-created every zone in the file on every
+  // keystroke. This ticks 250 ms after the last change instead — the same
+  // treatment the route-hint redraw above already gets.
+  var _useStateZT = useState(0);
+  var _useStateZT2 = _slicedToArray(_useStateZT, 2);
+  var zoneTick = _useStateZT2[0];
+  var setZoneTick = _useStateZT2[1];
+  useEffect(function () {
+    var timer = setTimeout(function () {
+      setZoneTick(function (n) { return n + 1; });
+    }, 250);
+    return function () { clearTimeout(timer); };
+  }, [tab.content]);
 
   // Render Blame block headers (author + summary) above contiguous commit regions.
   useEffect(function () {
@@ -1725,8 +1784,8 @@ var EditorPanel = function EditorPanel(_ref) {
       blameDecorationsRef.current = editor.deltaDecorations(blameDecorationsRef.current, []);
     }
 
-  // Include tab.content so blame re-renders once async file contents finish loading.
-  }, [blameData, isBlameVisible, tab.id, tab.content]);
+  // zoneTick, not tab.content: the zones follow the content, 250 ms behind it.
+  }, [blameData, isBlameVisible, tab.id, zoneTick]);
 
   // Check whether the current tab is the source file for the test that was run.
   // e.g. testPanelFile = "test/controllers/theme_controller_test.rb"
@@ -1804,6 +1863,14 @@ var EditorPanel = function EditorPanel(_ref) {
     return null;
   };
 
+  // treeHasPath walks the whole file tree once per candidate, and the Test
+  // button asked for this on every render — so once per keystroke. treeData is
+  // deliberately outside the React.memo comparator below, so it can only change
+  // on a render this component was going to do anyway.
+  var testFileForTab = useMemo(function () {
+    return matchingTestFilePath(tab.path);
+  }, [tab.path, treeData]);
+
   // Map a test method name to the best-matching line in the source file.
   // Extracts keywords from the test name and scores each source line.
   var mapTestToSourceLine = function(testName, sourceContent) {
@@ -1840,9 +1907,17 @@ var EditorPanel = function EditorPanel(_ref) {
     var model = editor.getModel();
     var lineCount = model ? model.getLineCount() : 0;
 
-    var showHere = testPanelFile && tab.path && isSourceForTest(tab.path, testPanelFile);
+    // Which test file a result entry belongs to. A whole-suite run spans many
+    // of them and stamps each entry with its own `file`, so there is no single
+    // testPanelFile to gate on; a per-file run leaves `file` unset on the
+    // passing entries and testPanelFile is the answer for those.
+    var testFileFor = function (t) { return (t && t.file) || testPanelFile; };
+    var relevantTests = ((testResult && testResult.tests) || []).filter(function (t) {
+      var file = testFileFor(t);
+      return file && tab.path && isSourceForTest(tab.path, file);
+    });
 
-    if (!testResult || !testInlineVisible || !showHere) {
+    if (!testResult || !testInlineVisible || relevantTests.length === 0) {
       clearTestZones(editor);
       testDecorationIdsRef.current = editor.deltaDecorations(testDecorationIdsRef.current, []);
       return;
@@ -1853,10 +1928,8 @@ var EditorPanel = function EditorPanel(_ref) {
       testDecorationIdsRef.current = editor.deltaDecorations(testDecorationIdsRef.current, []);
 
       var normPath = function(p) { return p ? p.replace(/^\/+/, '') : ''; };
-      var viewingTestFile = normPath(tab.path) === normPath(testPanelFile);
 
-      var tests = testResult.tests || [];
-      var testsWithStatus = tests.filter(function (t) {
+      var testsWithStatus = relevantTests.filter(function (t) {
         return t.status === 'pass' || t.status === 'fail' || t.status === 'error';
       });
 
@@ -1865,6 +1938,9 @@ var EditorPanel = function EditorPanel(_ref) {
       // Determine line number for each test
       var sourceContent = tab.content || '';
       var mapped = testsWithStatus.map(function(t) {
+        // Per entry, not per panel: in a suite run this tab is the test file
+        // for some entries and the source counterpart for others.
+        var viewingTestFile = normPath(tab.path) === normPath(testFileFor(t));
         var line;
         if (viewingTestFile && t.line && t.line >= 1 && t.line <= lineCount) {
           line = t.line;
@@ -1923,8 +1999,9 @@ var EditorPanel = function EditorPanel(_ref) {
       testDecorationIdsRef.current = editor.deltaDecorations(testDecorationIdsRef.current, []);
     }
 
-  // Include tab.content so zones re-render once async file content loads (same as blame).
-  }, [testResult, testInlineVisible, testPanelFile, tab.id, tab.path, tab.content]);
+  // zoneTick, not tab.content — see the blame effect. The effect still reads
+  // tab.content for mapTestToSourceLine; the tick only decides when it re-runs.
+  }, [testResult, testInlineVisible, testPanelFile, tab.id, tab.path, zoneTick]);
 
   var sourceTab = tab.isPreview ? findTabByPath(tab.previewFor) : null;
   var markdownContent = tab.isPreview ? sourceTab && sourceTab.content || tab.content || '' : tab.content || '';
@@ -2253,7 +2330,7 @@ var EditorPanel = function EditorPanel(_ref) {
         React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
         !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, isBlameLoading ? 'Loading...' : 'Blame')
       ),
-      testAvailable && matchingTestFilePath(tab.path) && React.createElement(
+      testAvailable && testFileForTab && React.createElement(
         'button',
         {
           className: 'ide-icon-btn',

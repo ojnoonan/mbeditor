@@ -35,7 +35,15 @@ module Mbeditor
       private
 
       def mbeditor_request?(path)
-        path.start_with?("/mbeditor/")
+        path.start_with?("#{mount_prefix}/")
+      end
+
+      # The mount is configurable, so the prefix cannot be hardcoded — a host
+      # that mounts the engine elsewhere logged every editor request in full.
+      def mount_prefix
+        Mbeditor::MountPath.resolve.chomp("/")
+      rescue StandardError
+        Mbeditor::MountPath::DEFAULT
       end
 
       def cable_request?(path)
@@ -53,7 +61,7 @@ module Mbeditor
       end
 
       def root_request?(env, path)
-        env["REQUEST_METHOD"] == "GET" && path == "/mbeditor"
+        env["REQUEST_METHOD"] == "GET" && path == mount_prefix
       end
 
       def normalized_request_path(env)

@@ -151,6 +151,28 @@ module Mbeditor
       assert_includes symbol_names(fresh), "Second"
     end
 
+    test "configured identifiers survive the MAX_SYMBOLS cap" do
+      content = (1..50).map { |i| "var CapTest#{i} = #{i};" }.join("\n")
+      write_file("app/many.js", content)
+
+      original_ids = Mbeditor.configuration.js_global_identifiers
+      Mbeditor.configuration.js_global_identifiers = ["MustSurvive"]
+      original = JsGlobalsService::MAX_SYMBOLS
+      $VERBOSE = nil
+      JsGlobalsService.send(:remove_const, :MAX_SYMBOLS)
+      JsGlobalsService.const_set(:MAX_SYMBOLS, 5)
+      $VERBOSE = true
+
+      assert_includes symbol_names(JsGlobalsService.call(@workspace)), "MustSurvive"
+    ensure
+      $VERBOSE = nil
+      JsGlobalsService.send(:remove_const, :MAX_SYMBOLS)
+      JsGlobalsService.const_set(:MAX_SYMBOLS, original)
+      $VERBOSE = true
+      Mbeditor.configuration.js_global_identifiers = original_ids
+      JsGlobalsService.invalidate(@workspace)
+    end
+
     test "caps the symbol list at MAX_SYMBOLS" do
       content = (1..50).map { |i| "var CapTest#{i} = #{i};" }.join("\n")
       write_file("app/many.js", content)

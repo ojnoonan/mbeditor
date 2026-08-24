@@ -45,6 +45,31 @@ module Mbeditor
       end
     end
 
+    # HEAD of the project repo is often a merge, which legitimately lists no
+    # files, so the shape of a real changed-file entry is pinned here instead.
+    # Metadata and the file list now come from a single `git show`.
+    def test_files_and_metadata_come_back_together_for_a_commit_with_changes
+      Dir.mktmpdir("mbeditor_commit_detail_") do |dir|
+        system("git", "-C", dir, "init", "-q", out: File::NULL, err: File::NULL)
+        system("git", "-C", dir, "config", "user.email", "t@example.com")
+        system("git", "-C", dir, "config", "user.name", "Detail Author")
+        File.write(File.join(dir, "a.txt"), "one\n")
+        system("git", "-C", dir, "add", ".", out: File::NULL, err: File::NULL)
+        system("git", "-C", dir, "commit", "-m", "first", out: File::NULL, err: File::NULL)
+        File.write(File.join(dir, "a.txt"), "one\ntwo\n")
+        system("git", "-C", dir, "add", ".", out: File::NULL, err: File::NULL)
+        system("git", "-C", dir, "commit", "-m", "second", out: File::NULL, err: File::NULL)
+        sha, = Open3.capture2("git", "-C", dir, "rev-parse", "HEAD")
+
+        result = GitCommitDetailService.new(repo_path: dir, sha: sha.strip).call
+
+        assert_equal "second", result["title"]
+        assert_equal "Detail Author", result["author"]
+        refute_empty result["date"]
+        assert_equal [{ "status" => "M", "path" => "a.txt", "added" => 1, "removed" => 0 }], result["files"]
+      end
+    end
+
     def test_call_returns_non_blank_metadata_for_known_sha
       result = GitCommitDetailService.new(repo_path: REPO_PATH, sha: known_sha).call
 

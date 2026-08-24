@@ -516,4 +516,13 @@ var GitPanel = function GitPanel(_ref) {
   );
 };
 
-window.GitPanel = GitPanel;
+// Same convention as FileTreeMemo: compare the data props only. The handlers
+// are re-created on every MbeditorApp render but each one only calls a setState
+// or a service, so they are stable in effect. Without this the panel — commit
+// history, file lists, the Redmine card — re-rendered on every keystroke in the
+// editor, because MbeditorApp is subscribed to the whole store.
+window.GitPanel = React.memo(GitPanel, function (prev, next) {
+  return prev.gitInfo === next.gitInfo &&
+    prev.error === next.error &&
+    prev.redmineEnabled === next.redmineEnabled;
+});

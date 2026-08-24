@@ -106,39 +106,90 @@ function _isCanceled(error) {
   return error.code === 'ERR_CANCELED' || error.name === 'CanceledError' || error.name === 'AbortError';
 }
 
+// A timeout is not an unreachable server, even though axios reports both the
+// same way — with no `response`. ECONNABORTED means the request went out and
+// the server had not answered *yet*, which is exactly what a busy dev server
+// does when a burst of saves queues behind git and tree work. Counting it as a
+// network failure declared the editor offline at the precise moment the server
+// was alive but loaded, and going offline then suppressed the very background
+// polls that would have proved it up — so it stayed "disconnected" until the
+// next /ping probe. A genuinely dead server still registers: a refused
+// connection or an unresolvable host fails immediately rather than timing out.
+function _isTimeout(error) {
+  if (!error) return false;
+  return error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT' ||
+    /timeout/i.test(error.message || '');
+}
+
 axios.interceptors.response.use(function (response) {
   ServerReachability.noteSuccess();
   return response;
 }, function (error) {
   if (error && error.mbeditorSkipped) return Promise.reject(error);
   if (_isCanceled(error)) return Promise.reject(error);
+  // Neither success nor failure: a timeout is no evidence either way, so it
+  // must not clear the failure counter any more than it may advance it.
+  if (_isTimeout(error)) return Promise.reject(error);
   // No response object at all means the request never reached the server.
   if (error && !error.response) ServerReachability.noteNetworkFailure();
   else ServerReachability.noteSuccess();
   return Promise.reject(error);
 });
 
-// Surface pending-migration errors as a dismissible banner instead of silently failing.
-axios.interceptors.response.use(null, function(error) {
-  if (error.response && error.response.data && error.response.data.pending_migration_error) {
-    var bannerId = 'mbeditor-migration-banner';
-    if (!document.getElementById(bannerId)) {
-      var banner = document.createElement('div');
-      banner.id = bannerId;
-      banner.style.cssText = [
-        'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:99999',
-        'background:#f1c40f', 'color:#1e1e1e', 'font-family:system-ui,sans-serif',
-        'font-size:13px', 'padding:8px 16px', 'display:flex',
-        'align-items:center', 'gap:12px'
-      ].join(';');
-      banner.innerHTML =
+// Pending-migration warning.
+//
+// The editor keeps working while migrations are pending — the server-side
+// bypass (Mbeditor::Rack::PendingMigrationBypass) is what makes that true — so
+// this is purely informational now. It is driven by a response *header* rather
+// than by a failed request, for two reasons: after the bypass there is no
+// failed request left to hang it on, and a header rides every response, so a
+// migration created mid-session raises the banner too, and running the
+// migration clears it without a reload.
+//
+// The old failed-response trigger is kept alongside: a PendingMigrationError
+// raised somewhere the bypass does not cover still shows the banner.
+var MIGRATION_BANNER_ID = 'mbeditor-migration-banner';
+
+function _showMigrationBanner() {
+  if (!document.body || document.getElementById(MIGRATION_BANNER_ID)) return;
+  var banner = document.createElement('div');
+  banner.id = MIGRATION_BANNER_ID;
+  banner.style.cssText = [
+    'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:99999',
+    'background:#f1c40f', 'color:#1e1e1e', 'font-family:system-ui,sans-serif',
+    'font-size:13px', 'padding:8px 16px', 'display:flex',
+    'align-items:center', 'gap:12px'
+  ].join(';');
+  banner.innerHTML =
         '<strong>Pending migrations detected.</strong>' +
         ' Run <code style="background:rgba(0,0,0,.15);padding:1px 5px;border-radius:3px">rails db:migrate</code>' +
-        ' then reload — editor is still available.' +
+        ' then reload — editing still works in the meantime.' +
         '<button onclick="this.parentNode.remove()" style="margin-left:auto;background:none;border:none;' +
         'cursor:pointer;font-size:16px;line-height:1;padding:0 4px" aria-label="Dismiss">\u00d7</button>';
-      document.body.prepend(banner);
-    }
+  document.body.prepend(banner);
+}
+
+function _hideMigrationBanner() {
+  var existing = document.getElementById(MIGRATION_BANNER_ID);
+  if (existing) existing.remove();
+}
+
+// Mirrors Mbeditor::Rack::PendingMigrationBypass::PENDING_HEADER. Absent means
+// the check passed, so the banner is cleared as soon as the migration is run —
+// no reload needed.
+function _notePendingMigrationHeader(response) {
+  if (!response || !response.headers) return;
+  if (response.headers['x-mbeditor-pending-migration']) _showMigrationBanner();
+  else _hideMigrationBanner();
+}
+
+axios.interceptors.response.use(function (response) {
+  _notePendingMigrationHeader(response);
+  return response;
+}, function (error) {
+  if (error && error.response && error.response.data &&
+      error.response.data.pending_migration_error) {
+    _showMigrationBanner();
   }
   return Promise.reject(error);
 });
@@ -158,6 +209,9 @@ var FileService = (function () {
   // asked for, so it can be skipped while the server is unreachable.
   function getTree(opts) {
     var cfg = (opts && opts.background) ? { mbeditorBackground: true } : {};
+    // opts.refresh bypasses the server's tree cache. The 10s poll must not set
+    // it — the cache is what keeps that poll cheap.
+    if (opts && opts.refresh) cfg.params = { refresh: 1 };
     return axios.get(window.mbeditorBasePath() + '/files', cfg).then(function(res) { return res.data; });
   }
 
@@ -222,10 +276,30 @@ var FileService = (function () {
 
   // line (1-based, optional) narrows the run to the single test at that line;
   // the server ignores it unless `path` IS the test file.
+  // Server-reported ceilings (seconds), seeded from /workspace. The request
+  // timeout is derived from them rather than hard-coded: two independent
+  // numbers meant that raising config.test_timeout past the client's own cap
+  // made the browser abort a run the server was still executing, and the user
+  // saw a generic network error instead of the server's message.
+  var testTimeouts = { test: 180, testAll: 1800 };
+  function setTestTimeouts(t) {
+    if (t && t.test > 0) testTimeouts.test = t.test;
+    if (t && t.testAll > 0) testTimeouts.testAll = t.testAll;
+  }
+  // Margin for boot, JSON encoding and the trip back, so the server's own
+  // timeout is always the one that fires first and reports why.
+  function requestTimeout(seconds) { return (seconds + 30) * 1000; }
+
   function runTests(path, line) {
     var payload = { path: path };
     if (line) payload.line = line;
-    return axios.post(window.mbeditorBasePath() + '/test', payload, { timeout: 120000 }).then(function(res) { return res.data; });
+    return axios.post(window.mbeditorBasePath() + '/test', payload,
+      { timeout: requestTimeout(testTimeouts.test) }).then(function(res) { return res.data; });
+  }
+
+  function runAllTests() {
+    return axios.post(window.mbeditorBasePath() + '/test_all', {},
+      { timeout: requestTimeout(testTimeouts.testAll) }).then(function(res) { return res.data; });
   }
 
   function ping() {
@@ -305,6 +379,23 @@ var FileService = (function () {
     prefetchCache.set(path, entry);
   }
 
+  // Put content we already hold into the same cache a hover-prefetch fills, so
+  // the open that follows serves from memory instead of the network.
+  //
+  // Used after creating a file: we just wrote it and know exactly what is in
+  // it, yet opening it went straight back to the server to be told the same
+  // thing. This reuses the prefetch path rather than adding a second content
+  // cache, so the consume-once and TTL rules stay in one place.
+  function seedPrefetch(path, content) {
+    prefetchCache.set(path, {
+      // Never fetched, so there is nothing to abort — but cancelPrefetch calls
+      // abort() unconditionally, so the shape has to match.
+      controller: { abort: function () {} },
+      promise: Promise.resolve({ content: content, missing: false }),
+      resolvedAt: Date.now()
+    });
+  }
+
   // Returns a Promise for the cached result and removes the entry (consume-once),
   // or returns null if no prefetch is in-flight / completed for this path.
   // Settled entries older than PREFETCH_TTL_MS are treated as expired.
@@ -378,6 +469,15 @@ var FileService = (function () {
       params: force ? { refresh: 1 } : {},
       timeout: 60000
     }).then(function (res) { return res.data; });
+  }
+
+  // Whole-workspace rubocop. mode 'autocorrect' runs `-a` and writes to disk.
+  // Generous timeout: a cold run over a large app is slow, and there is no
+  // progress stream to fall back on.
+  function runRubocop(mode) {
+    return axios.post(window.mbeditorBasePath() + '/rubocop',
+      { mode: mode || 'check' }, { timeout: 300000 }
+    ).then(function (res) { return res.data; });
   }
 
   // Exceptions raised by the host app, newest first. The cable push is the
@@ -471,6 +571,7 @@ var FileService = (function () {
     getJsDefinition: getJsDefinition,
     getJsMembers: getJsMembers,
     prefetch: prefetch,
+    seedPrefetch: seedPrefetch,
     getPrefetched: getPrefetched,
     cancelPrefetch: cancelPrefetch,
     getModuleMembers: getModuleMembers,
@@ -483,6 +584,9 @@ var FileService = (function () {
     lspDiagnostics: lspDiagnostics,
     rubyRename: rubyRename,
     getModelGraph: getModelGraph,
+    runRubocop: runRubocop,
+    runAllTests: runAllTests,
+    setTestTimeouts: setTestTimeouts,
     getExceptions: getExceptions,
     clearExceptions: clearExceptions,
     getRelatedFiles: getRelatedFiles,

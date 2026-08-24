@@ -44,6 +44,8 @@ module Mbeditor
             return hookRefs[index];
           },
           useEffect: function () {},
+          useMemo: function (fn) { return fn(); },
+          useCallback: function (fn) { return fn; },
           createElement: function (type, props) {
             var children = Array.prototype.slice.call(arguments, 2);
             props = props || {};

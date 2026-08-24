@@ -32,7 +32,8 @@ module Mbeditor
         service = EditorStateService.new(root, lock_timeout: 0.2)
         path = root.join("tmp", "mbeditor_workspace.json")
         FileUtils.mkdir_p(path.dirname)
-        holder = File.open(path, File::RDWR | File::CREAT)
+        # The write lock lives on the sidecar, not the state file itself.
+        holder = File.open("#{path}.lock", File::RDWR | File::CREAT)
         holder.flock(File::LOCK_EX)
 
         started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
