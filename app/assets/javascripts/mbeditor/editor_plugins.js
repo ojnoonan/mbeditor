@@ -1484,7 +1484,13 @@
             cases: {
               '$2~(?i:SQL)':            { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'sql' },
               '$2~(?i:HTML?|ERB)':      { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'html' },
-              '$2~(?i:JS|JAVASCRIPT)':  { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'javascript' },
+              // JSX rides the javascript tokenizer: Monaco registers no
+              // separate jsx language, and its TS-derived grammar lexes JSX
+              // bodies fine. The guard is anchored (^...$), so plain `JS`
+              // never matched `JSX` and it fell through to the generic
+              // heredoc — the whole block painted as one string.
+              '$2~(?i:JSX?|JAVASCRIPT)': { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'javascript' },
+              '$2~(?i:TSX?|TYPESCRIPT)': { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'typescript' },
               '$2~(?i:CSS)':            { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'css' },
               '$2~(?i:SCSS)':           { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'scss' },
               '$2~(?i:JSON)':           { token: 'string.heredoc.delimiter', next: '@heredocEmbedded.$2', nextEmbedded: 'json' },
