@@ -876,23 +876,33 @@ html, body, #mbeditor-root {
 }
 
 /* ── Status Bar ──────────────────────────────────────────── */
+/* line-height: 1 is what keeps an icon and the number beside it on the same
+ * centre line. Pico's inherited 1.5 gave every text span a 16.5px line box
+ * inside a 22px bar while the icons' box was 11px, so the two were centred on
+ * different half-leadings; with 1 both boxes are the font's own content box
+ * and flex centres them together. */
 .ide-statusbar {
   display: flex;
   align-items: center;
   background: var(--ide-accent);
   height: 22px;
-  padding: 0 8px;
-  gap: 4px;
+  padding: 0;
+  gap: 0;
   flex-shrink: 0;
   font-size: 11px;
+  line-height: 1;
   color: var(--ide-accent-text);
 }
+
+/* One cell rhythm for every item, button or not. The branch, the message and
+ * the chips each carried their own padding on top of the bar's, so the gaps
+ * between them were all different widths. */
+.ide-statusbar > * { padding: 0 8px; }
 
 .statusbar-branch {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: 4px;
   font-weight: 600;
   color: var(--ide-accent-text);
 }
@@ -926,7 +936,6 @@ html, body, #mbeditor-root {
   font-size: 12px;
   font-weight: 600;
   color: var(--ide-danger);
-  padding: 0 10px;
   animation: statusbar-pulse 2s ease-in-out infinite;
 }
 
@@ -1026,7 +1035,6 @@ html, body, #mbeditor-root {
   color: color-mix(in srgb, var(--ide-accent-text) 45%, transparent);
   font-size: 10px;
   white-space: nowrap;
-  padding-left: 8px;
   cursor: pointer;
 }
 .statusbar-version:hover {
@@ -1039,7 +1047,6 @@ html, body, #mbeditor-root {
   font-weight: 600;
   letter-spacing: 0.04em;
   opacity: 0.85;
-  padding: 0 6px;
 }
 
 .statusbar-zen-btn {
@@ -2881,7 +2888,11 @@ textarea {
   margin-bottom: 0;
 }
 
-/* Status bar buttons override (22px tall, full-bleed) */
+/* Status bar buttons override (22px tall, full-bleed).
+ * line-height must be set here too, not just on .ide-statusbar: Pico gives
+ * <button> its own line-height, so it does not inherit the bar's, and the
+ * count next to an icon ended up in a 16.5px line box beside the icon's 11px
+ * one. */
 .ide-statusbar button,
 .statusbar-btn {
   --pico-form-element-spacing-vertical: 0;
@@ -2889,6 +2900,7 @@ textarea {
   height: 22px;
   padding: 0 8px;
   font-size: 11px;
+  line-height: 1;
   border-radius: 2px;
   border: none;
   background: transparent;
@@ -3251,19 +3263,6 @@ button:not(.pico-btn) { margin-bottom: 0; }
 .ide-problems-actions { display: flex; gap: 2px; }
 .ide-problems-actions .ide-problems-btn { white-space: nowrap; }
 .ide-problems-btn.is-on { color: var(--ide-accent, #0a84ff); }
-.ide-testrun-stat { font-size: 11px; color: var(--ide-text-muted, #858585); }
-.ide-testrun-pass { color: #4ec9b0; }
-.ide-testrun-fail { color: #f14c4c; }
-.ide-testrun-raw {
-  margin: 0;
-  padding: 8px 14px;
-  font-family: var(--ide-mono, monospace);
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre;
-  overflow-x: auto;
-  color: var(--ide-fg, #eee);
-}
 .ide-problems-body { flex: 1; overflow: auto; padding: 4px 0; font-size: 12px; }
 .ide-problems-empty {
   padding: 10px 14px;
@@ -3496,18 +3495,12 @@ button:not(.pico-btn) { margin-bottom: 0; }
 .ide-problems-frame { padding-left: 28px; }
 .ide-problems-frame .ide-problems-code { opacity: 1; }
 
-/* Status-bar ruby-lsp indicator. Healthy is a dim icon you can ignore;
-   degraded/off is amber with a label, because that one you should read. */
-.statusbar-lsp { display: inline-flex; align-items: center; gap: 4px; }
-.statusbar-lsp-ok { opacity: 0.45; }
-.statusbar-lsp-ok:hover { opacity: 1; }
-.statusbar-lsp-degraded,
-.statusbar-lsp-off { color: var(--ide-warning); }
-
-/* Status-bar problems indicator: bug count then warning count, VS Code style. */
-.statusbar-problems { display: inline-flex; align-items: center; gap: 4px; }
+/* Status-bar problems indicator: bug count then warning count, VS Code style.
+   The gap is the icon-to-its-own-number spacing; the warning icon opens the
+   second pair, so it gets the wider separator. */
+.statusbar-problems { gap: 4px; }
 .statusbar-problems-error-icon { color: var(--ide-danger); }
-.statusbar-problems-warning-icon { color: var(--ide-warning); }
+.statusbar-problems-warning-icon { color: var(--ide-warning); margin-left: 8px; }
 .statusbar-problems-count { font-variant-numeric: tabular-nums; }
 
 /* Search decorations off across engines — Chrome/Safari draw their own

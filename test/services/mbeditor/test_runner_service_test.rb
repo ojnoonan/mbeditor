@@ -526,39 +526,6 @@ module Mbeditor
       end
     end
 
-    # -------------------------------------------------------------------------
-    # whole-suite runs
-    # -------------------------------------------------------------------------
-
-    test "build_suite_command takes no file argument and prefers bin/rails" do
-      Dir.mktmpdir do |dir|
-        FileUtils.mkdir_p(File.join(dir, "bin"))
-        File.write(File.join(dir, "bin", "rails"), "")
-
-        assert_equal [File.join(dir, "bin", "rails"), "test", "--verbose"],
-                     TestRunnerService.build_suite_command(dir, :minitest, nil)
-      end
-    end
-
-    test "build_suite_command falls back to rake test without bin/rails" do
-      Dir.mktmpdir do |dir|
-        assert_equal %w[bundle exec rake test],
-                     TestRunnerService.build_suite_command(dir, :minitest, nil)
-      end
-    end
-
-    test "detect_suite_framework reads the project layout, not a filename" do
-      Dir.mktmpdir do |dir|
-        assert_nil TestRunnerService.detect_suite_framework(dir)
-
-        FileUtils.mkdir_p(File.join(dir, "test"))
-        assert_equal :minitest, TestRunnerService.detect_suite_framework(dir)
-
-        FileUtils.mkdir_p(File.join(dir, "spec"))
-        assert_equal :rspec, TestRunnerService.detect_suite_framework(dir)
-      end
-    end
-
     # "Open failing files" is only as good as this: a failure with no
     # workspace-relative path is a row you cannot click.
     test "parse_minitest_output extracts the failing file, absolute or relative" do

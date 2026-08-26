@@ -96,12 +96,11 @@ module Mbeditor
         blameAvailable: AvailabilityProbe.git(workspace_root),
         redmineEnabled: Mbeditor.configuration.redmine_enabled == true,
         testAvailable: test_available?,
-        # The client derives its request timeouts from these. Two independently
+        # The client derives its request timeout from this. Two independently
         # hard-coded numbers is how you get the browser aborting a run the
         # server is still happily executing, reported as a generic network
         # error instead of the server's own message.
         testTimeout: (Mbeditor.configuration.test_timeout || 180).to_i,
-        testAllTimeout: (Mbeditor.configuration.test_all_timeout || 1800).to_i,
         actionCableEnabled: action_cable_enabled?,
         jsSyntaxCheckAvailable: JsSyntaxCheckService.available?,
         rubyLspAvailable: AvailabilityProbe.ruby_lsp(workspace_root),
@@ -1120,25 +1119,6 @@ module Mbeditor
       render json: result
     rescue StandardError => e
       render json: { ok: false, error: e.message, files: [] }, status: :unprocessable_content
-    end
-
-    # POST /mbeditor/test_all — run the whole suite
-    #
-    # No path: the framework's own default target applies. Deliberately a plain
-    # blocking request like /test, just with the suite ceiling — streaming would
-    # need a channel, a buffer and a cancel protocol for a button most people
-    # press a handful of times a day.
-    def run_all_tests
-      config = Mbeditor.configuration
-      result = TestRunnerService.run_all(
-        workspace_root.to_s,
-        framework: config.test_framework&.to_sym,
-        command: config.test_all_command,
-        timeout: (config.test_all_timeout || 1800).to_i
-      )
-      render json: result
-    rescue StandardError => e
-      render json: { ok: false, error: e.message }, status: :unprocessable_content
     end
 
     # POST /mbeditor/test — run tests for the given file

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **The whole-suite test run is gone** — the status-bar "Tests" button, the
+  Test Run drawer, `POST /test_all`, and the `test_all_command` /
+  `test_all_timeout` settings. It was one blocking request holding a
+  development-server thread for the length of the suite, with no way to cancel
+  it and the runner's output buffered whole in the server process; on a real
+  host app that is twenty minutes of a frozen-looking button for a result the
+  terminal gives you faster and interruptibly. The per-file (and per-line) test
+  run stays — that one is scoped, finishes in seconds and is why the editor
+  runs tests at all. **A host app setting `test_all_command` or
+  `test_all_timeout` in its initializer must drop those lines.**
+- **The ruby-lsp status-bar chip is gone**, along with its 10-second health
+  poll. ruby-lsp itself is untouched — definitions, hover, completion,
+  diagnostics and the rest all still run through it.
+
+### Fixed
+- **Status bar alignment.** Every item now sits in the same 8px cell instead of
+  carrying its own padding on top of the bar's (the branch, the offline chip
+  and the version each had a different one), the branch drops from 13px to the
+  bar's 11px, and `line-height: 1` on the bar *and* on its buttons puts an icon
+  and the number beside it in identical line boxes — Pico gives `<button>` its
+  own 1.5, so the problem counts sat in a 16.5px box next to an 11px icon.
+
 ## [0.13.0] - 2026-08-20
 
 ### Added
