@@ -88,7 +88,15 @@ var ImportDialog = function ImportDialog(_ref) {
     options.push(destOption(prefix, label, hint));
   };
 
-  if (initialFolder) offer(initialFolder, initialFolder, 'selected folder');
+  // The folder this upload was started from is always first and always the
+  // active one. Offering it after the suggestions meant that once you had
+  // imported a folder anywhere, that same folder scored top of the suggestion
+  // list next time and sat at the head of the options — so the dialog read as
+  // "it remembered where I last put things". With nothing selected it was
+  // worse: the previous destination was the first option and the actually
+  // chosen one ("Workspace root") was last.
+  offer(initialFolder, initialFolder || 'Workspace root',
+    initialFolder ? 'selected folder' : 'create the folders from the root');
   suggestions.forEach(function (s) {
     var bits = [];
     if (s.files) bits.push(s.files + ' matching file' + (s.files === 1 ? '' : 's'));

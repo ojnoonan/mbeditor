@@ -3922,12 +3922,17 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
-  var finishImport = function finishImport(result) {
-    var imported = (result.imported || []).length;
+  var finishImport = function finishImport(result, destFolder) {
+    var written  = result.imported || [];
+    var imported = written.length;
     var skipped  = (result.conflicts || []).length;
     var failed   = (result.errors || []).length;
 
-    var parts = [imported + ' file' + (imported === 1 ? '' : 's') + ' imported'];
+    // Say where the files went. A bulk upload that reports only a count looks
+    // the same whether it landed where you meant it to or in the workspace
+    // root, and the destination is the whole question a folder import raises.
+    var where = destFolder ? ' to ' + destFolder : ' to the workspace root';
+    var parts = [imported + ' file' + (imported === 1 ? '' : 's') + ' imported' + (imported > 0 ? where : '')];
     if (skipped > 0) parts.push(skipped + ' skipped');
     if (failed > 0) parts.push(failed + ' failed');
 
@@ -3935,7 +3940,21 @@ var MbeditorApp = function MbeditorApp() {
     EditorStore.setStatus(parts.join(', ') + '.', level);
 
     if (imported > 0) {
-      refreshProjectTree().then(function() { GitService.fetchStatus(); });
+      // Expand down to what was just written, so the tree actually shows it —
+      // importing into a collapsed folder otherwise leaves the explorer looking
+      // untouched. Deliberately does not *select* the folder: the tree
+      // selection is what the toolbar's Upload button reads for its default
+      // destination, and pinning it here would make every later upload default
+      // to this import's folder.
+      var landed = parentDir(written[0].path);
+      var toExpand = {};
+      var bits = landed ? landed.split('/') : [];
+      for (var i = 1; i <= bits.length; i++) toExpand[bits.slice(0, i).join('/')] = true;
+
+      refreshProjectTree().then(function() {
+        if (bits.length) setExpandedDirs(function (prev) { return Object.assign({}, prev, toExpand); });
+        GitService.fetchStatus();
+      });
     }
   };
 
@@ -3979,7 +3998,7 @@ var MbeditorApp = function MbeditorApp() {
         if (result.conflicts && result.conflicts.length > 0) {
           setImportConflict({ result: result, entries: entries, targetFolderPath: targetFolderPath });
         } else {
-          finishImport(result);
+          finishImport(result, targetFolderPath);
         }
       })['catch'](function(err) {
         var message = err && err.response && err.response.data && err.response.data.error || err.message;
@@ -3992,14 +4011,14 @@ var MbeditorApp = function MbeditorApp() {
     setImportConflict(null);
     if (!pending) return;
 
-    if (mode === 'skip') { finishImport(pending.result); return; }
+    if (mode === 'skip') { finishImport(pending.result, pending.targetFolderPath); return; }
 
     var retry = FileImport.conflictedEntries(
       pending.entries,
       pending.targetFolderPath,
       pending.result.conflicts
     );
-    if (retry.length === 0) { finishImport(pending.result); return; }
+    if (retry.length === 0) { finishImport(pending.result, pending.targetFolderPath); return; }
 
     FileService.importFiles(FileImport.buildFormData(retry, pending.targetFolderPath, mode))
       .then(function(second) {
@@ -4007,7 +4026,7 @@ var MbeditorApp = function MbeditorApp() {
           imported: (pending.result.imported || []).concat(second.imported || []),
           conflicts: [],
           errors: (pending.result.errors || []).concat(second.errors || [])
-        });
+        }, pending.targetFolderPath);
       })['catch'](function(err) {
         var message = err && err.response && err.response.data && err.response.data.error || err.message;
         EditorStore.setStatus('Import failed: ' + message, 'error');
