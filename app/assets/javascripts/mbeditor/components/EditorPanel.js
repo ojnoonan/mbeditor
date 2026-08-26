@@ -1323,9 +1323,18 @@ var EditorPanel = function EditorPanel(_ref) {
       var column = tab.gotoCol || 1;
       var maxColumn = model.getLineMaxColumn(line);
       if (column > maxColumn) column = maxColumn;
+      // With both bounds the match itself is selected and the cursor ends up
+      // just past it — where you'd start typing. With only gotoCol the
+      // selection is empty, which is exactly setPosition.
+      var endColumn = Math.min(tab.gotoEndCol || column, maxColumn);
 
       editor.revealLineInCenter(line);
-      editor.setPosition({ lineNumber: line, column: column });
+      // setSelection(IRange) parks the cursor at the range's end, so no
+      // setPosition afterwards — that would collapse the selection again.
+      editor.setSelection({
+        startLineNumber: line, startColumn: column,
+        endLineNumber: line, endColumn: endColumn
+      });
       editor.focus();
 
       TabManager.saveTabViewState(tab.id, editor.saveViewState());
@@ -1333,7 +1342,7 @@ var EditorPanel = function EditorPanel(_ref) {
     }, 50);
 
     return function () { clearTimeout(timer); };
-  }, [tab.gotoLine, tab.gotoCol, tab.content, tab.loading]);
+  }, [tab.gotoLine, tab.gotoCol, tab.gotoEndCol, tab.content, tab.loading]);
 
   // Apply RuboCop markers
   useEffect(function () {
