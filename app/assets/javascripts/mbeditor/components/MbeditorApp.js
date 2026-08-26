@@ -216,6 +216,23 @@ var SectionActionGroup = function SectionActionGroup(_ref2) {
   );
 };
 
+// Split a search hit into [before, match, after] so the match can be tinted
+// and pinned on screen. `col`/`end_col` are 1-based against the RAW line while
+// the row renders the stripped `text`, so `lead` — the characters strip took
+// off the front — is what maps one onto the other. Returns null for the tiers
+// and queries that produce no columns; the row then renders as plain text.
+function searchMatchParts(res) {
+  var text = res.text == null ? "" : String(res.text);
+  if (!res.col || !res.end_col) return null;
+  var start = res.col - 1 - (res.lead || 0);
+  var end = Math.min(res.end_col - 1 - (res.lead || 0), text.length);
+  if (!(start >= 0 && end > start && start < text.length)) return null;
+  // U+200E: a strong LTR character, so the left-ellipsis trick in
+  // .search-result-pre (direction: rtl) can never reorder a segment that
+  // happens to be all punctuation.
+  return ["‎" + text.slice(0, start), text.slice(start, end), text.slice(end)];
+}
+
 function FileReloadBanner(_ref) {
   var pendingReloads = _ref.pendingReloads;
   var onSaveAndReload = _ref.onSaveAndReload;
@@ -366,10 +383,28 @@ var MbeditorApp = function MbeditorApp() {
   // SearchReplaceService::MAX_RESULTS (10_000) rows, and every row is five
   // elements, so rendering the list in full built ~50k nodes — enough to kill
   // the tab outright, and 92 ms of render for a mere 3_000 rows. Rows are a
-  // fixed 40px (.search-result-item), which is what makes the arithmetic here
-  // as simple as the file tree's.
-  var SEARCH_ROW_HEIGHT = 40;
+  // fixed 22px, which is what makes the arithmetic here as simple as the file
+  // tree's. The results are a VS Code-style tree — a header row per file, its
+  // matches nested under it — but header and match rows are deliberately the
+  // *same* height (.search-result-file-row and .search-result-item both pin
+  // it), so the flattened row array still windows by plain multiplication.
+  // Give the two rows different heights and every offset here is wrong.
+  var SEARCH_ROW_HEIGHT = 22;
   var SEARCH_ROW_BUFFER = 5;
+
+  // File paths whose match list is folded away. Keyed by path, so a file that
+  // scrolls out of the window keeps its state.
+  var _useStateSC = useState({});
+  var _useStateSC2 = _slicedToArray(_useStateSC, 2);
+  var searchCollapsedFiles = _useStateSC2[0];
+  var setSearchCollapsedFiles = _useStateSC2[1];
+  var toggleSearchFile = function toggleSearchFile(file) {
+    setSearchCollapsedFiles(function (prev) {
+      var next = Object.assign({}, prev);
+      if (next[file]) delete next[file]; else next[file] = true;
+      return next;
+    });
+  };
   var _useStateSV = useState({ scrollTop: 0, height: 0 });
   var _useStateSV2 = _slicedToArray(_useStateSV, 2);
   var searchViewport = _useStateSV2[0];
@@ -561,11 +596,6 @@ var MbeditorApp = function MbeditorApp() {
   var showProblemsPanel = _useStateProblems2[0];
   var setShowProblemsPanel = _useStateProblems2[1];
 
-  var _useStateTestRun = useState(false);
-  var _useStateTestRun2 = _slicedToArray(_useStateTestRun, 2);
-  var showTestRunPanel = _useStateTestRun2[0];
-  var setShowTestRunPanel = _useStateTestRun2[1];
-
   // Error/warning tallies across the open tabs, mirrored into the status bar.
   var _useStateProblemCounts = useState({ errors: 0, warnings: 0 });
   var _useStateProblemCounts2 = _slicedToArray(_useStateProblemCounts, 2);
@@ -612,13 +642,6 @@ var MbeditorApp = function MbeditorApp() {
   var _useStateModelGraphLoading2 = _slicedToArray(_useStateModelGraphLoading, 2);
   var modelGraphLoading = _useStateModelGraphLoading2[0];
   var setModelGraphLoading = _useStateModelGraphLoading2[1];
-
-  // ruby-lsp status for the status-bar chip. 'off' means never available here,
-  // 'degraded' means we backed off after a failure, 'ok' means it's answering.
-  var _useStateLspHealth = useState({ status: 'off', reason: null });
-  var _useStateLspHealth2 = _slicedToArray(_useStateLspHealth, 2);
-  var lspHealth = _useStateLspHealth2[0];
-  var setLspHealth = _useStateLspHealth2[1];
 
   var _useState18g = useState(320);
   var _useState18g2 = _slicedToArray(_useState18g, 2);
@@ -674,11 +697,6 @@ var MbeditorApp = function MbeditorApp() {
   var _useState18rc2 = _slicedToArray(_useState18rc, 2);
   var rubocopConfigPath = _useState18rc2[0];
   var setRubocopConfigPath = _useState18rc2[1];
-
-  var _useState18t = useState(false);
-  var _useState18t2 = _slicedToArray(_useState18t, 2);
-  var testAvailable = _useState18t2[0];
-  var setTestAvailable = _useState18t2[1];
 
   var _useState18u = useState(null);
   var _useState18u2 = _slicedToArray(_useState18u, 2);
@@ -1023,64 +1041,6 @@ var MbeditorApp = function MbeditorApp() {
     loadModelGraph(false);
   }, [activeSidebarTab, sidebarCollapsed]);
 
-  var readLspHealth = function readLspHealth() {
-    if (!window.MBEDITOR_RUBY_LSP_AVAILABLE) {
-      return { status: 'off', reason: window.MBEDITOR_RUBY_LSP_REASON || null };
-    }
-    if (window.MbeditorEditorPlugins && MbeditorEditorPlugins.lspBackedOff()) {
-      return { status: 'degraded', reason: window.MBEDITOR_RUBY_LSP_REASON || null };
-    }
-    return { status: 'ok', reason: null };
-  };
-
-  // The backoff expires on a wall-clock deadline rather than a timer, so the
-  // chip also re-reads on a slow interval — otherwise it would sit on
-  // 'degraded' until the next failure or restart click.
-  //
-  // readLspHealth() builds a fresh object every call, so handing it straight to
-  // setLspHealth re-rendered the whole app every 10 seconds whether or not the
-  // health had changed — React bails on Object.is, and two object literals are
-  // never identical. Compare the fields and keep the previous object when they
-  // match. (Same shape of bug as the file-tree poll; see _treeUpdater.)
-  useEffect(function () {
-    var sync = function () {
-      setLspHealth(function (prev) {
-        var next = readLspHealth();
-        if (prev && prev.status === next.status && prev.reason === next.reason) return prev;
-        return next;
-      });
-    };
-    sync();
-    window.addEventListener('mbeditor:lsp-health', sync);
-    var tick = setInterval(sync, 10000);
-    return function () {
-      window.removeEventListener('mbeditor:lsp-health', sync);
-      clearInterval(tick);
-    };
-  }, []);
-
-  var restartRubyLsp = function restartRubyLsp() {
-    if (!FileService.rubyLspRequest) return;
-    EditorStore.setStatus('Restarting ruby-lsp…', 'info');
-    FileService.rubyLspRequest('restart', '', '', 1, 1).then(function (data) {
-      var ok = data && data.available && data.state !== 'failed';
-      if (ok) {
-        window.MBEDITOR_RUBY_LSP_AVAILABLE = true;
-        window.MBEDITOR_RUBY_LSP_DISABLED_UNTIL = 0;
-        window.MBEDITOR_RUBY_LSP_REASON = null;
-      } else {
-        window.MBEDITOR_RUBY_LSP_REASON =
-          (data && (data.reason || data.error)) || 'ruby-lsp did not come back';
-      }
-      EditorStore.setStatus(ok ? 'ruby-lsp restarted' : 'ruby-lsp unavailable', ok ? 'success' : 'warning');
-      setLspHealth(readLspHealth());
-    })["catch"](function (err) {
-      noteLspFailure(err);
-      EditorStore.setStatus('Could not restart ruby-lsp', 'error');
-      setLspHealth(readLspHealth());
-    });
-  };
-
   // The one writer for the markers map. Two things it must not do:
   //
   //   * write a fresh map when nothing changed — the auto-lint fires per
@@ -1260,14 +1220,8 @@ var MbeditorApp = function MbeditorApp() {
       if (workspace && typeof workspace.redmineEnabled === 'boolean') {
         setRedmineEnabled(workspace.redmineEnabled);
       }
-      if (workspace && (workspace.testTimeout || workspace.testAllTimeout)) {
-        FileService.setTestTimeouts({
-          test: workspace.testTimeout,
-          testAll: workspace.testAllTimeout
-        });
-      }
-      if (workspace && typeof workspace.testAvailable === 'boolean') {
-        setTestAvailable(workspace.testAvailable);
+      if (workspace && workspace.testTimeout) {
+        FileService.setTestTimeout(workspace.testTimeout);
       }
       if (workspace && typeof workspace.actionCableEnabled === 'boolean') {
         WebSocketService.connect(workspace.actionCableEnabled);
@@ -2019,6 +1973,12 @@ var MbeditorApp = function MbeditorApp() {
               });
             })
           });
+          // The text just moved under the diagnostics. Only the mounted editor
+          // re-lints, so without this a background tab kept reporting offenses
+          // at line numbers the external write had shifted — and the Problems
+          // panel and status-bar tallies reported them too. Dropping them says
+          // "not known yet", which is true: the file re-lints when you open it.
+          discardStaleMarkers(pt.tab.path);
         } else {
           // Re-verify the tab still exists before queuing
           var currentState = EditorStore.getState();
@@ -2125,8 +2085,8 @@ var MbeditorApp = function MbeditorApp() {
     };
   }, [monacoReady]);
 
-  var handleSelectFile = function handleSelectFile(path, name, line, col) {
-    TabManager.openTab(path, name, line, null, false, col);
+  var handleSelectFile = function handleSelectFile(path, name, line, col, endCol) {
+    TabManager.openTab(path, name, line, null, false, col, endCol);
     handleNodeSelect({ path: path, name: name || path.split('/').pop(), type: 'file' });
     setQuickOpen(false);
   };
@@ -3391,7 +3351,19 @@ var MbeditorApp = function MbeditorApp() {
   // counts because only the visible tab was re-checked. Dropping them says
   // "not known yet", which is true: the file re-lints when you open it.
   var discardStaleMarkers = function discardStaleMarkers(path) {
-    if (!path || !window.monaco || !window.monaco.editor) return;
+    if (!path) return;
+
+    // The React map has to go too, not just Monaco's copy. It is what TabBar
+    // counts, and EditorPanel re-applies it to the model the next time that tab
+    // mounts — so clearing only Monaco left every background tab primed to put
+    // its stale squiggles straight back on the next tab switch.
+    EditorStore.getState().panes.forEach(function (p) {
+      p.tabs.forEach(function (t) {
+        if (t.path === path) applyMarkersForTab(t.id, []);
+      });
+    });
+
+    if (!window.monaco || !window.monaco.editor) return;
     var entry = window.__mbeditorModels && window.__mbeditorModels[path];
     if (!entry || !entry.model || entry.model.isDisposed()) return;
 
@@ -3522,15 +3494,6 @@ var MbeditorApp = function MbeditorApp() {
 
   var TEST_CACHE_PREFIX = 'mbeditor_test_result_';
 
-  var loadCachedTestResult = function loadCachedTestResult(filePath) {
-    try {
-      var stored = localStorage.getItem(TEST_CACHE_PREFIX + filePath);
-      return stored ? JSON.parse(stored) : null;
-    } catch (e) {
-      return null;
-    }
-  };
-
   var saveCachedTestResult = function saveCachedTestResult(filePath, result) {
     try {
       localStorage.setItem(TEST_CACHE_PREFIX + filePath, JSON.stringify(result));
@@ -3570,21 +3533,6 @@ var MbeditorApp = function MbeditorApp() {
     })["finally"](function () {
       setTestLoading(false);
     });
-  };
-
-  var handleRunTest = function handleRunTest() {
-    if (!activeTab || !activeTab.path) return;
-    if (testLoading) return;
-
-    var cached = loadCachedTestResult(activeTab.path);
-    if (cached && !testPanelOpen) {
-      setTestResult(cached);
-      setTestPanelFile(cached.testFile || activeTab.path);
-      setTestPanelOpen(true);
-      return;
-    }
-
-    executeTestRun(activeTab.path);
   };
 
   var handleRerunTest = function handleRerunTest() {
@@ -3627,6 +3575,7 @@ var MbeditorApp = function MbeditorApp() {
     searchOffsetRef.current = 0;
     searchLoadingMoreRef.current = false;
     searchQueryRef.current = q;
+    setSearchCollapsedFiles({});
     EditorStore.setState({ searchResults: [], searchHasMore: false });
     EditorStore.setStatus("Searching project...", "info");
     SearchService.projectSearch(q, 0, SearchService.PAGE_SIZE, { regex: searchUseRegexRef.current, matchCase: searchMatchCaseRef.current, wholeWord: searchWholeWordRef.current }).then(function (res) {
@@ -3795,10 +3744,6 @@ var MbeditorApp = function MbeditorApp() {
     setShowLogPanel(function (prev) { return !prev; });
   };
 
-  var toggleTestRunPanel = function toggleTestRunPanel() {
-    setShowTestRunPanel(function (prev) { return !prev; });
-  };
-
   var toggleProblemsPanel = function toggleProblemsPanel() {
     setShowProblemsPanel(function (prev) { return !prev; });
   };
@@ -3885,12 +3830,17 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
-  var finishImport = function finishImport(result) {
-    var imported = (result.imported || []).length;
+  var finishImport = function finishImport(result, destFolder) {
+    var written  = result.imported || [];
+    var imported = written.length;
     var skipped  = (result.conflicts || []).length;
     var failed   = (result.errors || []).length;
 
-    var parts = [imported + ' file' + (imported === 1 ? '' : 's') + ' imported'];
+    // Say where the files went. A bulk upload that reports only a count looks
+    // the same whether it landed where you meant it to or in the workspace
+    // root, and the destination is the whole question a folder import raises.
+    var where = destFolder ? ' to ' + destFolder : ' to the workspace root';
+    var parts = [imported + ' file' + (imported === 1 ? '' : 's') + ' imported' + (imported > 0 ? where : '')];
     if (skipped > 0) parts.push(skipped + ' skipped');
     if (failed > 0) parts.push(failed + ' failed');
 
@@ -3898,7 +3848,21 @@ var MbeditorApp = function MbeditorApp() {
     EditorStore.setStatus(parts.join(', ') + '.', level);
 
     if (imported > 0) {
-      refreshProjectTree().then(function() { GitService.fetchStatus(); });
+      // Expand down to what was just written, so the tree actually shows it —
+      // importing into a collapsed folder otherwise leaves the explorer looking
+      // untouched. Deliberately does not *select* the folder: the tree
+      // selection is what the toolbar's Upload button reads for its default
+      // destination, and pinning it here would make every later upload default
+      // to this import's folder.
+      var landed = parentDir(written[0].path);
+      var toExpand = {};
+      var bits = landed ? landed.split('/') : [];
+      for (var i = 1; i <= bits.length; i++) toExpand[bits.slice(0, i).join('/')] = true;
+
+      refreshProjectTree().then(function() {
+        if (bits.length) setExpandedDirs(function (prev) { return Object.assign({}, prev, toExpand); });
+        GitService.fetchStatus();
+      });
     }
   };
 
@@ -3942,7 +3906,7 @@ var MbeditorApp = function MbeditorApp() {
         if (result.conflicts && result.conflicts.length > 0) {
           setImportConflict({ result: result, entries: entries, targetFolderPath: targetFolderPath });
         } else {
-          finishImport(result);
+          finishImport(result, targetFolderPath);
         }
       })['catch'](function(err) {
         var message = err && err.response && err.response.data && err.response.data.error || err.message;
@@ -3955,14 +3919,14 @@ var MbeditorApp = function MbeditorApp() {
     setImportConflict(null);
     if (!pending) return;
 
-    if (mode === 'skip') { finishImport(pending.result); return; }
+    if (mode === 'skip') { finishImport(pending.result, pending.targetFolderPath); return; }
 
     var retry = FileImport.conflictedEntries(
       pending.entries,
       pending.targetFolderPath,
       pending.result.conflicts
     );
-    if (retry.length === 0) { finishImport(pending.result); return; }
+    if (retry.length === 0) { finishImport(pending.result, pending.targetFolderPath); return; }
 
     FileService.importFiles(FileImport.buildFormData(retry, pending.targetFolderPath, mode))
       .then(function(second) {
@@ -3970,7 +3934,7 @@ var MbeditorApp = function MbeditorApp() {
           imported: (pending.result.imported || []).concat(second.imported || []),
           conflicts: [],
           errors: (pending.result.errors || []).concat(second.errors || [])
-        });
+        }, pending.targetFolderPath);
       })['catch'](function(err) {
         var message = err && err.response && err.response.data && err.response.data.error || err.message;
         EditorStore.setStatus('Import failed: ' + message, 'error');
@@ -5088,17 +5052,24 @@ var MbeditorApp = function MbeditorApp() {
                         React.createElement("i", { className: "tree-item-icon " + (window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code') + " tree-file-icon" }),
                         React.createElement(
                           "div",
-                          { className: "tree-item-name", style: { display: 'flex', alignItems: 'center' } },
+                          // minWidth:0 on both the row's name cell and the label
+                          // itself: without it a flex item refuses to shrink
+                          // below its content, so a long filename pushed out
+                          // under the (formerly absolute) action buttons.
+                          { className: "tree-item-name", style: { display: 'flex', alignItems: 'center', minWidth: 0 } },
                           React.createElement(
                             "span",
-                            { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+                            { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } },
                             tab.name
                           ),
-                          tab.dirty && React.createElement("i", { className: "fas fa-circle", style: { fontSize: '5px', color: '#e3d286', marginLeft: '6px', marginTop: '1px' } })
+                          tab.dirty && React.createElement("i", { className: "fas fa-circle", style: { fontSize: '5px', color: '#e3d286', marginLeft: '6px', marginTop: '1px', flexShrink: 0 } })
                         ),
                         React.createElement(
                           "div",
-                          { className: "tab-actions", style: { display: 'flex', position: 'absolute', right: '4px', top: 0, height: '100%', alignItems: 'center' } },
+                          // In flow, not absolute — the buttons now claim their
+                          // own width so the name truncates instead of running
+                          // underneath them.
+                          { className: "tab-actions", style: { display: 'flex', alignItems: 'center', flexShrink: 0, marginLeft: 'auto' } },
                           React.createElement(
                             "div",
                             { className: "tab-split", onClick: function (e) {
@@ -5337,13 +5308,29 @@ var MbeditorApp = function MbeditorApp() {
             var total       = searchTotalCount > 0 ? searchTotalCount : loadedCount;
             var hasAny      = loadedCount > 0;
 
+            // Grouped into a VS Code-style tree, then flattened straight back
+            // into one row array: the windowing below is unchanged, it just
+            // indexes rows instead of results. Every tier emits its hits file
+            // by file, so a run of the same path is the whole group.
+            var rows = [];
+            var group = null;
+            allResults.forEach(function (res, idx) {
+              if (!group || group.file !== res.file) {
+                group = { type: 'file', file: res.file, count: 0 };
+                rows.push(group);
+              }
+              group.count += 1;
+              if (!searchCollapsedFiles[res.file]) rows.push({ type: 'match', res: res, idx: idx });
+            });
+            var rowCount = rows.length;
+
             // Only the rows on screen (plus a small buffer either side) are
             // built. Everything else is represented by the height of the
             // spacer, so the scrollbar and every scroll position stay exactly
             // as they would be for the full list.
             var winStart = Math.max(0, Math.floor(searchViewport.scrollTop / SEARCH_ROW_HEIGHT) - SEARCH_ROW_BUFFER);
-            var winEnd   = Math.min(loadedCount, Math.ceil((searchViewport.scrollTop + (searchViewport.height || 600)) / SEARCH_ROW_HEIGHT) + SEARCH_ROW_BUFFER);
-            var visible  = allResults.slice(winStart, winEnd);
+            var winEnd   = Math.min(rowCount, Math.ceil((searchViewport.scrollTop + (searchViewport.height || 600)) / SEARCH_ROW_HEIGHT) + SEARCH_ROW_BUFFER);
+            var visible  = rows.slice(winStart, winEnd);
 
             return React.createElement(
               React.Fragment,
@@ -5367,30 +5354,57 @@ var MbeditorApp = function MbeditorApp() {
                   },
                   React.createElement(
                     "div",
-                    { style: { height: loadedCount * SEARCH_ROW_HEIGHT, position: 'relative' } },
-                    visible.map(function(res, vi) {
+                    { style: { height: rowCount * SEARCH_ROW_HEIGHT, position: 'relative' } },
+                    visible.map(function(row, vi) {
                       var i = winStart + vi;
-                      var fileName = res.file.split('/').pop();
+                      var top = { position: 'absolute', top: i * SEARCH_ROW_HEIGHT, left: 0, right: 0 };
+
+                      if (row.type === 'file') {
+                        var fileName = row.file.split('/').pop();
+                        var dir = row.file.slice(0, row.file.length - fileName.length).replace(/\/$/, '');
+                        var collapsed = !!searchCollapsedFiles[row.file];
+                        return React.createElement(
+                          "div",
+                          {
+                            key: 'f:' + row.file,
+                            className: "search-result-file-row",
+                            style: top,
+                            title: row.file,
+                            onClick: (function(f) { return function() { toggleSearchFile(f); }; })(row.file)
+                          },
+                          React.createElement("i", { className: "codicon codicon-chevron-" + (collapsed ? "right" : "down") + " search-result-chevron" }),
+                          React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
+                          React.createElement("span", { className: "search-result-file-name" }, fileName),
+                          dir && React.createElement("span", { className: "search-result-file-dir" }, dir),
+                          React.createElement("span", { className: "search-result-count" }, row.count)
+                        );
+                      }
+
+                      var res = row.res;
                       return React.createElement(
                         "div",
                         {
-                          key: i,
+                          key: 'm:' + row.idx,
                           className: "search-result-item",
-                          style: { position: 'absolute', top: i * SEARCH_ROW_HEIGHT, left: 0, right: 0 },
-                          // end_col puts the cursor just past the match, which is
-                          // where you want to start typing after jumping to a hit.
-                          onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line, r.end_col || r.col); }; })(res)
+                          style: top,
+                          title: res.file + ":" + res.line,
+                          // col..end_col selects the match and leaves the cursor
+                          // just past it, which is where you want to start
+                          // typing after jumping to a hit — not column 1.
+                          onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line, r.col || r.end_col, r.end_col); }; })(res)
                         },
-                        React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
-                        React.createElement(
-                          "div", { className: "search-result-body" },
-                          React.createElement(
-                            "div", { className: "search-result-file" },
-                            fileName,
-                            React.createElement("span", { className: "search-result-line-num" }, " ", res.file, ":", res.line)
-                          ),
-                          React.createElement("div", { className: "search-result-text" }, res.text)
-                        )
+                        React.createElement("span", { className: "search-result-line-num" }, res.line),
+                        (function () {
+                          var parts = searchMatchParts(res);
+                          if (!parts) return React.createElement("span", { className: "search-result-text" }, res.text);
+                          return React.createElement(
+                            "span",
+                            { className: "search-result-text search-result-text-split" },
+                            React.createElement("span", { className: "search-result-pre" }, parts[0]),
+                            React.createElement("mark", { className: "search-result-match" }, parts[1]),
+                            React.createElement("span", { className: "search-result-post" }, parts[2])
+                          );
+                        })()
                       );
                     })
                   ),
@@ -6240,17 +6254,14 @@ var MbeditorApp = function MbeditorApp() {
                   paneId: pane.id,
                   markers: markers[pActiveTab.id] || [],
                   gitAvailable: gitAvailable,
-                  testAvailable: testAvailable,
                   treeData: treeData,
                   testResult: testResult,
                   testPanelFile: testPanelFile,
-                  testLoading: testLoading,
                   testInlineVisible: testInlineVisible,
                   editorPrefs: editorPrefs,
                   monacoReady: monacoReady,
                   onFormat: function() { onFormatRef.current(); },
                   onSave: function() { handleSave(pane.id, pActiveTab); },
-                  onRunTest: handleRunTest,
                   onRunTestAtCursor: handleRunTestAtCursor,
                   onShowHistory: function(path) { setHistoryPanelPath(path); },
                   onContentChange: function onContentChange(val) {
@@ -6434,22 +6445,14 @@ var MbeditorApp = function MbeditorApp() {
         onClose: function () { setShowProblemsPanel(false); },
         onOpenFile: function (path, line, col) {
           handleSelectFile(path, path.split('/').pop(), line, col);
-        }
-      }),
-      showTestRunPanel && !zenMode && React.createElement(window.TestRunPanel, {
-        onClose: function () { setShowTestRunPanel(false); },
-        onOpenFile: function (path, line, col) {
-          handleSelectFile(path, path.split('/').pop(), line, col);
         },
-        // A suite result spans many files, so there is no single testPanelFile
-        // for it — each entry carries its own, and EditorPanel matches per
-        // entry. Clearing it here keeps the per-file modal from labelling a
-        // suite result with a file it did not come from.
-        onResult: function (res) {
-          setTestResult(res);
-          setTestPanelFile(null);
-        }
-      })
+        // `rubocop -a` writes through a subprocess, so the server's
+        // files_changed broadcast is the only notice — and there is no
+        // broadcast at all without a cable connection. Re-read every open tab
+        // here too: clean tabs take the corrected text (and re-lint), dirty
+        // ones get the usual reload prompt instead of being silently clobbered.
+        onFilesRewritten: function () { checkOpenTabsForExternalChanges(); }
+      }),
       ),
 
       // Right-side Git panel (children of ide-body, alongside sidebar and ide-main)
@@ -6509,45 +6512,8 @@ var MbeditorApp = function MbeditorApp() {
         },
         React.createElement("i", { className: "fas fa-bug statusbar-problems-error-icon" }),
         React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.errors),
-        React.createElement("i", {
-          className: "fas fa-exclamation-triangle statusbar-problems-warning-icon",
-          style: { marginLeft: "8px" }
-        }),
+        React.createElement("i", { className: "fas fa-exclamation-triangle statusbar-problems-warning-icon" }),
         React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.warnings)
-      ),
-      // Gated on the same probe as the per-file Test button: a project with no
-      // test directory has nothing for this to run.
-      testAvailable && React.createElement(
-        "button",
-        {
-          type: "button",
-          className: "statusbar-btn statusbar-testrun" + (showTestRunPanel ? " active" : ""),
-          onClick: toggleTestRunPanel,
-          title: "Run the whole test suite"
-        },
-        React.createElement("i", { className: "fas fa-flask" }),
-        React.createElement("span", null, " Tests")
-      ),
-      // ruby-lsp indicator. Hidden entirely when ruby-lsp was never available
-      // and nothing has gone wrong — a permanent "off" badge in a project with
-      // no Ruby is noise. A healthy server gets a quiet icon; a degraded one
-      // gets an amber chip you can click to restart.
-      (lspHealth.status !== 'off' || lspHealth.reason) && React.createElement(
-        "button",
-        {
-          type: "button",
-          className: "statusbar-btn statusbar-lsp statusbar-lsp-" + lspHealth.status,
-          onClick: restartRubyLsp,
-          title: lspHealth.status === 'ok'
-            ? 'ruby-lsp is running — click to restart'
-            : 'ruby-lsp unavailable' + (lspHealth.reason ? ': ' + lspHealth.reason : '') +
-              '. Falling back to search-based lookups. Click to retry.'
-        },
-        React.createElement("i", {
-          className: "fas " + (lspHealth.status === 'ok' ? 'fa-gem' : 'fa-plug'),
-          "aria-hidden": "true"
-        }),
-        lspHealth.status !== 'ok' && React.createElement("span", null, " ruby-lsp")
       ),
       !serverOnline && (function () {
         var dirtyCount = state.panes.reduce(function (acc, p) {

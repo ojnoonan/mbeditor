@@ -169,7 +169,10 @@ var TabManager = (function () {
     openTab(target.path, target.name, target.line, null, false, target.col);
   }
 
-  function openTab(path, name, line, forcePaneId, isSoftOpen, col) {
+  // col/endCol are the 1-based bounds of the thing being jumped to. Pass both
+  // and the editor selects it, leaving the cursor at its end; pass col alone
+  // and it just parks the cursor there.
+  function openTab(path, name, line, forcePaneId, isSoftOpen, col, endCol) {
     if (line) _jumpOrigin = _snapshotPosition() || _jumpOrigin;
     var state = EditorStore.getState();
     var paneId = forcePaneId || state.focusedPaneId;
@@ -191,7 +194,7 @@ var TabManager = (function () {
     var existing = pane.tabs.find(function(t) { return t.path === path; });
 
     if (existing) {
-      if (line) _updateTab(paneId, path, { gotoLine: line, gotoCol: col || null });
+      if (line) _updateTab(paneId, path, { gotoLine: line, gotoCol: col || null, gotoEndCol: endCol || null });
       switchTab(paneId, path);
       if (_isMarkdownPath(path)) {
         _ensureMarkdownPreview(paneId, path, existing.name || name, existing.content || "");
@@ -217,7 +220,7 @@ var TabManager = (function () {
       isSoftOpen: isSoftOpen ? true : false,
       loading: true
     };
-    if (line) { newTab.gotoLine = line; newTab.gotoCol = col || null; }
+    if (line) { newTab.gotoLine = line; newTab.gotoCol = col || null; newTab.gotoEndCol = endCol || null; }
 
     var newPanes = state.panes.map(function(p) {
       if (p.id === paneId) {
@@ -699,7 +702,7 @@ var TabManager = (function () {
   }
 
   function clearGotoLine(paneId, path) {
-    _updateTab(paneId, path, { gotoLine: null, gotoCol: null });
+    _updateTab(paneId, path, { gotoLine: null, gotoCol: null, gotoEndCol: null });
   }
 
   // VS Code-style scratch buffer: a tab with no file behind it. Nothing is

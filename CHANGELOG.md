@@ -7,8 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+### Removed
+- **The whole-suite test run is gone** — the status-bar "Tests" button, the
+  Test Run drawer, `POST /test_all`, and the `test_all_command` /
+  `test_all_timeout` settings. It was one blocking request holding a
+  development-server thread for the length of the suite, with no way to cancel
+  it and the runner's output buffered whole in the server process; on a real
+  host app that is twenty minutes of a frozen-looking button for a result the
+  terminal gives you faster and interruptibly. The per-file (and per-line) test
+  run stays — that one is scoped, finishes in seconds and is why the editor
+  runs tests at all. **A host app setting `test_all_command` or
+  `test_all_timeout` in its initializer must drop those lines.**
+- **The ruby-lsp status-bar chip is gone**, along with its 10-second health
+  poll. ruby-lsp itself is untouched — definitions, hover, completion,
+  diagnostics and the rest all still run through it.
 
+### Added
+- `rake mbeditor:scan_duplicates` — scans the workspace for files that contain a
+  duplicated copy of themselves, for finding files damaged before the seeding fix below.
+  Set `MBEDITOR_WORKSPACE_ROOT` to scan a tree other than the resolved workspace.
+
+### Fixed
 - **Data loss: a saved file could contain two copies of itself.** When two editor
   clients attached to a collaborative room the server had no state for — a fresh
   room, or one evicted while both sat idle — each one seeded the shared document
@@ -17,12 +36,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   room to exactly one client (`CollaborationDocStore.claim_seed`), never evicts a
   room that still has subscribers, and a client whose cable reconnects re-publishes
   its snapshot so a server that lost its state cannot hand out a second seed.
+- **Status bar alignment.** Every item now sits in the same 8px cell instead of
+  carrying its own padding on top of the bar's (the branch, the offline chip
+  and the version each had a different one), the branch drops from 13px to the
+  bar's 11px, and `line-height: 1` on the bar *and* on its buttons puts an icon
+  and the number beside it in identical line boxes — Pico gives `<button>` its
+  own 1.5, so the problem counts sat in a 16.5px box next to an 11px icon.
+- **The Problems panel's Fix button did nothing visible.** `rubocop -a` writes
+  its corrections to disk, but reports the offenses it just fixed alongside the
+  ones it left — each flagged both `corrected` and `correctable` — so the list
+  after a fix was byte-identical to the list before it and the button stayed
+  lit. Corrected offenses are now dropped from the response, open buffers are
+  re-read after the run, and clearing stale diagnostics now clears the React
+  marker map as well as Monaco's, which is what had left the panel, the tab
+  badges and the status-bar tallies disagreeing.
+- **Quick Open matches loosely again.** MiniSearch was configured `fuzzy: false`,
+  so a single typo found nothing; fuzziness is now scaled per term. Folders sort
+  after files instead of ahead of every match, and the dialog and its text are
+  larger.
+- **Search results read like VS Code's.** Hits group under a collapsible row per
+  file with a match count, the matched text is tinted with the accent colour and
+  is kept on screen at any panel width (eliding left and right around it), and
+  clicking a hit selects the match and leaves the cursor at its end.
+- **Bulk import no longer opens on the previous import's folder** — the folder
+  you actually acted on is offered first — and it now reports what it wrote and
+  reveals the destination in the tree.
+- `ReactRailsUJS` no longer reports as undefined; it ships inside the react-rails
+  gem, outside the workspace, so no static scan of the tree could ever find it.
+- `<<~JSX` heredocs highlight as JavaScript (as do `<<~TSX`/`<<~TS`).
+- The Open Editors list no longer runs its filenames underneath the split and
+  close buttons.
 
-### Added
-
-- `rake mbeditor:scan_duplicates` — scans the workspace for files that contain a
-  duplicated copy of themselves, for finding files damaged before the fix above.
-  Set `MBEDITOR_WORKSPACE_ROOT` to scan a tree other than the resolved workspace.
+### Changed
+- **The activity bar is a third narrower** (60px to 40px), and the editor
+  toolbar's per-file Test button is gone; running the test under the cursor is
+  unaffected.
 
 ## [0.13.0] - 2026-08-20
 

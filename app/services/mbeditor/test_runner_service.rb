@@ -10,9 +10,9 @@ module Mbeditor
   # Follows the same process-group kill pattern used by the lint endpoint to
   # enforce a configurable timeout.
   module TestRunnerService
-    # Cap on the output shipped to the browser. A whole-suite run emits
-    # megabytes of it, and the tail is the part that matters (the failure list
-    # and the summary). Parsing still sees the full output.
+    # Cap on the output shipped to the browser. A verbose run emits megabytes
+    # of it, and the tail is the part that matters (the failure list and the
+    # summary). Parsing still sees the full output.
     MAX_RAW_BYTES = 256_000
 
     module_function
@@ -43,59 +43,6 @@ module Mbeditor
       error_result("Test run timed out after #{timeout} seconds")
     rescue StandardError => e
       error_result(e.message)
-    end
-
-    # Run the whole suite in +repo_path+ — no file argument, so the framework's
-    # own default target applies (test/ for Rails, spec/ for RSpec).
-    #
-    # Same return shape as +run+, so the panel renders one result type. The
-    # framework is detected from the project rather than from a filename,
-    # since there isn't one.
-    def run_all(repo_path, framework: nil, command: nil, timeout: 1800)
-      framework = detect_suite_framework(repo_path) if framework.nil?
-      return error_result("Could not detect test framework") unless framework
-
-      cmd = build_suite_command(repo_path, framework, command)
-      raw = execute_with_timeout(repo_path, cmd, timeout)
-      tests, summary = parse_output(raw, framework, repo_path: repo_path)
-      {
-        ok: true,
-        framework: framework.to_s,
-        summary: summary,
-        tests: tests,
-        raw: truncate_raw(raw)
-      }
-    rescue ProcessRunner::TimeoutError
-      error_result("Test run timed out after #{timeout} seconds")
-    rescue StandardError => e
-      error_result(e.message)
-    end
-
-    # No test_path to go on, so this reads the project layout only. RSpec wins
-    # a tie: a project with both usually keeps `test/` for legacy fixtures.
-    def detect_suite_framework(repo_path)
-      return :rspec if File.exist?(File.join(repo_path, ".rspec"))
-      return :rspec if File.directory?(File.join(repo_path, "spec"))
-      return :minitest if File.directory?(File.join(repo_path, "test"))
-
-      nil
-    end
-
-    def build_suite_command(repo_path, framework, custom_command)
-      return Shellwords.split(custom_command) if custom_command.present?
-
-      case framework.to_sym
-      when :rspec
-        bin = File.join(repo_path, "bin", "rspec")
-        (File.exist?(bin) ? [bin] : ["bundle", "exec", "rspec"]) + ["--format", "json"]
-      else
-        bin = File.join(repo_path, "bin", "rails")
-        # `bin/rails test` with no path runs the default suite. Without it,
-        # `rake test` is the portable fallback for a non-Rails project.
-        return [bin, "test", "--verbose"] if File.exist?(bin)
-
-        ["bundle", "exec", "rake", "test"]
-      end
     end
 
     # Given a source file path, resolve it to its matching test/spec file.

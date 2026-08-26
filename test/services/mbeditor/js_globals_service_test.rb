@@ -105,6 +105,17 @@ module Mbeditor
       JsGlobalsService.invalidate(@workspace)
     end
 
+    test "seeds UMD runtime globals the static scan cannot see" do
+      result = JsGlobalsService.call(@workspace)
+
+      assert_includes symbol_names(result), "ReactRailsUJS"
+      ujs = result[:symbols].find { |s| s[:name] == "ReactRailsUJS" }
+      assert_equal "configured", ujs[:kind]
+      assert_nil ujs[:file]
+    ensure
+      JsGlobalsService.invalidate(@workspace)
+    end
+
     test "merges configured js_global_identifiers and drops invalid names" do
       original = Mbeditor.configuration.js_global_identifiers
       Mbeditor.configuration.js_global_identifiers = ["Routes", "I18n", "bad name!", ""]

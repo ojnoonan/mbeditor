@@ -22,6 +22,17 @@ module Mbeditor
 
     IDENTIFIER = /[A-Za-z_$][A-Za-z0-9_$]*/
 
+    # Runtime globals no static scan can reach, for the same reason React and
+    # lodash can't be reached: a UMD bundle assigns its name through a closure
+    # parameter. react-rails ships `root["ReactRailsUJS"] = factory()` in the
+    # *gem's* lib/assets/javascripts/react_ujs.js — outside the workspace, so
+    # it is never scanned, and bracket-assigned to a parameter, so widening
+    # PATTERN to `IDENT["Str"] =` would not help and would declare thousands
+    # of junk names out of every minified bundle. Seeded like
+    # js_global_identifiers, so both consumers (the TS worker's ambient
+    # declarations and the babel scope lint's whitelist) get them.
+    KNOWN_RUNTIME_GLOBALS = %w[ReactRailsUJS].freeze
+
     # Minified bundles are the reason for both guards below.
     #
     # A minified file is one enormous line, and it usually opens with a
@@ -70,7 +81,7 @@ module Mbeditor
         # Seeded first so the cap can never drop them: they are the names the
         # host app declared it needs, and appending them after the scan meant
         # first(MAX_SYMBOLS) silently discarded every one on a big workspace.
-        configured_identifiers.each do |name|
+        (KNOWN_RUNTIME_GLOBALS + configured_identifiers).each do |name|
           symbols[name] = { name: name, file: nil, line: nil, kind: "configured" }
         end
 
