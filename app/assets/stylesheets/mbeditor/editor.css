@@ -2534,7 +2534,7 @@ html, body, #mbeditor-root {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 15vh;
+  padding-top: 12vh;
   z-index: 9999;
 }
 
@@ -2542,8 +2542,9 @@ html, body, #mbeditor-root {
   background: var(--ide-panel-bg);
   border: 1px solid var(--ide-border-input);
   border-radius: 8px;
-  width: 500px;
-  max-height: 400px;
+  /* vw/vh caps keep the larger dialog inside a phone-sized viewport */
+  width: min(760px, 94vw);
+  max-height: min(620px, 72vh);
   display: flex;
   flex-direction: column;
   box-shadow: 0 16px 48px rgba(0,0,0,0.7);
@@ -2559,8 +2560,8 @@ html, body, #mbeditor-root {
   border: none;
   border-bottom: 1px solid var(--ide-border);
   color: var(--ide-text);
-  padding: 12px 34px 12px 16px;
-  font-size: 14px;
+  padding: 14px 40px 14px 18px;
+  font-size: 16px;
   outline: none;
   width: 100%;
   box-sizing: border-box;
@@ -2569,11 +2570,11 @@ html, body, #mbeditor-root {
 
 .quick-open-clear-btn {
   position: absolute;
-  right: 6px;
+  right: 8px;
   top: 50%;
   transform: translateY(-50%);
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border: none;
   border-radius: 4px;
   background: transparent;
@@ -2595,18 +2596,18 @@ html, body, #mbeditor-root {
 }
 
 .quick-open-result {
-  padding: 6px 16px;
+  padding: 8px 18px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
+  gap: 10px;
+  font-size: 14px;
   transition: background 0.1s;
 }
 
 .quick-open-result-icon {
   flex-shrink: 0;
-  width: 16px;
+  width: 18px;
   text-align: center;
   color: #78b4e0;
 }
@@ -2620,10 +2621,10 @@ html, body, #mbeditor-root {
 .quick-open-result.selected { background: var(--ide-active-bg); }
 
 .quick-open-result-name { color: var(--ide-text); }
-.quick-open-result-path { color: var(--ide-text-muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quick-open-result-path { color: var(--ide-text-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .quick-open-section { margin-bottom: 4px; }
-.quick-open-section-header { padding: 6px 14px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ide-text-muted); font-weight: 600; }
+.quick-open-section-header { padding: 8px 18px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ide-text-muted); font-weight: 600; }
 
 .quick-open-star-btn {
   flex-shrink: 0;
@@ -2632,7 +2633,7 @@ html, body, #mbeditor-root {
   cursor: pointer;
   padding: 2px 6px;
   color: var(--ide-text-muted);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1;
   opacity: 0;
   transition: opacity 0.1s, color 0.1s;
@@ -2646,9 +2647,9 @@ html, body, #mbeditor-root {
 .quick-open-result-dir .quick-open-result-name { color: #dcb67a; }
 
 .quick-open-empty-hint {
-  padding: 20px 16px;
+  padding: 24px 18px;
   color: var(--ide-text-muted);
-  font-size: 12px;
+  font-size: 13px;
   text-align: center;
   line-height: 1.6;
 }

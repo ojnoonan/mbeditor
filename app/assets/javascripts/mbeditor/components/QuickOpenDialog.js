@@ -23,6 +23,100 @@ function saveFavourites(list) {
   try { localStorage.setItem(FAVS_KEY, JSON.stringify(list)); } catch (e) {}
 }
 
+// ── Ranking ────────────────────────────────────────────────────────────────
+// Module scope, not component scope, so `rankResults` can be exercised without
+// rendering — see script/check-quick-open-ranking.mjs.
+
+// Priority tier for a file path: lower = shown first.
+// Order: controller > model > helper > concern > view > job > other > noise
+function getFilePriority(path) {
+  var p = (path || '').toLowerCase();
+  if (p.indexOf('/controllers/') >= 0) return 1;
+  if (p.indexOf('/models/')      >= 0) return 2;
+  if (p.indexOf('/helpers/')     >= 0) return 3;
+  if (p.indexOf('/concerns/')    >= 0) return 4;
+  if (p.indexOf('/views/')       >= 0) return 5;
+  if (p.indexOf('/jobs/')        >= 0) return 6;
+  // Deprioritise: migrations, schema, compiled assets, vendor, lock files
+  if (p.indexOf('/migrate/')  >= 0 || p.indexOf('schema.rb') >= 0) return 90;
+  if (p.indexOf('/public/')   >= 0 || p.indexOf('/vendor/')   >= 0) return 91;
+  if (p.slice(-7)  === '.min.js' || p.slice(-8) === '.min.css' ||
+      p.slice(-4)  === '.map'    || p.slice(-5) === '.lock')        return 92;
+  return 50;
+}
+
+// Recently opened files, most recent first, as a path -> rank lookup. Built
+// once per query rather than per comparison, since the sort calls this for
+// every pair.
+function recentRanks() {
+  var ranks = {};
+  var recent = (typeof TabManager !== 'undefined' && TabManager.getRecentFiles)
+    ? TabManager.getRecentFiles() : [];
+  recent.forEach(function (entry, index) {
+    var path = typeof entry === 'string' ? entry : (entry && entry.path);
+    if (path && !(path in ranks)) ranks[path] = index;
+  });
+  return ranks;
+}
+
+// Match relevance within a priority tier:
+//   exact basename > basename prefix > basename substring > path substring > fuzzy-only.
+// FUZZY_ONLY is the bucket everything MiniSearch matched approximately lands
+// in — a typo'd or transposed query hits nothing literally, so an exact match
+// can never be demoted by loosening the index search.
+var FUZZY_ONLY = 4;
+function getMatchRelevance(result, q) {
+  if (!q) return FUZZY_ONLY;
+  var name = (result.name || (result.path || '').split('/').pop() || '').toLowerCase();
+  var lq = q.toLowerCase();
+  if (name === lq)            return 0;
+  if (name.slice(0, lq.length) === lq) return 1;
+  if (name.indexOf(lq) >= 0)  return 2;
+  if ((result.path || '').toLowerCase().indexOf(lq) >= 0) return 3;
+  return FUZZY_ONLY;
+}
+
+// Filter SearchService hits by type and order them for display.
+// Precedence:
+//   1. files before folders — a folder is never what Ctrl+P is for, and as a
+//      tier below match quality an exactly-named folder used to outrank every
+//      file that matched
+//   2. match quality (see getMatchRelevance), so a worse match can never jump
+//      the queue however recently it was opened
+//   3. MiniSearch's own score, but only within the fuzzy-only bucket: nothing
+//      there matched literally, so edit distance is the only signal for which
+//      near-miss the user meant
+//   4. how recently the file was opened, most recent first
+//   5. the static file-type tier (controller > model > … > noise)
+//
+// Recency sits above the type tier deliberately: when two files match a query
+// equally well, the one you were just working in is almost always the one you
+// meant, and that beats a guess made from the directory name. Files never
+// opened all tie here and fall through to the type tier, which is what orders
+// the bulk of a cold result list.
+//
+// JS sort is stable in modern engines, so MiniSearch's own relevance order
+// remains the final tiebreaker.
+function rankResults(res, query, showFolders) {
+  var filtered = showFolders ? res.slice() : res.filter(function (r) { return r.type !== 'dir'; });
+  var ranks = recentRanks();
+  var NEVER_OPENED = Infinity;
+  filtered.sort(function (a, b) {
+    var aDir = a.type === 'dir' ? 1 : 0;
+    var bDir = b.type === 'dir' ? 1 : 0;
+    if (aDir !== bDir) return aDir - bDir;
+    var aRelevance = getMatchRelevance(a, query);
+    var bRelevance = getMatchRelevance(b, query);
+    if (aRelevance !== bRelevance) return aRelevance - bRelevance;
+    if (aRelevance === FUZZY_ONLY && a.score !== b.score) return (b.score || 0) - (a.score || 0);
+    var aRecent = a.path in ranks ? ranks[a.path] : NEVER_OPENED;
+    var bRecent = b.path in ranks ? ranks[b.path] : NEVER_OPENED;
+    if (aRecent !== bRecent) return aRecent - bRecent;
+    return getFilePriority(a.path) - getFilePriority(b.path);
+  });
+  return filtered;
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 var QuickOpenDialog = function QuickOpenDialog(_ref) {
@@ -76,49 +170,6 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     if (inputRef.current) inputRef.current.focus();
   };
 
-  // Priority tier for a file path: lower = shown first.
-  // Order: controller > model > helper > concern > view > job > other > noise
-  function getFilePriority(path) {
-    var p = (path || '').toLowerCase();
-    if (p.indexOf('/controllers/') >= 0) return 1;
-    if (p.indexOf('/models/')      >= 0) return 2;
-    if (p.indexOf('/helpers/')     >= 0) return 3;
-    if (p.indexOf('/concerns/')    >= 0) return 4;
-    if (p.indexOf('/views/')       >= 0) return 5;
-    if (p.indexOf('/jobs/')        >= 0) return 6;
-    // Deprioritise: migrations, schema, compiled assets, vendor, lock files
-    if (p.indexOf('/migrate/')  >= 0 || p.indexOf('schema.rb') >= 0) return 90;
-    if (p.indexOf('/public/')   >= 0 || p.indexOf('/vendor/')   >= 0) return 91;
-    if (p.slice(-7)  === '.min.js' || p.slice(-8) === '.min.css' ||
-        p.slice(-4)  === '.map'    || p.slice(-5) === '.lock')        return 92;
-    return 50;
-  }
-
-  // Recently opened files, most recent first, as a path -> rank lookup. Built
-  // once per query rather than per comparison, since the sort calls this for
-  // every pair.
-  function recentRanks() {
-    var ranks = {};
-    var recent = (typeof TabManager !== 'undefined' && TabManager.getRecentFiles)
-      ? TabManager.getRecentFiles() : [];
-    recent.forEach(function (entry, index) {
-      var path = typeof entry === 'string' ? entry : (entry && entry.path);
-      if (path && !(path in ranks)) ranks[path] = index;
-    });
-    return ranks;
-  }
-
-  // Match relevance within a priority tier: exact basename > prefix > substring > other.
-  function getMatchRelevance(result, q) {
-    if (!q) return 3;
-    var name = (result.name || (result.path || '').split('/').pop() || '').toLowerCase();
-    var lq = q.toLowerCase();
-    if (name === lq)            return 0;
-    if (name.slice(0, lq.length) === lq) return 1;
-    if (name.indexOf(lq) >= 0)  return 2;
-    return 3;
-  }
-
   var getQuickOpenIcon = function getQuickOpenIcon(path, name, type) {
     if (type === 'dir') {
       return React.createElement('i', { className: 'fas fa-folder quick-open-result-icon quick-open-folder-icon', 'aria-hidden': 'true' });
@@ -143,37 +194,7 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     // path in the workspace ran on every keystroke, between the keypress and
     // the character appearing.
     var timer = setTimeout(function () {
-      var res = SearchService.searchFiles(query);
-      // Filter by type: always include files; include dirs only when showFolders is on
-      var filtered = showFolders ? res : res.filter(function(r) { return r.type !== 'dir'; });
-      // Sort, in order of precedence:
-      //   1. match quality — exact basename > prefix > substring > other, so a
-      //      worse match can never jump the queue however recently it was opened
-      //   2. how recently the file was opened, most recent first
-      //   3. the static file-type tier (controller > model > … > noise)
-      //
-      // Recency sits above the type tier deliberately: when two files match a
-      // query equally well, the one you were just working in is almost always
-      // the one you meant, and that beats a guess made from the directory name.
-      // Files never opened all tie here and fall through to the type tier, which
-      // is what orders the bulk of a cold result list.
-      //
-      // Directories keep their +100 penalty inside the type tier so files still
-      // come first. JS sort is stable in modern engines, so MiniSearch's own
-      // relevance order remains the final tiebreaker.
-      var ranks = recentRanks();
-      var NEVER_OPENED = Infinity;
-      filtered.sort(function(a, b) {
-        var aRelevance = getMatchRelevance(a, query);
-        var bRelevance = getMatchRelevance(b, query);
-        if (aRelevance !== bRelevance) return aRelevance - bRelevance;
-        var aRecent = a.path in ranks ? ranks[a.path] : NEVER_OPENED;
-        var bRecent = b.path in ranks ? ranks[b.path] : NEVER_OPENED;
-        if (aRecent !== bRecent) return aRecent - bRecent;
-        var aPriority = getFilePriority(a.path) + (a.type === 'dir' ? 100 : 0);
-        var bPriority = getFilePriority(b.path) + (b.type === 'dir' ? 100 : 0);
-        return aPriority - bPriority;
-      });
+      var filtered = rankResults(SearchService.searchFiles(query), query, showFolders);
       setResults(filtered.slice(0, 200));
       setSelectedIndex(0);
     }, 120);
@@ -395,7 +416,7 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
               }),
               results.length === 0 && React.createElement(
                 'div',
-                { style: { padding: '12px 16px', color: '#666', fontSize: '12px' } },
+                { style: { padding: '14px 18px', color: '#666', fontSize: '14px' } },
                 'No matching files.'
               )
             )
@@ -404,4 +425,5 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
   );
 };
 
+QuickOpenDialog.rankResults = rankResults;
 window.QuickOpenDialog = QuickOpenDialog;
