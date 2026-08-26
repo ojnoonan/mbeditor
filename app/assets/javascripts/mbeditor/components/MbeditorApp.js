@@ -366,10 +366,28 @@ var MbeditorApp = function MbeditorApp() {
   // SearchReplaceService::MAX_RESULTS (10_000) rows, and every row is five
   // elements, so rendering the list in full built ~50k nodes — enough to kill
   // the tab outright, and 92 ms of render for a mere 3_000 rows. Rows are a
-  // fixed 40px (.search-result-item), which is what makes the arithmetic here
-  // as simple as the file tree's.
-  var SEARCH_ROW_HEIGHT = 40;
+  // fixed 22px, which is what makes the arithmetic here as simple as the file
+  // tree's. The results are a VS Code-style tree — a header row per file, its
+  // matches nested under it — but header and match rows are deliberately the
+  // *same* height (.search-result-file-row and .search-result-item both pin
+  // it), so the flattened row array still windows by plain multiplication.
+  // Give the two rows different heights and every offset here is wrong.
+  var SEARCH_ROW_HEIGHT = 22;
   var SEARCH_ROW_BUFFER = 5;
+
+  // File paths whose match list is folded away. Keyed by path, so a file that
+  // scrolls out of the window keeps its state.
+  var _useStateSC = useState({});
+  var _useStateSC2 = _slicedToArray(_useStateSC, 2);
+  var searchCollapsedFiles = _useStateSC2[0];
+  var setSearchCollapsedFiles = _useStateSC2[1];
+  var toggleSearchFile = function toggleSearchFile(file) {
+    setSearchCollapsedFiles(function (prev) {
+      var next = Object.assign({}, prev);
+      if (next[file]) delete next[file]; else next[file] = true;
+      return next;
+    });
+  };
   var _useStateSV = useState({ scrollTop: 0, height: 0 });
   var _useStateSV2 = _slicedToArray(_useStateSV, 2);
   var searchViewport = _useStateSV2[0];
@@ -2131,8 +2149,8 @@ var MbeditorApp = function MbeditorApp() {
     };
   }, [monacoReady]);
 
-  var handleSelectFile = function handleSelectFile(path, name, line, col) {
-    TabManager.openTab(path, name, line, null, false, col);
+  var handleSelectFile = function handleSelectFile(path, name, line, col, endCol) {
+    TabManager.openTab(path, name, line, null, false, col, endCol);
     handleNodeSelect({ path: path, name: name || path.split('/').pop(), type: 'file' });
     setQuickOpen(false);
   };
@@ -3645,6 +3663,7 @@ var MbeditorApp = function MbeditorApp() {
     searchOffsetRef.current = 0;
     searchLoadingMoreRef.current = false;
     searchQueryRef.current = q;
+    setSearchCollapsedFiles({});
     EditorStore.setState({ searchResults: [], searchHasMore: false });
     EditorStore.setStatus("Searching project...", "info");
     SearchService.projectSearch(q, 0, SearchService.PAGE_SIZE, { regex: searchUseRegexRef.current, matchCase: searchMatchCaseRef.current, wholeWord: searchWholeWordRef.current }).then(function (res) {
@@ -5106,17 +5125,24 @@ var MbeditorApp = function MbeditorApp() {
                         React.createElement("i", { className: "tree-item-icon " + (window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code') + " tree-file-icon" }),
                         React.createElement(
                           "div",
-                          { className: "tree-item-name", style: { display: 'flex', alignItems: 'center' } },
+                          // minWidth:0 on both the row's name cell and the label
+                          // itself: without it a flex item refuses to shrink
+                          // below its content, so a long filename pushed out
+                          // under the (formerly absolute) action buttons.
+                          { className: "tree-item-name", style: { display: 'flex', alignItems: 'center', minWidth: 0 } },
                           React.createElement(
                             "span",
-                            { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+                            { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } },
                             tab.name
                           ),
-                          tab.dirty && React.createElement("i", { className: "fas fa-circle", style: { fontSize: '5px', color: '#e3d286', marginLeft: '6px', marginTop: '1px' } })
+                          tab.dirty && React.createElement("i", { className: "fas fa-circle", style: { fontSize: '5px', color: '#e3d286', marginLeft: '6px', marginTop: '1px', flexShrink: 0 } })
                         ),
                         React.createElement(
                           "div",
-                          { className: "tab-actions", style: { display: 'flex', position: 'absolute', right: '4px', top: 0, height: '100%', alignItems: 'center' } },
+                          // In flow, not absolute — the buttons now claim their
+                          // own width so the name truncates instead of running
+                          // underneath them.
+                          { className: "tab-actions", style: { display: 'flex', alignItems: 'center', flexShrink: 0, marginLeft: 'auto' } },
                           React.createElement(
                             "div",
                             { className: "tab-split", onClick: function (e) {
@@ -5355,13 +5381,29 @@ var MbeditorApp = function MbeditorApp() {
             var total       = searchTotalCount > 0 ? searchTotalCount : loadedCount;
             var hasAny      = loadedCount > 0;
 
+            // Grouped into a VS Code-style tree, then flattened straight back
+            // into one row array: the windowing below is unchanged, it just
+            // indexes rows instead of results. Every tier emits its hits file
+            // by file, so a run of the same path is the whole group.
+            var rows = [];
+            var group = null;
+            allResults.forEach(function (res, idx) {
+              if (!group || group.file !== res.file) {
+                group = { type: 'file', file: res.file, count: 0 };
+                rows.push(group);
+              }
+              group.count += 1;
+              if (!searchCollapsedFiles[res.file]) rows.push({ type: 'match', res: res, idx: idx });
+            });
+            var rowCount = rows.length;
+
             // Only the rows on screen (plus a small buffer either side) are
             // built. Everything else is represented by the height of the
             // spacer, so the scrollbar and every scroll position stay exactly
             // as they would be for the full list.
             var winStart = Math.max(0, Math.floor(searchViewport.scrollTop / SEARCH_ROW_HEIGHT) - SEARCH_ROW_BUFFER);
-            var winEnd   = Math.min(loadedCount, Math.ceil((searchViewport.scrollTop + (searchViewport.height || 600)) / SEARCH_ROW_HEIGHT) + SEARCH_ROW_BUFFER);
-            var visible  = allResults.slice(winStart, winEnd);
+            var winEnd   = Math.min(rowCount, Math.ceil((searchViewport.scrollTop + (searchViewport.height || 600)) / SEARCH_ROW_HEIGHT) + SEARCH_ROW_BUFFER);
+            var visible  = rows.slice(winStart, winEnd);
 
             return React.createElement(
               React.Fragment,
@@ -5385,30 +5427,47 @@ var MbeditorApp = function MbeditorApp() {
                   },
                   React.createElement(
                     "div",
-                    { style: { height: loadedCount * SEARCH_ROW_HEIGHT, position: 'relative' } },
-                    visible.map(function(res, vi) {
+                    { style: { height: rowCount * SEARCH_ROW_HEIGHT, position: 'relative' } },
+                    visible.map(function(row, vi) {
                       var i = winStart + vi;
-                      var fileName = res.file.split('/').pop();
+                      var top = { position: 'absolute', top: i * SEARCH_ROW_HEIGHT, left: 0, right: 0 };
+
+                      if (row.type === 'file') {
+                        var fileName = row.file.split('/').pop();
+                        var dir = row.file.slice(0, row.file.length - fileName.length).replace(/\/$/, '');
+                        var collapsed = !!searchCollapsedFiles[row.file];
+                        return React.createElement(
+                          "div",
+                          {
+                            key: 'f:' + row.file,
+                            className: "search-result-file-row",
+                            style: top,
+                            title: row.file,
+                            onClick: (function(f) { return function() { toggleSearchFile(f); }; })(row.file)
+                          },
+                          React.createElement("i", { className: "codicon codicon-chevron-" + (collapsed ? "right" : "down") + " search-result-chevron" }),
+                          React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
+                          React.createElement("span", { className: "search-result-file-name" }, fileName),
+                          dir && React.createElement("span", { className: "search-result-file-dir" }, dir),
+                          React.createElement("span", { className: "search-result-count" }, row.count)
+                        );
+                      }
+
+                      var res = row.res;
                       return React.createElement(
                         "div",
                         {
-                          key: i,
+                          key: 'm:' + row.idx,
                           className: "search-result-item",
-                          style: { position: 'absolute', top: i * SEARCH_ROW_HEIGHT, left: 0, right: 0 },
-                          // end_col puts the cursor just past the match, which is
-                          // where you want to start typing after jumping to a hit.
-                          onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line, r.end_col || r.col); }; })(res)
+                          style: top,
+                          title: res.file + ":" + res.line,
+                          // col..end_col selects the match and leaves the cursor
+                          // just past it, which is where you want to start
+                          // typing after jumping to a hit — not column 1.
+                          onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line, r.col || r.end_col, r.end_col); }; })(res)
                         },
-                        React.createElement("i", { className: (window.getFileIcon ? window.getFileIcon(fileName) : 'far fa-file-code') + " search-result-icon" }),
-                        React.createElement(
-                          "div", { className: "search-result-body" },
-                          React.createElement(
-                            "div", { className: "search-result-file" },
-                            fileName,
-                            React.createElement("span", { className: "search-result-line-num" }, " ", res.file, ":", res.line)
-                          ),
-                          React.createElement("div", { className: "search-result-text" }, res.text)
-                        )
+                        React.createElement("span", { className: "search-result-line-num" }, res.line),
+                        React.createElement("span", { className: "search-result-text" }, res.text)
                       );
                     })
                   ),
