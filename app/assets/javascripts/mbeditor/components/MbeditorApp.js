@@ -579,11 +579,6 @@ var MbeditorApp = function MbeditorApp() {
   var showProblemsPanel = _useStateProblems2[0];
   var setShowProblemsPanel = _useStateProblems2[1];
 
-  var _useStateTestRun = useState(false);
-  var _useStateTestRun2 = _slicedToArray(_useStateTestRun, 2);
-  var showTestRunPanel = _useStateTestRun2[0];
-  var setShowTestRunPanel = _useStateTestRun2[1];
-
   // Error/warning tallies across the open tabs, mirrored into the status bar.
   var _useStateProblemCounts = useState({ errors: 0, warnings: 0 });
   var _useStateProblemCounts2 = _slicedToArray(_useStateProblemCounts, 2);
@@ -630,13 +625,6 @@ var MbeditorApp = function MbeditorApp() {
   var _useStateModelGraphLoading2 = _slicedToArray(_useStateModelGraphLoading, 2);
   var modelGraphLoading = _useStateModelGraphLoading2[0];
   var setModelGraphLoading = _useStateModelGraphLoading2[1];
-
-  // ruby-lsp status for the status-bar chip. 'off' means never available here,
-  // 'degraded' means we backed off after a failure, 'ok' means it's answering.
-  var _useStateLspHealth = useState({ status: 'off', reason: null });
-  var _useStateLspHealth2 = _slicedToArray(_useStateLspHealth, 2);
-  var lspHealth = _useStateLspHealth2[0];
-  var setLspHealth = _useStateLspHealth2[1];
 
   var _useState18g = useState(320);
   var _useState18g2 = _slicedToArray(_useState18g, 2);
@@ -1041,64 +1029,6 @@ var MbeditorApp = function MbeditorApp() {
     loadModelGraph(false);
   }, [activeSidebarTab, sidebarCollapsed]);
 
-  var readLspHealth = function readLspHealth() {
-    if (!window.MBEDITOR_RUBY_LSP_AVAILABLE) {
-      return { status: 'off', reason: window.MBEDITOR_RUBY_LSP_REASON || null };
-    }
-    if (window.MbeditorEditorPlugins && MbeditorEditorPlugins.lspBackedOff()) {
-      return { status: 'degraded', reason: window.MBEDITOR_RUBY_LSP_REASON || null };
-    }
-    return { status: 'ok', reason: null };
-  };
-
-  // The backoff expires on a wall-clock deadline rather than a timer, so the
-  // chip also re-reads on a slow interval — otherwise it would sit on
-  // 'degraded' until the next failure or restart click.
-  //
-  // readLspHealth() builds a fresh object every call, so handing it straight to
-  // setLspHealth re-rendered the whole app every 10 seconds whether or not the
-  // health had changed — React bails on Object.is, and two object literals are
-  // never identical. Compare the fields and keep the previous object when they
-  // match. (Same shape of bug as the file-tree poll; see _treeUpdater.)
-  useEffect(function () {
-    var sync = function () {
-      setLspHealth(function (prev) {
-        var next = readLspHealth();
-        if (prev && prev.status === next.status && prev.reason === next.reason) return prev;
-        return next;
-      });
-    };
-    sync();
-    window.addEventListener('mbeditor:lsp-health', sync);
-    var tick = setInterval(sync, 10000);
-    return function () {
-      window.removeEventListener('mbeditor:lsp-health', sync);
-      clearInterval(tick);
-    };
-  }, []);
-
-  var restartRubyLsp = function restartRubyLsp() {
-    if (!FileService.rubyLspRequest) return;
-    EditorStore.setStatus('Restarting ruby-lsp…', 'info');
-    FileService.rubyLspRequest('restart', '', '', 1, 1).then(function (data) {
-      var ok = data && data.available && data.state !== 'failed';
-      if (ok) {
-        window.MBEDITOR_RUBY_LSP_AVAILABLE = true;
-        window.MBEDITOR_RUBY_LSP_DISABLED_UNTIL = 0;
-        window.MBEDITOR_RUBY_LSP_REASON = null;
-      } else {
-        window.MBEDITOR_RUBY_LSP_REASON =
-          (data && (data.reason || data.error)) || 'ruby-lsp did not come back';
-      }
-      EditorStore.setStatus(ok ? 'ruby-lsp restarted' : 'ruby-lsp unavailable', ok ? 'success' : 'warning');
-      setLspHealth(readLspHealth());
-    })["catch"](function (err) {
-      noteLspFailure(err);
-      EditorStore.setStatus('Could not restart ruby-lsp', 'error');
-      setLspHealth(readLspHealth());
-    });
-  };
-
   // The one writer for the markers map. Two things it must not do:
   //
   //   * write a fresh map when nothing changed — the auto-lint fires per
@@ -1278,11 +1208,8 @@ var MbeditorApp = function MbeditorApp() {
       if (workspace && typeof workspace.redmineEnabled === 'boolean') {
         setRedmineEnabled(workspace.redmineEnabled);
       }
-      if (workspace && (workspace.testTimeout || workspace.testAllTimeout)) {
-        FileService.setTestTimeouts({
-          test: workspace.testTimeout,
-          testAll: workspace.testAllTimeout
-        });
+      if (workspace && workspace.testTimeout) {
+        FileService.setTestTimeout(workspace.testTimeout);
       }
       if (workspace && typeof workspace.testAvailable === 'boolean') {
         setTestAvailable(workspace.testAvailable);
@@ -3830,10 +3757,6 @@ var MbeditorApp = function MbeditorApp() {
 
   var toggleLogPanel = function toggleLogPanel() {
     setShowLogPanel(function (prev) { return !prev; });
-  };
-
-  var toggleTestRunPanel = function toggleTestRunPanel() {
-    setShowTestRunPanel(function (prev) { return !prev; });
   };
 
   var toggleProblemsPanel = function toggleProblemsPanel() {
@@ -6538,20 +6461,6 @@ var MbeditorApp = function MbeditorApp() {
         // ones get the usual reload prompt instead of being silently clobbered.
         onFilesRewritten: function () { checkOpenTabsForExternalChanges(); }
       }),
-      showTestRunPanel && !zenMode && React.createElement(window.TestRunPanel, {
-        onClose: function () { setShowTestRunPanel(false); },
-        onOpenFile: function (path, line, col) {
-          handleSelectFile(path, path.split('/').pop(), line, col);
-        },
-        // A suite result spans many files, so there is no single testPanelFile
-        // for it — each entry carries its own, and EditorPanel matches per
-        // entry. Clearing it here keeps the per-file modal from labelling a
-        // suite result with a file it did not come from.
-        onResult: function (res) {
-          setTestResult(res);
-          setTestPanelFile(null);
-        }
-      })
       ),
 
       // Right-side Git panel (children of ide-body, alongside sidebar and ide-main)
@@ -6611,45 +6520,8 @@ var MbeditorApp = function MbeditorApp() {
         },
         React.createElement("i", { className: "fas fa-bug statusbar-problems-error-icon" }),
         React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.errors),
-        React.createElement("i", {
-          className: "fas fa-exclamation-triangle statusbar-problems-warning-icon",
-          style: { marginLeft: "8px" }
-        }),
+        React.createElement("i", { className: "fas fa-exclamation-triangle statusbar-problems-warning-icon" }),
         React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.warnings)
-      ),
-      // Gated on the same probe as the per-file Test button: a project with no
-      // test directory has nothing for this to run.
-      testAvailable && React.createElement(
-        "button",
-        {
-          type: "button",
-          className: "statusbar-btn statusbar-testrun" + (showTestRunPanel ? " active" : ""),
-          onClick: toggleTestRunPanel,
-          title: "Run the whole test suite"
-        },
-        React.createElement("i", { className: "fas fa-flask" }),
-        React.createElement("span", null, " Tests")
-      ),
-      // ruby-lsp indicator. Hidden entirely when ruby-lsp was never available
-      // and nothing has gone wrong — a permanent "off" badge in a project with
-      // no Ruby is noise. A healthy server gets a quiet icon; a degraded one
-      // gets an amber chip you can click to restart.
-      (lspHealth.status !== 'off' || lspHealth.reason) && React.createElement(
-        "button",
-        {
-          type: "button",
-          className: "statusbar-btn statusbar-lsp statusbar-lsp-" + lspHealth.status,
-          onClick: restartRubyLsp,
-          title: lspHealth.status === 'ok'
-            ? 'ruby-lsp is running — click to restart'
-            : 'ruby-lsp unavailable' + (lspHealth.reason ? ': ' + lspHealth.reason : '') +
-              '. Falling back to search-based lookups. Click to retry.'
-        },
-        React.createElement("i", {
-          className: "fas " + (lspHealth.status === 'ok' ? 'fa-gem' : 'fa-plug'),
-          "aria-hidden": "true"
-        }),
-        lspHealth.status !== 'ok' && React.createElement("span", null, " ruby-lsp")
       ),
       !serverOnline && (function () {
         var dirtyCount = state.panes.reduce(function (acc, p) {

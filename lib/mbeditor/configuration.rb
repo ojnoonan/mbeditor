@@ -5,7 +5,6 @@ module Mbeditor
     attr_accessor :allowed_environments, :workspace_root, :excluded_paths, :rubocop_command, :rubocop_server,
                   :redmine_enabled, :redmine_url, :redmine_api_key, :redmine_ticket_source,
                   :test_framework, :test_command, :test_timeout,
-                  :test_all_command, :test_all_timeout,
                   :authenticate_with, :cable_authenticate_with, :authentication_cache_ttl, :user_name_callback, :user_name_methods,
                   :lint_timeout, :base_branch_candidates, :git_timeout, :search_timeout,
                   :ruby_def_include_dirs, :related_files_custom_paths,
@@ -32,13 +31,6 @@ module Mbeditor
       # of it booting Rails before the first assertion runs, so a perfectly
       # healthy single-file run reported "timed out".
       @test_timeout     = 180
-      # A whole-suite run is a different order of magnitude — minutes, not
-      # seconds — so it gets its own ceiling rather than forcing test_timeout
-      # up to a value that lets one hung example block for half an hour.
-      @test_all_timeout = 1800
-      # Sibling of test_command, for the same reason: a project that needs a
-      # custom runner for one file needs one for the suite too. nil auto-detects.
-      @test_all_command = nil
       @lint_timeout     = 15  # seconds for RuboCop/haml-lint subprocesses
       @base_branch_candidates = %w[origin/develop origin/main origin/master develop main master]
       @git_timeout            = 10 # seconds; nil disables (no timeout on git subprocesses)

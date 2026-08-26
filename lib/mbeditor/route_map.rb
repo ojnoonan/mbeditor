@@ -57,7 +57,6 @@ module Mbeditor
     post   'format',          to: 'editors#format_file'
     post   'rubocop',         to: 'editors#rubocop_run'
     post   'test',            to: 'editors#run_test'
-    post   'test_all',        to: 'editors#run_all_tests'
     get    'logs/tail',       to: 'logs#tail'
 
     # ── Git & Code Review ──────────────────────────────────────────────────────
