@@ -19,11 +19,12 @@ file on disk. Linting and formatting operate on the buffer (passed as `code`), n
 saved file.
 
 ### Diagnostic
-A single linter finding in mbeditor's neutral vocabulary, independent of any editor
-front-end: `severity` (`:error`, `:warning`, `:info`), `message`, `line`, `column`,
-`end_line`, `end_column`, and — for rubocop — `cop_name` and `correctable`. The Monaco
-front-end's marker shape (`startLine`, `copName`, …) is a presentation mapping of a
-Diagnostic, applied at the controller edge — never inside the service that produces it.
+A single linter finding, in the Monaco marker shape (`startLine`, `startCol`, `endLine`,
+`endCol`, `severity`, `message`, and — for rubocop — `copName`/`correctable`). Both
+Diagnostic-producing modules (`LspDiagnosticsTranslator` for ruby-lsp, `LintService` for
+plain rubocop/haml-lint) emit this shape directly rather than a separate neutral
+representation later mapped at the controller edge — there is only ever one shape, so
+there is nothing to keep in sync between a neutral form and its presentation.
 
 ### LintService
 The single module that owns mbeditor's linting toolchain: rubocop (diagnostics via
@@ -33,6 +34,10 @@ autocorrect text-edits, and formatted content, running every subprocess through
 `ProcessRunner`. The "Format" action on Ruby files is rubocop autocorrect returning full
 content — it is part of LintService, not a separate formatter. (Client-side Prettier for
 JS/CSS/HTML/Markdown is a separate, browser-only path and is not part of LintService.)
+`compute_text_edit` (the original-vs-corrected diff that becomes a Monaco
+`SingleEditOperation`) and `rubocop_config_path` (a `.rubocop.yml`-presence check for the
+`/workspace` payload) stay controller-private — neither is diagnostics, autocorrect, or
+formatted content.
 
 ### Language plugin
 A front-end module that contributes editor behaviour for one or more languages, satisfying

@@ -1015,37 +1015,11 @@ module Mbeditor
           return render json: { error: "haml-lint not available", markers: [] }, status: :unprocessable_content
         end
 
-        markers = run_haml_lint(code)
-        return render json: { markers: markers }
+        return render json: { markers: LintService.haml_diagnostics(workspace_root, code) }
       end
 
-      cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "--stdin", filename, "--format", "json", "--no-color"]
-      env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
-      output = run_with_timeout(env, cmd, stdin_data: code)
-
-      idx = output.index("{")
-      result = idx ? JSON.parse(output[idx..]) : {}
-      result = {} unless result.is_a?(Hash)
-      offenses = result.dig("files", 0, "offenses") || []
-
-      markers = offenses.map do |offense|
-        {
-          severity: cop_severity(offense["severity"]),
-          copName: offense["cop_name"],
-          correctable: offense["correctable"] == true,
-          message: "[#{offense['cop_name']}] #{offense['message']}",
-          startLine: offense.dig("location", "start_line") || offense.dig("location", "line"),
-          startCol: offense.dig("location", "start_column") || offense.dig("location", "column") || 1,
-          endLine: offense.dig("location", "last_line") || offense.dig("location", "line"),
-          endCol: offense.dig("location", "last_column") || offense.dig("location", "column") || 1,
-          # Same predicate the ruby-lsp path uses, so dead code fades whichever
-          # linter produced the offense. Plain rubocop JSON carries no
-          # code_description, so there's no codeHref to pass on here.
-          unnecessary: LspDiagnosticsTranslator.unnecessary?(offense["cop_name"])
-        }
-      end
-
-      render json: { markers: markers, summary: result["summary"] }
+      result = LintService.rubocop_diagnostics(workspace_root, path, code)
+      render json: { markers: result[:markers], summary: result[:summary] }
     rescue StandardError => e
       render json: { error: e.message, markers: [] }, status: :unprocessable_content
     end
@@ -1075,28 +1049,9 @@ module Mbeditor
       return render json: { error: "Invalid cop name" }, status: :unprocessable_content unless cop_name.match?(/\A[\w\/]+\z/)
 
       code = params[:code].to_s
-      ext  = File.extname(File.basename(path))
-
-      # Use a workspace-local tempfile so RuboCop's config discovery walks up
-      # from the source file's directory and finds the host app's .rubocop.yml.
-      Tempfile.create([".mbeditor_fix_", ext], File.dirname(path)) do |f|
-        f.write(code)
-        f.flush
-        tmpfile = f.path
-
-        cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "-A", "--no-color", tmpfile]
-        env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
-        status = run_lint_command(env, cmd)[:exit_status]
-
-        # exit 0 = no offenses, exit 1 = offenses corrected, exit 2 = error
-        unless status.success? || status.exitstatus == 1
-          return render json: { fix: nil }
-        end
-
-        corrected = File.read(tmpfile, encoding: "UTF-8", invalid: :replace, undef: :replace)
-        fix = compute_text_edit(code, corrected)
-        render json: { fix: fix }
-      end
+      result = LintService.autocorrect(workspace_root, path, code)
+      fix = result[:ok] ? compute_text_edit(code, result[:content]) : nil
+      render json: { fix: fix }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -1233,22 +1188,8 @@ module Mbeditor
       code = params[:code].to_s
       return render json: { error: "code required" }, status: :unprocessable_content if code.empty?
 
-      ext = File.extname(File.basename(path))
-      Tempfile.create([".mbeditor_fmt_", ext], File.dirname(path)) do |f|
-        f.write(code)
-        f.flush
-        tmpfile = f.path
-
-        cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "-A", "--no-color", tmpfile]
-        env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
-        status = run_lint_command(env, cmd)[:exit_status]
-        unless status.success? || status.exitstatus == 1
-          return render json: { ok: false, content: code }
-        end
-
-        corrected = File.read(tmpfile, encoding: "UTF-8", invalid: :replace, undef: :replace)
-        render json: { ok: true, content: corrected }
-      end
+      result = LintService.autocorrect(workspace_root, path, code)
+      render json: { ok: result[:ok], content: result[:content] }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -1541,19 +1482,6 @@ module Mbeditor
       Array(Mbeditor.configuration.ruby_def_include_dirs).map(&:to_s).reject(&:blank?)
     end
 
-    def run_with_timeout(env, cmd, stdin_data:)
-      run_lint_command(env, cmd, stdin_data: stdin_data)[:stdout]
-    end
-
-    # Same lint_timeout ceiling as #lint. quick_fix, format_file and haml-lint
-    # used to spawn with Open3.capture3 and no timeout at all, so a wedged
-    # rubocop held a request thread until the client gave up.
-    def run_lint_command(env, cmd, stdin_data: nil)
-      timeout_seconds = Mbeditor.configuration.lint_timeout&.to_i
-      timeout = timeout_seconds && timeout_seconds > 0 ? timeout_seconds : nil
-      ProcessRunner.call(cmd, timeout: timeout, env: env, stdin_data: stdin_data)
-    end
-
     def apply_rename_changes(result, open_paths)
       changes = result.is_a?(Hash) ? (result["changes"] || {}) : {}
       open = open_paths.to_set
@@ -1654,19 +1582,6 @@ module Mbeditor
       end
     end
 
-    # Kept in step with LspDiagnosticsTranslator::SEVERITIES so a file linted
-    # through ruby-lsp and the same file linted through `rubocop --stdin` grade
-    # their offenses identically. rubocop's own `info` is the weakest level and
-    # maps to hint; convention/refactor fall through to info.
-    def cop_severity(severity)
-      case severity
-      when "error", "fatal" then "error"
-      when "warning" then "warning"
-      when "info" then "hint"
-      else "info"
-      end
-    end
-
     # Given the original source string and the autocorrected source string, find
     # the smallest single edit that transforms original into corrected.  Returns a
     # hash suitable for Monaco's SingleEditOperation, or nil when there is no diff.
@@ -1719,39 +1634,6 @@ module Mbeditor
     def test_available?
       root = workspace_root.to_s
       File.directory?(File.join(root, "test")) || File.directory?(File.join(root, "spec"))
-    end
-
-    def run_haml_lint(code)
-      markers = []
-      Tempfile.create(["mbeditor_haml", ".haml"]) do |f|
-        f.write(code)
-        f.flush
-        cmd = AvailabilityProbe.haml_lint_command(workspace_root) + ["--reporter", "json", "--no-color", f.path]
-        output = run_lint_command({}, cmd)[:stdout]
-        idx = output.index("{")
-        result = idx ? JSON.parse(output[idx..]) : {}
-        result = {} unless result.is_a?(Hash)
-        offenses = result.dig("files", 0, "offenses") || []
-        markers = offenses.map do |offense|
-          {
-            severity: haml_lint_severity(offense["severity"]),
-            message: "[#{offense['linter_name']}] #{offense['message']}",
-            startLine: offense.dig("location", "line"),
-            startCol: (offense.dig("location", "column") || 1) - 1,
-            endLine: offense.dig("location", "line"),
-            endCol: offense.dig("location", "column") || 1
-          }
-        end
-      end
-      markers
-    end
-
-    def haml_lint_severity(severity)
-      case severity
-      when "error" then "error"
-      when "warning" then "warning"
-      else "info"
-      end
     end
 
     def resolve_monaco_asset_path(asset_path)

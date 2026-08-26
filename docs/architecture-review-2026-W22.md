@@ -3,7 +3,7 @@
 **Project:** mbeditor Rails engine gem
 **Reviewed:** 2026-08-26
 **Scope:** Commit-frequency hot spots over the last 40 commits — `MbeditorApp.js`, `editors_controller.rb`, `EditorPanel.js`, `editor_plugins.js`, `ProblemsPanel.js`. Referenced by [ADR-0001](adr/0001-no-frontend-build-step.md) as the vehicle for `MbeditorApp`/`editor_plugins.js` maintainability work.
-**Status:** In progress — candidate 1 done, 2–6 open
+**Status:** In progress — candidates 1–2 done, 3–6 open
 
 ---
 
@@ -45,15 +45,28 @@ None of the candidates below touch anything already extracted in W20/W21 (`Avail
 
 ### 2. `LintService` — build the module CONTEXT.md already documents
 
-**Status: Open**
+**Status: Done**
 
-**Files:** `app/controllers/mbeditor/editors_controller.rb` — `lint`, `quick_fix`, `format_file`, `run_haml_lint`, `cop_severity`, `compute_text_edit`, `run_lint_command`, `rubocop_config_path`.
+**Files:**
+- `app/services/mbeditor/lint_service.rb` (new)
+- `app/controllers/mbeditor/editors_controller.rb` (1818 → 1680 lines)
+- `test/services/mbeditor/lint_service_test.rb` (new, 3 tests)
+- `CONTEXT.md` (`Diagnostic` entry corrected)
 
-**Problem:** `CONTEXT.md` describes `LintService` in the present tense as the module owning rubocop/haml-lint diagnostics and autocorrect. It doesn't exist in code. `quick_fix` and `format_file` independently duplicate the same tempfile-then-`rubocop -A` body.
+**Problem:** `CONTEXT.md` described `LintService` in the present tense as the module owning rubocop/haml-lint diagnostics and autocorrect. It didn't exist in code. `quick_fix` and `format_file` independently duplicated the same tempfile-then-`rubocop -A` body.
 
-**Deletion test:** Deleting either copy makes the tempfile-autocorrect pattern reappear at the other call site — already duplicated, not a false abstraction.
+**Deletion test:** Deleting either copy made the tempfile-autocorrect pattern reappear at the other call site — already duplicated, not a false abstraction.
 
-**Sketch:** `LintService.diagnose(root, path, code, language:)` → Diagnostics; `LintService.autocorrect(root, path, code)` → `{changed:, content:}`, absorbing the shared tempfile/exit-status handling.
+**Solution (as implemented):** `LintService.rubocop_diagnostics(root, path, code)` and `.haml_diagnostics(root, code)` — one method per backend rather than a language-dispatching `.diagnose`, mirroring candidate 1's reasoning (the two backends' parameters and response shapes already differ; a shared entry point would paper over that). `.autocorrect(root, path, code)` → `{ok:, content:}`, absorbing the shared tempfile/exit-status handling that `quick_fix` and `format_file` each reimplemented; both callers now derive their own response shape from the same neutral result.
+
+A real doc/code mismatch surfaced during the grill: `CONTEXT.md`'s `Diagnostic` entry described a neutral intermediate shape, snake_case, mapped to Monaco's marker shape "at the controller edge — never inside the service that produces it" — but the one sibling module that exists (`LspDiagnosticsTranslator`) already emits Monaco-marker-shaped hashes directly, and nothing anywhere implemented the documented neutral form. Rather than build a second, differently-shaped Diagnostic pipeline to match the doc literally, `LintService` matches the real precedent and the `Diagnostic` glossary entry was corrected to describe what both modules actually do.
+
+`compute_text_edit` (produces literal Monaco `SingleEditOperation` keys — a genuine presentation mapping) and `rubocop_config_path` (a `.rubocop.yml`-presence check for an unrelated endpoint, `/workspace`) stay controller-private; neither is diagnostics, autocorrect, or formatted content.
+
+**Benefits:**
+- *Locality* — the autocorrect tempfile pattern is fixed in one place, not two.
+- *Leverage* — both actions become thin adapters over one interface.
+- *Tests* — the pure severity mappers get direct unit tests; the real-subprocess paths stay covered by the existing HTTP tests rather than being duplicated as a second real `rubocop`/`haml-lint` invocation.
 
 ---
 
@@ -118,7 +131,7 @@ None of the candidates below touch anything already extracted in W20/W21 (`Avail
 | # | Candidate | Effort | Impact | Status |
 |---|-----------|--------|--------|--------|
 | 1 | `RubyLspResultTranslator` | Low | High | Done |
-| 2 | `LintService` | Low | Medium | Open |
+| 2 | `LintService` | Low | Medium | Done |
 | 3 | `FileHistoryService` | Low | Medium | Open |
 | 4 | Split `registerGlobalExtensions` | Medium | Low | Open |
 | 5 | `EditorPanel` effect split | Medium | Medium | Open |
