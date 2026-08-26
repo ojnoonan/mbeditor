@@ -79,13 +79,31 @@ var SearchService = (function () {
     });
   }
 
+  // Fuzziness per term: edit distance is `fuzzy * term.length` inside
+  // MiniSearch, so short terms get none (at 3 chars every 3-letter token in the
+  // tree is within one edit and the list becomes noise) and longer ones get
+  // roughly one typo per 4 characters.
+  function _fuzzyFor(term) {
+    return term.length > 3 ? 0.25 : false;
+  }
+
   // Search files (and optionally folders) in the local MiniSearch index.
+  // Fuzzy + prefix, so a misspelled or half-typed query still finds the file;
+  // ranking back in QuickOpenDialog puts exact matches first, so loosening the
+  // match here cannot demote one.
   // Also performs a case-insensitive substring scan so that partial-word
-  // queries like "project" reliably find "projects_controller.rb".
+  // queries like "project" reliably find "projects_controller.rb" — the
+  // tokenizer splits on punctuation, so a query spanning a separator
+  // ("models/user") tokenizes into terms no single token can satisfy.
   // Returns merged results; MiniSearch scored entries come first.
   function searchFiles(query) {
     if (!query) return [];
-    var msResults = _miniSearch.search(query, { prefix: true, fuzzy: false, combineWith: 'AND' });
+    var msResults = _miniSearch.search(query, {
+      prefix: true,
+      fuzzy: _fuzzyFor,
+      combineWith: 'AND',
+      boost: { name: 2 }
+    });
     // Substring fallback — catch anything MiniSearch missed
     var q = query.toLowerCase();
     var msIds = new Set(msResults.map(function(r) { return r.id; }));
