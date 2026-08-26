@@ -112,6 +112,10 @@ var ProblemsPanel = (function () {
   var Panel = function ProblemsPanelComponent(_ref) {
     var onClose = _ref.onClose;
     var onOpenFile = _ref.onOpenFile;
+    // Called after `-a` has rewritten files on disk, so the app can re-read
+    // every open tab. Nothing else would: the write came from a subprocess,
+    // not from the editor, so the buffers and their markers are stale.
+    var onFilesRewritten = _ref.onFilesRewritten;
 
     var _problems = React.useState(collect);
     var problems = _problems[0], setProblems = _problems[1];
@@ -190,7 +194,10 @@ var ProblemsPanel = (function () {
       if (running) return;
       setRunning(mode);
       FileService.runRubocop(mode)
-        .then(function (data) { setWorkspace(data); })
+        .then(function (data) {
+          setWorkspace(data);
+          if (mode === 'autocorrect' && data && data.ok && onFilesRewritten) onFilesRewritten();
+        })
         ["catch"](function (e) {
           var res = e && e.response && e.response.data;
           setWorkspace(res || { ok: false, error: (e && e.message) || 'RuboCop failed', files: [] });
@@ -283,6 +290,25 @@ var ProblemsPanel = (function () {
         }).filter(function (entry) { return entry.markers.length > 0; })
       : problems.byFile;
 
+    // The workspace run and the marker set are different scopes, but they render
+    // in one panel under one set of severity chips. Counting only the markers
+    // made the header disagree with its own body: click RuboCop, get 400
+    // offenses listed under chips reading 0 / 0 / 0, and hiding "warning" left
+    // every workspace warning on screen. The chips describe what the panel is
+    // showing, so they have to cover both — and the filter has to reach both.
+    var wsFiles = (workspace && workspace.files) || [];
+    var wsCounts = { error: 0, warning: 0, info: 0 };
+    var wsShown = [];
+    wsFiles.forEach(function (file) {
+      var kept = [];
+      file.offenses.forEach(function (o) {
+        var kind = COP_SEVERITY_KIND[o.severity] || 'info';
+        wsCounts[kind] += 1;
+        if (severities[kind]) kept.push(o);
+      });
+      if (kept.length) wsShown.push({ path: file.path, offenses: kept });
+    });
+
     var total = problems.errors.length + problems.warnings.length + problems.infos.length;
 
     return React.createElement(
@@ -304,9 +330,9 @@ var ProblemsPanel = (function () {
           'div',
           { className: 'ide-problems-severity-filter' },
           [
-            { kind: 'error', count: problems.errors.length },
-            { kind: 'warning', count: problems.warnings.length },
-            { kind: 'info', count: problems.infos.length }
+            { kind: 'error', count: problems.errors.length + wsCounts.error },
+            { kind: 'warning', count: problems.warnings.length + wsCounts.warning },
+            { kind: 'info', count: problems.infos.length + wsCounts.info }
           ].map(function (s) {
             var on = severities[s.kind];
             return React.createElement(
@@ -342,7 +368,9 @@ var ProblemsPanel = (function () {
             disabled: !!running || !workspace || !workspace.correctable,
             title: workspace && workspace.correctable
               ? 'Safe-autocorrect ' + workspace.correctable + ' offense(s) and rerun'
-              : 'Run RuboCop first',
+              : workspace
+                ? 'Nothing left that safe autocorrect can fix'
+                : 'Run RuboCop first',
             onClick: function () { runRubocop('autocorrect'); }
           },
             React.createElement('i', { className: running === 'autocorrect' ? 'fas fa-spinner fa-spin' : 'fas fa-magic' }),
@@ -378,9 +406,9 @@ var ProblemsPanel = (function () {
           { className: 'ide-problems-workspace' },
           workspace.error
             ? React.createElement('div', { className: 'ide-problems-empty' }, 'RuboCop: ' + workspace.error)
-            : (workspace.files || []).length === 0
+            : wsFiles.length === 0
               ? React.createElement('div', { className: 'ide-problems-empty' }, 'RuboCop found no offenses in the workspace')
-              : workspace.files.map(function (file) {
+              : wsShown.map(function (file) {
                   return React.createElement(
                     'div',
                     { className: 'ide-problems-file', key: 'ws:' + file.path },
