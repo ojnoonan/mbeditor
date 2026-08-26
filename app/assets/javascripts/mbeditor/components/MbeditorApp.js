@@ -2019,6 +2019,12 @@ var MbeditorApp = function MbeditorApp() {
               });
             })
           });
+          // The text just moved under the diagnostics. Only the mounted editor
+          // re-lints, so without this a background tab kept reporting offenses
+          // at line numbers the external write had shifted — and the Problems
+          // panel and status-bar tallies reported them too. Dropping them says
+          // "not known yet", which is true: the file re-lints when you open it.
+          discardStaleMarkers(pt.tab.path);
         } else {
           // Re-verify the tab still exists before queuing
           var currentState = EditorStore.getState();
@@ -3391,7 +3397,19 @@ var MbeditorApp = function MbeditorApp() {
   // counts because only the visible tab was re-checked. Dropping them says
   // "not known yet", which is true: the file re-lints when you open it.
   var discardStaleMarkers = function discardStaleMarkers(path) {
-    if (!path || !window.monaco || !window.monaco.editor) return;
+    if (!path) return;
+
+    // The React map has to go too, not just Monaco's copy. It is what TabBar
+    // counts, and EditorPanel re-applies it to the model the next time that tab
+    // mounts — so clearing only Monaco left every background tab primed to put
+    // its stale squiggles straight back on the next tab switch.
+    EditorStore.getState().panes.forEach(function (p) {
+      p.tabs.forEach(function (t) {
+        if (t.path === path) applyMarkersForTab(t.id, []);
+      });
+    });
+
+    if (!window.monaco || !window.monaco.editor) return;
     var entry = window.__mbeditorModels && window.__mbeditorModels[path];
     if (!entry || !entry.model || entry.model.isDisposed()) return;
 
@@ -6434,7 +6452,13 @@ var MbeditorApp = function MbeditorApp() {
         onClose: function () { setShowProblemsPanel(false); },
         onOpenFile: function (path, line, col) {
           handleSelectFile(path, path.split('/').pop(), line, col);
-        }
+        },
+        // `rubocop -a` writes through a subprocess, so the server's
+        // files_changed broadcast is the only notice — and there is no
+        // broadcast at all without a cable connection. Re-read every open tab
+        // here too: clean tabs take the corrected text (and re-lint), dirty
+        // ones get the usual reload prompt instead of being silently clobbered.
+        onFilesRewritten: function () { checkOpenTabsForExternalChanges(); }
       }),
       showTestRunPanel && !zenMode && React.createElement(window.TestRunPanel, {
         onClose: function () { setShowTestRunPanel(false); },

@@ -54,6 +54,41 @@ module Mbeditor
       assert_equal 1, filtered[:correctable]
     end
 
+    # `rubocop -a` reports what it fixed alongside what it left, so the raw JSON
+    # after a Fix run is byte-identical to the one before it. Left in, the panel
+    # showed the same offenses and the Fix button stayed lit on offenses that
+    # were already gone from disk — the "Fix does nothing" report.
+    AUTOCORRECT_OUT = {
+      "files" => [
+        { "path" => "a.rb", "offenses" => [
+          { "cop_name" => "Layout/ExtraSpacing", "message" => "Unnecessary spacing detected.",
+            "severity" => "convention", "correctable" => true, "corrected" => true,
+            "location" => { "start_line" => 2, "start_column" => 5 } },
+          # `-a` skips cops whose autocorrect is unsafe, and RuboCop still calls
+          # them correctable — this is the one that kept the button lit forever.
+          { "cop_name" => "Style/FrozenStringLiteralComment", "message" => "Missing frozen string literal comment.",
+            "severity" => "convention", "correctable" => true, "corrected" => false,
+            "location" => { "start_line" => 1, "start_column" => 1 } }
+        ] }
+      ],
+      "summary" => { "offense_count" => 2 }
+    }.to_json
+
+    def test_corrected_offenses_are_dropped_and_stop_counting_as_correctable
+      result = RubocopRunService.parse(AUTOCORRECT_OUT, nil, nil, mode: :autocorrect)
+
+      offenses = result[:files].find { |f| f[:path] == "a.rb" }[:offenses]
+      assert_equal ["Style/FrozenStringLiteralComment"], offenses.map { |o| o[:copName] }
+      # Nothing safe autocorrect can still fix, so the Fix button must go dark.
+      assert_equal 0, result[:correctable]
+    end
+
+    def test_check_mode_still_reports_correctable
+      result = RubocopRunService.parse(AUTOCORRECT_OUT)
+
+      assert_equal 1, result[:correctable]
+    end
+
     def test_no_json_is_an_error_not_a_crash
       result = RubocopRunService.parse("", "bundler: command not found: rubocop")
 
