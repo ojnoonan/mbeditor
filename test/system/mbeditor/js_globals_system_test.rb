@@ -121,7 +121,11 @@ module Mbeditor
           })()
         JS
         if markers.is_a?(Array) &&
-           markers.any? { |m| m["message"].include?("implicitGlobalXyz") } &&
+           # The raw TS2304 lands before patchSeverities appends the hint, and it is
+           # already severity 8 — so matching the name alone can break the loop on the
+           # unpatched marker and fail the message assertion below. Wait for the
+           # settled text instead; that is what "once the lookup answers" means.
+           markers.any? { |m| m["message"].include?("implicitGlobalXyz") && m["message"].include?("implicit global") } &&
            markers.any? { |m| m["message"].include?("TotallyUndefinedSymbolXyz") && m["severity"] == 8 } &&
            markers.any? { |m| m["message"].include?("widgetLocalXyz") && m["severity"] == 8 }
           break
