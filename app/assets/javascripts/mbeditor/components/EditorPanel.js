@@ -24,16 +24,13 @@ var EditorPanel = function EditorPanel(_ref) {
   var onContentChange = _ref.onContentChange;
   var markers = _ref.markers;
   var gitAvailable = _ref.gitAvailable === true;
-  var testAvailable = _ref.testAvailable === true;
   var onFormat = _ref.onFormat;
   var onSave = _ref.onSave;
-  var onRunTest = _ref.onRunTest;
   var onRunTestAtCursor = _ref.onRunTestAtCursor;
   var onShowHistory = _ref.onShowHistory;
   var treeData = _ref.treeData || [];
   var testResult = _ref.testResult;
   var testPanelFile = _ref.testPanelFile;
-  var testLoading = _ref.testLoading;
   var testInlineVisible = _ref.testInlineVisible;
   var editorPrefs = _ref.editorPrefs || {};
   var monacoReady = _ref.monacoReady !== false; // undefined means Monaco already loaded (legacy callers)
@@ -1812,74 +1809,6 @@ var EditorPanel = function EditorPanel(_ref) {
     return src === derived;
   };
 
-  var testFileCandidates = function(relativePath) {
-    if (!relativePath || !relativePath.endsWith('.rb')) return [];
-
-    var basename = relativePath.slice(0, -3);
-    var dirParts = relativePath.split('/');
-    var leafName = basename.split('/').pop();
-    var candidates = [];
-
-    if (dirParts[0] === 'app' && dirParts.length > 1) {
-      var subPath = dirParts.slice(1).join('/');
-      var subDir = subPath.indexOf('/') !== -1 ? subPath.slice(0, subPath.lastIndexOf('/')) : '';
-      candidates.push('test/' + (subDir ? subDir + '/' : '') + leafName + '_test.rb');
-      candidates.push('spec/' + (subDir ? subDir + '/' : '') + leafName + '_spec.rb');
-    }
-
-    if (dirParts[0] === 'lib') {
-      var libSubPath = dirParts.slice(1).join('/');
-      var libSubDir = libSubPath.indexOf('/') !== -1 ? libSubPath.slice(0, libSubPath.lastIndexOf('/')) : '';
-      candidates.push('test/lib/' + (libSubDir ? libSubDir + '/' : '') + leafName + '_test.rb');
-      candidates.push('test/' + (libSubDir ? libSubDir + '/' : '') + leafName + '_test.rb');
-      candidates.push('spec/lib/' + (libSubDir ? libSubDir + '/' : '') + leafName + '_spec.rb');
-    }
-
-    candidates.push('test/' + leafName + '_test.rb');
-    candidates.push('spec/' + leafName + '_spec.rb');
-
-    return candidates.filter(function(candidate, index, list) {
-      return list.indexOf(candidate) === index;
-    });
-  };
-
-  var treeHasPath = function(nodes, targetPath) {
-    if (!targetPath) return false;
-    var stack = (nodes || []).slice();
-
-    while (stack.length) {
-      var node = stack.pop();
-      if (!node) continue;
-      if (node.path === targetPath) return true;
-      if (node.children && node.children.length) {
-        stack.push.apply(stack, node.children);
-      }
-    }
-
-    return false;
-  };
-
-  var matchingTestFilePath = function(sourcePath) {
-    var normalized = (sourcePath || '').replace(/^\/+/, '');
-    if (!normalized || !normalized.endsWith('.rb')) return null;
-    if (/^(test|spec)\//.test(normalized) && /_(test|spec)\.rb$/.test(normalized)) return normalized;
-
-    var candidates = testFileCandidates(normalized);
-    for (var i = 0; i < candidates.length; i += 1) {
-      if (treeHasPath(treeData, candidates[i])) return candidates[i];
-    }
-
-    return null;
-  };
-
-  // treeHasPath walks the whole file tree once per candidate, and the Test
-  // button asked for this on every render — so once per keystroke. treeData is
-  // deliberately outside the React.memo comparator below, so it can only change
-  // on a render this component was going to do anyway.
-  var testFileForTab = useMemo(function () {
-    return matchingTestFilePath(tab.path);
-  }, [tab.path, treeData]);
-
   // Map a test method name to the best-matching line in the source file.
   // Extracts keywords from the test name and scores each source line.
   var mapTestToSourceLine = function(testName, sourceContent) {
@@ -2339,18 +2268,6 @@ var EditorPanel = function EditorPanel(_ref) {
         React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
         !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, isBlameLoading ? 'Loading...' : 'Blame')
       ),
-      testAvailable && testFileForTab && React.createElement(
-        'button',
-        {
-          className: 'ide-icon-btn',
-          onClick: function() { if (onRunTest) onRunTest(); },
-          disabled: testLoading,
-          'aria-busy': !!testLoading,
-          title: 'Run Tests'
-        },
-        !testLoading && React.createElement('i', { className: 'fas fa-flask', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
-        !editorPrefs.toolbarIconOnly && !testLoading && React.createElement('span', { className: 'ide-toolbar-label' }, 'Test')
-      )
     ),
     conflictCount > 0 && React.createElement(
       'div', { className: 'mb-conflict-banner' },
@@ -2621,10 +2538,8 @@ window.EditorPanel = React.memo(EditorPanel, function(prev, next) {
     prev.paneId === next.paneId &&
     (prev.markers === next.markers || (prev.markers.length === 0 && next.markers.length === 0)) &&
     prev.gitAvailable === next.gitAvailable &&
-    prev.testAvailable === next.testAvailable &&
     prev.testResult === next.testResult &&
     prev.testPanelFile === next.testPanelFile &&
-    prev.testLoading === next.testLoading &&
     prev.testInlineVisible === next.testInlineVisible &&
     prev.editorPrefs === next.editorPrefs &&
     prev.monacoReady === next.monacoReady;

@@ -216,6 +216,23 @@ var SectionActionGroup = function SectionActionGroup(_ref2) {
   );
 };
 
+// Split a search hit into [before, match, after] so the match can be tinted
+// and pinned on screen. `col`/`end_col` are 1-based against the RAW line while
+// the row renders the stripped `text`, so `lead` — the characters strip took
+// off the front — is what maps one onto the other. Returns null for the tiers
+// and queries that produce no columns; the row then renders as plain text.
+function searchMatchParts(res) {
+  var text = res.text == null ? "" : String(res.text);
+  if (!res.col || !res.end_col) return null;
+  var start = res.col - 1 - (res.lead || 0);
+  var end = Math.min(res.end_col - 1 - (res.lead || 0), text.length);
+  if (!(start >= 0 && end > start && start < text.length)) return null;
+  // U+200E: a strong LTR character, so the left-ellipsis trick in
+  // .search-result-pre (direction: rtl) can never reorder a segment that
+  // happens to be all punctuation.
+  return ["‎" + text.slice(0, start), text.slice(start, end), text.slice(end)];
+}
+
 function FileReloadBanner(_ref) {
   var pendingReloads = _ref.pendingReloads;
   var onSaveAndReload = _ref.onSaveAndReload;
@@ -680,11 +697,6 @@ var MbeditorApp = function MbeditorApp() {
   var _useState18rc2 = _slicedToArray(_useState18rc, 2);
   var rubocopConfigPath = _useState18rc2[0];
   var setRubocopConfigPath = _useState18rc2[1];
-
-  var _useState18t = useState(false);
-  var _useState18t2 = _slicedToArray(_useState18t, 2);
-  var testAvailable = _useState18t2[0];
-  var setTestAvailable = _useState18t2[1];
 
   var _useState18u = useState(null);
   var _useState18u2 = _slicedToArray(_useState18u, 2);
@@ -1210,9 +1222,6 @@ var MbeditorApp = function MbeditorApp() {
       }
       if (workspace && workspace.testTimeout) {
         FileService.setTestTimeout(workspace.testTimeout);
-      }
-      if (workspace && typeof workspace.testAvailable === 'boolean') {
-        setTestAvailable(workspace.testAvailable);
       }
       if (workspace && typeof workspace.actionCableEnabled === 'boolean') {
         WebSocketService.connect(workspace.actionCableEnabled);
@@ -3485,15 +3494,6 @@ var MbeditorApp = function MbeditorApp() {
 
   var TEST_CACHE_PREFIX = 'mbeditor_test_result_';
 
-  var loadCachedTestResult = function loadCachedTestResult(filePath) {
-    try {
-      var stored = localStorage.getItem(TEST_CACHE_PREFIX + filePath);
-      return stored ? JSON.parse(stored) : null;
-    } catch (e) {
-      return null;
-    }
-  };
-
   var saveCachedTestResult = function saveCachedTestResult(filePath, result) {
     try {
       localStorage.setItem(TEST_CACHE_PREFIX + filePath, JSON.stringify(result));
@@ -3533,21 +3533,6 @@ var MbeditorApp = function MbeditorApp() {
     })["finally"](function () {
       setTestLoading(false);
     });
-  };
-
-  var handleRunTest = function handleRunTest() {
-    if (!activeTab || !activeTab.path) return;
-    if (testLoading) return;
-
-    var cached = loadCachedTestResult(activeTab.path);
-    if (cached && !testPanelOpen) {
-      setTestResult(cached);
-      setTestPanelFile(cached.testFile || activeTab.path);
-      setTestPanelOpen(true);
-      return;
-    }
-
-    executeTestRun(activeTab.path);
   };
 
   var handleRerunTest = function handleRerunTest() {
@@ -5409,7 +5394,17 @@ var MbeditorApp = function MbeditorApp() {
                           onClick: (function(r) { return function() { handleSelectFile(r.file, r.file.split('/').pop(), r.line, r.col || r.end_col, r.end_col); }; })(res)
                         },
                         React.createElement("span", { className: "search-result-line-num" }, res.line),
-                        React.createElement("span", { className: "search-result-text" }, res.text)
+                        (function () {
+                          var parts = searchMatchParts(res);
+                          if (!parts) return React.createElement("span", { className: "search-result-text" }, res.text);
+                          return React.createElement(
+                            "span",
+                            { className: "search-result-text search-result-text-split" },
+                            React.createElement("span", { className: "search-result-pre" }, parts[0]),
+                            React.createElement("mark", { className: "search-result-match" }, parts[1]),
+                            React.createElement("span", { className: "search-result-post" }, parts[2])
+                          );
+                        })()
                       );
                     })
                   ),
@@ -6259,17 +6254,14 @@ var MbeditorApp = function MbeditorApp() {
                   paneId: pane.id,
                   markers: markers[pActiveTab.id] || [],
                   gitAvailable: gitAvailable,
-                  testAvailable: testAvailable,
                   treeData: treeData,
                   testResult: testResult,
                   testPanelFile: testPanelFile,
-                  testLoading: testLoading,
                   testInlineVisible: testInlineVisible,
                   editorPrefs: editorPrefs,
                   monacoReady: monacoReady,
                   onFormat: function() { onFormatRef.current(); },
                   onSave: function() { handleSave(pane.id, pActiveTab); },
-                  onRunTest: handleRunTest,
                   onRunTestAtCursor: handleRunTestAtCursor,
                   onShowHistory: function(path) { setHistoryPanelPath(path); },
                   onContentChange: function onContentChange(val) {

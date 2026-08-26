@@ -393,7 +393,8 @@ module Mbeditor
           return {
             file: relative_path(md.dig("path", "text").to_s, root),
             line: md.dig("line_number"),
-            text: raw_text.strip
+            text: raw_text.strip,
+            lead: leading_ws(raw_text)
           }.merge(cols)
         end
 
@@ -412,8 +413,16 @@ module Mbeditor
         end
 
         raw_text = Regexp.last_match(3)
-        { file: file_path, line: Regexp.last_match(2).to_i, text: raw_text.strip }
+        { file: file_path, line: Regexp.last_match(2).to_i, text: raw_text.strip, lead: leading_ws(raw_text) }
           .merge(match_columns(raw_text, pattern))
+      end
+
+      # How many characters `strip` took off the FRONT of the line. `col`/
+      # `end_col` are measured against the raw line (see match_columns), so
+      # without this the client cannot say where the match sits inside the
+      # trimmed `text` it renders — which is what highlighting needs.
+      def leading_ws(raw_text)
+        raw_text.length - raw_text.lstrip.length
       end
 
       # 1-based Monaco columns for the first match on a hit line. Returns an

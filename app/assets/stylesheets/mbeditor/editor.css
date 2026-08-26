@@ -1322,6 +1322,47 @@ html, body, #mbeditor-root {
   text-overflow: ellipsis;
 }
 
+/* The match has to stay on screen at any panel width, so a hit line is three
+   boxes rather than one ellipsised string. Shrink order is what does the work:
+   the text BEFORE the match gives way first, then the text after it, and the
+   match itself only as a last resort — so it can never be the part that scrolls
+   out of view. `direction: rtl` is what moves the leading ellipsis to the start
+   of .search-result-pre; searchMatchParts() prefixes a U+200E so an all-symbol
+   segment can't be reordered by it. */
+.search-result-text-split {
+  display: flex;
+  align-items: center;
+  text-overflow: clip;
+}
+
+.search-result-pre,
+.search-result-post,
+.search-result-match {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.search-result-pre {
+  flex: 0 100 auto;
+  direction: rtl;
+  text-align: left;
+}
+
+.search-result-post { flex: 0 10 auto; }
+
+/* Never shrinks: flex distributes overflow across every shrinkable box in
+   proportion to its size, so even shrink:1 against a long tail cost the match a
+   character or two of ellipsis. max-width is what still bounds a match wider
+   than the panel — it clips instead of overflowing. */
+.search-result-match {
+  flex: 0 0 auto;
+  max-width: 100%;
+  background: color-mix(in srgb, var(--ide-accent) 40%, transparent);
+  color: var(--ide-text);
+  border-radius: 2px;
+}
+
 .search-results-loading-more {
   padding: 8px 10px;
   font-size: 11px;

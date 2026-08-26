@@ -365,6 +365,31 @@ module Mbeditor
       assert_equal "value = NEEDLE_TOKEN", result[:text]
     end
 
+    # `lead` is what lets the client put those raw-line columns back onto the
+    # stripped `text` it renders, which is what the result row highlights.
+    test "lead maps the raw-line columns onto the stripped text" do
+      write_file("app/code.rb", "    value = NEEDLE_TOKEN\n")
+
+      result = search("NEEDLE_TOKEN").first
+      start_in_text = result[:col] - 1 - result[:lead]
+      end_in_text   = result[:end_col] - 1 - result[:lead]
+
+      assert_equal 4, result[:lead]
+      assert_equal "NEEDLE_TOKEN", result[:text][start_in_text...end_in_text]
+    end
+
+    test "lead maps the columns onto the text on the grep tier too" do
+      write_file("app/code.rb", "\t\tx = NEEDLE_TOKEN\n")
+
+      with_rg_available(false) do
+        result = search("NEEDLE_TOKEN").first
+
+        assert_equal 2, result[:lead]
+        assert_equal "NEEDLE_TOKEN",
+                     result[:text][(result[:col] - 1 - result[:lead])...(result[:end_col] - 1 - result[:lead])]
+      end
+    end
+
     test "columns survive the grep tier as well as rg" do
       write_file("app/code.rb", "  x = NEEDLE_TOKEN\n")
 
