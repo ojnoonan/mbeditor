@@ -39,6 +39,26 @@ module Mbeditor
       assert_equal %w[D1 D2], sync["deltas"]
     end
 
+    test "the sync handshake grants the seed to the first client of an empty room only" do
+      path = "app/models/user.rb"
+
+      subscribe path: path
+      assert_equal true, transmissions.last["seed"]
+
+      # A second client on the same room is told not to seed: two clients each
+      # seeding from disk merge into two concatenated copies of the file.
+      refute CollaborationDocStore.claim_seed(room_key_for(path))
+    end
+
+    test "a room with cached state grants nobody a seed" do
+      path = "app/models/user.rb"
+      CollaborationDocStore.replace_snapshot(room_key_for(path), "SNAP")
+
+      subscribe path: path
+
+      assert_equal false, transmissions.last["seed"]
+    end
+
     test "doc_update persists the bytes to the store and relays them on the stream" do
       path = "lib/foo.rb"
       subscribe path: path

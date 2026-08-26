@@ -33,6 +33,44 @@ module Mbeditor
     # snapshot instead of syncing from the buffer.
     MAX_DELTAS = 500
 
+    # Grant the right to seed a room's shared document from disk, to exactly one
+    # client. Without this every client that finds the room empty inserts the whole
+    # file at offset 0, and Yjs merges those inserts into two concatenated copies —
+    # the file appended to itself. That happens whenever two editor tabs attach to
+    # a room the server has no state for: a fresh room, or one that was evicted
+    # while both were idle. The claim is per room, so the loser waits for the
+    # winner's content instead of inventing its own.
+    def claim_seed(path, now: monotonic)
+      MUTEX.synchronize do
+        room = touch(path, now)
+        next false if room[:seed_claimed] || room[:snapshot] || !room[:deltas].empty?
+
+        room[:seed_claimed] = true
+      end
+    end
+
+    # Subscriber accounting. A room with a live subscriber must never be evicted:
+    # eviction empties the server's copy while clients still hold content, and the
+    # next client to attach would be granted a seed it must not perform.
+    def join(path, now: monotonic)
+      MUTEX.synchronize { touch(path, now)[:subscribers] += 1 }
+      nil
+    end
+
+    def leave(path, now: monotonic)
+      MUTEX.synchronize do
+        room = rooms[path]
+        next unless room
+
+        room[:subscribers] -= 1 if room[:subscribers] > 0
+        # The claimer can leave before it ever seeds (a tab closed during the
+        # handshake). Releasing the claim on an empty, empty-handed room keeps the
+        # next opener from deferring to content that will never arrive.
+        room[:seed_claimed] = false if room[:subscribers].zero? && room[:snapshot].nil? && room[:deltas].empty?
+      end
+      nil
+    end
+
     def record_update(path, bytes, now: monotonic)
       MUTEX.synchronize do
         room = touch(path, now)
@@ -85,7 +123,7 @@ module Mbeditor
 
     def touch(path, now)
       new_room = !rooms.key?(path)
-      room = (rooms[path] ||= { snapshot: nil, deltas: [] })
+      room = (rooms[path] ||= { snapshot: nil, deltas: [], subscribers: 0, seed_claimed: false })
       room[:last_activity] = now
       maybe_sweep(now)
       evict_lru if new_room && rooms.size > ROOM_CAP
@@ -105,12 +143,13 @@ module Mbeditor
     private_class_method :maybe_sweep
 
     def evict_idle(now, grace)
-      rooms.delete_if { |_path, room| (now - room[:last_activity]) > grace }
+      rooms.delete_if { |_path, room| room[:subscribers].zero? && (now - room[:last_activity]) > grace }
     end
     private_class_method :evict_idle
 
     def evict_lru
-      oldest = rooms.min_by { |_path, room| room[:last_activity] }
+      idle = rooms.reject { |_path, room| room[:subscribers].positive? }
+      oldest = (idle.empty? ? rooms : idle).min_by { |_path, room| room[:last_activity] }
       rooms.delete(oldest.first) if oldest
     end
     private_class_method :evict_lru

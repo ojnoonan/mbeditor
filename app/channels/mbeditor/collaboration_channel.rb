@@ -21,11 +21,14 @@ module Mbeditor
       return reject if @path.empty? && respond_to?(:reject, true)
 
       stream_from stream_name if respond_to?(:stream_from)
+      CollaborationDocStore.join(room_key)
+      @joined = true
       transmit_initial_state
     end
 
     def unsubscribed
-      # no-op
+      CollaborationDocStore.leave(room_key) if @joined
+      @joined = false
     end
 
     def doc_update(data)
@@ -66,7 +69,10 @@ module Mbeditor
       return unless respond_to?(:transmit, true)
 
       state = CollaborationDocStore.state_for(room_key)
-      transmit({ "type" => "sync", "snapshot" => state[:snapshot], "deltas" => state[:deltas] })
+      # Exactly one client per empty room is told to seed it from disk; see
+      # CollaborationDocStore.claim_seed. Everyone else waits for that content.
+      transmit({ "type" => "sync", "snapshot" => state[:snapshot], "deltas" => state[:deltas],
+                 "seed" => CollaborationDocStore.claim_seed(room_key) })
     end
 
     # A room is identified by workspace *and* relative path. Keying on the path

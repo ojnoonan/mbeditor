@@ -315,6 +315,30 @@ hard way:
 Verified by counting `React.createElement` calls over an idle minute: 5 tree
 polls and 5 health ticks now produce zero re-renders.
 
+## Collaboration: only one client may seed a room
+
+`CollaborationService` (client) + `CollaborationChannel` + `CollaborationDocStore`
+(server) share a Yjs doc per open file. The doc starts empty, so somebody has to
+insert the disk content into it — and **every client that finds the room empty
+used to do it**. Two clients each inserting the whole file at offset 0 merge into
+two concatenated copies, which the next save writes to disk. That is a real data
+corruption that happened; `rake mbeditor:scan_duplicates` finds its victims.
+
+Three things keep it fixed, and all three are load-bearing:
+
+- `CollaborationDocStore.claim_seed` grants the seed to exactly one client per
+  empty room; the sync payload carries `seed: true/false` and the client only
+  inserts when granted.
+- A room with live subscribers is never evicted (`join`/`leave` from the channel).
+  Evicting one empties the server while clients still hold content, and the next
+  opener is then granted a seed it must not perform.
+- On cable reconnect a bound client re-pushes its snapshot, because a restarted
+  server has forgotten the room and would otherwise grant a fresh seed.
+
+A client that is *not* granted the seed and finds the room empty must **defer
+attaching** — binding to an empty `Y.Text` wipes its buffer. It attaches on the
+first `doc_update`, or falls back to local after the 6 s timer.
+
 ## Release workflow
 
 Say **"make a release for vX.Y.Z"** (or just "make a release") and Claude will:

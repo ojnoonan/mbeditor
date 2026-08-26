@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Data loss: a saved file could contain two copies of itself.** When two editor
+  clients attached to a collaborative room the server had no state for — a fresh
+  room, or one evicted while both sat idle — each one seeded the shared document
+  from disk, and Yjs merged both inserts at offset 0 into two concatenated copies.
+  Saving then wrote the doubled buffer. The server now grants the right to seed a
+  room to exactly one client (`CollaborationDocStore.claim_seed`), never evicts a
+  room that still has subscribers, and a client whose cable reconnects re-publishes
+  its snapshot so a server that lost its state cannot hand out a second seed.
+
+### Added
+
+- `rake mbeditor:scan_duplicates` — scans the workspace for files that contain a
+  duplicated copy of themselves, for finding files damaged before the fix above.
+  Set `MBEDITOR_WORKSPACE_ROOT` to scan a tree other than the resolved workspace.
+
 ## [0.13.0] - 2026-08-20
 
 ### Added

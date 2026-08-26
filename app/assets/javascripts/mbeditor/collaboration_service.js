@@ -225,6 +225,9 @@ var CollaborationService = (function () {
       binding: null,
       undoManager: null,
       lateJoin: false,
+      // Set from the sync handshake: the server grants the right to seed an empty
+      // room's shared doc from disk to exactly one client (see claim_seed).
+      seedGranted: false,
       onSeeded: null,
       attachRequested: false,
       degraded: false,
@@ -280,10 +283,14 @@ var CollaborationService = (function () {
           if (d) window.Y.applyUpdate(room.doc, _b64ToU8(d), REMOTE);
         });
       }
+      room.seedGranted = !!data.seed;
       room.synced = true;
       _maybeAttach(room);
     } else if (data.type === 'doc_update') {
       if (data.update) window.Y.applyUpdate(room.doc, _b64ToU8(data.update), REMOTE);
+      // A client that deferred attaching (empty room, seed granted to someone
+      // else) is waiting for exactly this: the seeder's content has landed.
+      _maybeAttach(room);
     } else if (data.type === 'awareness') {
       if (data.awareness && room.awareness && window.awarenessProtocol) {
         // REMOTE origin keeps the outbound handler from echoing peer state back.
@@ -312,7 +319,13 @@ var CollaborationService = (function () {
       room.subscription = WebSocketService.subscribeCollaboration(path, {
         // Awareness is never server-persisted, so peers lost our caret with the
         // connection and would not see it again until we happened to move.
-        connected: function () { _sendLocalAwareness(room); },
+        // The server may have lost the room entirely (restart): re-publish our
+        // content so the next opener late-joins instead of being granted a seed
+        // that would merge a second copy into what we still hold.
+        connected: function () {
+          _sendLocalAwareness(room);
+          if (room.binding) pushSnapshot(path);
+        },
         received: function (data) { _onMessage(room, data); }
       });
     });
@@ -346,6 +359,11 @@ var CollaborationService = (function () {
 
   function _maybeAttach(room) {
     if (room.binding || !room.synced || !room.attachRequested || !room.model) return;
+    // Shared doc still empty and the seed was granted to another client: its
+    // content is on its way. Binding now would hand the model to an empty Y.Text
+    // and wipe the buffer, so wait for the first doc_update (or the fallback
+    // timer, which lets the natively-loaded content stand).
+    if (room.text.length === 0 && !room.seedGranted && room.model.getValue().length > 0) return;
     _doAttach(room);
   }
 
@@ -353,10 +371,12 @@ var CollaborationService = (function () {
     var model = room.model;
     room.lateJoin = room.text.length > 0; // server already had shared state
 
-    if (!room.lateJoin && model.getValue().length > 0) {
+    if (!room.lateJoin && room.seedGranted && model.getValue().length > 0) {
       // First opener whose disk content is already in the model: seed the shared
       // doc from it before constructing the binding, otherwise the binding would
       // overwrite the model to match the (empty) Y.Text and wipe the content.
+      // Only ever the client the SERVER picked — two clients each seeding an
+      // empty room merge into two concatenated copies of the file.
       room.doc.transact(function () { room.text.insert(0, model.getValue()); });
     }
 

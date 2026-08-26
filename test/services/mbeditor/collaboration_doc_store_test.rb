@@ -188,6 +188,62 @@ module Mbeditor
       assert_equal "d10", deltas.first
     end
 
+    # Exactly one client may seed an empty room — the bug that duplicated files
+
+    def test_claim_seed_is_granted_once_per_empty_room
+      assert CollaborationDocStore.claim_seed("file.rb")
+      refute CollaborationDocStore.claim_seed("file.rb")
+    end
+
+    # a room that already holds content grants nobody a seed
+
+    def test_claim_seed_refused_once_the_room_has_state
+      CollaborationDocStore.record_update("file.rb", "d1")
+
+      refute CollaborationDocStore.claim_seed("file.rb")
+    end
+
+    def test_claim_seed_refused_once_the_room_has_a_snapshot
+      CollaborationDocStore.replace_snapshot("file.rb", "snap")
+
+      refute CollaborationDocStore.claim_seed("file.rb")
+    end
+
+    # the claimer can leave before it ever seeds; the next opener must get the slot
+
+    def test_claim_seed_released_when_the_empty_room_goes_unsubscribed
+      CollaborationDocStore.join("file.rb")
+      assert CollaborationDocStore.claim_seed("file.rb")
+      CollaborationDocStore.leave("file.rb")
+
+      assert CollaborationDocStore.claim_seed("file.rb")
+    end
+
+    # ...but not while content exists, or a late-joiner would seed over it
+
+    def test_claim_seed_stays_taken_after_leave_when_the_room_has_content
+      CollaborationDocStore.join("file.rb")
+      CollaborationDocStore.claim_seed("file.rb")
+      CollaborationDocStore.record_update("file.rb", "d1")
+      CollaborationDocStore.leave("file.rb")
+
+      refute CollaborationDocStore.claim_seed("file.rb")
+    end
+
+    # an idle sweep must not empty a room clients are still bound to: the next
+    # opener would then be granted a seed and merge a second copy of the file
+
+    def test_sweep_keeps_rooms_that_still_have_subscribers
+      CollaborationDocStore.join("live.rb")
+      CollaborationDocStore.record_update("live.rb", "d1", now: 0)
+      CollaborationDocStore.record_update("gone.rb", "d1", now: 0)
+
+      CollaborationDocStore.sweep!(now: CollaborationDocStore::GRACE_TTL + 1)
+
+      assert_equal ["d1"], CollaborationDocStore.state_for("live.rb")[:deltas]
+      assert_equal [], CollaborationDocStore.state_for("gone.rb")[:deltas]
+    end
+
     # reset! drops all cached rooms (test hook)
 
     def test_reset_clears_all_rooms
