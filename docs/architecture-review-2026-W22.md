@@ -3,7 +3,7 @@
 **Project:** mbeditor Rails engine gem
 **Reviewed:** 2026-08-26
 **Scope:** Commit-frequency hot spots over the last 40 commits — `MbeditorApp.js`, `editors_controller.rb`, `EditorPanel.js`, `editor_plugins.js`, `ProblemsPanel.js`. Referenced by [ADR-0001](adr/0001-no-frontend-build-step.md) as the vehicle for `MbeditorApp`/`editor_plugins.js` maintainability work.
-**Status:** In progress — candidates 1–2 done, 3–6 open
+**Status:** In progress — candidates 1–4 done, 5–6 open
 
 ---
 
@@ -72,29 +72,50 @@ A real doc/code mismatch surfaced during the grill: `CONTEXT.md`'s `Diagnostic` 
 
 ### 3. `FileHistoryService` — stop reimplementing `EditorStateService`'s locking
 
-**Status: Open**
+**Status: Done**
 
-**Files:** `editors_controller.rb` (`file_history`, `save_file_history`, `history_file_path`, `compact_history_ops`, `flock_exclusive_with_timeout!`) vs. `app/services/mbeditor/editor_state_service.rb` (`with_lock`/`lock_exclusive!`).
+**Files:**
+- `app/services/mbeditor/locked_json_file.rb` (new)
+- `app/services/mbeditor/file_history_service.rb` (new)
+- `app/services/mbeditor/editor_state_service.rb` (rebuilt on the new primitive, public interface unchanged)
+- `app/controllers/mbeditor/editors_controller.rb` (1680 → 1577 lines)
+- `test/services/mbeditor/locked_json_file_test.rb` (new, 5 tests)
+- `test/services/mbeditor/file_history_service_test.rb` (new, 13 tests)
+- `test/controllers/mbeditor/editors_controller_test.rb` (two assertions repointed at the new service's constants)
 
-**Problem:** `save_file_history` hand-rolls the same monotonic-deadline lock loop `EditorStateService` already owns — but locks the history file in place rather than a sidecar, so it writes with `truncate`/`rewind` instead of atomic rename. A crash mid-write truncates history instead of leaving it untouched. Third instance of a duplication W21 candidate 3 already consolidated once for `EditorChannel`/`EditorsController` state.
+**Problem:** `save_file_history` hand-rolled the same monotonic-deadline lock loop `EditorStateService` already owned — but locked the history file in place rather than a sidecar, so it wrote with `truncate`/`rewind` instead of atomic rename. A crash mid-write truncated history instead of leaving it untouched. Third instance of a duplication W21 candidate 3 already consolidated once for `EditorChannel`/`EditorsController` state.
 
-**Deletion test:** Deleting `flock_exclusive_with_timeout!` doesn't remove the need for locking — it reappears, because it's already the second copy.
+**Deletion test:** Deleting `flock_exclusive_with_timeout!` didn't remove the need for locking — it reappeared, because it was already the second copy.
 
-**Sketch:** `FileHistoryService.read(branch, path)` / `.append(branch, path, ops:)`, built on `EditorStateService`'s existing sidecar-lock + atomic-write adapter.
+**Solution (as implemented):** The sidecar-lock + atomic-write mechanics that lived as private methods on `EditorStateService` (`with_lock`/`lock_exclusive!`/`atomic_write`/`read_json`) are now `LockedJsonFile`, a tiny class bound to one path with `#read`, `#write(payload)`, and `#with_lock { }` — the third caller (history) is what made the primitive worth naming rather than inlining a second time. `EditorStateService` is rebuilt on it with its public interface and `LockTimeoutError` identity unchanged (an `error_class:` constructor arg lets each service keep raising its own named timeout error rather than a shared one leaking across two unrelated APIs). `FileHistoryService.read(branch, path)` / `.append(branch, path, ops:, base:, base_given:)` / `.prune(active_branches:)` replace the five controller-private methods; `append` now writes by rename via `LockedJsonFile#write` instead of `truncate`/`rewind`, closing the crash-truncation gap. `base_given` (rather than checking `base.present?`) preserves the existing rule that an explicit empty base is a legitimate first snapshot and only an absent `base` param is an error — collapsing that into "base truthy" would have broken the empty-base case a prior fix depended on.
+
+**Benefits:**
+- *Locality* — the sidecar-lock/atomic-write contract is defined once; a fix (or the next caller) doesn't need a fourth hand-rolled copy.
+- *Correctness* — history writes are now crash-safe the same way state writes are: a torn write can never leave a truncated file on disk.
+- *Tests* — the lock-timeout, atomic-rename, and compaction-arithmetic behavior are direct unit tests instead of requiring an HTTP round trip with a real held file lock; the existing `editors_controller_test.rb` HTTP coverage (242 tests) passes unchanged.
 
 ---
 
 ### 4. Split `registerGlobalExtensions` by provider group
 
-**Status: Open — Worth exploring**
+**Status: Done**
 
-**Files:** `app/assets/javascripts/mbeditor/editor_plugins.js:1005-2775`.
+**Files:**
+- `app/assets/javascripts/mbeditor/editor_plugins.js` (2801 → 2818 lines — pure reorganization; the +17 is new function signatures/braces/dispatcher calls and a short doc comment, not moved logic)
+- `CONTEXT.md` (`Language plugin` entry corrected)
 
-**Problem:** One 1770-line function registers 17 Monaco providers across three languages with nothing but scroll position separating them.
+**Problem:** One 1770-line function registered 17 Monaco providers across three languages with nothing but scroll position separating them.
 
-**Deletion test:** Nothing here is a pass-through — every provider is necessary. This is purely giving one necessary function internal seams, not removing complexity.
+**Deletion test:** Nothing here was a pass-through — every provider was necessary. This was purely giving one necessary function internal seams, not removing complexity.
 
-**Sketch:** `registerRubyProviders(monaco)`, `registerJsProviders(monaco)`, `registerGenericProviders(monaco)` as named top-level functions in the same file (no new files required); `registerGlobalExtensions` becomes a 4-line dispatcher. Also the natural point to reconcile `CONTEXT.md`'s "Language plugin" glossary entry (`RubyPlugin.registerGlobal`, an object shape that doesn't exist in code today) with what's actually there.
+**Solution (as implemented):** `registerJsProviders(monaco)`, `registerRubyProviders(monaco)`, `registerGenericProviders(monaco)` as named top-level functions in the same file, grouped by provider affinity rather than by language exclusively — "generic" holds the four features that are registered once across several languages at once (linked-editing ranges for js/ts/ruby, the shared `file://` editor opener, Prettier formatting across every Prettier-backed language, and the vim fold-marker provider for `scheme: '*'`), since forcing those into a single language's function would have been arbitrary. `registerGlobalExtensions` is now the four-line dispatcher the sketch proposed: the existing `globalsRegistered` once-guard, then three calls in the original registration order (JS setup, Ruby setup, generic). No behavior moved across the split — Monaco merges multiple providers of the same kind (hover, folding, linked-editing) regardless of registration order, and the one place order actually matters (JS formatting) is already decided by `setModeConfiguration` disabling the TypeScript worker's own formatter, not by which function runs first — so grouping by affinity instead of call order changes nothing at runtime. Verified with a line-multiset diff against the pre-refactor file: the touched region gained exactly the four function signatures, their closing braces, and the three dispatcher calls, and lost nothing — every provider registration, helper function, and cache is byte-identical to before, just regrouped.
+
+A real doc/code mismatch surfaced here too, same pattern as candidates 2 and 3: `CONTEXT.md`'s `Language plugin` entry described `RubyPlugin`/`HtmlPlugin`/`JsPlugin`/`GenericPlugin` objects on `window`, each satisfying an `appliesTo(language)` / `registerGlobal(monaco)` / `attach(editor, model, language)` interface — a design that was never built. Nothing in `editor_plugins.js` or anywhere else in the JS tree defines any of those four names. The entry was rewritten to describe the actual two-phase shape: `registerGlobalExtensions` (now the affinity-grouped dispatcher above) for one-time registration, and `attachEditorFeatures(editor, language)` — one function that branches on its own `language` parameter internally (e.g. `EMMET_MARKUP_LANGS[language]`) rather than being fanned out across per-language objects — for per-instance attach.
+
+**Benefits:**
+- *Locality* — a provider bug is now found by asking "is this JS, Ruby, or cross-language," not by scrolling a 1770-line function.
+- *Leverage* — each of the three functions is independently readable and, per the deletion-test note above, none reads state another one sets up.
+- *Docs* — `CONTEXT.md` now names the module shape that exists, so the next reader doesn't go looking for a `JsPlugin` object that was never written.
 
 ---
 
@@ -132,7 +153,7 @@ A real doc/code mismatch surfaced during the grill: `CONTEXT.md`'s `Diagnostic` 
 |---|-----------|--------|--------|--------|
 | 1 | `RubyLspResultTranslator` | Low | High | Done |
 | 2 | `LintService` | Low | Medium | Done |
-| 3 | `FileHistoryService` | Low | Medium | Open |
-| 4 | Split `registerGlobalExtensions` | Medium | Low | Open |
+| 3 | `FileHistoryService` | Low | Medium | Done |
+| 4 | Split `registerGlobalExtensions` | Medium | Low | Done |
 | 5 | `EditorPanel` effect split | Medium | Medium | Open |
 | 6 | `useProjectSearch` hook | Medium | Medium | Open |

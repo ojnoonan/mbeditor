@@ -1078,9 +1078,9 @@ module Mbeditor
       assert_equal [1,6,1,6," world"], json["ops"].last
     end
 
-    test "save_file_history compacts when ops exceed HISTORY_MAX_OPS" do
+    test "save_file_history compacts when ops exceed FileHistoryService::MAX_OPS" do
       base = "line\n"
-      first_ops = Array.new(Mbeditor::EditorsController::HISTORY_MAX_OPS) { [1,1,1,1,"x"] }
+      first_ops = Array.new(Mbeditor::FileHistoryService::MAX_OPS) { [1,1,1,1,"x"] }
 
       post "/mbeditor/file_history", params: {
         branch: "main", path: "app/models/user.rb",
@@ -1095,7 +1095,7 @@ module Mbeditor
       assert_response :no_content
 
       get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }
-      assert_equal Mbeditor::EditorsController::HISTORY_MAX_OPS - Mbeditor::EditorsController::HISTORY_COMPACT_TARGET + 1, json["ops"].length
+      assert_equal Mbeditor::FileHistoryService::MAX_OPS - Mbeditor::FileHistoryService::COMPACT_TARGET + 1, json["ops"].length
     end
 
     test "save_file_history returns 204 with empty ops array" do

@@ -40,14 +40,18 @@ JS/CSS/HTML/Markdown is a separate, browser-only path and is not part of LintSer
 formatted content.
 
 ### Language plugin
-A front-end module that contributes editor behaviour for one or more languages, satisfying
-a fixed interface: `appliesTo(language)`, `registerGlobal(monaco)` (one-time provider/config
-registration), and `attach(editor, model, language)` (per-instance listeners, returns a
-disposable). The plugins — `RubyPlugin`, `HtmlPlugin`, `JsPlugin`, `GenericPlugin` — are
-named explicitly by the **editor-feature registrar** (`editor_plugins.js`), which fans the
-two lifecycle phases across them. `appliesTo` is many-to-many: a `.jsx` editor is attached by
-both JsPlugin and HtmlPlugin (JSX tag auto-close). No build step — each plugin is a plain
-object on `window`, wired in a fixed order via Sprockets `//= require`.
+`editor_plugins.js` splits into two lifecycle phases, neither of which is a per-language
+object — there is no `RubyPlugin`/`HtmlPlugin`/`JsPlugin` on `window`, and nothing declares
+an `appliesTo(language)`. **One-time registration** is `registerGlobalExtensions(monaco)`, a
+dispatcher (guarded so it runs once) over three named functions grouped by provider
+affinity rather than by language: `registerJsProviders`, `registerRubyProviders`, and
+`registerGenericProviders` (features registered once across several languages at once —
+linked editing, the `file://` opener, Prettier formatting, vim fold markers). **Per-instance
+attach** is `attachEditorFeatures(editor, language)`, one function taking a `language`
+string and returning a disposable; it does its own per-call branching (e.g. ERB/HAML markup
+auto-close applies regardless of language, JSX-specific behaviour checks `language` itself)
+rather than being fanned out across language objects. No build step — plain functions in one
+file, wired via Sprockets `//= require`.
 
 ### Log viewer
 The read-only, real-time view of the active environment's Rails log. It tails

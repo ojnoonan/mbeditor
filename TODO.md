@@ -97,10 +97,11 @@ the JS program.
 | `editor_plugins.js` | ~2,400 |
 | `components/EditorPanel.js` | ~2,400 |
 
-`EditorsController` is back up to **2,004 lines** (was 1,772 at the W21
-follow-up) — the ruby-lsp passthrough, rename, import and model-graph endpoints
-all landed in the controller rather than behind services. Same seam question as
-before.
+`EditorsController` is down to **1,577 lines** after the W22
+`FileHistoryService`/`LockedJsonFile` extraction (2026-08-27) — was 2,004 at
+the previous review. The ruby-lsp passthrough, rename, import and model-graph
+endpoints are still in the controller rather than behind services. Same seam
+question as before.
 
 The 2026-07-30/31 feature block plus everything since (resilient routing,
 pending-migration bypass, suite runner, RuboCop workspace run) has had no
@@ -111,6 +112,16 @@ controllers at read-depth, the frontend only at spot-check depth.
 
 ## Resolved since the last review (kept for the record)
 
+- W22 architecture review candidates 3 and 4 done 2026-08-27:
+  `FileHistoryService` + `LockedJsonFile` extracted from `EditorsController`
+  (history read/append/prune now crash-safe via atomic rename, replacing an
+  in-place `truncate`/`rewind`), and `editor_plugins.js`'s 1770-line
+  `registerGlobalExtensions` split into `registerJsProviders`/
+  `registerRubyProviders`/`registerGenericProviders` behind a 4-line
+  dispatcher. `CONTEXT.md`'s `Language plugin` entry corrected to match (the
+  documented `RubyPlugin`/`HtmlPlugin`/`JsPlugin` object shape was never
+  built). See `docs/architecture-review-2026-W22.md`. Candidates 5–6 (
+  `EditorPanel` effect split, `useProjectSearch` hook) remain open.
 - 0.13.0 shipped 2026-08-20; `[Unreleased]` is empty and the missing-changelog
   complaint is moot.
 - Collaboration epic merged: `CollaborationDocStore` and `PresenceRegistry`

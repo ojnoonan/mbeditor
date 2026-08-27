@@ -1002,12 +1002,11 @@
     };
   }
 
-  function registerGlobalExtensions(monaco) {
-    if (globalsRegistered) return;
-    if (!monaco || !monaco.languages) return;
-
-    globalsRegistered = true;
-
+  // One-time Monaco registration, grouped by provider affinity rather than by
+  // scroll position. Each group is independent — no group's providers read
+  // state another group sets up — so the split only adds seams; nothing here
+  // was a pass-through.
+  function registerJsProviders(monaco) {
     // JavaScript: enable semantic checking (off by default in Monaco) and JSX support.
     // checkJs catches undefined variables, noUnusedLocals catches dead assignments.
     if (monaco.languages.typescript && monaco.languages.typescript.javascriptDefaults) {
@@ -1444,6 +1443,144 @@
       });
     });
 
+    // ── ruby-lsp navigation ──────────────────────────────────────────────────
+
+    // Serves exactly one thing: the candidate list navigateToJsWord hands over
+    // when a name is declared at top level in several other files. It is empty
+    // the rest of the time, so the TypeScript worker remains the only voice on
+    // an ordinary jump and a local definition still goes straight there —
+    // Monaco merges providers without deduping, so a second opinion here would
+    // show a picker listing one definition twice.
+    monaco.languages.registerDefinitionProvider('javascript', {
+      provideDefinition: function (model, position) {
+        var pending = pendingJsDefinitionPeek;
+        pendingJsDefinitionPeek = null;
+        if (!pending) return null;
+        if (pending.uri !== model.uri.toString() ||
+            pending.lineNumber !== position.lineNumber ||
+            pending.column !== position.column) return null;
+        return pending.locations;
+      }
+    });
+
+    // JS/JSX hover provider: looks up workspace definitions for window globals.
+    // Fires for mixed-case identifiers and for any symbol already in discoveredJsGlobals.
+    var JS_HOVER_CACHE_TTL_MS = 60000;
+    monaco.languages.registerHoverProvider('javascript', {
+      provideHover: function(model, position, token) {
+        var wordInfo = model.getWordAtPosition(position);
+        if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return null;
+        var word = wordInfo.word;
+        if (!discoveredJsGlobals[word] && !/[A-Z]/.test(word)) return null;
+        if (typeof FileService === 'undefined' || !FileService.getJsDefinition) return null;
+
+        // Build a position-specific range for this hover instance.
+        // The range must NOT be cached because the same symbol can appear on
+        // different lines; a stale cached lineNumber would highlight the wrong place.
+        function makeHoverRange() {
+          return new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn);
+        }
+
+        var parentCtx = extractJsParentContext(model, position.lineNumber, wordInfo);
+        // Parent-qualified hovers cache separately: Parent.myFunction and a
+        // bare myFunction can resolve to different definitions.
+        var cacheKey = (parentCtx ? parentCtx + '.' : '') + word;
+        var cached = jsHoverCache[cacheKey];
+        if (cached && (Date.now() - cached.ts) < JS_HOVER_CACHE_TTL_MS) {
+          if (!cached.contents) return null;
+          return { range: makeHoverRange(), contents: cached.contents };
+        }
+
+        var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        if (controller && token && token.onCancellationRequested) {
+          token.onCancellationRequested(function() { controller.abort(); });
+        }
+        return FileService.getJsDefinition(word, controller ? { signal: controller.signal } : {}, parentCtx)
+          .then(function(data) {
+            if (token && token.isCancellationRequested) return null;
+            var results = data && data.results;
+            if (!results || !results.length) {
+              if (isRuntimeWindowGlobal(word)) {
+                addDiscoveredGlobal(word);
+                var kind = typeof window[word];
+                var rtContents = [{ value: '**' + word + '** — runtime global (`' + kind + '`)' }];
+                jsHoverCache[cacheKey] = { ts: Date.now(), contents: rtContents };
+                return { range: makeHoverRange(), contents: rtContents };
+              }
+              jsHoverCache[cacheKey] = { ts: Date.now(), contents: null };
+              return null;
+            }
+            // Same preference as Ctrl+click, so the file the hover names is
+            // the file the jump would take you to.
+            var r = preferCurrentFile(results, model._mbeditorPath) || results[0];
+            // Only declare as global when the definition is a top-level
+            // (Sprockets-global) declaration in a different file — nested and
+            // member definitions must not get a duplicate declare var.
+            if (r.topLevel && r.file !== model._mbeditorPath) addDiscoveredGlobal(word);
+            var fileRef = r.file + ':' + r.line;
+            var contents = [
+              { value: '```javascript\n' + r.snippet + '\n```', isTrusted: true },
+              { value: '<span style="opacity:0.55;font-size:0.9em;">' + fileRef + '</span>', isTrusted: true, supportHtml: true }
+            ];
+            jsHoverCache[cacheKey] = { ts: Date.now(), contents: contents };
+            return { range: makeHoverRange(), contents: contents };
+          }).catch(function() { return null; });
+      }
+    });
+
+    // JS/JSX member completion provider: suggests properties/methods of workspace globals after '.'.
+    // Only looks up PascalCase/mixed-case identifiers or previously discovered globals.
+    var JS_MEMBERS_CACHE_TTL_MS = 60000;
+    monaco.languages.registerCompletionItemProvider('javascript', {
+      triggerCharacters: ['.'],
+      provideCompletionItems: function(model, position) {
+        var line = model.getLineContent(position.lineNumber);
+        var col  = position.column - 2; // index of character just before the '.'
+        var end  = col;
+        while (col >= 0 && /[a-zA-Z0-9_$]/.test(line[col])) col--;
+        var symbol = line.slice(col + 1, end + 1);
+        if (!symbol || symbol.length < 2) return { suggestions: [] };
+        if (!discoveredJsGlobals[symbol] && !/^[A-Z]/.test(symbol)) return { suggestions: [] };
+        if (typeof FileService === 'undefined' || !FileService.getJsMembers) return { suggestions: [] };
+
+        // Only the raw member list is cached. Suggestions carry the insert
+        // `range`, which is where the completion is about to be written — the
+        // same trap the hover provider's makeHoverRange avoids. Cached
+        // suggestions inserted at the position of the invocation that filled
+        // the cache, so a hit anywhere else in the file was misapplied or
+        // silently dropped by Monaco.
+        function buildSuggestions(members) {
+          return members.map(function(m) {
+            return {
+              label: m.name,
+              kind: monaco.languages.CompletionItemKind.Method,
+              detail: symbol,
+              documentation: m.snippet,
+              insertText: m.name,
+              range: {
+                startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
+                startColumn: position.column, endColumn: position.column
+              }
+            };
+          });
+        }
+
+        var cached = jsMembersCache[symbol];
+        if (cached && (Date.now() - cached.ts) < JS_MEMBERS_CACHE_TTL_MS) {
+          return { suggestions: buildSuggestions(cached.members) };
+        }
+
+        return FileService.getJsMembers(symbol)
+          .then(function(data) {
+            var members = (data && data.members) || [];
+            jsMembersCache[symbol] = { ts: Date.now(), members: members };
+            return { suggestions: buildSuggestions(members) };
+          }).catch(function() { return { suggestions: [] }; });
+      }
+    });
+  }
+
+  function registerRubyProviders(monaco) {
     monaco.languages.setLanguageConfiguration('ruby', {
       comments: { lineComment: '#', blockComment: ['=begin', '=end'] },
       brackets: [['(', ')'], ['{', '}'], ['[', ']']],
@@ -1727,49 +1864,6 @@
       }
     });
 
-    var genericLinkedProvider = {
-      provideLinkedEditingRanges: function provideLinkedEditingRanges(model, position) {
-        var line = model.getLineContent(position.lineNumber);
-        var wordInfo = model.getWordAtPosition(position);
-        if (!wordInfo) return null;
-
-        var word = wordInfo.word;
-        var startCol = wordInfo.startColumn;
-        var endCol = wordInfo.endColumn;
-
-        if (line[startCol - 2] === '<') {
-          var closeTagStr = '</' + word + '>';
-          var closeIdx = line.indexOf(closeTagStr, endCol - 1);
-          if (closeIdx !== -1) {
-            return {
-              ranges: [new monaco.Range(position.lineNumber, startCol, position.lineNumber, endCol), new monaco.Range(position.lineNumber, closeIdx + 3, position.lineNumber, closeIdx + 3 + word.length)],
-              wordPattern: /[a-zA-Z0-9:\-_]+/
-            };
-          }
-        }
-
-        if (line[startCol - 3] === '<' && line[startCol - 2] === '/') {
-          var openTagRegex = new RegExp('<' + word + '(?:\\s|>)');
-          var match = line.match(openTagRegex);
-          if (match) {
-            var openStart = match.index + 2;
-            if (openStart < startCol) {
-              return {
-                ranges: [new monaco.Range(position.lineNumber, openStart, position.lineNumber, openStart + word.length), new monaco.Range(position.lineNumber, startCol, position.lineNumber, endCol)],
-                wordPattern: /[a-zA-Z0-9:\-_]+/
-              };
-            }
-          }
-        }
-
-        return null;
-      }
-    };
-
-    monaco.languages.registerLinkedEditingRangeProvider('javascript', genericLinkedProvider);
-    monaco.languages.registerLinkedEditingRangeProvider('typescript', genericLinkedProvider);
-    monaco.languages.registerLinkedEditingRangeProvider('ruby', genericLinkedProvider);
-
     // RuboCop quick-fix code-action provider for Ruby files.
     // Only registers when RuboCop is available in the workspace.
     //
@@ -1873,52 +1967,6 @@
       if (!path) return;
       if (typeof TabManager === 'undefined' || !TabManager.openTab) return;
       TabManager.openTab(path, String(path).split('/').pop(), line || 1);
-    });
-
-    // ── ruby-lsp navigation ──────────────────────────────────────────────────
-
-    // Serves exactly one thing: the candidate list navigateToJsWord hands over
-    // when a name is declared at top level in several other files. It is empty
-    // the rest of the time, so the TypeScript worker remains the only voice on
-    // an ordinary jump and a local definition still goes straight there —
-    // Monaco merges providers without deduping, so a second opinion here would
-    // show a picker listing one definition twice.
-    monaco.languages.registerDefinitionProvider('javascript', {
-      provideDefinition: function (model, position) {
-        var pending = pendingJsDefinitionPeek;
-        pendingJsDefinitionPeek = null;
-        if (!pending) return null;
-        if (pending.uri !== model.uri.toString() ||
-            pending.lineNumber !== position.lineNumber ||
-            pending.column !== position.column) return null;
-        return pending.locations;
-      }
-    });
-
-    // Teaches Monaco how to open a file:// resource in this editor. Without it
-    // every provider below can find a location but nothing can go there:
-    // peek-definition, the references widget and Ctrl+hover previews all route
-    // their "open this" through here.
-    monaco.editor.registerEditorOpener({
-      openCodeEditor: function (_source, resource, selectionOrPosition) {
-        // Only file:// resources name a workspace file. Models are created
-        // without an explicit URI, so Monaco gives each one an
-        // `inmemory://model/N` identity — and the TS worker returns exactly
-        // that when a JS definition resolves inside the file you are already
-        // in. Stripping it to a path opened a phantom tab called "57".
-        // Handing those back to Monaco lets it reveal the position in the
-        // current editor, which is what the gesture meant.
-        if (String(resource.scheme || '') !== 'file') return false;
-
-        var path = String(resource.path || '').replace(/^\/+/, '');
-        if (!path || typeof TabManager === 'undefined' || !TabManager.openTab) return false;
-
-        var pos = selectionOrPosition || {};
-        var line = pos.startLineNumber || pos.lineNumber || 1;
-        var col = pos.startColumn || pos.column || 1;
-        TabManager.openTab(path, path.split('/').pop(), line, null, false, col);
-        return true;
-      }
     });
 
     // Words never worth a definition lookup: language keywords, core methods,
@@ -2107,82 +2155,6 @@
         return [{ range: model.getFullModelRange(), text: formatted }];
       }).catch(function () { return []; });
     }
-
-    // ── Prettier formatting providers ────────────────────────────────────────
-    //
-    // `formatOnPaste` has been on by default for a long time and did nothing
-    // outside Ruby: Monaco acts on a paste only through a *range* formatting
-    // provider, and none was registered. Registering one here is what makes
-    // pasted blocks land correctly indented, and what formats the whole thing
-    // when the paste fills an empty file (the pasted range is then the file).
-    //
-    // Prettier's own rangeStart/rangeEnd does the narrowing — it reprints the
-    // smallest enclosing statement and leaves the rest byte-identical, so a
-    // paste in the middle of a file does not reformat the file.
-    var PRETTIER_LANGUAGE_PARSERS = {
-      javascript: 'babel', json: 'json', css: 'css',
-      scss: 'scss', less: 'less', html: 'html', markdown: 'markdown'
-    };
-
-    // One edit spanning only what actually changed. A whole-document
-    // replacement would work but throws away the cursor position and collapses
-    // undo, which on every paste is very noticeable.
-    function minimalEdit(model, oldText, newText) {
-      if (oldText === newText) return [];
-      var start = 0;
-      var maxStart = Math.min(oldText.length, newText.length);
-      while (start < maxStart && oldText.charCodeAt(start) === newText.charCodeAt(start)) start++;
-      var oldEnd = oldText.length;
-      var newEnd = newText.length;
-      while (oldEnd > start && newEnd > start && oldText.charCodeAt(oldEnd - 1) === newText.charCodeAt(newEnd - 1)) {
-        oldEnd--;
-        newEnd--;
-      }
-      return [{
-        range: monaco.Range.fromPositions(model.getPositionAt(start), model.getPositionAt(oldEnd)),
-        text: newText.slice(start, newEnd)
-      }];
-    }
-
-    function prettierEdits(model, range) {
-      var parser = PRETTIER_LANGUAGE_PARSERS[model.getLanguageId()];
-      if (!parser || typeof runPrettier !== 'function') return Promise.resolve([]);
-
-      var text = model.getValue();
-      var prefs = (typeof EditorStore !== 'undefined' && EditorStore.getState().editorPrefs) || {};
-      var extra = null;
-      if (range) {
-        extra = {
-          rangeStart: model.getOffsetAt({ lineNumber: range.startLineNumber, column: range.startColumn }),
-          rangeEnd: model.getOffsetAt({ lineNumber: range.endLineNumber, column: range.endColumn })
-        };
-      }
-
-      return runPrettier(text, prefs, parser, extra)
-        .then(function (formatted) {
-          // The model can have moved on while Prettier was working.
-          if (model.isDisposed() || model.getValue() !== text) return [];
-          return minimalEdit(model, text, formatted);
-        })
-        // A paste of half an expression will not parse. Leaving it alone is the
-        // right answer — the diagnostics path reports the syntax error.
-        ["catch"](function () { return []; });
-    }
-
-    Object.keys(PRETTIER_LANGUAGE_PARSERS).forEach(function (languageId) {
-      monaco.languages.registerDocumentRangeFormattingEditProvider(languageId, {
-        displayName: 'Prettier',
-        provideDocumentRangeFormattingEdits: function (model, range) {
-          return prettierEdits(model, range);
-        }
-      });
-      monaco.languages.registerDocumentFormattingEditProvider(languageId, {
-        displayName: 'Prettier',
-        provideDocumentFormattingEdits: function (model) {
-          return prettierEdits(model, null);
-        }
-      });
-    });
 
     // Parameter hints while typing a call's arguments.
     monaco.languages.registerSignatureHelpProvider('ruby', {
@@ -2634,121 +2606,155 @@
         }).catch(function() { return { suggestions: [] }; });
       }
     }
+  }
 
-    // JS/JSX hover provider: looks up workspace definitions for window globals.
-    // Fires for mixed-case identifiers and for any symbol already in discoveredJsGlobals.
-    var JS_HOVER_CACHE_TTL_MS = 60000;
-    monaco.languages.registerHoverProvider('javascript', {
-      provideHover: function(model, position, token) {
+  // Cross-language providers: features registered once for several languages
+  // at once (linked editing, the file:// opener, Prettier formatting, vim fold
+  // markers) rather than owned by Ruby or JS specifically.
+  function registerGenericProviders(monaco) {
+    var genericLinkedProvider = {
+      provideLinkedEditingRanges: function provideLinkedEditingRanges(model, position) {
+        var line = model.getLineContent(position.lineNumber);
         var wordInfo = model.getWordAtPosition(position);
-        if (!wordInfo || !wordInfo.word || wordInfo.word.length < 2) return null;
+        if (!wordInfo) return null;
+
         var word = wordInfo.word;
-        if (!discoveredJsGlobals[word] && !/[A-Z]/.test(word)) return null;
-        if (typeof FileService === 'undefined' || !FileService.getJsDefinition) return null;
+        var startCol = wordInfo.startColumn;
+        var endCol = wordInfo.endColumn;
 
-        // Build a position-specific range for this hover instance.
-        // The range must NOT be cached because the same symbol can appear on
-        // different lines; a stale cached lineNumber would highlight the wrong place.
-        function makeHoverRange() {
-          return new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn);
+        if (line[startCol - 2] === '<') {
+          var closeTagStr = '</' + word + '>';
+          var closeIdx = line.indexOf(closeTagStr, endCol - 1);
+          if (closeIdx !== -1) {
+            return {
+              ranges: [new monaco.Range(position.lineNumber, startCol, position.lineNumber, endCol), new monaco.Range(position.lineNumber, closeIdx + 3, position.lineNumber, closeIdx + 3 + word.length)],
+              wordPattern: /[a-zA-Z0-9:\-_]+/
+            };
+          }
         }
 
-        var parentCtx = extractJsParentContext(model, position.lineNumber, wordInfo);
-        // Parent-qualified hovers cache separately: Parent.myFunction and a
-        // bare myFunction can resolve to different definitions.
-        var cacheKey = (parentCtx ? parentCtx + '.' : '') + word;
-        var cached = jsHoverCache[cacheKey];
-        if (cached && (Date.now() - cached.ts) < JS_HOVER_CACHE_TTL_MS) {
-          if (!cached.contents) return null;
-          return { range: makeHoverRange(), contents: cached.contents };
-        }
-
-        var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        if (controller && token && token.onCancellationRequested) {
-          token.onCancellationRequested(function() { controller.abort(); });
-        }
-        return FileService.getJsDefinition(word, controller ? { signal: controller.signal } : {}, parentCtx)
-          .then(function(data) {
-            if (token && token.isCancellationRequested) return null;
-            var results = data && data.results;
-            if (!results || !results.length) {
-              if (isRuntimeWindowGlobal(word)) {
-                addDiscoveredGlobal(word);
-                var kind = typeof window[word];
-                var rtContents = [{ value: '**' + word + '** — runtime global (`' + kind + '`)' }];
-                jsHoverCache[cacheKey] = { ts: Date.now(), contents: rtContents };
-                return { range: makeHoverRange(), contents: rtContents };
-              }
-              jsHoverCache[cacheKey] = { ts: Date.now(), contents: null };
-              return null;
+        if (line[startCol - 3] === '<' && line[startCol - 2] === '/') {
+          var openTagRegex = new RegExp('<' + word + '(?:\\s|>)');
+          var match = line.match(openTagRegex);
+          if (match) {
+            var openStart = match.index + 2;
+            if (openStart < startCol) {
+              return {
+                ranges: [new monaco.Range(position.lineNumber, openStart, position.lineNumber, openStart + word.length), new monaco.Range(position.lineNumber, startCol, position.lineNumber, endCol)],
+                wordPattern: /[a-zA-Z0-9:\-_]+/
+              };
             }
-            // Same preference as Ctrl+click, so the file the hover names is
-            // the file the jump would take you to.
-            var r = preferCurrentFile(results, model._mbeditorPath) || results[0];
-            // Only declare as global when the definition is a top-level
-            // (Sprockets-global) declaration in a different file — nested and
-            // member definitions must not get a duplicate declare var.
-            if (r.topLevel && r.file !== model._mbeditorPath) addDiscoveredGlobal(word);
-            var fileRef = r.file + ':' + r.line;
-            var contents = [
-              { value: '```javascript\n' + r.snippet + '\n```', isTrusted: true },
-              { value: '<span style="opacity:0.55;font-size:0.9em;">' + fileRef + '</span>', isTrusted: true, supportHtml: true }
-            ];
-            jsHoverCache[cacheKey] = { ts: Date.now(), contents: contents };
-            return { range: makeHoverRange(), contents: contents };
-          }).catch(function() { return null; });
+          }
+        }
+
+        return null;
+      }
+    };
+
+    monaco.languages.registerLinkedEditingRangeProvider('javascript', genericLinkedProvider);
+    monaco.languages.registerLinkedEditingRangeProvider('typescript', genericLinkedProvider);
+    monaco.languages.registerLinkedEditingRangeProvider('ruby', genericLinkedProvider);
+
+    // Teaches Monaco how to open a file:// resource in this editor. Without it
+    // every provider below can find a location but nothing can go there:
+    // peek-definition, the references widget and Ctrl+hover previews all route
+    // their "open this" through here.
+    monaco.editor.registerEditorOpener({
+      openCodeEditor: function (_source, resource, selectionOrPosition) {
+        // Only file:// resources name a workspace file. Models are created
+        // without an explicit URI, so Monaco gives each one an
+        // `inmemory://model/N` identity — and the TS worker returns exactly
+        // that when a JS definition resolves inside the file you are already
+        // in. Stripping it to a path opened a phantom tab called "57".
+        // Handing those back to Monaco lets it reveal the position in the
+        // current editor, which is what the gesture meant.
+        if (String(resource.scheme || '') !== 'file') return false;
+
+        var path = String(resource.path || '').replace(/^\/+/, '');
+        if (!path || typeof TabManager === 'undefined' || !TabManager.openTab) return false;
+
+        var pos = selectionOrPosition || {};
+        var line = pos.startLineNumber || pos.lineNumber || 1;
+        var col = pos.startColumn || pos.column || 1;
+        TabManager.openTab(path, path.split('/').pop(), line, null, false, col);
+        return true;
       }
     });
 
-    // JS/JSX member completion provider: suggests properties/methods of workspace globals after '.'.
-    // Only looks up PascalCase/mixed-case identifiers or previously discovered globals.
-    var JS_MEMBERS_CACHE_TTL_MS = 60000;
-    monaco.languages.registerCompletionItemProvider('javascript', {
-      triggerCharacters: ['.'],
-      provideCompletionItems: function(model, position) {
-        var line = model.getLineContent(position.lineNumber);
-        var col  = position.column - 2; // index of character just before the '.'
-        var end  = col;
-        while (col >= 0 && /[a-zA-Z0-9_$]/.test(line[col])) col--;
-        var symbol = line.slice(col + 1, end + 1);
-        if (!symbol || symbol.length < 2) return { suggestions: [] };
-        if (!discoveredJsGlobals[symbol] && !/^[A-Z]/.test(symbol)) return { suggestions: [] };
-        if (typeof FileService === 'undefined' || !FileService.getJsMembers) return { suggestions: [] };
+    // ── Prettier formatting providers ────────────────────────────────────────
+    //
+    // `formatOnPaste` has been on by default for a long time and did nothing
+    // outside Ruby: Monaco acts on a paste only through a *range* formatting
+    // provider, and none was registered. Registering one here is what makes
+    // pasted blocks land correctly indented, and what formats the whole thing
+    // when the paste fills an empty file (the pasted range is then the file).
+    //
+    // Prettier's own rangeStart/rangeEnd does the narrowing — it reprints the
+    // smallest enclosing statement and leaves the rest byte-identical, so a
+    // paste in the middle of a file does not reformat the file.
+    var PRETTIER_LANGUAGE_PARSERS = {
+      javascript: 'babel', json: 'json', css: 'css',
+      scss: 'scss', less: 'less', html: 'html', markdown: 'markdown'
+    };
 
-        // Only the raw member list is cached. Suggestions carry the insert
-        // `range`, which is where the completion is about to be written — the
-        // same trap the hover provider's makeHoverRange avoids. Cached
-        // suggestions inserted at the position of the invocation that filled
-        // the cache, so a hit anywhere else in the file was misapplied or
-        // silently dropped by Monaco.
-        function buildSuggestions(members) {
-          return members.map(function(m) {
-            return {
-              label: m.name,
-              kind: monaco.languages.CompletionItemKind.Method,
-              detail: symbol,
-              documentation: m.snippet,
-              insertText: m.name,
-              range: {
-                startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
-                startColumn: position.column, endColumn: position.column
-              }
-            };
-          });
-        }
-
-        var cached = jsMembersCache[symbol];
-        if (cached && (Date.now() - cached.ts) < JS_MEMBERS_CACHE_TTL_MS) {
-          return { suggestions: buildSuggestions(cached.members) };
-        }
-
-        return FileService.getJsMembers(symbol)
-          .then(function(data) {
-            var members = (data && data.members) || [];
-            jsMembersCache[symbol] = { ts: Date.now(), members: members };
-            return { suggestions: buildSuggestions(members) };
-          }).catch(function() { return { suggestions: [] }; });
+    // One edit spanning only what actually changed. A whole-document
+    // replacement would work but throws away the cursor position and collapses
+    // undo, which on every paste is very noticeable.
+    function minimalEdit(model, oldText, newText) {
+      if (oldText === newText) return [];
+      var start = 0;
+      var maxStart = Math.min(oldText.length, newText.length);
+      while (start < maxStart && oldText.charCodeAt(start) === newText.charCodeAt(start)) start++;
+      var oldEnd = oldText.length;
+      var newEnd = newText.length;
+      while (oldEnd > start && newEnd > start && oldText.charCodeAt(oldEnd - 1) === newText.charCodeAt(newEnd - 1)) {
+        oldEnd--;
+        newEnd--;
       }
+      return [{
+        range: monaco.Range.fromPositions(model.getPositionAt(start), model.getPositionAt(oldEnd)),
+        text: newText.slice(start, newEnd)
+      }];
+    }
+
+    function prettierEdits(model, range) {
+      var parser = PRETTIER_LANGUAGE_PARSERS[model.getLanguageId()];
+      if (!parser || typeof runPrettier !== 'function') return Promise.resolve([]);
+
+      var text = model.getValue();
+      var prefs = (typeof EditorStore !== 'undefined' && EditorStore.getState().editorPrefs) || {};
+      var extra = null;
+      if (range) {
+        extra = {
+          rangeStart: model.getOffsetAt({ lineNumber: range.startLineNumber, column: range.startColumn }),
+          rangeEnd: model.getOffsetAt({ lineNumber: range.endLineNumber, column: range.endColumn })
+        };
+      }
+
+      return runPrettier(text, prefs, parser, extra)
+        .then(function (formatted) {
+          // The model can have moved on while Prettier was working.
+          if (model.isDisposed() || model.getValue() !== text) return [];
+          return minimalEdit(model, text, formatted);
+        })
+        // A paste of half an expression will not parse. Leaving it alone is the
+        // right answer — the diagnostics path reports the syntax error.
+        ["catch"](function () { return []; });
+    }
+
+    Object.keys(PRETTIER_LANGUAGE_PARSERS).forEach(function (languageId) {
+      monaco.languages.registerDocumentRangeFormattingEditProvider(languageId, {
+        displayName: 'Prettier',
+        provideDocumentRangeFormattingEdits: function (model, range) {
+          return prettierEdits(model, range);
+        }
+      });
+      monaco.languages.registerDocumentFormattingEditProvider(languageId, {
+        displayName: 'Prettier',
+        provideDocumentFormattingEdits: function (model) {
+          return prettierEdits(model, null);
+        }
+      });
     });
 
     // Vim-style fold-marker folding provider.
@@ -2778,6 +2784,17 @@
         return ranges;
       }
     });
+  }
+
+  function registerGlobalExtensions(monaco) {
+    if (globalsRegistered) return;
+    if (!monaco || !monaco.languages) return;
+
+    globalsRegistered = true;
+
+    registerJsProviders(monaco);
+    registerRubyProviders(monaco);
+    registerGenericProviders(monaco);
   }
 
   window.MbeditorEditorPlugins = {

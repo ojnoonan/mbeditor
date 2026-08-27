@@ -147,10 +147,6 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
-    HISTORY_MAX_OPS        = 10_000
-    HISTORY_COMPACT_TARGET = 5_000
-
-
     # GET /mbeditor/branch_state?branch=... — load per-branch pane state
     def branch_state
       branch = sanitize_branch_name(params[:branch])
@@ -181,20 +177,7 @@ module Mbeditor
 
       local_branches = out.split("\n").map(&:strip).reject(&:empty?)
       pruned = editor_state_service.prune_branch_states(active_branches: local_branches)
-
-      hist_dir = workspace_root.join('tmp', 'mbeditor_history')
-      if File.directory?(hist_dir)
-        Dir.glob(File.join(hist_dir, '*.json')) do |hist_file|
-          data = begin
-            JSON.parse(File.read(hist_file))
-          rescue JSON::ParserError => e
-            Rails.logger.error("[mbeditor] prune_branch_states: skipping corrupt history file #{hist_file}: #{e.message}")
-            nil
-          end
-          next unless data.is_a?(Hash) && data['branch']
-          FileUtils.rm_f(hist_file) unless local_branches.include?(data['branch'])
-        end
-      end
+      file_history_service.prune(active_branches: local_branches)
 
       render json: { pruned: pruned }
     rescue StandardError => e
@@ -209,24 +192,8 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: {}, status: :forbidden unless path
 
-      rel  = relative_path(path)
-      hist = history_file_path(branch, rel)
-      return render json: {} unless File.exist?(hist)
-
-      data = JSON.parse(File.read(hist))
-
-      if data['t']
-        age = Time.now.utc - Time.parse(data['t'])
-        if age > 7 * 24 * 3600
-          FileUtils.rm_f(hist)
-          return render json: {}
-        end
-      end
-
-      render json: { base: data['base'], ops: data['ops'] || [] }
-    rescue JSON::ParserError
-      FileUtils.rm_f(hist) rescue nil
-      render json: {}
+      rel = relative_path(path)
+      render json: file_history_service.read(branch, rel) || {}
     rescue StandardError
       render json: {}
     end
@@ -239,50 +206,19 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: 'Forbidden' }, status: :forbidden unless path
 
-      rel      = relative_path(path)
-      new_ops  = params[:ops]
+      rel     = relative_path(path)
+      new_ops = params[:ops]
       return render json: { error: 'ops must be an array' }, status: :bad_request unless new_ops.is_a?(Array)
       return head :no_content if new_ops.empty?
 
       new_ops_clean = new_ops.map { |op| Array(op).first(5) }
 
-      hist = history_file_path(branch, rel)
-      FileUtils.mkdir_p(File.dirname(hist))
-
-      File.open(hist, File::RDWR | File::CREAT) do |f|
-        flock_exclusive_with_timeout!(f)
-        existing = f.size > 0 ? (JSON.parse(f.read) rescue {}) : {}
-
-        if existing.empty?
-          # An empty base is a legitimate one, and in practice the usual one:
-          # the client starts tracking when the editor mounts, which is before
-          # the file content has arrived, so the load itself is recorded as the
-          # first op against an empty document. Rejecting "" meant the initial
-          # POST for every file 400'd and no history was ever written at all.
-          # Only an absent base is an error.
-          unless params.key?(:base)
-            return render json: { error: 'base required for initial history' }, status: :bad_request
-          end
-
-          base = params[:base].to_s
-          return render json: { error: 'base too large' }, status: :content_too_large if base.bytesize > STATE_MAX_BYTES
-          existing = { 'branch' => branch, 'path' => rel, 'base' => base, 'ops' => [], 't' => Time.now.utc.iso8601 }
-        end
-
-        existing['ops'] = (existing['ops'] || []) + new_ops_clean
-        existing['t']   = Time.now.utc.iso8601
-
-        if existing['ops'].length > HISTORY_MAX_OPS
-          to_compact       = existing['ops'].shift(HISTORY_COMPACT_TARGET)
-          existing['base'] = compact_history_ops(existing['base'], to_compact)
-        end
-
-        f.truncate(0)
-        f.rewind
-        f.write(existing.to_json)
-      end
-
+      file_history_service.append(branch, rel, ops: new_ops_clean, base: params[:base], base_given: params.key?(:base))
       head :no_content
+    rescue FileHistoryService::BaseRequiredError
+      render json: { error: 'base required for initial history' }, status: :bad_request
+    rescue FileHistoryService::BaseTooLargeError
+      render json: { error: 'base too large' }, status: :content_too_large
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -1247,36 +1183,6 @@ module Mbeditor
       raw.start_with?("/") || raw.empty? ? raw : "/#{raw}"
     end
 
-    def history_file_path(branch, rel_path)
-      branch_hash = Digest::SHA256.hexdigest(branch.to_s)[0, 16]
-      file_hash   = Digest::SHA256.hexdigest(rel_path.to_s)[0, 16]
-      workspace_root.join('tmp', 'mbeditor_history', "#{branch_hash}_#{file_hash}.json")
-    end
-
-    def compact_history_ops(base, ops)
-      text = base.to_s
-      ops.each do |op|
-        sl, sc, el, ec, ins = op[0].to_i, op[1].to_i, op[2].to_i, op[3].to_i, op[4].to_s
-        lines = text.split("\n", -1)
-        sl0  = [[sl - 1, 0].max, [lines.length - 1, 0].max].min
-        el0  = [[el - 1, 0].max, [lines.length - 1, 0].max].min
-        sc0  = sc - 1
-        ec0  = ec - 1
-        prefix    = (lines[sl0] || '')[0, sc0] || ''
-        suffix    = (lines[el0] || '')[ec0..] || ''
-        ins_lines = ins.split("\n", -1)
-        new_seg   = if ins_lines.length <= 1
-          [prefix + (ins_lines[0] || '') + suffix]
-        else
-          [prefix + ins_lines[0]] + ins_lines[1..-2] + [ins_lines[-1] + suffix]
-        end
-        text = (lines[0...sl0] + new_seg + lines[(el0 + 1)..]).join("\n")
-      end
-      text
-    rescue StandardError
-      base.to_s
-    end
-
     # structural: false means "these files' contents changed, the tree did not"
     # — a save or a replace-in-files. The client uses it to skip re-walking the
     # whole workspace and rebuilding its quick-open index on every save, which
@@ -1338,17 +1244,8 @@ module Mbeditor
       @editor_state_service ||= EditorStateService.new(workspace_root)
     end
 
-    # Acquire an exclusive lock without blocking forever, so a stuck holder (e.g.
-    # a request paused at a breakpoint mid-write) cannot wedge history saves and
-    # pin a worker indefinitely. Raises on timeout; the caller's rescue turns it
-    # into a fast error response instead of a hang.
-    HISTORY_LOCK_TIMEOUT = 5.0
-    def flock_exclusive_with_timeout!(file, timeout: HISTORY_LOCK_TIMEOUT)
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-      until file.flock(File::LOCK_EX | File::LOCK_NB)
-        raise "could not acquire history lock within #{timeout}s" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
-        sleep 0.01
-      end
+    def file_history_service
+      @file_history_service ||= FileHistoryService.new(workspace_root)
     end
 
     def sanitize_branch_name(branch)
