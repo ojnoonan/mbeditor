@@ -3,7 +3,6 @@
 require "digest"
 require "fileutils"
 require "open3"
-require "shellwords"
 require "tempfile"
 require "timeout"
 require "tmpdir"
@@ -368,6 +367,31 @@ module Mbeditor
       return unless stale?(last_modified: stat.mtime, public: false)
 
       send_file path, disposition: params[:download].present? ? "attachment" : "inline"
+    end
+
+    # GET /mbeditor/archive?paths[]=a&paths[]=b — bundle a multi-selection of
+    # files and directories into one .tar.gz.
+    #
+    # GET, and so exempt from verify_mbeditor_client, for the same reason #raw
+    # is: the client fires it with a synthetic <a download> click, which is a
+    # real browser navigation and cannot carry the X-Mbeditor-Client header.
+    def archive
+      requested = Array(params[:paths]).map(&:to_s).reject(&:blank?)
+      return render json: { error: "No paths given" }, status: :bad_request if requested.empty?
+
+      resolved = requested.map { |p| resolve_path(p) }
+      return render json: { error: "Forbidden" }, status: :forbidden if resolved.any?(&:nil?)
+      unless resolved.all? { |p| File.exist?(p) || File.symlink?(p) }
+        return render json: { error: "Not found" }, status: :not_found
+      end
+
+      name = File.basename(resolved.length == 1 ? resolved.first : workspace_root.to_s)
+      send_data ArchiveService.new(workspace_root).build(resolved),
+                type: "application/gzip", disposition: "attachment", filename: "#{name}.tar.gz"
+    rescue ArchiveService::LimitExceededError => e
+      render json: { error: e.message }, status: :content_too_large
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
     end
 
     # POST /mbeditor/file — save file

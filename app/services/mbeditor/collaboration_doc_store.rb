@@ -147,9 +147,12 @@ module Mbeditor
     end
     private_class_method :evict_idle
 
+    # Only idle rooms are evictable, per the invariant on join: emptying a room
+    # clients still hold content for gets the next opener granted a seed it must
+    # not perform. With every room subscribed the cap is simply exceeded.
     def evict_lru
-      idle = rooms.reject { |_path, room| room[:subscribers].positive? }
-      oldest = (idle.empty? ? rooms : idle).min_by { |_path, room| room[:last_activity] }
+      oldest = rooms.reject { |_path, room| room[:subscribers].positive? }
+                    .min_by { |_path, room| room[:last_activity] }
       rooms.delete(oldest.first) if oldest
     end
     private_class_method :evict_lru

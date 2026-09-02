@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "rubygems/package"
+require "stringio"
+require "zlib"
 
 module Mbeditor
   class EditorsControllerTest < ActionDispatch::IntegrationTest
@@ -1260,6 +1263,131 @@ module Mbeditor
     ensure
       File.unlink(link) if link && File.symlink?(link)
       outside&.close!
+    end
+
+    # ---------------------------------------------------------------------------
+    # archive
+    # ---------------------------------------------------------------------------
+
+    # Unpacks the response body, proving it really is a gzip stream wrapping a
+    # tar. Returns { entry name => contents }.
+    def tar_entries(body)
+      entries = {}
+      Zlib::GzipReader.wrap(StringIO.new(body.b)) do |gz|
+        Gem::Package::TarReader.new(gz) { |tar| tar.each { |e| entries[e.full_name] = e.read.to_s } }
+      end
+      entries
+    end
+
+    test "archive bundles a single file" do
+      get "/mbeditor/archive", params: { paths: ["README.md"] }
+      assert_response :ok
+      assert_equal "application/gzip", response.media_type
+      assert_match(/\Aattachment/, response.headers["Content-Disposition"])
+      assert_match(/README\.md\.tar\.gz/, response.headers["Content-Disposition"])
+      assert_equal({ "README.md" => "# Hello\n" }, tar_entries(response.body))
+    end
+
+    test "archive walks a directory recursively" do
+      FileUtils.mkdir_p(File.join(@workspace, "app", "models", "concerns"))
+      File.write(File.join(@workspace, "app", "models", "concerns", "auditable.rb"), "module Auditable; end\n")
+
+      get "/mbeditor/archive", params: { paths: ["app"] }
+      assert_response :ok
+      assert_equal %w[app/models/concerns/auditable.rb app/models/user.rb],
+                   tar_entries(response.body).keys.sort
+      assert_match(/app\.tar\.gz/, response.headers["Content-Disposition"])
+    end
+
+    test "archive bundles a mix of files and directories" do
+      get "/mbeditor/archive", params: { paths: ["README.md", "app"] }
+      assert_response :ok
+      entries = tar_entries(response.body)
+      assert_equal %w[README.md app/models/user.rb], entries.keys.sort
+      assert_equal "class User; end\n", entries["app/models/user.rb"]
+      # More than one selection, so the archive is named after the workspace.
+      assert_match(/#{File.basename(@workspace)}\.tar\.gz/, response.headers["Content-Disposition"])
+    end
+
+    test "archive refuses a path outside the workspace" do
+      get "/mbeditor/archive", params: { paths: ["README.md", "../secret"] }
+      assert_response :forbidden
+    end
+
+    test "archive returns 404 for a missing path" do
+      get "/mbeditor/archive", params: { paths: ["nope.txt"] }
+      assert_response :not_found
+    end
+
+    test "archive requires at least one path" do
+      get "/mbeditor/archive", params: { paths: [] }
+      assert_response :bad_request
+    end
+
+    test "archive does not follow a symlink pointing outside the workspace" do
+      outside = Tempfile.new("mbeditor_outside_")
+      outside.write("linked content")
+      outside.flush
+      link = File.join(@workspace, "app", "shared_link.txt")
+      File.symlink(outside.path, link)
+
+      get "/mbeditor/archive", params: { paths: ["app"] }
+      assert_response :ok
+      entries = tar_entries(response.body)
+      assert_equal %w[app/models/user.rb], entries.keys
+      refute_includes entries.values.join, "linked content"
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      outside&.close!
+    end
+
+    test "archive of a symlinked directory outside the workspace is empty, not a leak" do
+      outside = Dir.mktmpdir("mbeditor_outside_")
+      File.write(File.join(outside, "secret.txt"), "top secret")
+      link = File.join(@workspace, "linked_dir")
+      File.symlink(outside, link)
+
+      get "/mbeditor/archive", params: { paths: ["linked_dir"] }
+      assert_response :unprocessable_content
+      assert_equal "Nothing to archive", JSON.parse(response.body)["error"]
+    ensure
+      File.unlink(link) if link && File.symlink?(link)
+      FileUtils.rm_rf(outside) if outside
+    end
+
+    test "archive skips excluded directories" do
+      File.write(File.join(@workspace, "tmp", "cache.txt"), "junk")
+      FileUtils.mkdir_p(File.join(@workspace, ".git"))
+      File.write(File.join(@workspace, ".git", "config"), "[core]\n")
+
+      get "/mbeditor/archive", params: { paths: ["."] }
+      assert_response :ok
+      names = tar_entries(response.body).keys
+      assert_includes names, "README.md"
+      assert_includes names, "app/models/user.rb"
+      refute(names.any? { |n| n.start_with?("tmp/", ".git/") }, names.inspect)
+    end
+
+    test "archive refuses a selection over the file-count cap" do
+      dir = File.join(@workspace, "many")
+      FileUtils.mkdir_p(dir)
+      (ArchiveService::MAX_FILES + 1).times { |i| File.write(File.join(dir, "f#{i}.txt"), "x") }
+
+      get "/mbeditor/archive", params: { paths: ["many"] }
+      assert_response :content_too_large
+      assert_equal "Too many files (#{ArchiveService::MAX_FILES + 1}). Limit is #{ArchiveService::MAX_FILES}.",
+                   JSON.parse(response.body)["error"]
+    end
+
+    test "archive refuses a selection over the byte cap" do
+      big = File.join(@workspace, "big.bin")
+      # Sparse: the cap is judged on the reported size, and this keeps the test
+      # from writing 50 MB.
+      File.open(big, "wb") { |f| f.truncate(ArchiveService::MAX_TOTAL_BYTES + 1) }
+
+      get "/mbeditor/archive", params: { paths: ["big.bin"] }
+      assert_response :content_too_large
+      assert_match(/Selection is too large/, JSON.parse(response.body)["error"])
     end
 
     # ---------------------------------------------------------------------------

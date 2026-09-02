@@ -1,6 +1,5 @@
 "use strict";
 
-var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; })();
 
 var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
 
@@ -139,6 +138,195 @@ var DEFAULT_EDITOR_PREFS = {
 // "Convert Indentation to Tabs / to Spaces" commands (F1) cover converting a
 // file that is already open, using its own indentation guesser.
 
+// Settings panel rows, in the order they render. `{ header: ... }` entries
+// are section headings; everything else is a row descriptor consumed by
+// renderSettingsRow. Checkbox default: plain `!!value` unless `def: true`
+// (default checked, `value !== false`) or `strict: true` (`value === true`,
+// used only where the on-state must be exact). Number default: `value || def`
+// unless `nullish: true` (`value != null ? value : def`, needed so 0 is a
+// valid stored value).
+var SETTINGS_ROWS = [
+  { header: 'Appearance' },
+  { key: 'theme', type: 'select', label: 'Theme', title: 'Color theme for the editor', def: 'vs-dark', options: [
+    ['vs-dark', 'Dark'], ['vs', 'Light'], ['hc-black', 'HC Dark'], ['hc-light', 'HC Light'],
+    ['dracula', 'Dracula'], ['night-owl', 'Night Owl'], ['monokai', 'Monokai'], ['nord', 'Nord'],
+    ['github-dark', 'GitHub Dark'], ['tomorrow-night', 'Tomorrow Night'], ['github-light', 'GitHub Light']
+  ] },
+  { key: 'fontSize', type: 'number', label: 'Font size', title: 'Editor font size in pixels (8–32)', min: 8, max: 32, step: 1, def: 13 },
+  { key: 'fontFamily', type: 'text', label: 'Font family', title: 'Font stack used in the editor — the first font available on your system is used', def: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace" },
+  { key: 'lineHeight', type: 'number', label: 'Line height (0=auto)', title: 'Row height in pixels. 0 = auto (roughly font size × 1.5)', min: 0, max: 100, step: 1, def: 0, nullish: true },
+  { key: 'letterSpacing', type: 'number', label: 'Letter spacing (px)', title: 'Extra space between characters in pixels. 0 = default', min: -5, max: 20, step: 0.5, parse: 'float', def: 0, nullish: true },
+
+  { header: 'Indentation' },
+  { key: 'tabSize', type: 'number', label: 'Tab size', title: 'Number of spaces per indentation level (also sets Prettier tab width)', min: 1, max: 8, step: 1, def: 4 },
+  { key: 'insertSpaces', type: 'checkbox', label: 'Use spaces', title: 'Insert spaces instead of tab characters when pressing Tab' },
+
+  { header: 'Editor' },
+  { key: 'wordWrap', type: 'select', label: 'Word wrap', title: 'How long lines are handled — Off: scroll horizontally, On: wrap at viewport width, Column: wrap at a fixed column', def: 'off', options: [
+    ['off', 'Off'], ['on', 'On'], ['wordWrapColumn', 'Column']
+  ] },
+  { key: 'lineNumbers', type: 'select', label: 'Line numbers', title: 'Show line numbers in the gutter — On, Off, or Relative (useful with Vim mode)', def: 'on', options: [
+    ['on', 'On'], ['off', 'Off'], ['relative', 'Relative']
+  ] },
+  { key: 'renderWhitespace', type: 'select', label: 'Whitespace', title: 'Render whitespace characters visually — None, Selection only, Boundary (leading/trailing), or All', def: 'none', options: [
+    ['none', 'None'], ['selection', 'Selection'], ['boundary', 'Boundary'], ['all', 'All']
+  ] },
+  { key: 'minimap', type: 'checkbox', label: 'Minimap', title: 'Show a scaled-down overview of the file on the right edge of the editor' },
+  { key: 'scrollBeyondLastLine', type: 'checkbox', label: 'Scroll past end', title: 'Allow scrolling past the last line so it can be positioned at the top of the viewport' },
+  { key: 'bracketPairColorization', type: 'checkbox', label: 'Bracket colors', title: 'Colorize matching bracket pairs with distinct colors to make nesting easier to read' },
+  { key: 'vimMode', type: 'checkbox', label: 'Vim mode', title: 'Enable Vim keybindings (Normal/Insert/Visual modes). Press Escape to return to Normal mode.' },
+  { key: 'autoClosingBrackets', type: 'select', label: 'Auto-close brackets', title: 'When to insert a matching closing bracket automatically', def: 'always', options: [
+    ['always', 'Always'], ['languageDefined', 'Per language rules'], ['beforeWhitespace', 'Only before whitespace'], ['never', 'Never']
+  ] },
+  { key: 'autoClosingQuotes', type: 'select', label: 'Auto-close quotes', title: 'When to insert a matching closing quote automatically', def: 'always', options: [
+    ['always', 'Always'], ['languageDefined', 'Per language rules'], ['beforeWhitespace', 'Only before whitespace'], ['never', 'Never']
+  ] },
+  { key: 'renderLineHighlight', type: 'select', label: 'Line highlight', title: 'What to highlight on the current editor line', def: 'none', options: [
+    ['none', 'None'], ['gutter', 'Line number only'], ['line', 'Current line background'], ['all', 'Line number + background']
+  ] },
+  { key: 'cursorStyle', type: 'select', label: 'Cursor style', title: 'Shape of the text cursor in the editor', def: 'line', options: [
+    ['line', 'Line (|)'], ['block', 'Block (filled)'], ['underline', 'Underline (_)'],
+    ['line-thin', 'Line thin'], ['block-outline', 'Block outline'], ['underline-thin', 'Underline thin']
+  ] },
+  { key: 'cursorBlinking', type: 'select', label: 'Cursor blinking', title: 'Cursor animation style — Blink (on/off), Smooth (fade), Phase (offset fade), Expand (grow), or Solid (no animation)', def: 'blink', options: [
+    ['blink', 'Blink (on/off)'], ['smooth', 'Smooth (fade)'], ['phase', 'Phase (offset fade)'],
+    ['expand', 'Expand (grow/shrink)'], ['solid', 'Solid (no blink)']
+  ] },
+  { key: 'folding', type: 'checkbox', label: 'Code folding', title: 'Show collapse arrows next to foldable regions (functions, classes, blocks)', def: true },
+  { key: 'smoothScrolling', type: 'checkbox', label: 'Smooth scrolling', title: 'Animate scrolling instead of jumping instantly' },
+  { key: 'mouseWheelZoom', type: 'checkbox', label: 'Ctrl+scroll to zoom', title: 'Hold Ctrl (or Cmd) and scroll the mouse wheel to zoom the font size' },
+
+  { header: 'Behaviour' },
+  { key: 'autoIndent', type: 'select', label: 'Auto indent', title: 'How aggressively the editor re-indents lines as you type', def: 'full', options: [
+    ['none', 'None (disabled)'], ['keep', 'Keep current level'], ['brackets', 'Indent on { and ['],
+    ['advanced', 'Language indent rules'], ['full', 'Full (language grammar)']
+  ] },
+  { key: 'acceptSuggestionOnEnter', type: 'select', label: 'Accept suggestion on Enter', title: 'Whether pressing Enter accepts the highlighted autocomplete suggestion', def: 'on', options: [
+    ['on', 'Always'], ['smart', 'Only when navigated (↑↓)'], ['off', 'Never (Tab only)']
+  ] },
+  { key: 'wordBasedSuggestions', type: 'select', label: 'Word-based suggestions', title: 'Suggest completions based on words already present in open files', def: 'matchingDocuments', options: [
+    ['off', 'Off'], ['currentDocument', 'Current file only'], ['matchingDocuments', 'Same language files'], ['allDocuments', 'All open files']
+  ] },
+  { key: 'formatOnType', type: 'checkbox', label: 'Format on type', title: 'Re-indent and auto-close blocks as you type (e.g. after pressing Enter inside {})', strict: true },
+  { key: 'formatOnSave', type: 'checkbox', label: 'Format on save', title: 'Format the file before every save — RuboCop -A for Ruby, Prettier for JS/JSX/CSS/HTML/Markdown', strict: true },
+  { key: 'quickSuggestions', type: 'checkbox', label: 'Quick suggestions', title: 'Show autocomplete suggestions while typing (not just on trigger characters like .)', def: true },
+
+  { header: 'Formatting' },
+  { key: 'prettierPrintWidth', type: 'number', label: 'Print width', title: 'Prettier: maximum line length before wrapping (40–200)', min: 40, max: 200, step: 1, def: 80, nullish: true },
+  { key: 'prettierTrailingComma', type: 'select', label: 'Trailing commas', title: 'Prettier: add trailing commas in multi-line expressions — All (ES2017+), ES5 (objects/arrays only), or None', def: 'all', options: [
+    ['all', 'All'], ['es5', 'ES5'], ['none', 'None']
+  ] },
+  { key: 'prettierSemi', type: 'checkbox', label: 'Semicolons', title: 'Prettier: add semicolons at the end of statements', def: true },
+  { key: 'prettierSingleQuote', type: 'checkbox', label: 'Single quotes', title: 'Prettier: use single quotes instead of double quotes for strings' },
+  { key: 'prettierBracketSpacing', type: 'checkbox', label: 'Bracket spacing', title: 'Prettier: add spaces inside object literal braces, e.g. { a: 1 } vs {a: 1}', def: true },
+
+  { header: 'Interface' },
+  { key: 'autoRevealInExplorer', type: 'checkbox', label: 'Explorer follows active file', title: 'Automatically scroll the file explorer to reveal and highlight the file you are editing' },
+  { key: 'fileTreeTypeahead', type: 'checkbox', label: 'Explorer type-ahead', title: 'Jump to a file in the explorer by typing its name when the sidebar is focused', def: true },
+  { key: 'showDotFiles', type: 'checkbox', label: 'Show dotfiles', title: 'Show hidden files and directories (those starting with a dot, e.g. .env, .gitignore) in the file explorer' },
+  { key: 'tabDisplayMode', type: 'select', label: 'Tab bar layout', title: 'Scroll: tabs overflow horizontally with a scrollbar; Wrap: tabs flow onto multiple rows', def: 'scroll', options: [
+    ['scroll', 'Scroll'], ['wrap', 'Wrap (multi-row)']
+  ] },
+  { key: 'quickOpenShowFolders', type: 'checkbox', label: 'Quick Open: show folders', title: 'Include folder names in the Quick Open picker (Ctrl+P / Cmd+P) results, not just files' },
+  // The stored preference, not the derived value: at a narrow width the box would
+  // otherwise show as checked and unchecking it would appear to do nothing.
+  { key: 'toolbarIconOnly', type: 'checkbox', label: 'Toolbar: icons only', title: 'Hide toolbar button labels and show only icons, giving more horizontal space' },
+  { key: 'persistFindState', type: 'checkbox', label: 'Persist find state across files', title: 'Keep the search/replace text when switching between files in the editor', def: true },
+  { key: 'branchStateRestore', type: 'checkbox', label: 'Restore tabs on branch switch', title: 'Save which files are open per branch and restore them when switching branches. Disable to always start with a clean slate when switching.', def: true },
+  { key: 'routeHints', type: 'checkbox', label: 'Controller route hints', title: 'Show the verb and path that route to each controller action after its def line, and mark public actions nothing routes to', def: true },
+
+  { header: 'RuboCop' },
+  { key: 'rubocopLintEnabled', type: 'checkbox', label: 'Enable RuboCop linting', title: 'Run RuboCop in the background and show lint warnings/errors as markers in the editor gutter', def: true }
+];
+
+function setEditorPref(setEditorPrefs, key, value) {
+  setEditorPrefs(function(p) {
+    var next = Object.assign({}, p);
+    next[key] = value;
+    return next;
+  });
+}
+
+function renderSettingsRow(desc, editorPrefs, setEditorPrefs) {
+  var raw = editorPrefs[desc.key];
+
+  switch (desc.type) {
+    case 'checkbox': {
+      var checked = desc.strict ? raw === true : (desc.def === true ? raw !== false : !!raw);
+      return React.createElement(
+        'label', { className: 'ide-settings-row ide-settings-row-check', title: desc.title, key: desc.key },
+        React.createElement('span', { className: 'ide-settings-label' }, desc.label),
+        React.createElement('input', {
+          type: 'checkbox',
+          className: 'ide-settings-checkbox',
+          checked: checked,
+          onChange: function(e) { var v = e.target.checked; setEditorPref(setEditorPrefs, desc.key, v); }
+        })
+      );
+    }
+
+    case 'select': {
+      return React.createElement(
+        'label', { className: 'ide-settings-row ide-settings-row-half', title: desc.title, key: desc.key },
+        React.createElement('span', { className: 'ide-settings-label' }, desc.label),
+        React.createElement(
+          'select', {
+            value: raw || desc.def,
+            onChange: function(e) { setEditorPref(setEditorPrefs, desc.key, e.target.value); }
+          },
+          desc.options.map(function(opt) {
+            return React.createElement('option', { value: opt[0], key: opt[0] }, opt[1]);
+          })
+        )
+      );
+    }
+
+    case 'number': {
+      var val = desc.nullish ? (raw != null ? raw : desc.def) : (raw || desc.def);
+      return React.createElement(
+        'label', { className: 'ide-settings-row ide-settings-row-half', title: desc.title, key: desc.key },
+        React.createElement('span', { className: 'ide-settings-label' }, desc.label),
+        React.createElement('input', {
+          key: String(val),
+          type: 'number', min: String(desc.min), max: String(desc.max), step: String(desc.step),
+          className: 'ide-settings-input',
+          defaultValue: val,
+          onChange: function(e) {
+            var v = desc.parse === 'float' ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
+            if (!isNaN(v) && v >= desc.min && v <= desc.max) setEditorPref(setEditorPrefs, desc.key, v);
+          },
+          onBlur: function(e) {
+            var v = desc.parse === 'float' ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
+            if (isNaN(v) || v < desc.min || v > desc.max) e.target.value = String(val);
+          }
+        })
+      );
+    }
+
+    case 'text': {
+      return React.createElement(
+        'label', { className: 'ide-settings-row-full', title: desc.title, key: desc.key },
+        React.createElement('span', { className: 'ide-settings-label' }, desc.label),
+        React.createElement('input', {
+          type: 'text',
+          className: 'ide-settings-input ide-settings-input-wide',
+          value: raw || desc.def,
+          onChange: function(e) { setEditorPref(setEditorPrefs, desc.key, e.target.value); }
+        })
+      );
+    }
+  }
+
+  return null;
+}
+
+function renderSettingsEntry(desc, editorPrefs, setEditorPrefs) {
+  if (desc.header) {
+    return React.createElement('div', { className: 'ide-settings-section-header', key: 'h-' + desc.header }, desc.header);
+  }
+  return renderSettingsRow(desc, editorPrefs, setEditorPrefs);
+}
+
 function diffLines(oldLines, newLines) {
   var n = oldLines.length, m = newLines.length;
   var dp = [];
@@ -191,7 +379,13 @@ var SidebarActionButton = function SidebarActionButton(_ref) {
         className: "project-action-btn" + (danger ? " danger" : ""),
         "aria-label": ariaLabel || title,
         "aria-busy": !!ariaBusy,
-        onClick: onClick,
+        onClick: function (e) {
+          if (onClick) onClick(e);
+          // Clicking leaves the button focused, which keeps the :focus-within
+          // tooltip open until the user clicks elsewhere. Blur to drop it
+          // immediately; a Tab-focused button still shows it on keyboard focus.
+          e.currentTarget.blur();
+        },
         disabled: !!disabled
       },
       !ariaBusy && React.createElement("i", { className: iconClass })
@@ -274,104 +468,87 @@ function FileReloadBanner(_ref) {
 var MbeditorApp = function MbeditorApp() {
   var _useState = useState(EditorStore.getState());
 
-  var _useState2 = _slicedToArray(_useState, 2);
 
-  var state = _useState2[0];
-  var setState = _useState2[1];
+  var state = _useState[0];
+  var setState = _useState[1];
 
   var _useState21 = useState(null);
-  var _useState22 = _slicedToArray(_useState21, 2);
-  var historyPanelPath = _useState22[0];
-  var setHistoryPanelPath = _useState22[1];
+  var historyPanelPath = _useState21[0];
+  var setHistoryPanelPath = _useState21[1];
 
   var _useState23 = useState(false);
-  var _useState24 = _slicedToArray(_useState23, 2);
-  var isNavigating = _useState24[0];
-  var setIsNavigating = _useState24[1];
+  var isNavigating = _useState23[0];
+  var setIsNavigating = _useState23[1];
 
   var _useState25 = useState(false);
-  var _useState26 = _slicedToArray(_useState25, 2);
-  var isReviewOpen = _useState26[0];
-  var setIsReviewOpen = _useState26[1];
+  var isReviewOpen = _useState25[0];
+  var setIsReviewOpen = _useState25[1];
 
   var _useState27 = useState(null);
-  var _useState28 = _slicedToArray(_useState27, 2);
-  var selectedCommit = _useState28[0];
-  var setSelectedCommit = _useState28[1];
+  var selectedCommit = _useState27[0];
+  var setSelectedCommit = _useState27[1];
 
   var _useState29 = useState(null);
-  var _useState30 = _slicedToArray(_useState29, 2);
-  var commitDetailFiles = _useState30[0];
-  var setCommitDetailFiles = _useState30[1];
+  var commitDetailFiles = _useState29[0];
+  var setCommitDetailFiles = _useState29[1];
 
   var _useState4 = useState([]);
 
-  var _useState42 = _slicedToArray(_useState4, 2);
 
-  var treeData = _useState42[0];
-  var setTreeData = _useState42[1];
+  var treeData = _useState4[0];
+  var setTreeData = _useState4[1];
 
   var _useState5 = useState("");
 
-  var _useState52 = _slicedToArray(_useState5, 2);
 
-  var projectRootName = _useState52[0];
-  var setProjectRootName = _useState52[1];
+  var projectRootName = _useState5[0];
+  var setProjectRootName = _useState5[1];
 
   var _useState6 = useState(null);
 
-  var _useState62 = _slicedToArray(_useState6, 2);
 
-  var selectedTreeNode = _useState62[0];
-  var setSelectedTreeNode = _useState62[1];
+  var selectedTreeNode = _useState6[0];
+  var setSelectedTreeNode = _useState6[1];
 
   var _useStateSP = useState(new Set());
-  var _useStateSP2 = _slicedToArray(_useStateSP, 2);
-  var selectedPaths = _useStateSP2[0];
-  var setSelectedPaths = _useStateSP2[1];
+  var selectedPaths = _useStateSP[0];
+  var setSelectedPaths = _useStateSP[1];
 
   var _useState7 = useState("");
 
-  var _useState72 = _slicedToArray(_useState7, 2);
 
-  var searchQuery = _useState72[0];
-  var setSearchQuery = _useState72[1];
+  var searchQuery = _useState7[0];
+  var setSearchQuery = _useState7[1];
 
   var _useState33 = useState(false);
-  var _useState332 = _slicedToArray(_useState33, 2);
-  var searchLoading = _useState332[0];
-  var setSearchLoading = _useState332[1];
+  var searchLoading = _useState33[0];
+  var setSearchLoading = _useState33[1];
 
   var searchRequestIdRef = useRef(0);
 
   var _useState33h = useState(false);
-  var _useState33h2 = _slicedToArray(_useState33h, 2);
-  var searchHasMore = _useState33h2[0];
-  var setSearchHasMore = _useState33h2[1];
+  var searchHasMore = _useState33h[0];
+  var setSearchHasMore = _useState33h[1];
 
   var _useState33tc = useState(0);
-  var _useState33tc2 = _slicedToArray(_useState33tc, 2);
-  var searchTotalCount = _useState33tc2[0];
-  var setSearchTotalCount = _useState33tc2[1];
+  var searchTotalCount = _useState33tc[0];
+  var setSearchTotalCount = _useState33tc[1];
 
   var searchHasMoreRef      = useRef(false);
   var searchOffsetRef       = useRef(0);
   var searchLoadingMoreRef  = useRef(false);
 
   var _useStateRx = useState(false);
-  var _useStateRx2 = _slicedToArray(_useStateRx, 2);
-  var searchUseRegex = _useStateRx2[0];
-  var setSearchUseRegex = _useStateRx2[1];
+  var searchUseRegex = _useStateRx[0];
+  var setSearchUseRegex = _useStateRx[1];
 
   var _useStateMC = useState(false);
-  var _useStateMC2 = _slicedToArray(_useStateMC, 2);
-  var searchMatchCase = _useStateMC2[0];
-  var setSearchMatchCase = _useStateMC2[1];
+  var searchMatchCase = _useStateMC[0];
+  var setSearchMatchCase = _useStateMC[1];
 
   var _useStateWW = useState(false);
-  var _useStateWW2 = _slicedToArray(_useStateWW, 2);
-  var searchWholeWord = _useStateWW2[0];
-  var setSearchWholeWord = _useStateWW2[1];
+  var searchWholeWord = _useStateWW[0];
+  var setSearchWholeWord = _useStateWW[1];
 
   var searchQueryRef = useRef('');
   var searchUseRegexRef = useRef(false);
@@ -395,9 +572,8 @@ var MbeditorApp = function MbeditorApp() {
   // File paths whose match list is folded away. Keyed by path, so a file that
   // scrolls out of the window keeps its state.
   var _useStateSC = useState({});
-  var _useStateSC2 = _slicedToArray(_useStateSC, 2);
-  var searchCollapsedFiles = _useStateSC2[0];
-  var setSearchCollapsedFiles = _useStateSC2[1];
+  var searchCollapsedFiles = _useStateSC[0];
+  var setSearchCollapsedFiles = _useStateSC[1];
   var toggleSearchFile = function toggleSearchFile(file) {
     setSearchCollapsedFiles(function (prev) {
       var next = Object.assign({}, prev);
@@ -406,9 +582,8 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
   var _useStateSV = useState({ scrollTop: 0, height: 0 });
-  var _useStateSV2 = _slicedToArray(_useStateSV, 2);
-  var searchViewport = _useStateSV2[0];
-  var setSearchViewport = _useStateSV2[1];
+  var searchViewport = _useStateSV[0];
+  var setSearchViewport = _useStateSV[1];
 
   // The container's height is only known once it is on screen, and a viewport
   // of 0 would render a single row and never grow — nothing would scroll, so
@@ -441,31 +616,26 @@ var MbeditorApp = function MbeditorApp() {
   }).current;
 
   var _useStateRM = useState(false);
-  var _useStateRM2 = _slicedToArray(_useStateRM, 2);
-  var replaceMode = _useStateRM2[0];
-  var setReplaceMode = _useStateRM2[1];
+  var replaceMode = _useStateRM[0];
+  var setReplaceMode = _useStateRM[1];
 
   var _useStateRQ = useState('');
-  var _useStateRQ2 = _slicedToArray(_useStateRQ, 2);
-  var replaceQuery = _useStateRQ2[0];
-  var setReplaceQuery = _useStateRQ2[1];
+  var replaceQuery = _useStateRQ[0];
+  var setReplaceQuery = _useStateRQ[1];
 
   var _useStateRL = useState(false);
-  var _useStateRL2 = _slicedToArray(_useStateRL, 2);
-  var replaceLoading = _useStateRL2[0];
-  var setReplaceLoading = _useStateRL2[1];
+  var replaceLoading = _useStateRL[0];
+  var setReplaceLoading = _useStateRL[1];
 
   var _useState8 = useState("explorer");
 
-  var _useState82 = _slicedToArray(_useState8, 2);
 
-  var activeSidebarTab = _useState82[0];
-  var setActiveSidebarTab = _useState82[1];
+  var activeSidebarTab = _useState8[0];
+  var setActiveSidebarTab = _useState8[1];
 
   var _useStateSC = useState(false);
-  var _useStateSC2 = _slicedToArray(_useStateSC, 2);
-  var sidebarCollapsed = _useStateSC2[0];
-  var setSidebarCollapsed = _useStateSC2[1];
+  var sidebarCollapsed = _useStateSC[0];
+  var setSidebarCollapsed = _useStateSC[1];
 
   // Ref mirrors for use inside long-lived event handlers registered with
   // empty-dependency effects (live search refresh on files_changed).
@@ -477,130 +647,110 @@ var MbeditorApp = function MbeditorApp() {
   var jsSyntaxCheckAvailableRef = useRef(false);
 
   var _useStateRFMap = useState({});
-  var _useStateRFMap2 = _slicedToArray(_useStateRFMap, 2);
-  var railsFilesMap = _useStateRFMap2[0];
-  var setRailsFilesMap = _useStateRFMap2[1];
+  var railsFilesMap = _useStateRFMap[0];
+  var setRailsFilesMap = _useStateRFMap[1];
 
   var _useStateRFC = useState({});
-  var _useStateRFC2 = _slicedToArray(_useStateRFC, 2);
-  var railsGroupsCollapsed = _useStateRFC2[0];
-  var setRailsGroupsCollapsed = _useStateRFC2[1];
+  var railsGroupsCollapsed = _useStateRFC[0];
+  var setRailsGroupsCollapsed = _useStateRFC[1];
 
   var _useStateChangelog = useState(null); // null | { content, loading, error }
-  var _useStateChangelog2 = _slicedToArray(_useStateChangelog, 2);
-  var changelogState = _useStateChangelog2[0];
-  var setChangelogState = _useStateChangelog2[1];
+  var changelogState = _useStateChangelog[0];
+  var setChangelogState = _useStateChangelog[1];
 
   var _useStateSchemaModal = useState(null);
-  var _useStateSchemaModal2 = _slicedToArray(_useStateSchemaModal, 2);
-  var schemaModal = _useStateSchemaModal2[0];
-  var setSchemaModal = _useStateSchemaModal2[1];
+  var schemaModal = _useStateSchemaModal[0];
+  var setSchemaModal = _useStateSchemaModal[1];
 
   var _useStateImportConflict = useState(null);
-  var _useStateImportConflict2 = _slicedToArray(_useStateImportConflict, 2);
-  var importConflict = _useStateImportConflict2[0];
-  var setImportConflict = _useStateImportConflict2[1];
+  var importConflict = _useStateImportConflict[0];
+  var setImportConflict = _useStateImportConflict[1];
 
   // { initialFolder } while the upload dialog is open, null otherwise.
   var _useStateImportDialog = useState(null);
-  var _useStateImportDialog2 = _slicedToArray(_useStateImportDialog, 2);
-  var importDialog = _useStateImportDialog2[0];
-  var setImportDialog = _useStateImportDialog2[1];
+  var importDialog = _useStateImportDialog[0];
+  var setImportDialog = _useStateImportDialog[1];
 
   var _useStateSchemaLoading = useState(null);
-  var _useStateSchemaLoading2 = _slicedToArray(_useStateSchemaLoading, 2);
-  var schemaLoadingLabel = _useStateSchemaLoading2[0];
-  var setSchemaLoadingLabel = _useStateSchemaLoading2[1];
+  var schemaLoadingLabel = _useStateSchemaLoading[0];
+  var setSchemaLoadingLabel = _useStateSchemaLoading[1];
 
   var _useState9 = useState({});
 
-  var _useState92 = _slicedToArray(_useState9, 2);
 
-  var markers = _useState92[0];
-  var setMarkers = _useState92[1];
+  var markers = _useState9[0];
+  var setMarkers = _useState9[1];
   // { tabId: [] }
 
   var _useState10 = useState({});
 
-  var _useState102 = _slicedToArray(_useState10, 2);
 
-  var loading = _useState102[0];
-  var setLoading = _useState102[1];
+  var loading = _useState10[0];
+  var setLoading = _useState10[1];
 
   var _useState11 = useState(null);
 
-  var _useState112 = _slicedToArray(_useState11, 2);
 
-  var closingTabId = _useState112[0];
-  var setClosingTabId = _useState112[1];
+  var closingTabId = _useState11[0];
+  var setClosingTabId = _useState11[1];
 
   var _useState12 = useState(null);
 
-  var _useState122 = _slicedToArray(_useState12, 2);
 
-  var closingPaneId = _useState122[0];
-  var setClosingPaneId = _useState122[1];
+  var closingPaneId = _useState12[0];
+  var setClosingPaneId = _useState12[1];
 
   var _useState13 = useState(SIDEBAR_MIN_WIDTH);
 
-  var _useState132 = _slicedToArray(_useState13, 2);
 
-  var sidebarWidth = _useState132[0];
-  var setSidebarWidth = _useState132[1];
+  var sidebarWidth = _useState13[0];
+  var setSidebarWidth = _useState13[1];
 
   var _useState14 = useState(50);
 
-  var _useState142 = _slicedToArray(_useState14, 2);
 
-  var pane1Width = _useState142[0];
-  var setPane1Width = _useState142[1];
+  var pane1Width = _useState14[0];
+  var setPane1Width = _useState14[1];
   // percentage
 
   var dragSplitWidthRef = useRef(pane1Width);
 
   var _useState15 = useState(null);
 
-  var _useState152 = _slicedToArray(_useState15, 2);
 
-  var activeResizeMode = _useState152[0];
-  var setActiveResizeMode = _useState152[1];
+  var activeResizeMode = _useState15[0];
+  var setActiveResizeMode = _useState15[1];
 
   var _useState16 = useState(null);
 
-  var _useState162 = _slicedToArray(_useState16, 2);
 
-  var draggedTab = _useState162[0];
-  var setDraggedTab = _useState162[1];
+  var draggedTab = _useState16[0];
+  var setDraggedTab = _useState16[1];
 
   var _useState17 = useState(null);
 
-  var _useState172 = _slicedToArray(_useState17, 2);
 
-  var dragOverPaneId = _useState172[0];
-  var setDragOverPaneId = _useState172[1];
+  var dragOverPaneId = _useState17[0];
+  var setDragOverPaneId = _useState17[1];
 
   var _useState18 = useState(false);
-  var _useState182 = _slicedToArray(_useState18, 2);
-  var showGitPanel = _useState182[0];
-  var setShowGitPanel = _useState182[1];
+  var showGitPanel = _useState18[0];
+  var setShowGitPanel = _useState18[1];
   var showGitPanelRef = useRef(showGitPanel);
   showGitPanelRef.current = showGitPanel;
 
   var _useStateLog = useState(false);
-  var _useStateLog2 = _slicedToArray(_useStateLog, 2);
-  var showLogPanel = _useStateLog2[0];
-  var setShowLogPanel = _useStateLog2[1];
+  var showLogPanel = _useStateLog[0];
+  var setShowLogPanel = _useStateLog[1];
 
   var _useStateProblems = useState(false);
-  var _useStateProblems2 = _slicedToArray(_useStateProblems, 2);
-  var showProblemsPanel = _useStateProblems2[0];
-  var setShowProblemsPanel = _useStateProblems2[1];
+  var showProblemsPanel = _useStateProblems[0];
+  var setShowProblemsPanel = _useStateProblems[1];
 
   // Error/warning tallies across the open tabs, mirrored into the status bar.
   var _useStateProblemCounts = useState({ errors: 0, warnings: 0 });
-  var _useStateProblemCounts2 = _slicedToArray(_useStateProblemCounts, 2);
-  var problemCounts = _useStateProblemCounts2[0];
-  var setProblemCounts = _useStateProblemCounts2[1];
+  var problemCounts = _useStateProblemCounts[0];
+  var setProblemCounts = _useStateProblemCounts[1];
 
   // Below this the toolbar's labelled buttons no longer fit beside the title
   // and the file search, and start pushing each other out of the bar.
@@ -612,9 +762,8 @@ var MbeditorApp = function MbeditorApp() {
     return typeof window.matchMedia === 'function' &&
       window.matchMedia('(max-width: ' + TOOLBAR_LABEL_MIN_WIDTH + 'px)').matches;
   });
-  var _useStateNarrow2 = _slicedToArray(_useStateNarrow, 2);
-  var narrowToolbar = _useStateNarrow2[0];
-  var setNarrowToolbar = _useStateNarrow2[1];
+  var narrowToolbar = _useStateNarrow[0];
+  var setNarrowToolbar = _useStateNarrow[1];
 
   useEffect(function () {
     if (typeof window.matchMedia !== 'function') return;
@@ -634,99 +783,82 @@ var MbeditorApp = function MbeditorApp() {
   // Model graph. Built lazily — generating it eager-loads the host app — and
   // only when the Models tab is opened.
   var _useStateModelGraph = useState(null);
-  var _useStateModelGraph2 = _slicedToArray(_useStateModelGraph, 2);
-  var modelGraph = _useStateModelGraph2[0];
-  var setModelGraph = _useStateModelGraph2[1];
+  var modelGraph = _useStateModelGraph[0];
+  var setModelGraph = _useStateModelGraph[1];
 
   var _useStateModelGraphLoading = useState(false);
-  var _useStateModelGraphLoading2 = _slicedToArray(_useStateModelGraphLoading, 2);
-  var modelGraphLoading = _useStateModelGraphLoading2[0];
-  var setModelGraphLoading = _useStateModelGraphLoading2[1];
+  var modelGraphLoading = _useStateModelGraphLoading[0];
+  var setModelGraphLoading = _useStateModelGraphLoading[1];
 
   var _useState18g = useState(320);
-  var _useState18g2 = _slicedToArray(_useState18g, 2);
-  var gitPanelWidth = _useState18g2[0];
-  var setGitPanelWidth = _useState18g2[1];
+  var gitPanelWidth = _useState18g[0];
+  var setGitPanelWidth = _useState18g[1];
   var gitPanelWidthRef = useRef(gitPanelWidth);
   gitPanelWidthRef.current = gitPanelWidth;
 
   var _useState18h = useState(false);
 
-  var _useState18h2 = _slicedToArray(_useState18h, 2);
 
-  var showHelp = _useState18h2[0];
-  var setShowHelp = _useState18h2[1];
+  var showHelp = _useState18h[0];
+  var setShowHelp = _useState18h[1];
 
   var _useStatePwa = useState(null);
-  var _useStatePwa2 = _slicedToArray(_useStatePwa, 2);
-  var pwaInstallPrompt = _useStatePwa2[0];
-  var setPwaInstallPrompt = _useStatePwa2[1];
+  var pwaInstallPrompt = _useStatePwa[0];
+  var setPwaInstallPrompt = _useStatePwa[1];
 
   var _useState18b = useState(true);
 
-  var _useState18b2 = _slicedToArray(_useState18b, 2);
 
-  var serverOnline = _useState18b2[0];
-  var setServerOnline = _useState18b2[1];
+  var serverOnline = _useState18b[0];
+  var setServerOnline = _useState18b[1];
 
   var _useState18c = useState(false);
 
-  var _useState18c2 = _slicedToArray(_useState18c, 2);
 
-  var rubocopAvailable = _useState18c2[0];
-  var setRubocopAvailable = _useState18c2[1];
+  var rubocopAvailable = _useState18c[0];
+  var setRubocopAvailable = _useState18c[1];
 
   var _useState18d = useState(false);
 
-  var _useState18d2 = _slicedToArray(_useState18d, 2);
 
-  var hamlLintAvailable = _useState18d2[0];
-  var setHamlLintAvailable = _useState18d2[1];
+  var hamlLintAvailable = _useState18d[0];
+  var setHamlLintAvailable = _useState18d[1];
 
   var _useState18e = useState(false);
-  var _useState18e2 = _slicedToArray(_useState18e, 2);
-  var gitAvailable = _useState18e2[0];
-  var setGitAvailable = _useState18e2[1];
+  var gitAvailable = _useState18e[0];
+  var setGitAvailable = _useState18e[1];
 
   var _useState18f = useState(false);
-  var _useState18f2 = _slicedToArray(_useState18f, 2);
-  var redmineEnabled = _useState18f2[0];
-  var setRedmineEnabled = _useState18f2[1];
+  var redmineEnabled = _useState18f[0];
+  var setRedmineEnabled = _useState18f[1];
 
   var _useState18rc = useState(null);
-  var _useState18rc2 = _slicedToArray(_useState18rc, 2);
-  var rubocopConfigPath = _useState18rc2[0];
-  var setRubocopConfigPath = _useState18rc2[1];
+  var rubocopConfigPath = _useState18rc[0];
+  var setRubocopConfigPath = _useState18rc[1];
 
   var _useState18u = useState(null);
-  var _useState18u2 = _slicedToArray(_useState18u, 2);
-  var testResult = _useState18u2[0];
-  var setTestResult = _useState18u2[1];
+  var testResult = _useState18u[0];
+  var setTestResult = _useState18u[1];
 
   var _useState18v = useState(false);
-  var _useState18v2 = _slicedToArray(_useState18v, 2);
-  var testLoading = _useState18v2[0];
-  var setTestLoading = _useState18v2[1];
+  var testLoading = _useState18v[0];
+  var setTestLoading = _useState18v[1];
 
   var _useState18w = useState(true);
-  var _useState18w2 = _slicedToArray(_useState18w, 2);
-  var testInlineVisible = _useState18w2[0];
-  var setTestInlineVisible = _useState18w2[1];
+  var testInlineVisible = _useState18w[0];
+  var setTestInlineVisible = _useState18w[1];
 
   var _useState18x = useState(null);
-  var _useState18x2 = _slicedToArray(_useState18x, 2);
-  var testPanelFile = _useState18x2[0];
-  var setTestPanelFile = _useState18x2[1];
+  var testPanelFile = _useState18x[0];
+  var setTestPanelFile = _useState18x[1];
 
   var _useState18y = useState(false);
-  var _useState18y2 = _slicedToArray(_useState18y, 2);
-  var testPanelOpen = _useState18y2[0];
-  var setTestPanelOpen = _useState18y2[1];
+  var testPanelOpen = _useState18y[0];
+  var setTestPanelOpen = _useState18y[1];
 
   var _useState18p = useState(DEFAULT_EDITOR_PREFS);
-  var _useState18p2 = _slicedToArray(_useState18p, 2);
-  var editorPrefs = _useState18p2[0];
-  var setEditorPrefs = _useState18p2[1];
+  var editorPrefs = _useState18p[0];
+  var setEditorPrefs = _useState18p[1];
 
   // Icon-only toolbar: on by preference, or automatically once the window is
   // too narrow for the labels to fit beside the title and file search.
@@ -737,43 +869,44 @@ var MbeditorApp = function MbeditorApp() {
     projects: false
   });
 
-  var _useState192 = _slicedToArray(_useState19, 2);
 
-  var collapsedSections = _useState192[0];
-  var setCollapsedSections = _useState192[1];
+  var collapsedSections = _useState19[0];
+  var setCollapsedSections = _useState19[1];
 
   var _useState20 = useState({});
 
-  var _useState202 = _slicedToArray(_useState20, 2);
 
-  var expandedDirs = _useState202[0];
-  var setExpandedDirs = _useState202[1];
+  var expandedDirs = _useState20[0];
+  var setExpandedDirs = _useState20[1];
 
   var _useState21 = useState(null);
 
-  var _useState212 = _slicedToArray(_useState21, 2);
 
-  var pendingCreate = _useState212[0];
-  var setPendingCreate = _useState212[1];
+  var pendingCreate = _useState21[0];
+  var setPendingCreate = _useState21[1];
 
   var _useState22 = useState(null);
 
-  var _useState222 = _slicedToArray(_useState22, 2);
 
-  var pendingRename = _useState222[0];
-  var setPendingRename = _useState222[1];
+  var pendingRename = _useState22[0];
+  var setPendingRename = _useState22[1];
 
   var _useState23 = useState(null);
 
-  var _useState232 = _slicedToArray(_useState23, 2);
 
-  var contextMenu = _useState232[0];
-  var setContextMenu = _useState232[1];
+  var contextMenu = _useState23[0];
+  var setContextMenu = _useState23[1];
+  var contextMenuRef = useRef(null);
 
   var _useState24 = useState(140);
-  var _useState242 = _slicedToArray(_useState24, 2);
-  var openEditorsHeight = _useState242[0];
-  var setOpenEditorsHeight = _useState242[1];
+  var openEditorsHeight = _useState24[0];
+  var setOpenEditorsHeight = _useState24[1];
+
+  // One-shot target for post-operation scroll reveal (create/rename/delete).
+  // A fresh object each time so the effect re-fires even for a repeated path.
+  var _useState25 = useState(null);
+  var revealTarget = _useState25[0];
+  var setRevealTarget = _useState25[1];
 
   var resizeSessionRef = useRef(null);
   var resizeRafRef = useRef(null);
@@ -783,9 +916,8 @@ var MbeditorApp = function MbeditorApp() {
   var ctrlWPendingRef = useRef(false);
   var ctrlWTimeoutRef = useRef(null);
   var _useStateCP = useState([]);
-  var _useStateCP2 = _slicedToArray(_useStateCP, 2);
-  var customPaths = _useStateCP2[0];
-  var setCustomPaths = _useStateCP2[1];
+  var customPaths = _useStateCP[0];
+  var setCustomPaths = _useStateCP[1];
   var customPathsRef = useRef([]);
   customPathsRef.current = customPaths;
   // Whether to show the presence chips at all. Read at render rather than held in
@@ -798,33 +930,29 @@ var MbeditorApp = function MbeditorApp() {
   var _useStateIdent = useState(
     typeof CollaborationIdentity !== 'undefined' ? CollaborationIdentity.get() : null
   );
-  var _useStateIdent2 = _slicedToArray(_useStateIdent, 2);
-  var collabIdentity = _useStateIdent2[0];
-  var setCollabIdentity = _useStateIdent2[1];
+  var collabIdentity = _useStateIdent[0];
+  var setCollabIdentity = _useStateIdent[1];
   // Presence roster: other connected participants, keyed by client_id →
   // { name, colour, current_file }. Fed by the global presence stream; rendered
   // as click-to-jump chips in the status bar.
   var _useStateRoster = useState({});
-  var _useStateRoster2 = _slicedToArray(_useStateRoster, 2);
-  var collabRoster = _useStateRoster2[0];
-  var setCollabRoster = _useStateRoster2[1];
+  var collabRoster = _useStateRoster[0];
+  var setCollabRoster = _useStateRoster[1];
 
   // Follow mode (slice 8): the presence client_id of the participant whose file +
   // viewport we're tracking, or null when navigating independently. Toggled from a
   // roster chip. The file-open is driven by the effect below; the scroll-tracking
   // lives in CollaborationService.setFollow().
   var _useStateFollow = useState(null);
-  var _useStateFollow2 = _slicedToArray(_useStateFollow, 2);
-  var followedClientId = _useStateFollow2[0];
-  var setFollowedClientId = _useStateFollow2[1];
+  var followedClientId = _useStateFollow[0];
+  var setFollowedClientId = _useStateFollow[1];
   var recentSavesRef = useRef({});
   var isSavingRef = useRef(false);
   // True once the saved session has finished loading into the panes. Anything
   // that opens a tab on startup must wait for this, or the restore overwrites it.
   var _useStateSR = useState(false);
-  var _useStateSR2 = _slicedToArray(_useStateSR, 2);
-  var sessionRestored = _useStateSR2[0];
-  var setSessionRestored = _useStateSR2[1];
+  var sessionRestored = _useStateSR[0];
+  var setSessionRestored = _useStateSR[1];
   var pendingChangelogRef = useRef(false);
   // path -> the file's content as last seen ON DISK (newline-normalised).
   // External-change detection compares disk-to-disk; comparing disk to the
@@ -884,24 +1012,20 @@ var MbeditorApp = function MbeditorApp() {
   };
 
   var _useState_dro = useState(null);
-  var _useState_dro2 = _slicedToArray(_useState_dro, 2);
-  var draftRestoreOffer = _useState_dro2[0];
-  var setDraftRestoreOffer = _useState_dro2[1];
+  var draftRestoreOffer = _useState_dro[0];
+  var setDraftRestoreOffer = _useState_dro[1];
 
   var _useStateMR = useState(false);
-  var _useStateMR2 = _slicedToArray(_useStateMR, 2);
-  var monacoReady = _useStateMR2[0];
-  var setMonacoReady = _useStateMR2[1];
+  var monacoReady = _useStateMR[0];
+  var setMonacoReady = _useStateMR[1];
 
   var _useStateZen = useState(false);
-  var _useStateZen2 = _slicedToArray(_useStateZen, 2);
-  var zenMode = _useStateZen2[0];
-  var setZenMode = _useStateZen2[1];
+  var zenMode = _useStateZen[0];
+  var setZenMode = _useStateZen[1];
 
   var _useStateSB = useState(false);
-  var _useStateSB2 = _slicedToArray(_useStateSB, 2);
-  var isSwitchingBranch = _useStateSB2[0];
-  var setIsSwitchingBranch = _useStateSB2[1];
+  var isSwitchingBranch = _useStateSB[0];
+  var setIsSwitchingBranch = _useStateSB[1];
 
   var clamp = function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
@@ -953,6 +1077,48 @@ var MbeditorApp = function MbeditorApp() {
       }
       return item;
     });
+  };
+
+  // Finds the children array of parentPath within tree ('' means the root).
+  var findTreeChildren = function findTreeChildren(tree, parentPath) {
+    if (!parentPath) return tree;
+    for (var i = 0; i < tree.length; i++) {
+      var item = tree[i];
+      if (item.path === parentPath && item.type === 'folder') return item.children || [];
+      if (item.type === 'folder' && item.children) {
+        var found = findTreeChildren(item.children, parentPath);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  // Row to reveal after a delete: the next surviving sibling in display
+  // order, else the previous one, else the parent directory. Sorted the same
+  // way FileTree sorts (folders first, then name) so it matches what the
+  // user actually sees.
+  var computeDeleteRevealTarget = function computeDeleteRevealTarget(tree, deletedPaths) {
+    var anchor = deletedPaths[0];
+    var parent = parentDir(anchor);
+    var siblings = findTreeChildren(tree, parent);
+    if (siblings) {
+      var sorted = siblings.concat().sort(function (a, b) {
+        if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      var idx = sorted.findIndex(function (n) { return n.path === anchor; });
+      if (idx >= 0) {
+        var deletedSet = new Set(deletedPaths);
+        var j, k;
+        for (j = idx + 1; j < sorted.length; j++) {
+          if (!deletedSet.has(sorted[j].path)) return sorted[j].path;
+        }
+        for (k = idx - 1; k >= 0; k--) {
+          if (!deletedSet.has(sorted[k].path)) return sorted[k].path;
+        }
+      }
+    }
+    return parent || null;
   };
 
   // Every structural mutation (create, delete, rename, import) funnels through
@@ -1191,9 +1357,7 @@ var MbeditorApp = function MbeditorApp() {
     Promise.all([FileService.getWorkspace()["catch"](function () {
       return null;
     }), refreshProjectTree()]).then(function (_ref) {
-      var _ref2 = _slicedToArray(_ref, 1);
-
-      var workspace = _ref2[0];
+      var workspace = _ref[0];
 
       if (workspace && workspace.rootName) {
         setProjectRootName(workspace.rootName);
@@ -2178,6 +2342,7 @@ var MbeditorApp = function MbeditorApp() {
     }
 
     if (save) {
+      tab = _freshTab(closingPaneId, tab);
       if (tab.isUntitled) {
         // Save-as converts the scratch tab to a real one (closing the scratch
         // tab in the process); a cancelled prompt keeps the tab open.
@@ -2801,9 +2966,8 @@ var MbeditorApp = function MbeditorApp() {
   // chips sit against the right edge of the titlebar and a left-anchored card
   // would run off screen.
   var _useStateHover = useState(null);
-  var _useStateHover2 = _slicedToArray(_useStateHover, 2);
-  var collabHover = _useStateHover2[0];
-  var setCollabHover = _useStateHover2[1];
+  var collabHover = _useStateHover[0];
+  var setCollabHover = _useStateHover[1];
 
   var openCollabHover = function (cid, e) {
     var r = e.currentTarget.getBoundingClientRect();
@@ -2813,8 +2977,7 @@ var MbeditorApp = function MbeditorApp() {
   // Latency and last-seen only need to tick while the card is actually on screen,
   // so the interval lives and dies with it. Idle cost stays zero.
   var _useStateHoverTick = useState(0);
-  var _useStateHoverTick2 = _slicedToArray(_useStateHoverTick, 2);
-  var setCollabHoverTick = _useStateHoverTick2[1];
+  var setCollabHoverTick = _useStateHoverTick[1];
   useEffect(function () {
     if (!collabHover) return;
     var id = setInterval(function () { setCollabHoverTick(function (n) { return n + 1; }); }, 1000);
@@ -2847,15 +3010,13 @@ var MbeditorApp = function MbeditorApp() {
 
   // Phase 7: Per-file last-commit info shown in the status bar
   var _useState31 = useState(null);
-  var _useState32 = _slicedToArray(_useState31, 2);
-  var activeFileCommit = _useState32[0];
-  var setActiveFileCommit = _useState32[1];
+  var activeFileCommit = _useState31[0];
+  var setActiveFileCommit = _useState31[1];
 
   // EOL indicator — tracks current line-ending style of the active file
   var _useState31e = useState(null);
-  var _useState31e2 = _slicedToArray(_useState31e, 2);
-  var activeEOL = _useState31e2[0];
-  var setActiveEOL = _useState31e2[1];
+  var activeEOL = _useState31e[0];
+  var setActiveEOL = _useState31e[1];
 
   useEffect(function () {
     if (!gitAvailable || !activeTab || activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCommitGraph || !activeTab.path || activeTab.path.indexOf('://') >= 0) {
@@ -3941,21 +4102,75 @@ var MbeditorApp = function MbeditorApp() {
       });
   };
 
-  // Downloads go straight through /raw?download=1 — the browser's own save
-  // flow, so nothing is buffered client-side and a 5 MB file costs no memory.
-  // A synthetic anchor rather than location.href: navigating away from the
-  // editor to an attachment response leaves the page in a half-unloaded state
-  // in Safari.
+  // /raw stays a bare anchor for the single-file case — nothing buffered
+  // client-side. /archive can fail with a JSON error body a plain anchor
+  // navigation can't see, so that path goes through fetch instead.
+  // Right-clicking a node inside a multi-selection acts on the whole selection;
+  // right-clicking outside it acts on that node alone. The standard file-manager
+  // rule, and why FileTree's onContextMenu stopped collapsing the set. Every
+  // menu action that can operate on more than one path asks this.
+  var actsOnSelection = function actsOnSelection(node) {
+    return !!(node && selectedPaths && selectedPaths.size > 1 && selectedPaths.has(node.path));
+  };
+
   var handleDownloadFile = function handleDownloadFile(node) {
-    if (!node || node.type !== 'file') return;
-    var link = document.createElement('a');
-    link.href = window.mbeditorBasePath() + '/raw?download=1&path=' + encodeURIComponent(node.path);
-    link.download = node.name;
-    link.rel = 'noopener';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    EditorStore.setStatus('Downloading ' + node.name + '...', 'info');
+    if (!node) return;
+    var isMultiSelect = actsOnSelection(node);
+    if (!isMultiSelect && node.type === 'file') {
+      var link = document.createElement('a');
+      link.href = window.mbeditorBasePath() + '/raw?download=1&path=' + encodeURIComponent(node.path);
+      link.download = node.name;
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      EditorStore.setStatus('Downloading ' + node.name + '...', 'info');
+      return;
+    }
+    var paths = isMultiSelect ? Array.from(selectedPaths) : [node.path];
+    var url = window.mbeditorBasePath() + '/archive?' + paths.map(function (p) {
+      return 'paths[]=' + encodeURIComponent(p);
+    }).join('&');
+    fetch(url).then(function (resp) {
+      if (!resp.ok) {
+        return resp.json().catch(function () { return {}; }).then(function (body) {
+          var message = (body && body.error) || ('HTTP ' + resp.status);
+          EditorStore.setStatus('Download failed: ' + message, 'error');
+        });
+      }
+      var disposition = resp.headers.get('Content-Disposition');
+      var match = disposition && disposition.match(/filename="([^"]+)"/);
+      var filename = (match && match[1]) || 'archive.tar.gz';
+      return resp.blob().then(function (blob) {
+        var objectUrl = URL.createObjectURL(blob);
+        var archiveLink = document.createElement('a');
+        archiveLink.href = objectUrl;
+        archiveLink.download = filename;
+        archiveLink.rel = 'noopener';
+        document.body.appendChild(archiveLink);
+        archiveLink.click();
+        document.body.removeChild(archiveLink);
+        // Revoking in the same tick can free the blob before the browser has
+        // started reading it, which cancels the download instead of saving it.
+        setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 60000);
+        EditorStore.setStatus('Downloading ' + filename + '...', 'info');
+      });
+    }).catch(function (err) {
+      EditorStore.setStatus('Download failed: ' + (err && err.message || 'network error'), 'error');
+    });
+  };
+
+  var downloadMenuLabel = function downloadMenuLabel(node) {
+    if (!node) return 'Download';
+    if (actsOnSelection(node)) return 'Download ' + selectedPaths.size + ' items';
+    if (node.type === 'folder') return 'Download folder';
+    return 'Download';
+  };
+
+  // Deleting is irreversible, so the item has to say how much it will take —
+  // "Delete" over a 3-item selection would understate it.
+  var deleteMenuLabel = function deleteMenuLabel(node) {
+    return actsOnSelection(node) ? 'Delete ' + selectedPaths.size + ' items' : 'Delete';
   };
 
   // A file node means "upload alongside this file", so the dialog opens on its
@@ -3977,12 +4192,17 @@ var MbeditorApp = function MbeditorApp() {
 
   var openContextMenu = function openContextMenu(e, node) {
     setContextMenu({ x: e.clientX, y: e.clientY, node: node });
-    handleNodeSelect(node);
+    if (!actsOnSelection(node)) handleNodeSelect(node);
   };
 
   var closeContextMenu = function closeContextMenu() {
     return setContextMenu(null);
   };
+
+  // Clamp into view whenever the menu opens at a new position.
+  useEffect(function () {
+    if (contextMenu) window.clampMenuIntoView(contextMenuRef.current);
+  }, [contextMenu]);
 
   var handleContextMenuAction = function handleContextMenuAction(action) {
     var node = contextMenu && contextMenu.node;
@@ -4207,6 +4427,7 @@ var MbeditorApp = function MbeditorApp() {
     // Optimistically insert the new node so the tree doesn't flash empty while waiting for the server
     var optimisticNode = { path: path, name: name, type: type === 'folder' ? 'folder' : 'file', children: type === 'folder' ? [] : undefined };
     setTreeData(function (prev) { return insertNodeIntoTree(prev, parentPath, optimisticNode); });
+    setRevealTarget({ path: path });
 
     if (type === 'file') {
       setLoading(function (prev) {
@@ -4337,6 +4558,7 @@ var MbeditorApp = function MbeditorApp() {
       EditorStore.setStatus('Renamed to: ' + renamedPath, 'success');
       return refreshProjectTree().then(function () {
         GitService.fetchStatusLite({ background: true });
+        setRevealTarget({ path: renamedPath });
       });
     })["catch"](function (err) {
       var message = err && err.response && err.response.data && err.response.data.error || err.message;
@@ -4353,10 +4575,12 @@ var MbeditorApp = function MbeditorApp() {
   };
 
   var handleDeletePath = function handleDeletePath(targetNode) {
-    // If a specific node is provided (e.g. from context menu), delete just that.
-    // Otherwise delete all paths in the multi-selection (or fall back to selectedTreeNode).
+    // A node from the context menu deletes just that node — unless it is part
+    // of a live multi-selection, in which case the whole selection goes, the
+    // same rule Download follows. With no node (the toolbar button) it is
+    // always the selection, falling back to selectedTreeNode.
     var pathsToDelete;
-    if (targetNode !== undefined && targetNode) {
+    if (targetNode && !actsOnSelection(targetNode)) {
       pathsToDelete = [targetNode.path];
     } else if (selectedPaths && selectedPaths.size > 0) {
       pathsToDelete = Array.from(selectedPaths);
@@ -4380,6 +4604,10 @@ var MbeditorApp = function MbeditorApp() {
     var confirmed = window.confirm('Delete ' + label + '? This cannot be undone.');
     if (!confirmed) return;
 
+    // Computed against the pre-delete tree, since the deleted paths' siblings
+    // are only known before the tree is refreshed.
+    var deleteRevealTarget = computeDeleteRevealTarget(treeData, pathsToDelete);
+
     setLoading(function (prev) {
       return _extends({}, prev, { deletePath: true });
     });
@@ -4398,6 +4626,7 @@ var MbeditorApp = function MbeditorApp() {
       }
       return refreshProjectTree().then(function () {
         GitService.fetchStatusLite({ background: true });
+        if (failures.length === 0 && deleteRevealTarget) setRevealTarget({ path: deleteRevealTarget });
       });
     })["finally"](function () {
       setLoading(function (prev) {
@@ -5178,6 +5407,7 @@ var MbeditorApp = function MbeditorApp() {
               activePath: editorPrefs.autoRevealInExplorer !== false ? (activeTab && activeTab.path) : null,
               selectedPaths: selectedPaths,
               anchorPath: selectedTreePath,
+              revealTarget: revealTarget,
               onNodeSelect: handleNodeSelect,
               onMultiSelect: handleMultiSelect,
               onMove: handleMoveNodes,
@@ -5651,563 +5881,9 @@ var MbeditorApp = function MbeditorApp() {
                   React.createElement(
                     'div',
                     { className: 'ide-settings-body' },
-
-                    /* ── Appearance ──────────────────────────────── */
-                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Appearance'),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Color theme for the editor' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Theme'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.theme || 'vs-dark',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { theme: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'vs-dark' }, 'Dark'),
-                        React.createElement('option', { value: 'vs' }, 'Light'),
-                        React.createElement('option', { value: 'hc-black' }, 'HC Dark'),
-                        React.createElement('option', { value: 'hc-light' }, 'HC Light'),
-                        React.createElement('option', { value: 'dracula' }, 'Dracula'),
-                        React.createElement('option', { value: 'night-owl' }, 'Night Owl'),
-                        React.createElement('option', { value: 'monokai' }, 'Monokai'),
-                        React.createElement('option', { value: 'nord' }, 'Nord'),
-                        React.createElement('option', { value: 'github-dark' }, 'GitHub Dark'),
-                        React.createElement('option', { value: 'tomorrow-night' }, 'Tomorrow Night'),
-                        React.createElement('option', { value: 'github-light' }, 'GitHub Light')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Editor font size in pixels (8–32)' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Font size'),
-                      React.createElement('input', {
-                        key: String(editorPrefs.fontSize || 13),
-                        type: 'number', min: '8', max: '32', step: '1',
-                        className: 'ide-settings-input',
-                        defaultValue: editorPrefs.fontSize || 13,
-                        onChange: function(e) {
-                          var v = parseInt(e.target.value, 10);
-                          if (v >= 8 && v <= 32) setEditorPrefs(function(p) { return Object.assign({}, p, { fontSize: v }); });
-                        },
-                        onBlur: function(e) {
-                          var v = parseInt(e.target.value, 10);
-                          if (isNaN(v) || v < 8 || v > 32) e.target.value = String(editorPrefs.fontSize || 13);
-                        }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row-full', title: 'Font stack used in the editor — the first font available on your system is used' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Font family'),
-                      React.createElement('input', {
-                        type: 'text',
-                        className: 'ide-settings-input ide-settings-input-wide',
-                        value: editorPrefs.fontFamily || "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
-                        onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { fontFamily: e.target.value }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Row height in pixels. 0 = auto (roughly font size × 1.5)' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Line height (0=auto)'),
-                      React.createElement('input', {
-                        key: String(editorPrefs.lineHeight != null ? editorPrefs.lineHeight : 0),
-                        type: 'number', min: '0', max: '100', step: '1',
-                        className: 'ide-settings-input',
-                        defaultValue: editorPrefs.lineHeight != null ? editorPrefs.lineHeight : 0,
-                        onChange: function(e) {
-                          var v = parseInt(e.target.value, 10);
-                          if (!isNaN(v) && v >= 0 && v <= 100) setEditorPrefs(function(p) { return Object.assign({}, p, { lineHeight: v }); });
-                        },
-                        onBlur: function(e) {
-                          var v = parseInt(e.target.value, 10);
-                          if (isNaN(v) || v < 0 || v > 100) e.target.value = String(editorPrefs.lineHeight != null ? editorPrefs.lineHeight : 0);
-                        }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Extra space between characters in pixels. 0 = default' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Letter spacing (px)'),
-                      React.createElement('input', {
-                        key: String(editorPrefs.letterSpacing != null ? editorPrefs.letterSpacing : 0),
-                        type: 'number', min: '-5', max: '20', step: '0.5',
-                        className: 'ide-settings-input',
-                        defaultValue: editorPrefs.letterSpacing != null ? editorPrefs.letterSpacing : 0,
-                        onChange: function(e) {
-                          var v = parseFloat(e.target.value);
-                          if (!isNaN(v) && v >= -5 && v <= 20) setEditorPrefs(function(p) { return Object.assign({}, p, { letterSpacing: v }); });
-                        },
-                        onBlur: function(e) {
-                          var v = parseFloat(e.target.value);
-                          if (isNaN(v) || v < -5 || v > 20) e.target.value = String(editorPrefs.letterSpacing != null ? editorPrefs.letterSpacing : 0);
-                        }
-                      })
-                    ),
-
-                    /* ── Indentation (unified editor + Prettier) ── */
-                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Indentation'),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Number of spaces per indentation level (also sets Prettier tab width)' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Tab size'),
-                      React.createElement('input', {
-                        key: String(editorPrefs.tabSize || 4),
-                        type: 'number', min: '1', max: '8', step: '1',
-                        className: 'ide-settings-input',
-                        defaultValue: editorPrefs.tabSize || 4,
-                        onChange: function(e) {
-                          var v = parseInt(e.target.value, 10);
-                          if (v >= 1 && v <= 8) setEditorPrefs(function(p) { return Object.assign({}, p, { tabSize: v }); });
-                        },
-                        onBlur: function(e) {
-                          var v = parseInt(e.target.value, 10);
-                          if (isNaN(v) || v < 1 || v > 8) e.target.value = String(editorPrefs.tabSize || 4);
-                        }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Insert spaces instead of tab characters when pressing Tab' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Use spaces'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!(editorPrefs.insertSpaces),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { insertSpaces: v }); }); }
-                      })
-                    ),
-
-                    /* ── Editor ──────────────────────────────────── */
-                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Editor'),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'How long lines are handled — Off: scroll horizontally, On: wrap at viewport width, Column: wrap at a fixed column' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Word wrap'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.wordWrap || 'off',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { wordWrap: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'off' }, 'Off'),
-                        React.createElement('option', { value: 'on' }, 'On'),
-                        React.createElement('option', { value: 'wordWrapColumn' }, 'Column')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Show line numbers in the gutter — On, Off, or Relative (useful with Vim mode)' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Line numbers'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.lineNumbers || 'on',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { lineNumbers: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'on' }, 'On'),
-                        React.createElement('option', { value: 'off' }, 'Off'),
-                        React.createElement('option', { value: 'relative' }, 'Relative')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Render whitespace characters visually — None, Selection only, Boundary (leading/trailing), or All' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Whitespace'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.renderWhitespace || 'none',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { renderWhitespace: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'none' }, 'None'),
-                        React.createElement('option', { value: 'selection' }, 'Selection'),
-                        React.createElement('option', { value: 'boundary' }, 'Boundary'),
-                        React.createElement('option', { value: 'all' }, 'All')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Show a scaled-down overview of the file on the right edge of the editor' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Minimap'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!(editorPrefs.minimap),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { minimap: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Allow scrolling past the last line so it can be positioned at the top of the viewport' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Scroll past end'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!(editorPrefs.scrollBeyondLastLine),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { scrollBeyondLastLine: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Colorize matching bracket pairs with distinct colors to make nesting easier to read' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Bracket colors'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!(editorPrefs.bracketPairColorization),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { bracketPairColorization: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Enable Vim keybindings (Normal/Insert/Visual modes). Press Escape to return to Normal mode.' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Vim mode'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!(editorPrefs.vimMode),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { vimMode: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'When to insert a matching closing bracket automatically' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Auto-close brackets'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.autoClosingBrackets || 'always',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { autoClosingBrackets: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'always' }, 'Always'),
-                        React.createElement('option', { value: 'languageDefined' }, 'Per language rules'),
-                        React.createElement('option', { value: 'beforeWhitespace' }, 'Only before whitespace'),
-                        React.createElement('option', { value: 'never' }, 'Never')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'When to insert a matching closing quote automatically' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Auto-close quotes'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.autoClosingQuotes || 'always',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { autoClosingQuotes: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'always' }, 'Always'),
-                        React.createElement('option', { value: 'languageDefined' }, 'Per language rules'),
-                        React.createElement('option', { value: 'beforeWhitespace' }, 'Only before whitespace'),
-                        React.createElement('option', { value: 'never' }, 'Never')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'What to highlight on the current editor line' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Line highlight'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.renderLineHighlight || 'none',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { renderLineHighlight: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'none' }, 'None'),
-                        React.createElement('option', { value: 'gutter' }, 'Line number only'),
-                        React.createElement('option', { value: 'line' }, 'Current line background'),
-                        React.createElement('option', { value: 'all' }, 'Line number + background')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Shape of the text cursor in the editor' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Cursor style'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.cursorStyle || 'line',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { cursorStyle: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'line' }, 'Line (|)'),
-                        React.createElement('option', { value: 'block' }, 'Block (filled)'),
-                        React.createElement('option', { value: 'underline' }, 'Underline (_)'),
-                        React.createElement('option', { value: 'line-thin' }, 'Line thin'),
-                        React.createElement('option', { value: 'block-outline' }, 'Block outline'),
-                        React.createElement('option', { value: 'underline-thin' }, 'Underline thin')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Cursor animation style — Blink (on/off), Smooth (fade), Phase (offset fade), Expand (grow), or Solid (no animation)' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Cursor blinking'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.cursorBlinking || 'blink',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { cursorBlinking: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'blink' }, 'Blink (on/off)'),
-                        React.createElement('option', { value: 'smooth' }, 'Smooth (fade)'),
-                        React.createElement('option', { value: 'phase' }, 'Phase (offset fade)'),
-                        React.createElement('option', { value: 'expand' }, 'Expand (grow/shrink)'),
-                        React.createElement('option', { value: 'solid' }, 'Solid (no blink)')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Show collapse arrows next to foldable regions (functions, classes, blocks)' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Code folding'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: editorPrefs.folding !== false,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { folding: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Animate scrolling instead of jumping instantly' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Smooth scrolling'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!(editorPrefs.smoothScrolling),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { smoothScrolling: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Hold Ctrl (or Cmd) and scroll the mouse wheel to zoom the font size' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Ctrl+scroll to zoom'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!(editorPrefs.mouseWheelZoom),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { mouseWheelZoom: v }); }); }
-                      })
-                    ),
-
-                    /* ── Behaviour ───────────────────────────────── */
-                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Behaviour'),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'How aggressively the editor re-indents lines as you type' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Auto indent'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.autoIndent || 'full',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { autoIndent: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'none' }, 'None (disabled)'),
-                        React.createElement('option', { value: 'keep' }, 'Keep current level'),
-                        React.createElement('option', { value: 'brackets' }, 'Indent on { and ['),
-                        React.createElement('option', { value: 'advanced' }, 'Language indent rules'),
-                        React.createElement('option', { value: 'full' }, 'Full (language grammar)')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Whether pressing Enter accepts the highlighted autocomplete suggestion' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Accept suggestion on Enter'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.acceptSuggestionOnEnter || 'on',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { acceptSuggestionOnEnter: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'on' }, 'Always'),
-                        React.createElement('option', { value: 'smart' }, 'Only when navigated (↑↓)'),
-                        React.createElement('option', { value: 'off' }, 'Never (Tab only)')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Suggest completions based on words already present in open files' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Word-based suggestions'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.wordBasedSuggestions || 'matchingDocuments',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { wordBasedSuggestions: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'off' }, 'Off'),
-                        React.createElement('option', { value: 'currentDocument' }, 'Current file only'),
-                        React.createElement('option', { value: 'matchingDocuments' }, 'Same language files'),
-                        React.createElement('option', { value: 'allDocuments' }, 'All open files')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Re-indent and auto-close blocks as you type (e.g. after pressing Enter inside {})' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Format on type'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: editorPrefs.formatOnType === true,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { formatOnType: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Format the file before every save — RuboCop -A for Ruby, Prettier for JS/JSX/CSS/HTML/Markdown' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Format on save'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: editorPrefs.formatOnSave === true,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { formatOnSave: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Show autocomplete suggestions while typing (not just on trigger characters like .)' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Quick suggestions'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: editorPrefs.quickSuggestions !== false,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { quickSuggestions: v }); }); }
-                      })
-                    ),
-
-                    /* ── Formatting (Prettier) ───────────────────── */
-                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Formatting'),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Prettier: maximum line length before wrapping (40–200)' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Print width'),
-                      React.createElement('input', {
-                        key: String(editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80),
-                        type: 'number', min: '40', max: '200', step: '1',
-                        className: 'ide-settings-input',
-                        defaultValue: editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80,
-                        onChange: function(e) {
-                          var v = parseInt(e.target.value, 10);
-                          if (v >= 40 && v <= 200) setEditorPrefs(function(p) { return Object.assign({}, p, { prettierPrintWidth: v }); });
-                        },
-                        onBlur: function(e) {
-                          var v = parseInt(e.target.value, 10);
-                          if (isNaN(v) || v < 40 || v > 200) e.target.value = String(editorPrefs.prettierPrintWidth != null ? editorPrefs.prettierPrintWidth : 80);
-                        }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Prettier: add trailing commas in multi-line expressions — All (ES2017+), ES5 (objects/arrays only), or None' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Trailing commas'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.prettierTrailingComma || 'all',
-                          onChange: function(e) { setEditorPrefs(function(p) { return Object.assign({}, p, { prettierTrailingComma: e.target.value }); }); }
-                        },
-                        React.createElement('option', { value: 'all' }, 'All'),
-                        React.createElement('option', { value: 'es5' }, 'ES5'),
-                        React.createElement('option', { value: 'none' }, 'None')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Prettier: add semicolons at the end of statements' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Semicolons'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: editorPrefs.prettierSemi !== false,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { prettierSemi: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: "Prettier: use single quotes instead of double quotes for strings" },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Single quotes'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!editorPrefs.prettierSingleQuote,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { prettierSingleQuote: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Prettier: add spaces inside object literal braces, e.g. { a: 1 } vs {a: 1}' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Bracket spacing'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: editorPrefs.prettierBracketSpacing !== false,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { prettierBracketSpacing: v }); }); }
-                      })
-                    ),
-
-                    /* ── Interface ───────────────────────────────── */
-                    React.createElement('div', { className: 'ide-settings-section-header' }, 'Interface'),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Automatically scroll the file explorer to reveal and highlight the file you are editing' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Explorer follows active file'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!(editorPrefs.autoRevealInExplorer),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { autoRevealInExplorer: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Jump to a file in the explorer by typing its name when the sidebar is focused' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Explorer type-ahead'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!(editorPrefs.fileTreeTypeahead !== false),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { fileTreeTypeahead: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Show hidden files and directories (those starting with a dot, e.g. .env, .gitignore) in the file explorer' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Show dotfiles'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!(editorPrefs.showDotFiles),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { showDotFiles: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-half', title: 'Scroll: tabs overflow horizontally with a scrollbar; Wrap: tabs flow onto multiple rows' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Tab bar layout'),
-                      React.createElement(
-                        'select', {
-                          value: editorPrefs.tabDisplayMode || 'scroll',
-                          onChange: function(e) { var v = e.target.value; setEditorPrefs(function(p) { return Object.assign({}, p, { tabDisplayMode: v }); }); }
-                        },
-                        React.createElement('option', { value: 'scroll' }, 'Scroll'),
-                        React.createElement('option', { value: 'wrap' }, 'Wrap (multi-row)')
-                      )
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Include folder names in the Quick Open picker (Ctrl+P / Cmd+P) results, not just files' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Quick Open: show folders'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: !!(editorPrefs.quickOpenShowFolders),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { quickOpenShowFolders: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Hide toolbar button labels and show only icons, giving more horizontal space' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Toolbar: icons only'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        // The stored preference, not the derived value: at a
-                        // narrow width the box would otherwise show as checked
-                        // and unchecking it would appear to do nothing.
-                        checked: !!(editorPrefs.toolbarIconOnly),
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { toolbarIconOnly: v }); }); }
-                      })
-                    ),
-
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Keep the search/replace text when switching between files in the editor' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Persist find state across files'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: editorPrefs.persistFindState !== false,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { persistFindState: v }); }); }
-                      })
-                    ),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Save which files are open per branch and restore them when switching branches. Disable to always start with a clean slate when switching.' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Restore tabs on branch switch'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: editorPrefs.branchStateRestore !== false,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { branchStateRestore: v }); }); }
-                      })
-                    ),
-
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Show the verb and path that route to each controller action after its def line, and mark public actions nothing routes to' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Controller route hints'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: editorPrefs.routeHints !== false,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { routeHints: v }); }); }
-                      })
-                    ),
-
-                    /* ── RuboCop ─────────────────────────────────── */
-                    React.createElement('div', { className: 'ide-settings-section-header' }, 'RuboCop'),
-                    React.createElement(
-                      'label', { className: 'ide-settings-row ide-settings-row-check', title: 'Run RuboCop in the background and show lint warnings/errors as markers in the editor gutter' },
-                      React.createElement('span', { className: 'ide-settings-label' }, 'Enable RuboCop linting'),
-                      React.createElement('input', {
-                        type: 'checkbox',
-                        className: 'ide-settings-checkbox',
-                        checked: editorPrefs.rubocopLintEnabled !== false,
-                        onChange: function(e) { var v = e.target.checked; setEditorPrefs(function(p) { return Object.assign({}, p, { rubocopLintEnabled: v }); }); }
-                      })
-                    ),
+                    SETTINGS_ROWS.map(function(desc) {
+                      return renderSettingsEntry(desc, editorPrefs, setEditorPrefs);
+                    }),
                     rubocopAvailable && rubocopConfigPath ? React.createElement(
                       'div', { className: 'ide-settings-row ide-settings-row-link' },
                       React.createElement('span', { className: 'ide-settings-label' }, 'Config file'),
@@ -6786,6 +6462,7 @@ var MbeditorApp = function MbeditorApp() {
         "div",
         {
           className: "context-menu",
+          ref: contextMenuRef,
           style: { left: contextMenu.x, top: contextMenu.y },
           onClick: function (e) {
             return e.stopPropagation();
@@ -6830,16 +6507,16 @@ var MbeditorApp = function MbeditorApp() {
               return handleContextMenuAction('delete');
             } },
           React.createElement("i", { className: "far fa-trash-alt context-menu-icon" }),
-          " Delete"
+          " " + deleteMenuLabel(contextMenu.node)
         ),
         React.createElement("div", { className: "context-menu-divider" }),
-        contextMenu.node && contextMenu.node.type === 'file' && React.createElement(
+        contextMenu.node && React.createElement(
           "div",
           { className: "context-menu-item", onClick: function () {
               return handleContextMenuAction('download');
             } },
           React.createElement("i", { className: "fas fa-download context-menu-icon" }),
-          " Download"
+          " " + downloadMenuLabel(contextMenu.node)
         ),
         React.createElement(
           "div",

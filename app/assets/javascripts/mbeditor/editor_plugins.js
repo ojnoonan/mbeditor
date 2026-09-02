@@ -239,10 +239,41 @@
   // Same-URI addExtraLib replaces content in place; that is how both layers
   // refresh.
   var PROGRAM_VISIBLE_KINDS = { 'var': 1, 'let': 1, 'const': 1, 'function': 1, 'class': 1 };
-  var programPaths = {}; // workspace-relative path -> true, for the filter above
+  // workspace-relative path -> { content, lib }, where lib is the addExtraLib
+  // disposable or null while the file is open. Presence is what the filter
+  // above reads: an open file is still in the program, supplied by its model.
+  var programPaths = {};
 
   function programUri(path) {
     return 'file:///' + String(path).replace(/^\/+/, '');
+  }
+
+  // An open file reaches the program twice — as its live Monaco model and as
+  // this extraLib — and TypeScript reads that as two declarations of everything
+  // at its top level, so a lone `const x` in an open .jsx reports TS2451
+  // against itself. The model is the edited copy, so it wins and the extraLib
+  // stands down until the model is disposed.
+  function syncProgramLib(monaco, path) {
+    var entry = programPaths[path];
+    if (!entry) return;
+    var open = monaco.editor.getModels().some(function (m) {
+      return m._mbeditorPath === path && !m.isDisposed();
+    });
+    if (open && entry.lib) {
+      entry.lib.dispose();
+      entry.lib = null;
+    } else if (!open && !entry.lib) {
+      entry.lib = monaco.languages.typescript.javascriptDefaults
+        .addExtraLib(entry.content, programUri(path));
+    }
+  }
+
+  function setProgramFile(monaco, path, content) {
+    var entry = programPaths[path];
+    if (!entry) entry = programPaths[path] = { content: content, lib: null };
+    entry.content = content;
+    if (entry.lib) { entry.lib.dispose(); entry.lib = null; }
+    syncProgramLib(monaco, path);
   }
 
   function loadWorkspaceProgram(monaco) {
@@ -255,8 +286,7 @@
           if (!data || !data.ok || !data.files) return;
           data.files.forEach(function (f) {
             if (!f || typeof f.content !== 'string' || !f.path) return;
-            programPaths[f.path] = true;
-            mts.javascriptDefaults.addExtraLib(f.content, programUri(f.path));
+            setProgramFile(monaco, f.path, f.content);
           });
           if (data.skipped && data.skipped.length && window.console) {
             console.info('[mbeditor] ' + data.fileCount + ' source files (' +
@@ -322,8 +352,7 @@
     })).then(function (responses) {
       responses.forEach(function (data) {
         if (!data || !data.ok || !data.file) return;
-        programPaths[data.file.path] = true;
-        mts.javascriptDefaults.addExtraLib(data.file.content, programUri(data.file.path));
+        setProgramFile(monaco, data.file.path, data.file.content);
       });
     });
   }
@@ -1176,6 +1205,22 @@
       // supply, loaded once now.
       loadWorkspaceProgram(monaco);
 
+      // Opening or closing a file moves it between the two halves of the
+      // program — see syncProgramLib. Deferred a tick because _mbeditorPath is
+      // stamped on the model after createModel returns, and because a disposing
+      // model is still live when the event fires.
+      var _syncPending = false;
+      var syncProgram = function () {
+        if (_syncPending) return;
+        _syncPending = true;
+        setTimeout(function () {
+          _syncPending = false;
+          Object.keys(programPaths).forEach(function (p) { syncProgramLib(monaco, p); });
+        }, 0);
+      };
+      monaco.editor.onDidCreateModel(syncProgram);
+      monaco.editor.onWillDisposeModel(syncProgram);
+
       // On a change: refresh just the touched files' program entries, and
       // re-run the (cheap, cached) globals scan. The whole tree is never
       // re-sent — see refreshProgramPaths.
@@ -1220,16 +1265,29 @@
       //     Downgraded to Warning below and auto-resolved against the workspace,
       //     since host-app globals are invisible to the language service.
       //   • 6133 "declared but never read" — a lint. Downgraded to Warning.
+      //   • 2451 "Cannot redeclare block-scoped variable" and 2300 "Duplicate
+      //     identifier", but only when the file collides with itself — see
+      //     isSelfRedeclaration. Two `const`s or two `class`es of one name in
+      //     one file is a SyntaxError under every module system, so this is not
+      //     a guess about types at all.
       //   • anything below Error severity — hints and suggestions render faint
       //     and cost nothing, so they pass through untouched.
       //
-      // Deliberately dropped along with the type errors: 2300 "Duplicate
-      // identifier" and 2403 "Subsequent variable declarations…", which are
-      // structural false positives in the Sprockets model — every open file
-      // shares one global script context, so a component in file_a.jsx looks
-      // like a redeclaration once file_b.jsx is open, and the ambient
-      // `declare var Foo: any` from workspace-globals.d.ts collides with the
-      // real `function Foo()` when its defining file is open.
+      // Deliberately dropped along with the type errors: 2403 "Subsequent
+      // variable declarations…", the code TypeScript reaches for when a
+      // declaration collides with a `var`. Every ambient name this module
+      // synthesizes is a `declare var`, so it fires against our own `.d.ts`
+      // files: typing `function Foo()` into an open file collides with the
+      // `declare var Foo: any` that workspace-globals.d.ts still holds until
+      // the next save. That ambient collision reaches 2300 too, which is what
+      // the two-site rule below exists to tell apart — measured on the sample
+      // workspace after the extraLib suppression above, a real duplicate emits
+      // 2300 at both sites and the ambient one emits it at one.
+      //
+      // 2393 "Duplicate function implementation" is kept under the same rule.
+      // Redeclaring a plain `function` is legal JS and TypeScript rightly says
+      // nothing, but it does emit 2393 for a class that declares one method
+      // twice — where the second silently wins and the first is dead code.
       //
       // .ts/.tsx keeps full checking: there the types are hand-written, so a
       // type error is a statement about code the author actually wrote.
@@ -1253,7 +1311,8 @@
       // which is a working idiom. That is the arbitrary-inference category
       // this filter exists to keep out.
       var JS_CALL_CODES = { '2554': true, '2769': true, '2741': true, '2322': true };
-      var JS_KEEP_CODES  = { '2304': true, '6133': true, '2554': true, '2769': true, '2741': true, '2322': true };
+      var JS_KEEP_CODES  = { '2304': true, '6133': true, '2554': true, '2769': true, '2741': true, '2322': true, '2451': true, '2300': true, '2393': true };
+      var JS_DUP_CODES   = { '2451': true, '2300': true, '2393': true };
       var JS_SYNTAX_CODE = /^(?:1\d{3}|17\d{3})$/;
       var JS_WARN_CODES  = { '2304': true, '6133': true, '2554': true, '2769': true, '2741': true, '2322': true };
       var TS_WARN_CODES  = { '6133': true };
@@ -1278,10 +1337,41 @@
         return monaco.MarkerSeverity.Error;
       }
 
-      function keepJsMarker(marker) {
+      // TypeScript flags every colliding declaration site, so a file that really
+      // does declare a name twice gets one marker per site — identical message,
+      // different position. A lone one means the other declaration is elsewhere:
+      // an ambient `.d.ts` this module synthesizes, or a workspace file that
+      // shares a top-level name and is never loaded alongside this one. Neither
+      // is the author's mistake, and neither is visible any other way — Monaco
+      // drops the relatedInformation naming the other file, because it resolves
+      // to no open model.
+      //
+      // The rule is under-inclusive for `function`, never wrong: redeclaring one
+      // is legal JS, so TypeScript says nothing unless the name ALSO has an
+      // ambient declaration, at which point it reports 2300 at both sites and
+      // this keeps them. `function Foo(){}` twice therefore underlines when Foo
+      // is a workspace global and stays quiet otherwise. Both are real
+      // duplicates; only the quiet half is missed.
+      //
+      // This is also the only thing keeping diff tabs quiet. DiffViewer builds
+      // two more javascript models per diff, and every javascript model joins
+      // the one program, so opening a diff of a file that is also open makes
+      // each side collide with the live model — measured, one raw 2451 on the
+      // live model per diff pane. One occurrence, so the rule drops it. Relaxing
+      // the two-site test, or adding a duplicate code to JS_KEEP_CODES without
+      // adding it to JS_DUP_CODES, lights every diff tab up with false errors.
+      function isSelfRedeclaration(marker, markers) {
+        var code = String(marker.code);
+        return markers.filter(function (m) {
+          return String(m.code) === code && m.message === marker.message;
+        }).length > 1;
+      }
+
+      function keepJsMarker(marker, markers) {
         if (marker.severity !== monaco.MarkerSeverity.Error) return true;
         var code = String(marker.code == null ? '' : marker.code);
-        return JS_KEEP_CODES[code] === true || JS_SYNTAX_CODE.test(code);
+        if (JS_KEEP_CODES[code] !== true && !JS_SYNTAX_CODE.test(code)) return false;
+        return !JS_DUP_CODES[code] || isSelfRedeclaration(marker, markers);
       }
 
       // A 2304 whose span is an assignment TARGET (`foo = 1` with no
@@ -1326,7 +1416,7 @@
               var markers = (entry.owner === 'javascript' && jsMarkers && jsMarkers[uri.toString()]) ||
                 monaco.editor.getModelMarkers({ resource: uri, owner: entry.owner });
               var patched = markers.filter(function(m) {
-                return entry.keep ? entry.keep(m) : true;
+                return entry.keep ? entry.keep(m, markers) : true;
               }).map(function(m) {
                 var code = String(m.code);
                 if (!entry.warn[code]) return m;

@@ -72,6 +72,12 @@ var CollaborationService = (function () {
   // ever on the other end of that CRDT.
   var _peerPresent = false;
   var _availabilityListeners = [];
+  var _published = false;
+  var _dropTimer = null;
+  // Long enough to cover a peer reloading their tab, and no longer. Presence is
+  // broadcast on a 5s roster, so anything under that expires before the roster
+  // could have reported the peer back and the grace buys nothing.
+  var PEER_DROP_GRACE = 10000;
 
   function _globalsReady() {
     return typeof window.Y !== 'undefined' &&
@@ -107,17 +113,39 @@ var CollaborationService = (function () {
     refreshAvailability();
   }
 
-  function refreshAvailability() {
-    var available = isAvailable();
+  function _publishAvailability(available) {
     // No longer collaborating: close every room so the editor returns to solo
     // behaviour — persistent undo and external-change detection both key off
     // there being no live binding.
     if (!available && Object.keys(_rooms).length) {
       Object.keys(_rooms).forEach(function (path) { leaveRoom(path); });
     }
+    _published = available;
     _availabilityListeners.slice().forEach(function (fn) {
       try { fn(available); } catch (e) { /* a bad listener must not stop the rest */ }
     });
+  }
+
+  function refreshAvailability() {
+    var available = isAvailable();
+    if (available && _dropTimer) { clearTimeout(_dropTimer); _dropTimer = null; }
+    // A peer normally "leaves" because their tab reloaded or the cable blinked.
+    // Acting on that immediately tears every room down AND rebuilds every open
+    // editor — EditorPanel's mount effect depends on this value — losing the
+    // cursor, selection and scroll position. Hold the previous value until the
+    // drop has lasted PEER_DROP_GRACE. `_published` only decides whether we are on
+    // a falling edge; it never suppresses a publish, so the current value still
+    // goes out on every roster message.
+    if (!available && _published) {
+      if (!_dropTimer) {
+        _dropTimer = setTimeout(function () {
+          _dropTimer = null;
+          if (!isAvailable()) _publishAvailability(false);
+        }, PEER_DROP_GRACE);
+      }
+      available = true;
+    }
+    _publishAvailability(available);
   }
 
   // Every condition collaboration depends on, reported separately.
@@ -359,12 +387,21 @@ var CollaborationService = (function () {
 
   function _maybeAttach(room) {
     if (room.binding || !room.synced || !room.attachRequested || !room.model) return;
-    // Shared doc still empty and the seed was granted to another client: its
-    // content is on its way. Binding now would hand the model to an empty Y.Text
-    // and wipe the buffer, so wait for the first doc_update (or the fallback
-    // timer, which lets the natively-loaded content stand).
-    if (room.text.length === 0 && !room.seedGranted && room.model.getValue().length > 0) return;
+    // Nobody may attach to an empty shared doc except the seed grantee, and only
+    // once its own disk content has arrived. Binding to an empty Y.Text wipes the
+    // buffer, and a client that attaches empty reports consumesDiskLoad() false —
+    // so when its content lands EditorPanel pushes the whole file through the live
+    // binding at offset 0, and two clients doing that concatenate the file into
+    // itself. Wait for the first doc_update, contentReady(), or the fallback timer.
+    if (room.text.length === 0 && !(room.seedGranted && room.model.getValue().length > 0)) return;
     _doAttach(room);
+  }
+
+  // The disk content for a path has landed in the model. A room that deferred
+  // above with an empty model can now seed the shared doc from it.
+  function contentReady(path) {
+    var room = _rooms[path];
+    if (room) _maybeAttach(room);
   }
 
   function _doAttach(room) {
@@ -396,7 +433,13 @@ var CollaborationService = (function () {
     // editors added later get an equivalent caret writer from us.
     room.boundEditor = room.editor || null;
     if (room.boundEditor) room.editors.add(room.boundEditor);
+    // The binding's constructor calls model.setValue() whenever the model differs
+    // from the converged text, which resets cursor, selection and scroll — the
+    // "it jumped to the other person's position" symptom. Put the viewport back.
+    var preValue = model.getValue();
+    var preView = room.boundEditor ? room.boundEditor.saveViewState() : null;
     room.binding = new window.MonacoBinding(room.text, model, room.editors, room.awareness);
+    if (preView && model.getValue() !== preValue) room.boundEditor.restoreViewState(preView);
 
     if (room.awareness) _initAwareness(room);
 
@@ -794,6 +837,7 @@ var CollaborationService = (function () {
     unbindEditor: unbindEditor,
     leaveRoom: leaveRoom,
     consumesDiskLoad: consumesDiskLoad,
+    contentReady: contentReady,
     isBound: isBound,
     isAttached: isAttached,
     pushSnapshot: pushSnapshot,

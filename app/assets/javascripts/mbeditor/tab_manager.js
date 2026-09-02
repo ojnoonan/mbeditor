@@ -145,10 +145,12 @@ var TabManager = (function () {
     });
   }
 
-  // Single slot holding "where the cursor was before the last jump".
-  // PageUp/PageDown swap the cursor between this slot and its current spot.
-  // ponytail: two-position cycle, upgrade to a real back/forward stack if asked
-  var _jumpOrigin = null;
+  // Back/forward navigation history: every real jump or file change pushes
+  // an entry; PageUp/PageDown walk it like browser back/forward.
+  var _navStack = [];
+  var _navIndex = -1;
+  var _navigating = false;
+  var NAV_STACK_MAX = 50;
 
   function _snapshotPosition() {
     var editor = window.__mbeditorActiveEditor;
@@ -161,19 +163,40 @@ var TabManager = (function () {
     return { path: tab.path, name: tab.name, line: pos.lineNumber, col: pos.column };
   }
 
-  function toggleJumpOrigin() {
-    var target = _jumpOrigin;
-    if (!target) return;
-    // openTab re-snapshots the current position into _jumpOrigin below,
-    // which is exactly the swap we want.
-    openTab(target.path, target.name, target.line, null, false, target.col);
+  // Truncates any forward entries, then pushes. Skips a push that would
+  // duplicate the current top entry's path+line, and is a no-op entirely
+  // while a navigateBack/navigateForward-driven openTab is replaying.
+  function _pushNavEntry(entry) {
+    if (_navigating || !entry || !entry.path) return;
+    if (_navIndex > -1) _navStack = _navStack.slice(0, _navIndex + 1);
+    var top = _navStack[_navStack.length - 1];
+    if (top && top.path === entry.path && top.line === entry.line) return;
+    _navStack.push(entry);
+    if (_navStack.length > NAV_STACK_MAX) _navStack.shift();
+    _navIndex = _navStack.length - 1;
   }
+
+  // Refreshing the entry we are leaving from the live cursor is what makes
+  // going back land where you actually were, not where the entry was created.
+  function _navigate(step) {
+    var next = _navIndex + step;
+    if (_navIndex < 0 || next < 0 || next >= _navStack.length) return;
+    var live = _snapshotPosition();
+    if (live) _navStack[_navIndex] = live;
+    _navIndex = next;
+    var target = _navStack[next];
+    _navigating = true;
+    try { openTab(target.path, target.name, target.line, null, false, target.col); }
+    finally { _navigating = false; }
+  }
+
+  function navigateBack() { _navigate(-1); }
+  function navigateForward() { _navigate(1); }
 
   // col/endCol are the 1-based bounds of the thing being jumped to. Pass both
   // and the editor selects it, leaving the cursor at its end; pass col alone
   // and it just parks the cursor there.
   function openTab(path, name, line, forcePaneId, isSoftOpen, col, endCol) {
-    if (line) _jumpOrigin = _snapshotPosition() || _jumpOrigin;
     var state = EditorStore.getState();
     var paneId = forcePaneId || state.focusedPaneId;
     var pane = state.panes.find(function(p) { return p.id === paneId; });
@@ -189,13 +212,14 @@ var TabManager = (function () {
 
     if (!pane) return;
 
+    _pushNavEntry({ path: path, name: name, line: line || null, col: col || null });
     _recordRecentFile(path, name);
 
     var existing = pane.tabs.find(function(t) { return t.path === path; });
 
     if (existing) {
       if (line) _updateTab(paneId, path, { gotoLine: line, gotoCol: col || null, gotoEndCol: endCol || null });
-      switchTab(paneId, path);
+      _switchTab(paneId, path);
       if (_isMarkdownPath(path)) {
         _ensureMarkdownPreview(paneId, path, existing.name || name, existing.content || "");
       }
@@ -230,6 +254,7 @@ var TabManager = (function () {
     });
 
     EditorStore.setState({ panes: newPanes, focusedPaneId: paneId, activeTabId: path });
+    _promoteMru(paneId, path);
 
     // Virtual paths (diff://, combined-diff://) should never hit the file endpoint
     if (path.indexOf('diff://') === 0 || path.indexOf('combined-diff://') === 0) {
@@ -426,6 +451,7 @@ var TabManager = (function () {
     if (typeof HistoryService !== 'undefined') {
       HistoryService.flushForPath(path);
     }
+    _removeMru(paneId, path);
     var state = EditorStore.getState();
     var newPanes = state.panes.map(function(pane) {
       if (pane.id === paneId) {
@@ -433,7 +459,13 @@ var TabManager = (function () {
         var newTabs = pane.tabs.filter(function(t) { return t.id !== path; });
         var newActive = pane.activeTabId;
         if (pane.activeTabId === path) {
-          newActive = newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null;
+          // Reactivate the tab the user was actually last in, not just the rightmost one.
+          var mruList = _mru[paneId] || [];
+          var mruPick = null;
+          for (var i = 0; i < mruList.length; i++) {
+            if (newTabs.some(function(t) { return t.id === mruList[i]; })) { mruPick = mruList[i]; break; }
+          }
+          newActive = mruPick || (newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null);
         }
         return Object.assign({}, pane, { tabs: newTabs, activeTabId: newActive });
       }
@@ -528,13 +560,43 @@ var TabManager = (function () {
     });
   }
 
-  function switchTab(paneId, path) {
+  // Most-recently-used tab ids per pane, most-recent first. Lets closeTab
+  // reactivate the tab the user was actually last in, not just the rightmost one.
+  var _mru = {};
+  var MRU_MAX = 20;
+
+  function _promoteMru(paneId, tabId) {
+    if (!tabId) return;
+    var list = _mru[paneId] || (_mru[paneId] = []);
+    var idx = list.indexOf(tabId);
+    if (idx !== -1) list.splice(idx, 1);
+    list.unshift(tabId);
+    if (list.length > MRU_MAX) list.length = MRU_MAX;
+  }
+
+  function _removeMru(paneId, tabId) {
+    var list = _mru[paneId];
+    if (!list) return;
+    var idx = list.indexOf(tabId);
+    if (idx !== -1) list.splice(idx, 1);
+  }
+
+  function _switchTab(paneId, path) {
     var state = EditorStore.getState();
     var newPanes = state.panes.map(function(p) {
       if (p.id === paneId) return Object.assign({}, p, { activeTabId: path });
       return p;
     });
     EditorStore.setState({ panes: newPanes, focusedPaneId: paneId, activeTabId: path });
+    _promoteMru(paneId, path);
+  }
+
+  function switchTab(paneId, path) {
+    _switchTab(paneId, path);
+    var state = EditorStore.getState();
+    var pane = state.panes.find(function(p) { return p.id === paneId; });
+    var tab = pane && pane.tabs.find(function(t) { return t.id === path; });
+    _pushNavEntry({ path: path, name: tab ? tab.name : null, line: null, col: null });
   }
 
   function focusPane(paneId) {
@@ -755,7 +817,8 @@ var TabManager = (function () {
     reorderTabInPane: reorderTabInPane,
     moveTabToPane: moveTabToPane,
     clearGotoLine: clearGotoLine,
-    toggleJumpOrigin: toggleJumpOrigin,
+    navigateBack: navigateBack,
+    navigateForward: navigateForward,
     closeAllTabsInPane: closeAllTabsInPane,
     closeOtherTabsInPane: closeOtherTabsInPane,
     closeSavedTabsInPane: closeSavedTabsInPane,

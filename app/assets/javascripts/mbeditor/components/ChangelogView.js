@@ -7,100 +7,80 @@
 (function() {
   var _React = React;
   var useEffect = _React.useEffect;
+  var useState = _React.useState;
 
-  // ---------------------------------------------------------------------------
-  // Lightweight markdown → React elements renderer, tuned for CHANGELOG format.
-  // Handles: h1/h2/h3, bullet lists, blank lines, horizontal rules, inline **bold**.
-  // ---------------------------------------------------------------------------
-  function parseInline(text) {
-    // Split on **bold** markers and return a mixed array of strings + bold spans.
-    var parts = text.split(/\*\*([^*]+)\*\*/g);
-    return parts.map(function(part, i) {
-      return i % 2 === 1
-        ? React.createElement('strong', { key: i }, part)
-        : part;
-    });
-  }
+  var SECTION_ICONS = { Added: 'fas fa-plus-circle', Fixed: 'fas fa-wrench', Changed: 'fas fa-exchange-alt', Removed: 'fas fa-minus-circle', Performance: 'fas fa-bolt', Tests: 'fas fa-vial', Security: 'fas fa-shield-alt' };
+  // Shared with EditorPanel.js's markdown preview, which renders untrusted
+  // workspace files through the same marked renderer. One definition on
+  // purpose: this is the allow-list that keeps `javascript:` out of an href,
+  // and a second copy is how one of them silently stops matching the other.
+  var SAFE_HREF_SCHEME = /^(https?:|mailto:|#|\/)/i;
 
-  function renderMarkdown(markdown) {
-    var lines = markdown.split('\n');
-    var elements = [];
-    var listBuffer = [];
-    var key = 0;
+  window.mbeditorEscapeHtml = function escapeHtml(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  };
 
-    function flushList() {
-      if (!listBuffer.length) return;
-      elements.push(React.createElement(
-        'ul', { key: 'ul' + key++, className: 'changelog-list' },
-        listBuffer.slice()
-      ));
-      listBuffer = [];
-    }
+  window.mbeditorSafeHref = function safeHref(href) {
+    if (!href) return href;
+    return SAFE_HREF_SCHEME.test(href.trim()) ? href : '#';
+  };
 
-    lines.forEach(function(line) {
-      // H1
-      if (/^# /.test(line)) {
-        flushList();
-        elements.push(React.createElement('h1', { key: key++, className: 'changelog-h1' }, line.slice(2).trim()));
-        return;
-      }
-      // H2 — version line, e.g. "## [0.7.0] - 2026-05-21"
-      if (/^## /.test(line)) {
-        flushList();
-        var raw = line.slice(3).trim();
-        // Parse "[X.Y.Z] - DATE" or "[Unreleased]..." patterns
-        var vMatch = raw.match(/^\[([^\]]+)\](?:\s*-\s*(.+))?/);
-        if (vMatch) {
-          elements.push(React.createElement(
-            'div', { key: key++, className: 'changelog-version-row' },
-            React.createElement('span', { className: 'changelog-version-badge' }, vMatch[1]),
-            vMatch[2] && React.createElement('span', { className: 'changelog-version-date' }, vMatch[2].trim())
-          ));
-        } else {
-          elements.push(React.createElement('div', { key: key++, className: 'changelog-version-row' },
-            React.createElement('span', { className: 'changelog-version-badge' }, raw)
-          ));
-        }
-        return;
-      }
-      // H3 — section name, e.g. "### Added"
-      if (/^### /.test(line)) {
-        flushList();
-        var section = line.slice(4).trim();
-        var iconMap = { Added: 'fas fa-plus-circle', Fixed: 'fas fa-wrench', Changed: 'fas fa-exchange-alt', Removed: 'fas fa-minus-circle', Performance: 'fas fa-bolt', Tests: 'fas fa-vial', Security: 'fas fa-shield-alt' };
-        var iconClass = iconMap[section] || 'fas fa-tag';
-        elements.push(React.createElement(
-          'div', { key: key++, className: 'changelog-section changelog-section-' + section.toLowerCase() },
-          React.createElement('i', { className: iconClass }),
-          ' ',
-          section
-        ));
-        return;
-      }
-      // Horizontal rule
-      if (/^---+$/.test(line.trim())) {
-        flushList();
-        elements.push(React.createElement('hr', { key: key++, className: 'changelog-rule' }));
-        return;
-      }
-      // Bullet list item
-      if (/^- /.test(line)) {
-        listBuffer.push(React.createElement('li', { key: key++ }, parseInline(line.slice(2).trim())));
-        return;
-      }
-      // Blank line
-      if (line.trim() === '') {
-        flushList();
-        return;
-      }
-      // Plain paragraph (links, prose)
-      flushList();
-      if (/^\[.+\]: /.test(line)) return; // skip reference-style link defs
-      elements.push(React.createElement('p', { key: key++, className: 'changelog-p' }, parseInline(line.trim())));
-    });
+  var escapeHtml = window.mbeditorEscapeHtml;
+  var safeHref = window.mbeditorSafeHref;
 
-    flushList();
-    return elements;
+  // Custom marked.Renderer() that layers the changelog's bespoke presentation
+  // (version badges on H2, section icons on H3) over marked's own HTML, plus
+  // the same link/image href scheme allow-list EditorPanel.js uses. marked's
+  // Renderer methods here take positional args (href, title, text) — not the
+  // token objects EditorPanel.js's override checks for — so that override is
+  // effectively a no-op against the vendored marked build; this one uses the
+  // signature marked actually calls.
+  function buildRenderer() {
+    var renderer = new window.marked.Renderer();
+
+    renderer.heading = function(text, level) {
+      if (level === 2) {
+        var vMatch = text.match(/^\[([^\]]+)\](?:\s*-\s*(.+))?/);
+        var badge = vMatch ? vMatch[1] : text;
+        var date = vMatch && vMatch[2] ? vMatch[2].trim() : '';
+        return '<div class="changelog-version-row"><span class="changelog-version-badge">' + badge + '</span>' +
+          (date ? '<span class="changelog-version-date">' + date + '</span>' : '') + '</div>\n';
+      }
+      if (level === 3) {
+        var iconClass = SECTION_ICONS[text] || 'fas fa-tag';
+        return '<div class="changelog-section changelog-section-' + text.toLowerCase() + '"><i class="' + iconClass + '"></i> ' + text + '</div>\n';
+      }
+      return '<h1 class="changelog-h1">' + text + '</h1>\n';
+    };
+
+    renderer.list = function(body, ordered, start) {
+      var tag = ordered ? 'ol' : 'ul';
+      var cls = ordered ? '' : ' class="changelog-list"';
+      return '<' + tag + cls + '>\n' + body + '</' + tag + '>\n';
+    };
+
+    renderer.paragraph = function(text) {
+      return '<p class="changelog-p">' + text + '</p>\n';
+    };
+
+    renderer.hr = function() {
+      return '<hr class="changelog-rule">\n';
+    };
+
+    renderer.html = function(html) {
+      return '<pre>' + escapeHtml(html) + '</pre>';
+    };
+
+    var _origLink = renderer.link.bind(renderer);
+    var _origImage = renderer.image.bind(renderer);
+    renderer.link = function(href, title, text) {
+      return _origLink(safeHref(href), title, text);
+    };
+    renderer.image = function(href, title, text) {
+      return _origImage(safeHref(href), title, text);
+    };
+
+    return renderer;
   }
 
   // ---------------------------------------------------------------------------
@@ -109,10 +89,23 @@
   var ChangelogView = function ChangelogView(props) {
     var changelogState = props.changelogState;
     var onLoad = props.onLoad;
+    var content = (changelogState && changelogState.content) || '';
+
+    var _markupState = useState('');
+    var markup = _markupState[0];
+    var setMarkup = _markupState[1];
 
     useEffect(function() {
       if (onLoad) onLoad();
     }, []);
+
+    useEffect(function() {
+      if (!window.marked || !content) {
+        setMarkup('');
+        return;
+      }
+      setMarkup(window.marked.parse(content, { renderer: buildRenderer() }));
+    }, [content]);
 
     if (!changelogState || changelogState.loading) {
       return React.createElement(
@@ -130,14 +123,16 @@
       );
     }
 
-    var content = changelogState.content || '';
+    if (!window.marked) {
+      return React.createElement(
+        'div', { className: 'changelog-view' },
+        React.createElement('div', { className: 'changelog-body', style: { whiteSpace: 'pre-wrap' } }, content)
+      );
+    }
 
     return React.createElement(
       'div', { className: 'changelog-view' },
-      React.createElement(
-        'div', { className: 'changelog-body' },
-        renderMarkdown(content)
-      )
+      React.createElement('div', { className: 'changelog-body', dangerouslySetInnerHTML: { __html: markup } })
     );
   };
 

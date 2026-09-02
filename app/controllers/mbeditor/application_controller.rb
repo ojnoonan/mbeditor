@@ -1,9 +1,17 @@
 # frozen_string_literal: true
 
-require "open3"
-require "pathname"
-
 module Mbeditor
+  # No `rescue_from StandardError` here, and the repeated
+  # `rescue StandardError => e; render json: { error: e.message },
+  # status: :unprocessable_content` at the foot of ~29 actions is deliberate,
+  # not something waiting to be dried up. Most actions in this engine have no
+  # rescue at all and rely on an unhandled error surfacing as a real 500:
+  # resilient_routing_test.rb asserts exactly that, to prove ResilientRouter
+  # sits below Rails' own exception middleware. A blanket handler swallows that
+  # signal for 18 actions here plus `tail` in LogsController. Collapsing it to
+  # one handler plus a per-controller allowlist was tried and reverted: it saved
+  # 21 lines, moved each action's error behaviour a thousand lines away from the
+  # action, and left the same action names duplicated in the allowlist.
   class ApplicationController < ActionController::Base
     protect_from_forgery with: :exception
     # Before the auth hook, and on every controller: a disallowed environment is

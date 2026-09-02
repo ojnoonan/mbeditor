@@ -2507,6 +2507,12 @@ html, body, #mbeditor-root {
 .monaco-editor .line-numbers.mbeditor-gitline-deleted.mbeditor-gitline-added,
 .monaco-editor .line-numbers.mbeditor-gitline-deleted.mbeditor-gitline-modified { color: var(--ide-danger); }
 
+/* Monaco's own active-selection rule is `.monaco-editor .focused .selected-text`,
+   which wants `focused` on a DESCENDANT. In this build the class lands on the
+   `.monaco-editor` element itself, so that rule never matches and every selection
+   paints with the dim inactive colour. Same theme variable, one less space. */
+.monaco-editor.focused .selected-text { background-color: var(--vscode-editor-selectionBackground); }
+
 .ide-methods-dropdown-message {
   padding: 8px 12px;
   color: #858585;
@@ -2593,6 +2599,26 @@ html, body, #mbeditor-root {
   height: 1px;
   background: var(--ide-border);
   margin: 4px 0;
+}
+
+.ide-tab-context-menu-item {
+  padding: 6px 14px;
+  cursor: pointer;
+  color: #ccc;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+}
+
+.ide-tab-context-menu-item:hover {
+  background: #094771;
+}
+
+.ide-tab-context-menu-item i {
+  width: 14px;
+  text-align: center;
 }
 
 .collapsible-content {

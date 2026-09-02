@@ -5,19 +5,16 @@ var CodeReviewPanel = function CodeReviewPanel(_ref) {
   var onClose = _ref.onClose;
 
   var _React$useState = React.useState(null),
-      _React$useState2 = _slicedToArray(_React$useState, 2),
-      redmineIssue = _React$useState2[0],
-      setRedmineIssue = _React$useState2[1];
+      redmineIssue = _React$useState[0],
+      setRedmineIssue = _React$useState[1];
 
   var _React$useState3 = React.useState(null),
-      _React$useState4 = _slicedToArray(_React$useState3, 2),
-      redmineError = _React$useState4[0],
-      setRedmineError = _React$useState4[1];
+      redmineError = _React$useState3[0],
+      setRedmineError = _React$useState3[1];
 
   var _React$useState5 = React.useState(false),
-      _React$useState6 = _slicedToArray(_React$useState5, 2),
-      isRedmineLoading = _React$useState6[0],
-      setIsRedmineLoading = _React$useState6[1];
+      isRedmineLoading = _React$useState5[0],
+      setIsRedmineLoading = _React$useState5[1];
 
   var branchIdMatch = gitInfo && gitInfo.branch && gitInfo.branch.match(/(?:feature|bug|hotfix|task)\/(?:#)?(\d+)/i);
   var issueId = branchIdMatch ? branchIdMatch[1] : null;

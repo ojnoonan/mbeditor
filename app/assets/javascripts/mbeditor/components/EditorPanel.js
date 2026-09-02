@@ -1,6 +1,5 @@
 'use strict';
 
-var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i['return']) _i['return'](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError('Invalid attempt to destructure non-iterable instance'); } }; })();
 
 var _React = React;
 var useState = _React.useState;
@@ -67,24 +66,20 @@ var EditorPanel = function EditorPanel(_ref) {
   var currentConflictIndexRef = React.useRef(0);
 
   var _useState = useState('');
-  var _useState2 = _slicedToArray(_useState, 2);
-  var markup = _useState2[0];
-  var setMarkup = _useState2[1];
+  var markup = _useState[0];
+  var setMarkup = _useState[1];
 
   var _useState3 = useState(false);
-  var _useState4 = _slicedToArray(_useState3, 2);
-  var isBlameVisible = _useState4[0];
-  var setIsBlameVisible = _useState4[1];
+  var isBlameVisible = _useState3[0];
+  var setIsBlameVisible = _useState3[1];
 
   var _useState5 = useState(null);
-  var _useState6 = _slicedToArray(_useState5, 2);
-  var blameData = _useState6[0];
-  var setBlameData = _useState6[1];
+  var blameData = _useState5[0];
+  var setBlameData = _useState5[1];
 
   var _useState7 = useState(false);
-  var _useState8 = _slicedToArray(_useState7, 2);
-  var isBlameLoading = _useState8[0];
-  var setIsBlameLoading = _useState8[1];
+  var isBlameLoading = _useState7[0];
+  var setIsBlameLoading = _useState7[1];
 
   var blameDecorationsRef = useRef([]);
   var gitLineDecorationsRef = useRef([]);
@@ -97,34 +92,28 @@ var EditorPanel = function EditorPanel(_ref) {
   var testZoneIdsRef = useRef([]);
 
   var _useState9 = useState(false);
-  var _useState10 = _slicedToArray(_useState9, 2);
-  var editorReady = _useState10[0];
-  var setEditorReady = _useState10[1];
+  var editorReady = _useState9[0];
+  var setEditorReady = _useState9[1];
 
   var _useState11 = useState(false);
-  var _useState12 = _slicedToArray(_useState11, 2);
-  var methodsOpen = _useState12[0];
-  var setMethodsOpen = _useState12[1];
+  var methodsOpen = _useState11[0];
+  var setMethodsOpen = _useState11[1];
 
   var _useState13 = useState([]);
-  var _useState14 = _slicedToArray(_useState13, 2);
-  var methodsList = _useState14[0];
-  var setMethodsList = _useState14[1];
+  var methodsList = _useState13[0];
+  var setMethodsList = _useState13[1];
 
   var _useState15 = useState(false);
-  var _useState16 = _slicedToArray(_useState15, 2);
-  var methodsTruncated = _useState16[0];
-  var setMethodsTruncated = _useState16[1];
+  var methodsTruncated = _useState15[0];
+  var setMethodsTruncated = _useState15[1];
 
   var _useState17 = useState(false);
-  var _useState18 = _slicedToArray(_useState17, 2);
-  var methodsUnavailable = _useState18[0];
-  var setMethodsUnavailable = _useState18[1];
+  var methodsUnavailable = _useState17[0];
+  var setMethodsUnavailable = _useState17[1];
 
   var _useState19 = useState(null);
-  var _useState20 = _slicedToArray(_useState19, 2);
-  var methodsDropdownPos = _useState20[0];
-  var setMethodsDropdownPos = _useState20[1];
+  var methodsDropdownPos = _useState19[0];
+  var setMethodsDropdownPos = _useState19[1];
 
   var methodsBtnRef = useRef(null);
   var methodsDropdownRef = useRef(null);
@@ -133,24 +122,20 @@ var EditorPanel = function EditorPanel(_ref) {
 
   // Local pagination state — initialized from tab props; updated on page navigation
   var _useState21 = useState(tab.startLine || 0);
-  var _useState22 = _slicedToArray(_useState21, 2);
-  var pageStartLine = _useState22[0];
-  var setPageStartLine = _useState22[1];
+  var pageStartLine = _useState21[0];
+  var setPageStartLine = _useState21[1];
 
   var _useState23 = useState(tab.lineCount || 0);
-  var _useState24 = _slicedToArray(_useState23, 2);
-  var pageLineCount = _useState24[0];
-  var setPageLineCount = _useState24[1];
+  var pageLineCount = _useState23[0];
+  var setPageLineCount = _useState23[1];
 
   var _useState25 = useState(tab.totalLines || 0);
-  var _useState26 = _slicedToArray(_useState25, 2);
-  var pageTotalLines = _useState26[0];
-  var setPageTotalLines = _useState26[1];
+  var pageTotalLines = _useState25[0];
+  var setPageTotalLines = _useState25[1];
 
   var _useState27 = useState(tab.totalBytes || 0);
-  var _useState28 = _slicedToArray(_useState27, 2);
-  var pageTotalBytes = _useState28[0];
-  var setPageTotalBytes = _useState28[1];
+  var pageTotalBytes = _useState27[0];
+  var setPageTotalBytes = _useState27[1];
 
   var onFormatRef = useRef(onFormat);
   onFormatRef.current = onFormat;
@@ -659,8 +644,13 @@ var EditorPanel = function EditorPanel(_ref) {
 
     applyLargeFileTuning(editor, modelObj);
 
-    if (tab.viewState) {
-      editor.restoreViewState(tab.viewState);
+    // Read the view state from the store, not from the captured `tab` prop: this
+    // effect re-runs on collabReady, and the cleanup that just ran wrote a fresher
+    // snapshot than the prop this closure was created with.
+    var _liveTab = findTabByPath(tab.path);
+    var _viewState = (_liveTab && _liveTab.viewState) || tab.viewState;
+    if (_viewState) {
+      editor.restoreViewState(_viewState);
     }
 
     // Restore the find widget state from the previous editor (when persistFindState is on).
@@ -768,14 +758,13 @@ var EditorPanel = function EditorPanel(_ref) {
       EditorStore.setState({ isQuickOpenVisible: true });
     });
 
-    // PageUp/PageDown cycle between the current cursor position and where the
-    // cursor was before the last jump (go-to-definition, search result, etc.),
-    // replacing the default page-scroll behaviour.
+    // PageUp/PageDown walk a back/forward navigation history (go-to-definition,
+    // search results, file switches), replacing the default page-scroll behaviour.
     editor.addCommand(window.monaco.KeyCode.PageUp, function() {
-      TabManager.toggleJumpOrigin();
+      TabManager.navigateBack();
     });
     editor.addCommand(window.monaco.KeyCode.PageDown, function() {
-      TabManager.toggleJumpOrigin();
+      TabManager.navigateForward();
     });
 
     var editorPluginDisposable = null;
@@ -1131,6 +1120,12 @@ var EditorPanel = function EditorPanel(_ref) {
       var _newExtAvi = model.getAlternativeVersionId();
       if (_extEntry) _extEntry.cleanVersionId = _newExtAvi;
       aviBaseRef.current = _newExtAvi;
+    }
+
+    // The model now holds the disk content. A room that deferred attaching while
+    // this fetch was in flight can seed the shared doc from it.
+    if (collabActiveRef.current && typeof CollaborationService !== 'undefined') {
+      CollaborationService.contentReady(tab.path);
     }
   }, [tab.content, tab.externalContentVersion]);
 
@@ -1694,9 +1689,8 @@ var EditorPanel = function EditorPanel(_ref) {
   // keystroke. This ticks 250 ms after the last change instead — the same
   // treatment the route-hint redraw above already gets.
   var _useStateZT = useState(0);
-  var _useStateZT2 = _slicedToArray(_useStateZT, 2);
-  var zoneTick = _useStateZT2[0];
-  var setZoneTick = _useStateZT2[1];
+  var zoneTick = _useStateZT[0];
+  var setZoneTick = _useStateZT[1];
   useEffect(function () {
     var timer = setTimeout(function () {
       setZoneTick(function (n) { return n + 1; });
@@ -1966,27 +1960,25 @@ var EditorPanel = function EditorPanel(_ref) {
     if (isMarkdown && window.marked) {
       (function () {
         var renderer = new window.marked.Renderer();
-        var escapeHtml = function escapeHtml(str) {
-          return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        };
+        // escapeHtml and safeHref are defined once in ChangelogView.js — the
+        // href allow-list guards both markdown surfaces and must not fork.
+        var escapeHtml = window.mbeditorEscapeHtml;
+        var safeHref = window.mbeditorSafeHref;
         renderer.html = function (token) {
           return '<pre>' + escapeHtml(typeof token === 'object' ? token.text : token) + '</pre>';
         };
-        // Sanitize link/image hrefs to block javascript: and data: schemes.
         var _origLink = renderer.link.bind(renderer);
         var _origImage = renderer.image.bind(renderer);
-        var SAFE_HREF_SCHEME = /^(https?:|mailto:|#|\/)/i;
-        var safeHref = function(href) {
-          if (!href) return href;
-          return SAFE_HREF_SCHEME.test(href.trim()) ? href : '#';
+        // marked 10 calls these positionally — `.link(href, title, text)`, see
+        // the vendored bundle. An earlier version took a token object, and
+        // against the real signature the object branch never ran: safeHref was
+        // dead, so javascript: hrefs passed through, and dropping title/text
+        // rendered every link as "undefined".
+        renderer.link = function(href, title, text) {
+          return _origLink(safeHref(href), title, text);
         };
-        renderer.link = function(token) {
-          if (token && typeof token === 'object') { token = Object.assign({}, token, { href: safeHref(token.href) }); }
-          return _origLink(token);
-        };
-        renderer.image = function(token) {
-          if (token && typeof token === 'object') { token = Object.assign({}, token, { href: safeHref(token.href) }); }
-          return _origImage(token);
+        renderer.image = function(href, title, text) {
+          return _origImage(safeHref(href), title, text);
         };
         setMarkup(window.marked.parse(markdownContent, { renderer: renderer }));
       })();
