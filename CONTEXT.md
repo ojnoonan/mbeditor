@@ -19,11 +19,12 @@ file on disk. Linting and formatting operate on the buffer (passed as `code`), n
 saved file.
 
 ### Diagnostic
-A single linter finding in mbeditor's neutral vocabulary, independent of any editor
-front-end: `severity` (`:error`, `:warning`, `:info`), `message`, `line`, `column`,
-`end_line`, `end_column`, and — for rubocop — `cop_name` and `correctable`. The Monaco
-front-end's marker shape (`startLine`, `copName`, …) is a presentation mapping of a
-Diagnostic, applied at the controller edge — never inside the service that produces it.
+A single linter finding, in the Monaco marker shape (`startLine`, `startCol`, `endLine`,
+`endCol`, `severity`, `message`, and — for rubocop — `copName`/`correctable`). Both
+Diagnostic-producing modules (`LspDiagnosticsTranslator` for ruby-lsp, `LintService` for
+plain rubocop/haml-lint) emit this shape directly rather than a separate neutral
+representation later mapped at the controller edge — there is only ever one shape, so
+there is nothing to keep in sync between a neutral form and its presentation.
 
 ### LintService
 The single module that owns mbeditor's linting toolchain: rubocop (diagnostics via
@@ -33,16 +34,24 @@ autocorrect text-edits, and formatted content, running every subprocess through
 `ProcessRunner`. The "Format" action on Ruby files is rubocop autocorrect returning full
 content — it is part of LintService, not a separate formatter. (Client-side Prettier for
 JS/CSS/HTML/Markdown is a separate, browser-only path and is not part of LintService.)
+`compute_text_edit` (the original-vs-corrected diff that becomes a Monaco
+`SingleEditOperation`) and `rubocop_config_path` (a `.rubocop.yml`-presence check for the
+`/workspace` payload) stay controller-private — neither is diagnostics, autocorrect, or
+formatted content.
 
 ### Language plugin
-A front-end module that contributes editor behaviour for one or more languages, satisfying
-a fixed interface: `appliesTo(language)`, `registerGlobal(monaco)` (one-time provider/config
-registration), and `attach(editor, model, language)` (per-instance listeners, returns a
-disposable). The plugins — `RubyPlugin`, `HtmlPlugin`, `JsPlugin`, `GenericPlugin` — are
-named explicitly by the **editor-feature registrar** (`editor_plugins.js`), which fans the
-two lifecycle phases across them. `appliesTo` is many-to-many: a `.jsx` editor is attached by
-both JsPlugin and HtmlPlugin (JSX tag auto-close). No build step — each plugin is a plain
-object on `window`, wired in a fixed order via Sprockets `//= require`.
+`editor_plugins.js` splits into two lifecycle phases, neither of which is a per-language
+object — there is no `RubyPlugin`/`HtmlPlugin`/`JsPlugin` on `window`, and nothing declares
+an `appliesTo(language)`. **One-time registration** is `registerGlobalExtensions(monaco)`, a
+dispatcher (guarded so it runs once) over three named functions grouped by provider
+affinity rather than by language: `registerJsProviders`, `registerRubyProviders`, and
+`registerGenericProviders` (features registered once across several languages at once —
+linked editing, the `file://` opener, Prettier formatting, vim fold markers). **Per-instance
+attach** is `attachEditorFeatures(editor, language)`, one function taking a `language`
+string and returning a disposable; it does its own per-call branching (e.g. ERB/HAML markup
+auto-close applies regardless of language, JSX-specific behaviour checks `language` itself)
+rather than being fanned out across language objects. No build step — plain functions in one
+file, wired via Sprockets `//= require`.
 
 ### Log viewer
 The read-only, real-time view of the active environment's Rails log. It tails

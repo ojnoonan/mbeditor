@@ -22,4 +22,5 @@ gemfiles/*.lock
 /.claude/worktrees/
 /.understand-anything/
 /graphify-out/
+/.opencode/
 .DS_Store

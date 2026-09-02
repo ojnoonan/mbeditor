@@ -146,10 +146,6 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
-    HISTORY_MAX_OPS        = 10_000
-    HISTORY_COMPACT_TARGET = 5_000
-
-
     # GET /mbeditor/branch_state?branch=... — load per-branch pane state
     def branch_state
       branch = sanitize_branch_name(params[:branch])
@@ -180,20 +176,7 @@ module Mbeditor
 
       local_branches = out.split("\n").map(&:strip).reject(&:empty?)
       pruned = editor_state_service.prune_branch_states(active_branches: local_branches)
-
-      hist_dir = workspace_root.join('tmp', 'mbeditor_history')
-      if File.directory?(hist_dir)
-        Dir.glob(File.join(hist_dir, '*.json')) do |hist_file|
-          data = begin
-            JSON.parse(File.read(hist_file))
-          rescue JSON::ParserError => e
-            Rails.logger.error("[mbeditor] prune_branch_states: skipping corrupt history file #{hist_file}: #{e.message}")
-            nil
-          end
-          next unless data.is_a?(Hash) && data['branch']
-          FileUtils.rm_f(hist_file) unless local_branches.include?(data['branch'])
-        end
-      end
+      file_history_service.prune(active_branches: local_branches)
 
       render json: { pruned: pruned }
     rescue StandardError => e
@@ -208,24 +191,8 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: {}, status: :forbidden unless path
 
-      rel  = relative_path(path)
-      hist = history_file_path(branch, rel)
-      return render json: {} unless File.exist?(hist)
-
-      data = JSON.parse(File.read(hist))
-
-      if data['t']
-        age = Time.now.utc - Time.parse(data['t'])
-        if age > 7 * 24 * 3600
-          FileUtils.rm_f(hist)
-          return render json: {}
-        end
-      end
-
-      render json: { base: data['base'], ops: data['ops'] || [] }
-    rescue JSON::ParserError
-      FileUtils.rm_f(hist) rescue nil
-      render json: {}
+      rel = relative_path(path)
+      render json: file_history_service.read(branch, rel) || {}
     rescue StandardError
       render json: {}
     end
@@ -238,50 +205,19 @@ module Mbeditor
       path = resolve_path(params[:path])
       return render json: { error: 'Forbidden' }, status: :forbidden unless path
 
-      rel      = relative_path(path)
-      new_ops  = params[:ops]
+      rel     = relative_path(path)
+      new_ops = params[:ops]
       return render json: { error: 'ops must be an array' }, status: :bad_request unless new_ops.is_a?(Array)
       return head :no_content if new_ops.empty?
 
       new_ops_clean = new_ops.map { |op| Array(op).first(5) }
 
-      hist = history_file_path(branch, rel)
-      FileUtils.mkdir_p(File.dirname(hist))
-
-      File.open(hist, File::RDWR | File::CREAT) do |f|
-        flock_exclusive_with_timeout!(f)
-        existing = f.size > 0 ? (JSON.parse(f.read) rescue {}) : {}
-
-        if existing.empty?
-          # An empty base is a legitimate one, and in practice the usual one:
-          # the client starts tracking when the editor mounts, which is before
-          # the file content has arrived, so the load itself is recorded as the
-          # first op against an empty document. Rejecting "" meant the initial
-          # POST for every file 400'd and no history was ever written at all.
-          # Only an absent base is an error.
-          unless params.key?(:base)
-            return render json: { error: 'base required for initial history' }, status: :bad_request
-          end
-
-          base = params[:base].to_s
-          return render json: { error: 'base too large' }, status: :content_too_large if base.bytesize > STATE_MAX_BYTES
-          existing = { 'branch' => branch, 'path' => rel, 'base' => base, 'ops' => [], 't' => Time.now.utc.iso8601 }
-        end
-
-        existing['ops'] = (existing['ops'] || []) + new_ops_clean
-        existing['t']   = Time.now.utc.iso8601
-
-        if existing['ops'].length > HISTORY_MAX_OPS
-          to_compact       = existing['ops'].shift(HISTORY_COMPACT_TARGET)
-          existing['base'] = compact_history_ops(existing['base'], to_compact)
-        end
-
-        f.truncate(0)
-        f.rewind
-        f.write(existing.to_json)
-      end
-
+      file_history_service.append(branch, rel, ops: new_ops_clean, base: params[:base], base_given: params.key?(:base))
       head :no_content
+    rescue FileHistoryService::BaseRequiredError
+      render json: { error: 'base required for initial history' }, status: :bad_request
+    rescue FileHistoryService::BaseTooLargeError
+      render json: { error: 'base too large' }, status: :content_too_large
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -1039,37 +975,11 @@ module Mbeditor
           return render json: { error: "haml-lint not available", markers: [] }, status: :unprocessable_content
         end
 
-        markers = run_haml_lint(code)
-        return render json: { markers: markers }
+        return render json: { markers: LintService.haml_diagnostics(workspace_root, code) }
       end
 
-      cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "--stdin", filename, "--format", "json", "--no-color"]
-      env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
-      output = run_with_timeout(env, cmd, stdin_data: code)
-
-      idx = output.index("{")
-      result = idx ? JSON.parse(output[idx..]) : {}
-      result = {} unless result.is_a?(Hash)
-      offenses = result.dig("files", 0, "offenses") || []
-
-      markers = offenses.map do |offense|
-        {
-          severity: cop_severity(offense["severity"]),
-          copName: offense["cop_name"],
-          correctable: offense["correctable"] == true,
-          message: "[#{offense['cop_name']}] #{offense['message']}",
-          startLine: offense.dig("location", "start_line") || offense.dig("location", "line"),
-          startCol: offense.dig("location", "start_column") || offense.dig("location", "column") || 1,
-          endLine: offense.dig("location", "last_line") || offense.dig("location", "line"),
-          endCol: offense.dig("location", "last_column") || offense.dig("location", "column") || 1,
-          # Same predicate the ruby-lsp path uses, so dead code fades whichever
-          # linter produced the offense. Plain rubocop JSON carries no
-          # code_description, so there's no codeHref to pass on here.
-          unnecessary: LspDiagnosticsTranslator.unnecessary?(offense["cop_name"])
-        }
-      end
-
-      render json: { markers: markers, summary: result["summary"] }
+      result = LintService.rubocop_diagnostics(workspace_root, path, code)
+      render json: { markers: result[:markers], summary: result[:summary] }
     rescue StandardError => e
       render json: { error: e.message, markers: [] }, status: :unprocessable_content
     end
@@ -1099,28 +1009,9 @@ module Mbeditor
       return render json: { error: "Invalid cop name" }, status: :unprocessable_content unless cop_name.match?(/\A[\w\/]+\z/)
 
       code = params[:code].to_s
-      ext  = File.extname(File.basename(path))
-
-      # Use a workspace-local tempfile so RuboCop's config discovery walks up
-      # from the source file's directory and finds the host app's .rubocop.yml.
-      Tempfile.create([".mbeditor_fix_", ext], File.dirname(path)) do |f|
-        f.write(code)
-        f.flush
-        tmpfile = f.path
-
-        cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "-A", "--no-color", tmpfile]
-        env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
-        status = run_lint_command(env, cmd)[:exit_status]
-
-        # exit 0 = no offenses, exit 1 = offenses corrected, exit 2 = error
-        unless status.success? || status.exitstatus == 1
-          return render json: { fix: nil }
-        end
-
-        corrected = File.read(tmpfile, encoding: "UTF-8", invalid: :replace, undef: :replace)
-        fix = compute_text_edit(code, corrected)
-        render json: { fix: fix }
-      end
+      result = LintService.autocorrect(workspace_root, path, code)
+      fix = result[:ok] ? compute_text_edit(code, result[:content]) : nil
+      render json: { fix: fix }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -1257,22 +1148,8 @@ module Mbeditor
       code = params[:code].to_s
       return render json: { error: "code required" }, status: :unprocessable_content if code.empty?
 
-      ext = File.extname(File.basename(path))
-      Tempfile.create([".mbeditor_fmt_", ext], File.dirname(path)) do |f|
-        f.write(code)
-        f.flush
-        tmpfile = f.path
-
-        cmd = AvailabilityProbe.rubocop_command(workspace_root) + [AvailabilityProbe.rubocop_server_flag(workspace_root), "-A", "--no-color", tmpfile]
-        env = { 'RUBOCOP_CACHE_ROOT' => File.join(Dir.tmpdir, 'rubocop') }
-        status = run_lint_command(env, cmd)[:exit_status]
-        unless status.success? || status.exitstatus == 1
-          return render json: { ok: false, content: code }
-        end
-
-        corrected = File.read(tmpfile, encoding: "UTF-8", invalid: :replace, undef: :replace)
-        render json: { ok: true, content: corrected }
-      end
+      result = LintService.autocorrect(workspace_root, path, code)
+      render json: { ok: result[:ok], content: result[:content] }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content
     end
@@ -1328,36 +1205,6 @@ module Mbeditor
     def mbeditor_base_path
       raw = Mbeditor::MountPath.resolve.chomp("/")
       raw.start_with?("/") || raw.empty? ? raw : "/#{raw}"
-    end
-
-    def history_file_path(branch, rel_path)
-      branch_hash = Digest::SHA256.hexdigest(branch.to_s)[0, 16]
-      file_hash   = Digest::SHA256.hexdigest(rel_path.to_s)[0, 16]
-      workspace_root.join('tmp', 'mbeditor_history', "#{branch_hash}_#{file_hash}.json")
-    end
-
-    def compact_history_ops(base, ops)
-      text = base.to_s
-      ops.each do |op|
-        sl, sc, el, ec, ins = op[0].to_i, op[1].to_i, op[2].to_i, op[3].to_i, op[4].to_s
-        lines = text.split("\n", -1)
-        sl0  = [[sl - 1, 0].max, [lines.length - 1, 0].max].min
-        el0  = [[el - 1, 0].max, [lines.length - 1, 0].max].min
-        sc0  = sc - 1
-        ec0  = ec - 1
-        prefix    = (lines[sl0] || '')[0, sc0] || ''
-        suffix    = (lines[el0] || '')[ec0..] || ''
-        ins_lines = ins.split("\n", -1)
-        new_seg   = if ins_lines.length <= 1
-          [prefix + (ins_lines[0] || '') + suffix]
-        else
-          [prefix + ins_lines[0]] + ins_lines[1..-2] + [ins_lines[-1] + suffix]
-        end
-        text = (lines[0...sl0] + new_seg + lines[(el0 + 1)..]).join("\n")
-      end
-      text
-    rescue StandardError
-      base.to_s
     end
 
     # structural: false means "these files' contents changed, the tree did not"
@@ -1421,17 +1268,8 @@ module Mbeditor
       @editor_state_service ||= EditorStateService.new(workspace_root)
     end
 
-    # Acquire an exclusive lock without blocking forever, so a stuck holder (e.g.
-    # a request paused at a breakpoint mid-write) cannot wedge history saves and
-    # pin a worker indefinitely. Raises on timeout; the caller's rescue turns it
-    # into a fast error response instead of a hang.
-    HISTORY_LOCK_TIMEOUT = 5.0
-    def flock_exclusive_with_timeout!(file, timeout: HISTORY_LOCK_TIMEOUT)
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-      until file.flock(File::LOCK_EX | File::LOCK_NB)
-        raise "could not acquire history lock within #{timeout}s" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
-        sleep 0.01
-      end
+    def file_history_service
+      @file_history_service ||= FileHistoryService.new(workspace_root)
     end
 
     def sanitize_branch_name(branch)
@@ -1565,19 +1403,6 @@ module Mbeditor
       Array(Mbeditor.configuration.ruby_def_include_dirs).map(&:to_s).reject(&:blank?)
     end
 
-    def run_with_timeout(env, cmd, stdin_data:)
-      run_lint_command(env, cmd, stdin_data: stdin_data)[:stdout]
-    end
-
-    # Same lint_timeout ceiling as #lint. quick_fix, format_file and haml-lint
-    # used to spawn with Open3.capture3 and no timeout at all, so a wedged
-    # rubocop held a request thread until the client gave up.
-    def run_lint_command(env, cmd, stdin_data: nil)
-      timeout_seconds = Mbeditor.configuration.lint_timeout&.to_i
-      timeout = timeout_seconds && timeout_seconds > 0 ? timeout_seconds : nil
-      ProcessRunner.call(cmd, timeout: timeout, env: env, stdin_data: stdin_data)
-    end
-
     def apply_rename_changes(result, open_paths)
       changes = result.is_a?(Hash) ? (result["changes"] || {}) : {}
       open = open_paths.to_set
@@ -1586,7 +1411,7 @@ module Mbeditor
       edits_for_open = {}
 
       changes.each do |uri, raw_edits|
-        rel = workspace_relative_uri(uri.to_s)
+        rel = RubyLspResultTranslator.workspace_relative_uri(uri.to_s, workspace_root)
         # Outside the workspace, or a path we refuse to write: record it so a
         # partial rename is visibly partial rather than silently so.
         target = rel && resolve_path(rel)
@@ -1663,217 +1488,18 @@ module Mbeditor
       { available: false, disabled: false, state: :failed, restarts: 0, error: e.message }
     end
 
+    # Dispatches to RubyLspResultTranslator (definition/hover/completion/raw —
+    # sanitizes every file:// URI, see that module for the trust-boundary
+    # rationale) or to LspDiagnosticsTranslator for diagnostics, which has its
+    # own interface (no workspace_root) and is shared with the plain-rubocop
+    # /lint path.
     def translate_ruby_lsp_result(kind, result, uri = nil)
       case kind
-      when "definition"  then { results: translate_lsp_locations(result) }
-      when "hover"       then { markdown: translate_lsp_hover(result) }
-      when "completion"  then { suggestions: translate_lsp_completions(result) }
+      when "definition"  then RubyLspResultTranslator.definition(result, workspace_root: workspace_root)
+      when "hover"       then RubyLspResultTranslator.hover(result, workspace_root: workspace_root)
+      when "completion"  then RubyLspResultTranslator.completion(result)
       when "diagnostics" then LspDiagnosticsTranslator.call(result, uri)
-      when *RUBY_LSP_RAW then { result: sanitize_lsp_uris(result) }
-      end
-    end
-
-    # The one trust boundary for every raw-passthrough method. Walks the LSP
-    # response and rewrites each file:// URI to a workspace-relative path,
-    # dropping any object that points outside the workspace — a reference in a
-    # gem is not something this editor can open, and a path outside the root is
-    # not something it should hand to the browser at all.
-    #
-    # Recursion is bounded by MAX_LSP_DEPTH: the payload comes from a
-    # subprocess, and a cyclic or pathologically nested one must not take the
-    # request thread down with it.
-    MAX_LSP_DEPTH = 32
-
-    URI_KEYS = %w[uri targetUri].freeze
-
-    # URI::DEFAULT_PARSER became the RFC3986 parser in Ruby 4.0, where #unescape
-    # is deprecated; URI::RFC2396_PARSER only exists from Ruby 3.4. The gem
-    # supports >= 3.0, so take whichever this Ruby has.
-    URI_UNESCAPER = defined?(URI::RFC2396_PARSER) ? URI::RFC2396_PARSER : URI::DEFAULT_PARSER
-
-    def sanitize_lsp_uris(node, depth = 0)
-      return nil if depth > MAX_LSP_DEPTH
-
-      case node
-      when Array
-        node.filter_map { |child| sanitize_lsp_uris(child, depth + 1) }
-      when Hash
-        sanitized = {}
-        node.each do |key, value|
-          if URI_KEYS.include?(key) && value.is_a?(String)
-            rel = workspace_relative_uri(value)
-            # A URI we can't place inside the workspace disqualifies its object.
-            return nil unless rel
-
-            sanitized[key] = rel
-          else
-            child = sanitize_lsp_uris(value, depth + 1)
-            sanitized[key] = child unless child.nil? && !value.nil?
-          end
-        end
-        sanitized
-      when String
-        sanitize_lsp_markdown(node)
-      else
-        node
-      end
-    end
-
-    # URIs also turn up *inside* strings: ruby-lsp's signatureHelp and hover
-    # documentation embed a "Definitions" line of file:// markdown links. Those
-    # would leak absolute host paths and render as links that go nowhere, so
-    # they get the same treatment hover already gives them.
-    def sanitize_lsp_markdown(text)
-      return text unless text.include?("file://")
-
-      rewritten = rewrite_lsp_hover_links(text)
-      return rewritten unless rewritten.include?("file://")
-
-      # Backstop for any file:// URI that wasn't in markdown-link form. An
-      # absolute host path must never reach the browser, linkable or not.
-      rewritten.gsub(%r{file://\S*}) do |raw|
-        workspace_relative_uri(raw.sub(/[)\]\s].*\z/m, "")) || "(external)"
-      end
-    end
-
-    def workspace_relative_uri(uri)
-      return nil unless uri.start_with?("file://")
-
-      # ruby-lsp percent-escapes its URIs; workspace_root is a raw path. A
-      # checkout with a space (or any other escaped character) in its path
-      # matched nothing here, so every result was silently dropped.
-      path = URI_UNESCAPER.unescape(uri.delete_prefix("file://"))
-      prefix = "#{workspace_root}/"
-      return nil unless path.start_with?(prefix)
-
-      path.delete_prefix(prefix)
-    end
-
-    def translate_lsp_locations(result)
-      items = result.is_a?(Array) ? result : [result].compact
-      root = workspace_root.to_s
-      items.filter_map do |loc|
-        next unless loc.is_a?(Hash)
-
-        uri   = loc["uri"] || loc["targetUri"]
-        range = loc["range"] || loc["targetSelectionRange"] || loc["targetRange"]
-        next unless uri.to_s.start_with?("file://")
-
-        fpath = URI_UNESCAPER.unescape(uri.delete_prefix("file://"))
-        # Drop gem/stdlib locations the editor can't open; an empty list makes
-        # the frontend fall back to the legacy services (ri covers stdlib).
-        next unless fpath.start_with?("#{root}/")
-
-        start_line = (range&.dig("start", "line") || 0) + 1
-        {
-          file: fpath.delete_prefix("#{root}/"),
-          line: start_line,
-          # Columns and the end of the range are additive: existing consumers
-          # only read :file and :line, but peek-definition needs a real range
-          # to highlight rather than the start of the line.
-          col: (range&.dig("start", "character") || 0) + 1,
-          endLine: (range&.dig("end", "line") || range&.dig("start", "line") || 0) + 1,
-          endCol: (range&.dig("end", "character") || range&.dig("start", "character") || 0) + 1
-        }
-      end
-    end
-
-    def translate_lsp_hover(result)
-      contents = result.is_a?(Hash) ? result["contents"] : nil
-      return nil if contents.nil?
-
-      markdown =
-        case contents
-        when Hash  then contents["value"].to_s
-        when Array then contents.map { |c| c.is_a?(Hash) ? c["value"].to_s : c.to_s }.join("\n\n")
-        else contents.to_s
-        end
-
-      neutralize_comment_headings(rewrite_lsp_hover_links(markdown))
-    end
-
-    # ruby-lsp renders a doc comment by stripping exactly one leading "# " from
-    # each line, then hands the result to the editor as markdown. A `##`-opened
-    # doc block — a very common Ruby convention — therefore arrives as
-    # "# Title" and renders as an <h1> filling the hover.
-    #
-    # Ruby comments are not markdown, so escape a `#` that opens a line and let
-    # it render as the text it is. Fenced code blocks are left alone: `#` inside
-    # them is Ruby source, not a heading, and needs no escaping.
-    #
-    # This deliberately diverges from other ruby-lsp clients, which show the
-    # heading.
-    def neutralize_comment_headings(markdown)
-      in_fence = false
-      markdown.lines.map do |line|
-        in_fence = !in_fence if line.start_with?("```")
-        next line if in_fence || line.start_with?("```")
-
-        line.sub(/\A(\s*)(#+)(?=\s|\z)/) { "#{Regexp.last_match(1)}\\#{Regexp.last_match(2)}" }
-      end.join
-    end
-
-    # ruby-lsp renders its "Definitions" line as VS Code file links, e.g.
-    # `[user.rb](file:///abs/path/user.rb#L3,1-9,4)`. Monaco renders those as
-    # links but clicking one does nothing, since nothing can open a file:// URI
-    # here. Point in-workspace links at the `mbeditor.openDefinition` Monaco
-    # command (registered in editor_plugins.js) and demote gem/stdlib links —
-    # which the editor cannot open at all — to plain code spans.
-    LSP_HOVER_FILE_LINK = %r{\[([^\]\n]+)\]\(file://([^)\s#]+)(?:\#L(\d+),\d+(?:-\d+,\d+)?)?\)}
-
-    def rewrite_lsp_hover_links(markdown)
-      prefix = "#{workspace_root}/"
-      markdown.gsub(LSP_HOVER_FILE_LINK) do
-        label, raw_path, line = Regexp.last_match(1), Regexp.last_match(2), Regexp.last_match(3).to_i
-        # Percent-decode by hand: URI's unescape helpers are deprecated on new
-        # Rubies and their replacements are missing on the old ones we support.
-        # (Must come after reading the other captures — gsub resets last_match.)
-        path = raw_path.gsub(/%\h\h/) { |esc| esc[1..].hex.chr }.force_encoding(Encoding::UTF_8)
-
-        if path.start_with?(prefix)
-          args = [path.delete_prefix(prefix), line.positive? ? line : 1]
-          "[#{label}](command:mbeditor.openDefinition?#{ERB::Util.url_encode(args.to_json)})"
-        else
-          "`#{label}`"
-        end
-      end
-    end
-
-    def translate_lsp_completions(result)
-      items = result.is_a?(Hash) ? Array(result["items"]) : Array(result)
-      items.first(100).filter_map do |item|
-        next unless item.is_a?(Hash)
-
-        {
-          label: item["label"].to_s,
-          kind: lsp_completion_kind(item["kind"]),
-          insertText: (item.dig("textEdit", "newText") || item["insertText"] || item["label"]).to_s,
-          detail: item["detail"].to_s,
-          isSnippet: item["insertTextFormat"] == 2
-        }
-      end
-    end
-
-    LSP_COMPLETION_KINDS = {
-      2 => "Method", 3 => "Function", 4 => "Constructor", 5 => "Field",
-      6 => "Variable", 7 => "Class", 8 => "Interface", 9 => "Module",
-      10 => "Property", 14 => "Keyword", 15 => "Snippet", 21 => "Constant"
-    }.freeze
-
-    def lsp_completion_kind(kind)
-      LSP_COMPLETION_KINDS[kind] || "Text"
-    end
-
-    # Kept in step with LspDiagnosticsTranslator::SEVERITIES so a file linted
-    # through ruby-lsp and the same file linted through `rubocop --stdin` grade
-    # their offenses identically. rubocop's own `info` is the weakest level and
-    # maps to hint; convention/refactor fall through to info.
-    def cop_severity(severity)
-      case severity
-      when "error", "fatal" then "error"
-      when "warning" then "warning"
-      when "info" then "hint"
-      else "info"
+      when *RUBY_LSP_RAW then RubyLspResultTranslator.raw(result, workspace_root: workspace_root)
       end
     end
 
@@ -1929,39 +1555,6 @@ module Mbeditor
     def test_available?
       root = workspace_root.to_s
       File.directory?(File.join(root, "test")) || File.directory?(File.join(root, "spec"))
-    end
-
-    def run_haml_lint(code)
-      markers = []
-      Tempfile.create(["mbeditor_haml", ".haml"]) do |f|
-        f.write(code)
-        f.flush
-        cmd = AvailabilityProbe.haml_lint_command(workspace_root) + ["--reporter", "json", "--no-color", f.path]
-        output = run_lint_command({}, cmd)[:stdout]
-        idx = output.index("{")
-        result = idx ? JSON.parse(output[idx..]) : {}
-        result = {} unless result.is_a?(Hash)
-        offenses = result.dig("files", 0, "offenses") || []
-        markers = offenses.map do |offense|
-          {
-            severity: haml_lint_severity(offense["severity"]),
-            message: "[#{offense['linter_name']}] #{offense['message']}",
-            startLine: offense.dig("location", "line"),
-            startCol: (offense.dig("location", "column") || 1) - 1,
-            endLine: offense.dig("location", "line"),
-            endCol: offense.dig("location", "column") || 1
-          }
-        end
-      end
-      markers
-    end
-
-    def haml_lint_severity(severity)
-      case severity
-      when "error" then "error"
-      when "warning" then "warning"
-      else "info"
-      end
     end
 
     def resolve_monaco_asset_path(asset_path)
