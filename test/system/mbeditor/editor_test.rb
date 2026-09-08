@@ -1500,6 +1500,28 @@ module Mbeditor
              "Expected Monaco to show 'unusedThing' as a Warning (severity 4), not an Error"
     end
 
+    test "test-result cache caps entry count and keeps the newest" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      counts = page.evaluate_script(<<~'JS')
+        (function () {
+          var prefix = window.__mbeditorTestCache.prefix;
+          for (var i = 0; i < 60; i++) {
+            localStorage.setItem(prefix + 'seed_' + i + '.rb', JSON.stringify({ ok: true, ts: i }));
+          }
+          var before = Object.keys(localStorage).filter(function (k) { return k.indexOf(prefix) === 0; }).length;
+          window.__mbeditorTestCache.save('newest.rb', { ok: true, tests: [] });
+          var keys = Object.keys(localStorage).filter(function (k) { return k.indexOf(prefix) === 0; });
+          return { before: before, after: keys.length, hasNewest: keys.indexOf(prefix + 'newest.rb') !== -1 };
+        })()
+      JS
+
+      assert_equal 60, counts["before"], "expected all 60 seeded entries present before capping"
+      assert_operator counts["after"], :<=, 50, "expected the cache capped at 50 entries, got #{counts['after']}"
+      assert counts["hasNewest"], "expected the just-saved entry to survive eviction"
+    end
+
     private
 
     # Turn the tmp workspace into a git repo and pre-seed a stored undo history for
