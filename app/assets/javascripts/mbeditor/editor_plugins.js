@@ -1323,9 +1323,12 @@
       // value of the wrong type flows straight into the component — both of
       // those break something, so they read as errors.
       //
-      // TypeScript folds all three JSX cases into 2769 ("No overload matches
-      // this call") once React's types are in play, so the distinction has to
-      // come from the message chain, which Monaco flattens into the marker.
+      // The code is not a reliable signal, so the distinction comes from the
+      // message chain, which Monaco flattens into the marker. TypeScript
+      // reports the precise 2322/2741 when the component is declared once, but
+      // folds both JSX cases into 2769 ("No overload matches this call") as
+      // soon as it sees two declarations of it — which is what an open file
+      // duplicated into the program as an extraLib used to produce.
       var JS_UNKNOWN_PROPERTY  = /does not exist on type/;
       var JS_MISSING_REQUIRED  = /is missing in type .* but required in type/;
       function callDiagnosticSeverity(code, message) {
