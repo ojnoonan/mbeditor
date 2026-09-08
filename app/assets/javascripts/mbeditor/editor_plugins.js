@@ -756,14 +756,16 @@
     var lineNumber = change.range.startLineNumber;
     var columnBeforeInsert = change.range.startColumn;
     var lineContent = model.getLineContent(lineNumber);
-    var textBefore = lineContent.substring(0, columnBeforeInsert - 1);
+    var textBefore = textBackTo(model, lineNumber, columnBeforeInsert - 1);
 
     if (/\/$/.test(textBefore)) return false;
 
-    var tagMatch = textBefore.match(/<([a-zA-Z][a-zA-Z0-9:\-_]*)(?:\s+[^>]*?)?$/);
-    if (!tagMatch) return false;
+    var tags = scanTags(textBefore);
+    var opener = tags[tags.length - 1];
+    if (!opener || opener.closing || opener.closed || opener.depth !== 0) return false;
+    if (opener.end !== textBefore.length) return false;
 
-    var tagName = tagMatch[1];
+    var tagName = opener.name;
     if (VOID_HTML_ELEMENTS[tagName.toLowerCase()]) return false;
 
     var closingTag = '</' + tagName + '>';
@@ -786,6 +788,164 @@
 
       window.setTimeout(function () {
         editor.setPosition({ lineNumber: lineNumber, column: columnBeforeInsert + 1 });
+        editor.focus();
+      }, 0);
+    }, 0);
+
+    return true;
+  }
+
+  var TAG_SCAN_LINES = 200;
+  var TAG_SCAN_LINES_AFTER = 500;
+
+  // Tags in `text`, brace-aware so JSX attribute expressions like
+  // onClick={() => x > y} do not end a tag early.
+  function scanTags(text) {
+    var tags = [];
+    var re = /<(\/?)([A-Za-z][\w:.\-]*)/g;
+    var match;
+    while ((match = re.exec(text))) {
+      var i = re.lastIndex;
+      var depth = 0;
+      var quote = null;
+      var closed = false;
+      while (i < text.length) {
+        var c = text.charAt(i);
+        if (quote) {
+          if (c === '\\') { i += 2; continue; }
+          if (c === quote) quote = null;
+        } else if (c === '"' || c === "'" || c === '`') {
+          quote = c;
+        } else if (c === '{') {
+          depth++;
+        } else if (c === '}') {
+          if (depth > 0) depth--;
+        } else if (depth === 0) {
+          if (c === '>') { closed = true; break; }
+          if (c === '<') break;
+        }
+        i++;
+      }
+      tags.push({
+        name: match[2],
+        closing: !!match[1],
+        closed: closed,
+        selfClosing: closed && text.charAt(i - 1) === '/',
+        start: match.index,
+        end: i,
+        depth: depth
+      });
+      re.lastIndex = closed ? i + 1 : i;
+    }
+    return tags;
+  }
+
+  // Text from at most TAG_SCAN_LINES lines back up to `endIndex` on `lineNumber`.
+  function textBackTo(model, lineNumber, endIndex) {
+    var startLine = Math.max(1, lineNumber - TAG_SCAN_LINES);
+    return model.getValueInRange(new window.monaco.Range(startLine, 1, lineNumber, endIndex + 1));
+  }
+
+  // Nearest still-open tag before `endIndex` on `lineNumber`, scanning back at
+  // most TAG_SCAN_LINES lines. Void and self-closing tags never go on the stack.
+  function nearestUnclosedTag(model, lineNumber, endIndex) {
+    var stack = [];
+    scanTags(textBackTo(model, lineNumber, endIndex)).forEach(function (tag) {
+      if (tag.closing) {
+        for (var i = stack.length - 1; i >= 0; i--) {
+          if (stack[i] === tag.name) { stack.length = i; break; }
+        }
+      } else if (tag.closed && !tag.selfClosing && !VOID_HTML_ELEMENTS[tag.name.toLowerCase()]) {
+        stack.push(tag.name);
+      }
+    });
+    return stack.length ? stack[stack.length - 1] : null;
+  }
+
+  function tagNameRange(model, base, tag) {
+    var offset = base + tag.start + (tag.closing ? 2 : 1);
+    var start = model.getPositionAt(offset);
+    var end = model.getPositionAt(offset + tag.name.length);
+    return new window.monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column);
+  }
+
+  function linkedEditingRanges(model, position) {
+    if (!model || !position) return null;
+    if (model.getLanguageId && model.getLanguageId() === 'erb' && isInsideErbTag(model, position)) return null;
+
+    var startLine = Math.max(1, position.lineNumber - TAG_SCAN_LINES);
+    var endLine = Math.min(model.getLineCount(), position.lineNumber + TAG_SCAN_LINES_AFTER);
+    var base = model.getOffsetAt({ lineNumber: startLine, column: 1 });
+    var text = model.getValueInRange(new window.monaco.Range(startLine, 1, endLine, model.getLineMaxColumn(endLine)));
+    var tags = scanTags(text);
+    var cursor = model.getOffsetAt(position) - base;
+
+    var index = -1;
+    for (var i = 0; i < tags.length; i++) {
+      var nameStart = tags[i].start + (tags[i].closing ? 2 : 1);
+      if (cursor >= nameStart && cursor <= nameStart + tags[i].name.length) { index = i; break; }
+    }
+    if (index < 0) return null;
+
+    var tag = tags[index];
+    if (VOID_HTML_ELEMENTS[tag.name.toLowerCase()]) return null;
+
+    var match = null;
+    var depth = 0;
+    var j;
+    if (tag.closing) {
+      for (j = index - 1; j >= 0; j--) {
+        if (tags[j].name !== tag.name) continue;
+        if (tags[j].closing) depth++;
+        else if (tags[j].closed && !tags[j].selfClosing) {
+          if (depth === 0) { match = tags[j]; break; }
+          depth--;
+        }
+      }
+    } else {
+      if (!tag.closed || tag.selfClosing) return null;
+      for (j = index + 1; j < tags.length; j++) {
+        if (tags[j].name !== tag.name) continue;
+        if (tags[j].closing) {
+          if (depth === 0) { match = tags[j]; break; }
+          depth--;
+        } else if (tags[j].closed && !tags[j].selfClosing) depth++;
+      }
+    }
+    if (!match) return null;
+
+    return {
+      ranges: [
+        tagNameRange(model, base, tag.closing ? match : tag),
+        tagNameRange(model, base, tag.closing ? tag : match)
+      ],
+      wordPattern: /[\w:.\-]+/
+    };
+  }
+
+  function handleClosingTagAutoClose(editor, model, change) {
+    if (change.rangeLength !== 0 || change.text !== '/') return false;
+
+    var lineNumber = change.range.startLineNumber;
+    var slashColumn = change.range.startColumn;
+    var lineContent = model.getLineContent(lineNumber);
+    if (lineContent.charAt(slashColumn - 2) !== '<') return false;
+
+    var tagName = nearestUnclosedTag(model, lineNumber, slashColumn - 2);
+    if (!tagName) return false;
+
+    var insertAt = slashColumn + 1;
+    window.setTimeout(function () {
+      var activeModel = editor.getModel();
+      if (!activeModel || activeModel !== model) return;
+
+      editor.executeEdits('html-auto-close-end', [{
+        range: new window.monaco.Range(lineNumber, insertAt, lineNumber, insertAt),
+        text: tagName + '>'
+      }]);
+
+      window.setTimeout(function () {
+        editor.setPosition({ lineNumber: lineNumber, column: insertAt + tagName.length + 1 });
         editor.focus();
       }, 0);
     }, 0);
@@ -955,12 +1115,15 @@
 
       suppressInternalEdit = true;
       try {
-        if (language === 'html') {
-          handled = handleMarkupAutoClose(editor, model, change) || handled;
-        }
+        var isMarkup = language === 'html' || language === 'javascript' || language === 'typescript' ||
+          (language === 'erb' && !isInsideErbTag(model, {
+            lineNumber: change.range.startLineNumber,
+            column: change.range.startColumn
+          }));
 
-        if (language === 'javascript' || language === 'typescript') {
+        if (isMarkup) {
           handled = handleMarkupAutoClose(editor, model, change) || handled;
+          handled = handleClosingTagAutoClose(editor, model, change) || handled;
         }
       } finally {
         suppressInternalEdit = false;
@@ -1578,6 +1741,80 @@
           }).catch(function() { return { suggestions: [] }; });
       }
     });
+
+    monaco.languages.registerCompletionItemProvider('javascript', jsxPropsProvider);
+  }
+
+  // JSX attribute completion for components whose props are read as `props.x` /
+  // `this.props.x`, which the TS worker types as `any` and so completes nothing
+  // for. Destructured params are deliberately not scanned: the TS worker already
+  // completes those, and a second copy would double every row.
+  // Component name → prop-name list.
+  var jsxPropsProvider = {
+    triggerCharacters: [' '],
+    provideCompletionItems: function(model, position) {
+      var monaco = window.monaco;
+      var before = model.getValueInRange({
+        startLineNumber: position.lineNumber, startColumn: 1,
+        endLineNumber: position.lineNumber, endColumn: position.column
+      });
+      var tag = before.match(/<([A-Z][\w$]*)(?:\s+[^<>]*)?\s+[\w-]*$/);
+      if (!tag) return { suggestions: [] };
+
+      var used = {};
+      (before.slice(tag.index).match(/[\w-]+(?=\s*=)/g) || []).forEach(function(a) { used[a] = 1; });
+
+      var word = model.getWordUntilPosition(position);
+      var range = {
+        startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
+        startColumn: word.startColumn, endColumn: word.endColumn
+      };
+      return {
+        suggestions: collectComponentProps(monaco, model, tag[1])
+          .filter(function(p) { return !used[p]; })
+          .map(function(p) {
+            return {
+              label: p,
+              kind: monaco.languages.CompletionItemKind.Property,
+              insertText: p,
+              range: range
+            };
+          })
+      };
+    }
+  };
+
+  function collectComponentProps(monaco, model, name) {
+    var sources = [model.getValue()];
+    try {
+      var libs = monaco.languages.typescript.javascriptDefaults.getExtraLibs();
+      Object.keys(libs).forEach(function(uri) {
+        if (libs[uri] && libs[uri].content) sources.push(libs[uri].content);
+      });
+    } catch (e) { /* extraLibs unavailable */ }
+    monaco.editor.getModels().forEach(function(m) { if (m !== model) sources.push(m.getValue()); });
+
+    var decl = new RegExp('(?:function\\s+' + name + '\\s*\\(|(?:const|let|var)\\s+' + name + '\\s*=|class\\s+' + name + '\\b)');
+    var names = [];
+    var seen = {};
+    function add(candidate) {
+      if (/^[A-Za-z_$][\w$]*$/.test(candidate) && !seen[candidate]) { seen[candidate] = 1; names.push(candidate); }
+    }
+
+    for (var i = 0; i < sources.length; i++) {
+      var found = decl.exec(sources[i]);
+      if (!found) continue;
+
+      var body = sources[i].slice(found.index);
+      var end = body.slice(1).search(/\n(?:function |class |const |let |var )/);
+      if (end > 0) body = body.slice(0, end + 1);
+
+      var re = /\b(?:this\.)?props\.([A-Za-z_$][\w$]*)/g;
+      var read;
+      while ((read = re.exec(body))) add(read[1]);
+      break;
+    }
+    return names;
   }
 
   function registerRubyProviders(monaco) {
@@ -2612,48 +2849,10 @@
   // at once (linked editing, the file:// opener, Prettier formatting, vim fold
   // markers) rather than owned by Ruby or JS specifically.
   function registerGenericProviders(monaco) {
-    var genericLinkedProvider = {
-      provideLinkedEditingRanges: function provideLinkedEditingRanges(model, position) {
-        var line = model.getLineContent(position.lineNumber);
-        var wordInfo = model.getWordAtPosition(position);
-        if (!wordInfo) return null;
-
-        var word = wordInfo.word;
-        var startCol = wordInfo.startColumn;
-        var endCol = wordInfo.endColumn;
-
-        if (line[startCol - 2] === '<') {
-          var closeTagStr = '</' + word + '>';
-          var closeIdx = line.indexOf(closeTagStr, endCol - 1);
-          if (closeIdx !== -1) {
-            return {
-              ranges: [new monaco.Range(position.lineNumber, startCol, position.lineNumber, endCol), new monaco.Range(position.lineNumber, closeIdx + 3, position.lineNumber, closeIdx + 3 + word.length)],
-              wordPattern: /[a-zA-Z0-9:\-_]+/
-            };
-          }
-        }
-
-        if (line[startCol - 3] === '<' && line[startCol - 2] === '/') {
-          var openTagRegex = new RegExp('<' + word + '(?:\\s|>)');
-          var match = line.match(openTagRegex);
-          if (match) {
-            var openStart = match.index + 2;
-            if (openStart < startCol) {
-              return {
-                ranges: [new monaco.Range(position.lineNumber, openStart, position.lineNumber, openStart + word.length), new monaco.Range(position.lineNumber, startCol, position.lineNumber, endCol)],
-                wordPattern: /[a-zA-Z0-9:\-_]+/
-              };
-            }
-          }
-        }
-
-        return null;
-      }
-    };
-
-    monaco.languages.registerLinkedEditingRangeProvider('javascript', genericLinkedProvider);
-    monaco.languages.registerLinkedEditingRangeProvider('typescript', genericLinkedProvider);
-    monaco.languages.registerLinkedEditingRangeProvider('ruby', genericLinkedProvider);
+    var linkedProvider = { provideLinkedEditingRanges: linkedEditingRanges };
+    ['html', 'erb', 'javascript', 'typescript', 'ruby'].forEach(function (lang) {
+      monaco.languages.registerLinkedEditingRangeProvider(lang, linkedProvider);
+    });
 
     // Teaches Monaco how to open a file:// resource in this editor. Without it
     // every provider below can find a location but nothing can go there:
@@ -2810,6 +3009,10 @@
     markerFixKey: markerFixKey,
     // Exposed so the ERB gating can be asserted directly in system tests.
     isInsideErbTag: isInsideErbTag,
+    // Exposed so JSX prop completion can be asserted without the suggest widget.
+    jsxPropsProvider: jsxPropsProvider,
+    // Exposed so tag-pair linking can be asserted without driving a rename.
+    linkedEditingRanges: linkedEditingRanges,
     runRubyEnter: function runRubyEnter(editor) {
       if (!editor || !editor.getModel) return false;
       return handleRubyEnter(editor, editor.getModel());
