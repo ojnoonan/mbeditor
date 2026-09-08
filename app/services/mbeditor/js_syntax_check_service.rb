@@ -165,10 +165,16 @@ module Mbeditor
     MUTEX = Mutex.new
     private_constant :MUTEX
 
+    # ponytail: one shared V8 context behind one global lock, so concurrent
+    # saves queue; a check skipped under contention is advisory-only. Hold a
+    # small pool of contexts if skips ever become common.
+    LOCK_WAIT_SECONDS = 0.1
+
     class << self
       def available?
         return false if Mbeditor.configuration.js_syntax_check == false
         return false unless defined?(::MiniRacer)
+        return false if @context == :broken
 
         !babel_source_path.nil?
       end
@@ -178,7 +184,7 @@ module Mbeditor
       def check(source)
         return nil unless available?
 
-        MUTEX.synchronize do
+        with_lock(nil) do
           begin
             ctx = context
             return nil unless ctx
@@ -224,7 +230,7 @@ module Mbeditor
         program = JsProgramService.call(workspace_root.to_s)
         globals = JsGlobalsService.call(workspace_root.to_s)
 
-        MUTEX.synchronize do
+        with_lock([]) do
           begin
             ctx = context
             return [] unless ctx
@@ -257,27 +263,47 @@ module Mbeditor
 
       private
 
-      def context
-        @context ||= begin
-          path = babel_source_path
-          return nil unless path
+      # Skipping the lock costs a lint run, never correctness.
+      def with_lock(unavailable)
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + LOCK_WAIT_SECONDS
+        until MUTEX.try_lock
+          return unavailable if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
 
-          ctx = ::MiniRacer::Context.new(timeout: EVAL_TIMEOUT_MS)
-          ctx.eval(File.read(path))
-          ctx.eval("if (typeof Babel === 'undefined') { throw new Error('Babel global missing'); }")
-          @checks_run = 0
-          ctx
-        rescue StandardError
-          @context = nil
-          nil
+          sleep 0.005
         end
+
+        begin
+          yield
+        ensure
+          MUTEX.unlock
+        end
+      end
+
+      def context
+        return nil if @context == :broken
+        return @context if @context
+
+        path = babel_source_path
+        return nil unless path
+
+        ctx = ::MiniRacer::Context.new(timeout: EVAL_TIMEOUT_MS)
+        ctx.eval(File.read(path))
+        ctx.eval("if (typeof Babel === 'undefined') { throw new Error('Babel global missing'); }")
+        @checks_run = 0
+        @context = ctx
+      rescue StandardError => e
+        # A bundle that will not evaluate will not evaluate on the next save
+        # either; re-reading multi-MB of babel per save is pure waste.
+        @context = :broken
+        Rails.logger&.warn("[mbeditor] babel asset #{path.inspect} failed to load, JS syntax check disabled: #{e.message}")
+        nil
       end
 
       def reset_context!
         # Dropping the reference leaks the V8 isolate until the GC finalizer
         # runs; dispose releases it now.
         begin
-          @context&.dispose
+          @context.dispose if @context.respond_to?(:dispose)
         rescue StandardError
           nil
         end
