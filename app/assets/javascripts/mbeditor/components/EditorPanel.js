@@ -695,6 +695,10 @@ var EditorPanel = function EditorPanel(_ref) {
 
     monacoRef.current = editor;
     window.__mbeditorActiveEditor = editor;
+    // Tells the status bar's cursor readout to re-attach. An event rather than
+    // a prop because the editor is published imperatively here, and a listener
+    // that guessed at the timing would miss the swap on a tab switch.
+    window.dispatchEvent(new CustomEvent('mbeditor:active-editor'));
     // Apply read-only for paginated (truncated) files
     if (tab.truncated) {
       editor.updateOptions({ readOnly: true });
@@ -1044,6 +1048,7 @@ var EditorPanel = function EditorPanel(_ref) {
       }
       if (window.__mbeditorActiveEditor === editor) {
         window.__mbeditorActiveEditor = null;
+        window.dispatchEvent(new CustomEvent('mbeditor:active-editor'));
       }
       if (editorPluginDisposable) editorPluginDisposable.dispose();
       if (formatActionDisposable) formatActionDisposable.dispose();
@@ -1979,6 +1984,21 @@ var EditorPanel = function EditorPanel(_ref) {
         };
         renderer.image = function(href, title, text) {
           return _origImage(safeHref(href), title, text);
+        };
+        // marked 10 dropped heading ids, so every in-document `[x](#anchor)`
+        // link pointed at nothing. Slugs follow GitHub's: strip markup, lower,
+        // drop punctuation, spaces to hyphens, `-1`/`-2` for repeats.
+        var slugSeen = {};
+        renderer.heading = function (text, level) {
+          var slug = String(text)
+            .replace(/<[^>]+>/g, '')
+            .replace(/&[#\w]+;/g, '')
+            .trim().toLowerCase()
+            .replace(/[^\w\- ]+/g, '')
+            .replace(/\s/g, '-');
+          slugSeen[slug] = (slugSeen[slug] || 0) + 1;
+          if (slugSeen[slug] > 1) slug += '-' + (slugSeen[slug] - 1);
+          return '<h' + level + ' id="' + slug + '">' + text + '</h' + level + '>\n';
         };
         setMarkup(window.marked.parse(markdownContent, { renderer: renderer }));
       })();

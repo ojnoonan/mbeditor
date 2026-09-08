@@ -13,6 +13,16 @@ var FileImport = (function () {
   // otherwise reject the request as a 500 before the server guard can run.
   var MAX_ENTRIES = 100;
 
+  // Every collector returns this same shape; `truncated` is read off the full
+  // list, so it must be computed before the slice.
+  function capResult(list, foldersSkipped) {
+    return {
+      entries: list.slice(0, MAX_ENTRIES),
+      truncated: list.length > MAX_ENTRIES,
+      foldersSkipped: !!foldersSkipped
+    };
+  }
+
   function hasExternalFiles(dataTransfer) {
     if (!dataTransfer || !dataTransfer.types) return false;
     return Array.prototype.indexOf.call(dataTransfer.types, 'Files') !== -1;
@@ -41,20 +51,12 @@ var FileImport = (function () {
       for (var j = 0; j < files.length; j++) {
         flat.push({ file: files[j], relativePath: files[j].name });
       }
-      return Promise.resolve({
-        entries: flat.slice(0, MAX_ENTRIES),
-        truncated: flat.length > MAX_ENTRIES,
-        foldersSkipped: !!(items && items.length > flat.length)
-      });
+      return Promise.resolve(capResult(flat, items && items.length > flat.length));
     }
 
     var collected = [];
     return walkAll(roots, collected).then(function () {
-      return {
-        entries: collected.slice(0, MAX_ENTRIES),
-        truncated: collected.length > MAX_ENTRIES,
-        foldersSkipped: false
-      };
+      return capResult(collected, false);
     });
   }
 
@@ -99,11 +101,7 @@ var FileImport = (function () {
       var f = fileList[i];
       out.push({ file: f, relativePath: stripLeadingSlash(f.webkitRelativePath || f.name) });
     }
-    return {
-      entries: out.slice(0, MAX_ENTRIES),
-      truncated: out.length > MAX_ENTRIES,
-      foldersSkipped: false
-    };
+    return capResult(out, false);
   }
 
   // Where in the workspace does this set of files already live?

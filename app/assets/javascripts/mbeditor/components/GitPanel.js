@@ -84,6 +84,9 @@ var GitPanel = function GitPanel(_ref) {
   var statusMeta = function statusMeta(rawStatus) {
     var raw = (rawStatus || '').trim();
     if (raw === '??') return { badge: 'NEW', cssKey: 'A', description: 'Untracked' };
+    // Before the first-character switch below: AA and DD are conflicts, and it
+    // would call them "added" and "deleted".
+    if (window.MBEDITOR_UNMERGED_STATUSES[raw]) return { badge: 'U', cssKey: 'Q', description: 'Conflict' };
     if (raw.startsWith('R')) return { badge: 'R', cssKey: 'R', description: 'Renamed' };
     switch (raw.charAt(0)) {
       case 'M': return { badge: 'M', cssKey: 'M', description: 'Modified' };

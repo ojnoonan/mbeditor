@@ -961,6 +961,18 @@ html, body, #mbeditor-root {
   white-space: nowrap;
 }
 
+/* Cursor position readout. Matches the buttons' metrics so the bar keeps one
+   rhythm, but it is a span with no hover: nothing happens when you click it. */
+.statusbar-cursor {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  height: 22px;
+  flex-shrink: 0;
+  color: var(--ide-accent-text);
+  font-variant-numeric: tabular-nums;
+}
+
 .statusbar-btn:hover { background: color-mix(in srgb, var(--ide-accent-text) 15%, transparent); }
 .statusbar-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -3743,6 +3755,7 @@ input.ide-model-graph-search[type="search"] {
 /* Pair-programming diagnostics. The chip only appears when a condition pairing
    needs has actually failed — an empty room is silence, not a warning. */
 .mbeditor-collab-trouble { color: var(--ide-warning, #cca700); }
+.mbeditor-conflict-chip { color: var(--ide-error, #f48771); }
 .mbeditor-modal-backdrop {
   position: fixed; inset: 0; z-index: 5000;
   background: rgba(0, 0, 0, 0.45);

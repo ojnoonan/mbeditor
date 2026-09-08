@@ -679,24 +679,13 @@ var TabManager = (function () {
     _updateTab(paneId, path, { isSoftOpen: false });
   }
 
-  function saveTabViewState(paneIdOrPath, pathOrViewState, maybeViewState) {
-    var paneId = paneIdOrPath;
-    var path = pathOrViewState;
-    var viewState = maybeViewState;
-
-    // Backward-compatible signature: saveTabViewState(path, viewState)
-    if (typeof maybeViewState === 'undefined') {
-      var state = EditorStore.getState();
-      path = paneIdOrPath;
-      viewState = pathOrViewState;
-      var containingPane = state.panes.find(function(p) {
-        return p.tabs.some(function(t) { return t.path === path; });
-      });
-      if (!containingPane) return;
-      paneId = containingPane.id;
-    }
-
-    _updateTab(paneId, path, { viewState: viewState });
+  function saveTabViewState(path, viewState) {
+    var state = EditorStore.getState();
+    var containingPane = state.panes.find(function(p) {
+      return p.tabs.some(function(t) { return t.path === path; });
+    });
+    if (!containingPane) return;
+    _updateTab(containingPane.id, path, { viewState: viewState });
   }
 
   function reorderTabInPane(paneId, tabId, insertBeforeTabId) {

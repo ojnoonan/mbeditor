@@ -32,17 +32,37 @@ var CombinedDiffViewer = function CombinedDiffViewer(_ref) {
   }
 
   // Split the raw diff into per-file segments, each starting at "diff --git".
+  // Anything before the first such header is not a file diff — it's the
+  // explanatory "# ..." text tab_manager.js substitutes when there's no base
+  // branch to compare against, or nothing changed — so it must be shown
+  // rather than silently dropped, or the tab reads as a blank diff.
   var segments = [];
   var current = null;
+  var preamble = [];
   diffText.split('\n').forEach(function (line) {
     if (line.startsWith('diff --git ')) {
       if (current) segments.push(current);
       current = { header: line, lines: [line] };
     } else if (current) {
       current.lines.push(line);
+    } else {
+      preamble.push(line);
     }
   });
   if (current) segments.push(current);
+
+  if (segments.length === 0) {
+    var message = preamble.join('\n').trim().replace(/^#\s*/, '');
+    // Info, not the green tick used for a genuinely empty diff above: this
+    // branch also carries "no base branch to compare against", which is a
+    // problem to act on rather than a clean result.
+    return React.createElement(
+      'div',
+      { className: 'combined-diff-viewer combined-diff-empty' },
+      React.createElement('i', { className: 'fas fa-info-circle', style: { marginRight: 8 } }),
+      message || 'No changes.'
+    );
+  }
 
   // Extract a clean display path from the "diff --git a/foo b/foo" header
   function extractPath(headerLine) {

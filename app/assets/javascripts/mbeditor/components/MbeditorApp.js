@@ -345,6 +345,46 @@ function diffLines(oldLines, newLines) {
   return changed;
 }
 
+// Cursor line/column for the status bar.
+//
+// Its own component holding its own state, deliberately: the cursor moves on
+// every keystroke and every click, and MbeditorApp subscribes to the whole
+// store — reading the position there would re-render the entire app, tree and
+// all, on each keypress. Here a move re-renders one span.
+var CursorPosition = function CursorPosition() {
+  var _pos = React.useState(null);
+  var pos = _pos[0];
+  var setPos = _pos[1];
+
+  React.useEffect(function () {
+    var disposable = null;
+    var attach = function () {
+      if (disposable) { disposable.dispose(); disposable = null; }
+      var editor = window.__mbeditorActiveEditor;
+      if (!editor) { setPos(null); return; }
+      var read = function () {
+        var p = editor.getPosition();
+        setPos(p ? { line: p.lineNumber, col: p.column } : null);
+      };
+      read();
+      disposable = editor.onDidChangeCursorPosition(read);
+    };
+    attach();
+    window.addEventListener('mbeditor:active-editor', attach);
+    return function () {
+      window.removeEventListener('mbeditor:active-editor', attach);
+      if (disposable) disposable.dispose();
+    };
+  }, []);
+
+  if (!pos) return null;
+  return React.createElement(
+    'span',
+    { className: 'statusbar-cursor', title: 'Line ' + pos.line + ', column ' + pos.col },
+    'Ln ' + pos.line + ', Col ' + pos.col
+  );
+};
+
 var SidebarActionButton = function SidebarActionButton(_ref) {
   var title = _ref.title;
   var iconClass = _ref.iconClass;
@@ -491,6 +531,10 @@ var MbeditorApp = function MbeditorApp() {
   var _useState29 = useState(null);
   var commitDetailFiles = _useState29[0];
   var setCommitDetailFiles = _useState29[1];
+
+  var _useStateCFI = useState(0);
+  var conflictFileIndex = _useStateCFI[0];
+  var setConflictFileIndex = _useStateCFI[1];
 
   var _useState4 = useState([]);
 
@@ -2305,6 +2349,17 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
+  // Drop any pending-reload prompt whose tab is no longer open in any pane.
+  var _prunePendingReloads = function _prunePendingReloads() {
+    EditorStore.setState({
+      pendingReloads: EditorStore.getState().pendingReloads.filter(function (r) {
+        return EditorStore.getState().panes.some(function (p) {
+          return p.tabs.some(function (t) { return t.id === r.tabId; });
+        });
+      })
+    });
+  };
+
   var requestCloseTab = function requestCloseTab(paneId, id) {
     var pane = state.panes.find(function (p) {
       return p.id === paneId;
@@ -2317,13 +2372,7 @@ var MbeditorApp = function MbeditorApp() {
       setClosingTabId(id);
     } else {
       TabManager.closeTab(paneId, id);
-      EditorStore.setState({
-        pendingReloads: EditorStore.getState().pendingReloads.filter(function (r) {
-          return EditorStore.getState().panes.some(function (p) {
-            return p.tabs.some(function (t) { return t.id === r.tabId; });
-          });
-        })
-      });
+      _prunePendingReloads();
       forgetClosedTabs();
     }
   };
@@ -2356,49 +2405,20 @@ var MbeditorApp = function MbeditorApp() {
         });
         return;
       }
-      setLoading(function (prev) {
-        return _extends({}, prev, { save: true });
-      });
-      EditorStore.setStatus("Saving " + tab.name + "...", "info");
-      isSavingRef.current = true;
-      FileService.saveFile(tab.path, tab.content).then(function () {
-        noteLocalSave(tab.path, tab.content);
+      _runSave(tab, function () {
         EditorStore.setStatus("Saved", "success");
         SearchService.invalidate();
         GitService.fetchStatusLite({ background: true });
-        // Reset the AVI clean baseline so undo past this save point shows dirty correctly.
-        var _closeEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
-        if (_closeEntry && _closeEntry.model && !_closeEntry.model.isDisposed()) {
-          _closeEntry.cleanVersionId = _closeEntry.model.getAlternativeVersionId();
-        }
         TabManager.closeTab(closingPaneId, tab.id);
-        EditorStore.setState({
-          pendingReloads: EditorStore.getState().pendingReloads.filter(function (r) {
-            return EditorStore.getState().panes.some(function (p) {
-              return p.tabs.some(function (t) { return t.id === r.tabId; });
-            });
-          })
-        });
+        _prunePendingReloads();
         forgetClosedTabs();
-      })["catch"](function (err) {
-        EditorStore.setStatus("Save failed: " + err.message, "error");
-      })["finally"](function () {
-        isSavingRef.current = false;
-        setLoading(function (prev) {
-          return _extends({}, prev, { save: false });
-        });
+      }, function () {
         setClosingTabId(null);
         setClosingPaneId(null);
       });
     } else {
       TabManager.closeTab(closingPaneId, tab.id);
-      EditorStore.setState({
-        pendingReloads: EditorStore.getState().pendingReloads.filter(function (r) {
-          return EditorStore.getState().panes.some(function (p) {
-            return p.tabs.some(function (t) { return t.id === r.tabId; });
-          });
-        })
-      });
+      _prunePendingReloads();
       forgetClosedTabs();
       setClosingTabId(null);
       setClosingPaneId(null);
@@ -3128,8 +3148,14 @@ var MbeditorApp = function MbeditorApp() {
   var _formatContentForSave = function _formatContentForSave(tab) {
     var isRubyLang = /\.(rb|rake|gemspec)$/.test(tab.path) || /(?:^|\/)(Rakefile|Gemfile)$/.test(tab.path);
     if (isRubyLang) {
-      if (!rubocopAvailable) return Promise.resolve(null);
-      return FileService.formatFile(tab.path, tab.content)
+      // Same route as the Format button: formatRubySource tries ruby-lsp and
+      // falls back to /format's `rubocop -A`. Calling /format directly here
+      // meant saving a Ruby file could produce different bytes from formatting
+      // the same file by hand — the two-formatters-disagree trap this file
+      // already documents for JS — and gating on RuboCop alone made
+      // format-on-save silently do nothing when only ruby-lsp was present.
+      if (!rubocopAvailable && !window.MBEDITOR_RUBY_LSP_AVAILABLE) return Promise.resolve(null);
+      return formatRubySource(tab.path, tab.content)
         .then(function (res) { return (res && res.content) || null; })
         ["catch"](function () { return null; });
     }
@@ -3174,6 +3200,36 @@ var MbeditorApp = function MbeditorApp() {
     _doSave(paneId, tab);
   };
 
+  // Shared save-execution flow for a known-on-disk (non-untitled) tab: the
+  // saving status/loading flag, the FileService write, the AVI clean-baseline
+  // reset, and save-failed/cleanup handling. `onSuccess` runs whatever the
+  // caller does after a successful write (before the finally cleanup);
+  // `onFinally` runs any extra caller-specific cleanup after the standard one.
+  var _runSave = function _runSave(tab, onSuccess, onFinally) {
+    setLoading(function (prev) {
+      return _extends({}, prev, { save: true });
+    });
+    EditorStore.setStatus("Saving " + tab.name + "...", "info");
+    isSavingRef.current = true;
+    return FileService.saveFile(tab.path, tab.content).then(function () {
+      noteLocalSave(tab.path, tab.content);
+      // Reset the AVI clean baseline so undo past this save point shows dirty correctly.
+      var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+      if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
+        _modelEntry.cleanVersionId = _modelEntry.model.getAlternativeVersionId();
+      }
+      onSuccess();
+    })["catch"](function (err) {
+      EditorStore.setStatus("Save failed: " + err.message, "error");
+    })["finally"](function () {
+      isSavingRef.current = false;
+      setLoading(function (prev) {
+        return _extends({}, prev, { save: false });
+      });
+      if (onFinally) onFinally();
+    });
+  };
+
   var _doSave = function _doSave(paneId, tab) {
     if (tab.isUntitled) {
       saveUntitledTab(paneId, tab)["catch"](function (err) {
@@ -3182,13 +3238,7 @@ var MbeditorApp = function MbeditorApp() {
       });
       return;
     }
-    setLoading(function (prev) {
-      return _extends({}, prev, { save: true });
-    });
-    EditorStore.setStatus("Saving " + tab.name + "...", "info");
-    isSavingRef.current = true;
-    FileService.saveFile(tab.path, tab.content).then(function () {
-      noteLocalSave(tab.path, tab.content);
+    _runSave(tab, function () {
       var newPanes = EditorStore.getState().panes.map(function (p) {
         if (p.id === paneId) {
           return _extends({}, p, { tabs: p.tabs.map(function (t) {
@@ -3198,11 +3248,6 @@ var MbeditorApp = function MbeditorApp() {
         return p;
       });
       EditorStore.setState({ panes: newPanes });
-      // Reset the AVI clean baseline so undo past this save point shows dirty correctly.
-      var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
-      if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
-        _modelEntry.cleanVersionId = _modelEntry.model.getAlternativeVersionId();
-      }
       // Collab: push a fresh snapshot so the server compacts the buffered deltas.
       if (typeof CollaborationService !== 'undefined' && CollaborationService.isBound(tab.path)) {
         CollaborationService.pushSnapshot(tab.path);
@@ -3245,13 +3290,6 @@ var MbeditorApp = function MbeditorApp() {
       // file every time does by definition, so the duplicate was the expensive
       // one. Without a socket no broadcast arrives, so keep it for that case.
       if (!_socketWillBroadcast()) GitService.fetchStatusLite({ background: true });
-    })["catch"](function (err) {
-      EditorStore.setStatus("Save failed: " + err.message, "error");
-    })["finally"](function () {
-      isSavingRef.current = false;
-      return setLoading(function (prev) {
-        return _extends({}, prev, { save: false });
-      });
     });
   };
 
@@ -4011,10 +4049,8 @@ var MbeditorApp = function MbeditorApp() {
     if (imported > 0) {
       // Expand down to what was just written, so the tree actually shows it —
       // importing into a collapsed folder otherwise leaves the explorer looking
-      // untouched. Deliberately does not *select* the folder: the tree
-      // selection is what the toolbar's Upload button reads for its default
-      // destination, and pinning it here would make every later upload default
-      // to this import's folder.
+      // untouched. Deliberately does not *select* the folder, which would move
+      // the selection somewhere the user did not put it.
       var landed = parentDir(written[0].path);
       var toExpand = {};
       var bits = landed ? landed.split('/') : [];
@@ -4033,8 +4069,7 @@ var MbeditorApp = function MbeditorApp() {
   // rather than a disaster. Real targets stopPropagation before this runs.
   useEffect(function () {
     var swallow = function (e) {
-      var types = (e.dataTransfer && e.dataTransfer.types) || [];
-      if (Array.prototype.indexOf.call(types, 'Files') === -1) return;
+      if (!FileImport.hasExternalFiles(e.dataTransfer)) return;
       e.preventDefault();
       // dragover is left alone beyond preventDefault: setting dropEffect here
       // would override the 'copy' cursor the tree sets on a valid folder.
@@ -4062,7 +4097,15 @@ var MbeditorApp = function MbeditorApp() {
         (entries.length === 1 ? '' : 's') + '...', 'info');
     }
 
-    return FileService.importFiles(FileImport.buildFormData(entries, targetFolderPath, 'ask'))
+    var where = targetFolderPath || 'the workspace root';
+    var noun = entries.length + ' file' + (entries.length === 1 ? '' : 's');
+    var progress = function (percent) {
+      EditorStore.setStatus(percent === null
+        ? 'Uploaded ' + noun + ' to ' + where + ', writing them...'
+        : 'Uploading ' + noun + ' to ' + where + '... ' + percent + '%', 'info');
+    };
+
+    return FileService.importFiles(FileImport.buildFormData(entries, targetFolderPath, 'ask'), progress)
       .then(function(result) {
         if (result.conflicts && result.conflicts.length > 0) {
           setImportConflict({ result: result, entries: entries, targetFolderPath: targetFolderPath });
@@ -4176,12 +4219,7 @@ var MbeditorApp = function MbeditorApp() {
   // A file node means "upload alongside this file", so the dialog opens on its
   // parent — right-clicking a file to upload next to it is the common gesture.
   var openImportDialog = function openImportDialog(node) {
-    var folder = '';
-    if (node && node.type === 'folder') {
-      folder = node.path;
-    } else if (node && node.path) {
-      folder = node.path.split('/').slice(0, -1).join('/');
-    }
+    var folder = node ? (node.type === 'folder' ? node.path : parentDir(node.path)) : '';
     setImportDialog({ initialFolder: folder });
   };
 
@@ -4644,6 +4682,35 @@ var MbeditorApp = function MbeditorApp() {
   var canLintAndFormat = !!activeTab;
   var hasGitBranch = !!(state.gitBranch && state.gitBranch.trim());
 
+  // Derived at render from state already in the store — not stored via setState,
+  // so the 5s git-status poll (MbeditorApp.js re-render rules) never fires an
+  // extra re-render on an unchanged tick. Only conflictFileIndex is state, and
+  // it changes only on explicit user click, never from a poll.
+  var conflictedFiles = (state.gitInfo && state.gitInfo.workingTree || []).filter(function (f) {
+    return window.MBEDITOR_UNMERGED_STATUSES[(f.status || '').trim()];
+  });
+
+  // Opens the conflicted file at index idx (wrapping), landing the cursor/reveal
+  // on its first `<<<<<<<` marker. Prefers an already-open tab's live content
+  // (may hold unsaved edits) over a fresh disk fetch.
+  var openConflictedFileAt = function openConflictedFileAt(idx) {
+    if (!conflictedFiles.length) return;
+    var i = ((idx % conflictedFiles.length) + conflictedFiles.length) % conflictedFiles.length;
+    var file = conflictedFiles[i];
+    setConflictFileIndex(i);
+    var openTab = state.panes.reduce(function (found, p) {
+      return found || p.tabs.find(function (t) { return t.path === file.path; });
+    }, null);
+    var name = file.path.split('/').pop();
+    var contentPromise = openTab ? Promise.resolve({ content: openTab.content }) : FileService.getFile(file.path);
+    contentPromise.then(function (data) {
+      var content = typeof data.content === 'string' ? data.content : '';
+      var blocks = ConflictParser.parse(content);
+      var line = blocks.length ? blocks[0].startLine + 1 : null;
+      TabManager.openTab(file.path, name, line);
+    });
+  };
+
   var renderTabBar = function renderTabBar(paneId, tabs, activeId) {
     return React.createElement(TabBar, {
       tabs: tabs,
@@ -4913,6 +4980,35 @@ var MbeditorApp = function MbeditorApp() {
               title: (showGitPanel ? "Hide" : "Show") + " the git panel (Ctrl+Shift+G)" },
             React.createElement("i", { className: "fas fa-code-branch" }),
             !toolbarIconOnly && " Git"
+          )
+        ),
+        conflictedFiles.length > 0 && React.createElement(
+          React.Fragment,
+          null,
+          React.createElement("div", { className: "statusbar-sep" }),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "statusbar-btn mbeditor-conflict-chip",
+              title: "Open the first of " + conflictedFiles.length + " conflicted file" + (conflictedFiles.length === 1 ? "" : "s"),
+              onClick: function () { openConflictedFileAt(0); }
+            },
+            React.createElement("i", { className: "fas fa-exclamation-circle" }),
+            // The count always renders, even icon-only: it is the chip's
+            // content, not a label. A bare warning icon says less than nothing.
+            " " + conflictedFiles.length,
+            !toolbarIconOnly && (conflictedFiles.length === 1 ? " conflict" : " conflicts")
+          ),
+          conflictedFiles.length > 1 && React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "statusbar-btn",
+              title: "Open the next conflicted file",
+              onClick: function () { openConflictedFileAt(conflictFileIndex + 1); }
+            },
+            React.createElement("i", { className: "fas fa-arrow-right" })
           )
         ),
         // Collaboration trouble chip. Deliberately not shown when everything is
@@ -5374,10 +5470,15 @@ var MbeditorApp = function MbeditorApp() {
                   disabled: !!loading.createDir
                 }),
                 React.createElement(SidebarActionButton, {
-                  title: "Upload files",
+                  title: "Upload files to the workspace root",
                   iconClass: 'fas fa-upload',
+                  // Defaults to the workspace root, not whatever happens to be
+                  // selected in the tree: an upload that silently follows the
+                  // selection lands files somewhere the user was not looking,
+                  // and the count reads as a success either way. The context
+                  // menu's "Upload Files Here..." is the way to target a folder.
                   onClick: function () {
-                    return openImportDialog(selectedTreeNode);
+                    return openImportDialog(null);
                   }
                 }),
                 React.createElement(SidebarActionButton, {
@@ -6250,6 +6351,7 @@ var MbeditorApp = function MbeditorApp() {
         },
         React.createElement("i", { className: "fas fa-paragraph" })
       ),
+      React.createElement(CursorPosition, null),
       activeEOL && React.createElement(
         "button",
         {

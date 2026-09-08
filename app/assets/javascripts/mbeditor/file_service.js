@@ -242,9 +242,17 @@ var FileService = (function () {
   // Multipart import of files dragged in from outside the browser. The
   // default 30 s axios timeout is too tight for a large drop on a slow disk,
   // so this one call gets a longer leash.
-  function importFiles(formData) {
+  // onProgress(percentOrNull) fires as the body uploads, then once more with
+  // null when the bytes are away and the server is still writing. A big drop
+  // on a slow link otherwise sits on one static message long enough to look
+  // like it has hung.
+  function importFiles(formData, onProgress) {
     return axios.post(window.mbeditorBasePath() + '/import', formData, {
-      timeout: 120000
+      timeout: 120000,
+      onUploadProgress: onProgress ? function (e) {
+        var done = e.loaded === e.total;
+        onProgress(!done && e.total ? Math.round((e.loaded / e.total) * 100) : null);
+      } : undefined
     }).then(function (res) { return res.data; });
   }
 

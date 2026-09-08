@@ -1,3 +1,10 @@
+// Git's seven unmerged porcelain codes. Defined here because git_service.js
+// loads before both consumers (GitPanel's status badges and the status bar's
+// conflict chip) and one list is the point: testing the first character
+// instead reads AA as "added" and DD as "deleted", so four of the seven
+// conflicts get mislabelled.
+window.MBEDITOR_UNMERGED_STATUSES = { DD: 1, AU: 1, UD: 1, UA: 1, DU: 1, AA: 1, UU: 1 };
+
 var GitService = (function () {
   function applyGitInfo(data) {
     var files = data.workingTree || data.files || [];
