@@ -162,6 +162,22 @@ module Mbeditor
       assert_equal ["d"], CollaborationDocStore.state_for("overflow", now: now)[:deltas]
     end
 
+    # the cap must not evict a room clients are still bound to, even when every
+    # cached room is subscribed: the evicted room's next opener would be granted a
+    # seed and merge a second copy of the file
+
+    def test_room_cap_never_evicts_a_subscribed_room
+      CollaborationDocStore.join("older.rb")
+      CollaborationDocStore.record_update("older.rb", "d1", now: 100.0)
+      CollaborationDocStore.join("newer.rb")
+      CollaborationDocStore.record_update("newer.rb", "d2", now: 200.0)
+
+      CollaborationDocStore.send(:evict_lru)
+
+      assert_equal ["d1"], CollaborationDocStore.state_for("older.rb")[:deltas]
+      assert_equal ["d2"], CollaborationDocStore.state_for("newer.rb")[:deltas]
+    end
+
     # concurrent writers to one room record every delta without loss or crash
 
     def test_concurrent_record_update_records_all_deltas

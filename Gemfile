@@ -4,6 +4,7 @@ gemspec
 
 gem 'brakeman',           require: false
 gem 'bundler-audit',      require: false
+gem 'json',               '< 3',        require: false  # json 3 removed JSON.parse's options arg and generate's quirks_mode; ActiveSupport's JSON adapter still passes both
 gem 'loofah',             '>= 2.25.1',  require: false  # CVE: GHSA-46fp-8f5p-pf2m
 gem 'mcp',                '>= 0.9.2',   require: false  # CVE: CVE-2026-33946
 gem 'capybara',           require: false

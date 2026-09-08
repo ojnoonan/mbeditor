@@ -1,11 +1,45 @@
 'use strict';
 
-var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i['return']) _i['return'](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError('Invalid attempt to destructure non-iterable instance'); } }; })();
 
 var _React = React;
 var useState = _React.useState;
 var useEffect = _React.useEffect;
 var useRef = _React.useRef;
+
+var menuItem = function menuItem(icon, label, onClick) {
+  return React.createElement(
+    'div',
+    { className: 'ide-tab-context-menu-item', onClick: onClick },
+    React.createElement('i', { className: icon }),
+    label
+  );
+};
+
+// Clamps a position:fixed, content-sized popup menu into the viewport.
+// The menu is already rendered at its raw (possibly off-screen) cursor
+// position via inline style, so its size can only be known by measuring
+// the real element — nudge it back on-screen if it overflows. Shared by
+// the tab-strip menu here and the explorer context menu in MbeditorApp.js.
+window.clampMenuIntoView = function clampMenuIntoView(el) {
+  if (!el) return;
+  var MARGIN = 4;
+  var rect = el.getBoundingClientRect();
+  var left = rect.left;
+  var top = rect.top;
+
+  if (rect.right > window.innerWidth - MARGIN) {
+    left = Math.max(MARGIN, window.innerWidth - MARGIN - rect.width);
+  }
+  if (rect.bottom > window.innerHeight - MARGIN) {
+    var above = rect.top - rect.height;
+    top = above >= MARGIN ? above : MARGIN;
+  }
+  if (left < MARGIN) left = MARGIN;
+  if (top < MARGIN) top = MARGIN;
+
+  if (left !== rect.left) el.style.left = left + 'px';
+  if (top !== rect.top) el.style.top = top + 'px';
+};
 
 var TabBar = function TabBar(_ref) {
   var tabs = _ref.tabs;
@@ -29,27 +63,24 @@ var TabBar = function TabBar(_ref) {
 
   var _useState = useState(null);
 
-  var _useState2 = _slicedToArray(_useState, 2);
 
-  var draggingTabId = _useState2[0];
-  var setDraggingTabId = _useState2[1];
+  var draggingTabId = _useState[0];
+  var setDraggingTabId = _useState[1];
 
   var _useState3 = useState(null);
 
-  var _useState4 = _slicedToArray(_useState3, 2);
 
-  var tabContextMenu = _useState4[0];
-  var setTabContextMenu = _useState4[1];
+  var tabContextMenu = _useState3[0];
+  var setTabContextMenu = _useState3[1];
+  var tabContextMenuRef = useRef(null);
 
   var _useState5 = useState(null);
-  var _useState6 = _slicedToArray(_useState5, 2);
-  var dropTargetTabId = _useState6[0];
-  var setDropTargetTabId = _useState6[1];
+  var dropTargetTabId = _useState5[0];
+  var setDropTargetTabId = _useState5[1];
 
   var _useState7 = useState(null);
-  var _useState8 = _slicedToArray(_useState7, 2);
-  var dropTargetSide = _useState8[0];
-  var setDropTargetSide = _useState8[1];
+  var dropTargetSide = _useState7[0];
+  var setDropTargetSide = _useState7[1];
 
   var getTabMarkerClass = function getTabMarkerClass(tab) {
     var tabMarkers = markers[tab.id] || [];
@@ -91,6 +122,11 @@ var TabBar = function TabBar(_ref) {
     var handler = function () { setTabContextMenu(null); };
     document.addEventListener('mousedown', handler);
     return function () { document.removeEventListener('mousedown', handler); };
+  }, [tabContextMenu]);
+
+  // Clamp into view whenever the menu opens at a new position.
+  useEffect(function () {
+    if (tabContextMenu) window.clampMenuIntoView(tabContextMenuRef.current);
   }, [tabContextMenu]);
 
   return React.createElement(
@@ -222,6 +258,7 @@ var TabBar = function TabBar(_ref) {
     'div',
     {
       className: 'ide-tab-context-menu',
+      ref: tabContextMenuRef,
       style: {
         position: 'fixed',
         top: tabContextMenu.y,
@@ -236,85 +273,19 @@ var TabBar = function TabBar(_ref) {
       },
       onMouseDown: function(e) { e.stopPropagation(); }
     },
-    React.createElement(
-      'div',
-      {
-        className: 'ide-tab-context-menu-item',
-        style: { padding: '6px 14px', cursor: 'pointer', color: '#ccc', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' },
-        onMouseEnter: function(e) { e.currentTarget.style.background = '#094771'; },
-        onMouseLeave: function(e) { e.currentTarget.style.background = 'transparent'; },
-        onClick: function() { setTabContextMenu(null); onClose(tabContextMenu.tab.id); }
-      },
-      React.createElement('i', { className: 'fas fa-times', style: { width: '14px', textAlign: 'center' } }),
-      'Close'
-    ),
-    onCloseOthers && React.createElement(
-      'div',
-      {
-        className: 'ide-tab-context-menu-item',
-        style: { padding: '6px 14px', cursor: 'pointer', color: '#ccc', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' },
-        onMouseEnter: function(e) { e.currentTarget.style.background = '#094771'; },
-        onMouseLeave: function(e) { e.currentTarget.style.background = 'transparent'; },
-        onClick: function() { setTabContextMenu(null); onCloseOthers(tabContextMenu.tab.id); }
-      },
-      React.createElement('i', { className: 'fas fa-times-circle', style: { width: '14px', textAlign: 'center' } }),
-      'Close Others'
-    ),
-    onCloseSaved && React.createElement(
-      'div',
-      {
-        className: 'ide-tab-context-menu-item',
-        style: { padding: '6px 14px', cursor: 'pointer', color: '#ccc', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' },
-        onMouseEnter: function(e) { e.currentTarget.style.background = '#094771'; },
-        onMouseLeave: function(e) { e.currentTarget.style.background = 'transparent'; },
-        onClick: function() { setTabContextMenu(null); onCloseSaved(); }
-      },
-      React.createElement('i', { className: 'fas fa-check', style: { width: '14px', textAlign: 'center' } }),
-      'Close Saved'
-    ),
-    onCloseAll && React.createElement(
-      'div',
-      {
-        className: 'ide-tab-context-menu-item',
-        style: { padding: '6px 14px', cursor: 'pointer', color: '#ccc', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' },
-        onMouseEnter: function(e) { e.currentTarget.style.background = '#094771'; },
-        onMouseLeave: function(e) { e.currentTarget.style.background = 'transparent'; },
-        onClick: function() { setTabContextMenu(null); onCloseAll(); }
-      },
-      React.createElement('i', { className: 'fas fa-times', style: { width: '14px', textAlign: 'center' } }),
-      'Close All'
-    ),
+    menuItem('fas fa-times', 'Close', function() { setTabContextMenu(null); onClose(tabContextMenu.tab.id); }),
+    onCloseOthers && menuItem('fas fa-times-circle', 'Close Others', function() { setTabContextMenu(null); onCloseOthers(tabContextMenu.tab.id); }),
+    onCloseSaved && menuItem('fas fa-check', 'Close Saved', function() { setTabContextMenu(null); onCloseSaved(); }),
+    onCloseAll && menuItem('fas fa-times', 'Close All', function() { setTabContextMenu(null); onCloseAll(); }),
     React.createElement('div', { style: { height: '1px', background: '#454545', margin: '4px 0' } }),
-    onShowHistory && React.createElement(
-      'div',
-      {
-        className: 'ide-tab-context-menu-item',
-        style: { padding: '6px 14px', cursor: 'pointer', color: '#ccc', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' },
-        onMouseEnter: function(e) { e.currentTarget.style.background = '#094771'; },
-        onMouseLeave: function(e) { e.currentTarget.style.background = 'transparent'; },
-        onClick: function() {
-          setTabContextMenu(null);
-          onShowHistory(tabContextMenu.tab.path);
-        }
-      },
-      React.createElement('i', { className: 'fas fa-history', style: { width: '14px', textAlign: 'center' } }),
-      'File History'
-    ),
-    onRevealInExplorer && React.createElement(
-      'div',
-      {
-        className: 'ide-tab-context-menu-item',
-        style: { padding: '6px 14px', cursor: 'pointer', color: '#ccc', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' },
-        onMouseEnter: function(e) { e.currentTarget.style.background = '#094771'; },
-        onMouseLeave: function(e) { e.currentTarget.style.background = 'transparent'; },
-        onClick: function() {
-          setTabContextMenu(null);
-          onRevealInExplorer(tabContextMenu.tab.path);
-        }
-      },
-      React.createElement('i', { className: 'fas fa-sitemap', style: { width: '14px', textAlign: 'center' } }),
-      'Find in Explorer'
-    )
+    onShowHistory && menuItem('fas fa-history', 'File History', function() {
+      setTabContextMenu(null);
+      onShowHistory(tabContextMenu.tab.path);
+    }),
+    onRevealInExplorer && menuItem('fas fa-sitemap', 'Find in Explorer', function() {
+      setTabContextMenu(null);
+      onRevealInExplorer(tabContextMenu.tab.path);
+    })
   )
   );
 };

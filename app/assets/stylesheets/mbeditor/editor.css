@@ -961,6 +961,18 @@ html, body, #mbeditor-root {
   white-space: nowrap;
 }
 
+/* Cursor position readout. Matches the buttons' metrics so the bar keeps one
+   rhythm, but it is a span with no hover: nothing happens when you click it. */
+.statusbar-cursor {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  height: 22px;
+  flex-shrink: 0;
+  color: var(--ide-accent-text);
+  font-variant-numeric: tabular-nums;
+}
+
 .statusbar-btn:hover { background: color-mix(in srgb, var(--ide-accent-text) 15%, transparent); }
 .statusbar-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -2507,6 +2519,12 @@ html, body, #mbeditor-root {
 .monaco-editor .line-numbers.mbeditor-gitline-deleted.mbeditor-gitline-added,
 .monaco-editor .line-numbers.mbeditor-gitline-deleted.mbeditor-gitline-modified { color: var(--ide-danger); }
 
+/* Monaco's own active-selection rule is `.monaco-editor .focused .selected-text`,
+   which wants `focused` on a DESCENDANT. In this build the class lands on the
+   `.monaco-editor` element itself, so that rule never matches and every selection
+   paints with the dim inactive colour. Same theme variable, one less space. */
+.monaco-editor.focused .selected-text { background-color: var(--vscode-editor-selectionBackground); }
+
 .ide-methods-dropdown-message {
   padding: 8px 12px;
   color: #858585;
@@ -2593,6 +2611,26 @@ html, body, #mbeditor-root {
   height: 1px;
   background: var(--ide-border);
   margin: 4px 0;
+}
+
+.ide-tab-context-menu-item {
+  padding: 6px 14px;
+  cursor: pointer;
+  color: #ccc;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+}
+
+.ide-tab-context-menu-item:hover {
+  background: #094771;
+}
+
+.ide-tab-context-menu-item i {
+  width: 14px;
+  text-align: center;
 }
 
 .collapsible-content {
@@ -3717,6 +3755,7 @@ input.ide-model-graph-search[type="search"] {
 /* Pair-programming diagnostics. The chip only appears when a condition pairing
    needs has actually failed — an empty room is silence, not a warning. */
 .mbeditor-collab-trouble { color: var(--ide-warning, #cca700); }
+.mbeditor-conflict-chip { color: var(--ide-error, #f48771); }
 .mbeditor-modal-backdrop {
   position: fixed; inset: 0; z-index: 5000;
   background: rgba(0, 0, 0, 0.45);

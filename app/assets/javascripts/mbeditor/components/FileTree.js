@@ -1,6 +1,5 @@
 'use strict';
 
-var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i['return']) _i['return'](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError('Invalid attempt to destructure non-iterable instance'); } }; })();
 
 function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) arr2[i] = arr[i]; return arr2; } else { return Array.from(arr); } }
 
@@ -25,6 +24,7 @@ var FileTree = function FileTree(_ref) {
   var activePath = _ref.activePath;
   var selectedPaths = _ref.selectedPaths;   // Set<string> — all selected paths
   var anchorPath = _ref.anchorPath;         // string — anchor for shift-click range
+  var revealTarget = _ref.revealTarget;     // { path } — one-shot scroll target after create/rename/delete
   var onNodeSelect = _ref.onNodeSelect;     // fn(node) — single select (also clears multi)
   var onMultiSelect = _ref.onMultiSelect;   // fn(Set<string>) — multi-select update
   var onMove = _ref.onMove;                 // fn(srcPaths[], destFolderPath) — DnD move
@@ -44,23 +44,20 @@ var FileTree = function FileTree(_ref) {
 
   var _useState = useState('');
 
-  var _useState2 = _slicedToArray(_useState, 2);
 
-  var inlineValue = _useState2[0];
-  var setInlineValue = _useState2[1];
+  var inlineValue = _useState[0];
+  var setInlineValue = _useState[1];
 
   var _useStateDnD = useState(null);
-  var _useStateDnD2 = _slicedToArray(_useStateDnD, 2);
-  var dragOverFolder = _useStateDnD2[0];
-  var setDragOverFolder = _useStateDnD2[1];
+  var dragOverFolder = _useStateDnD[0];
+  var setDragOverFolder = _useStateDnD[1];
 
   // Target of an in-flight *external* drag: a folder path, '' for the tree
   // root, or null when no external drag is over the tree. Kept separate from
   // dragOverFolder so the two drop kinds highlight differently.
   var _useStateExt = useState(null);
-  var _useStateExt2 = _slicedToArray(_useStateExt, 2);
-  var externalDragOver = _useStateExt2[0];
-  var setExternalDragOver = _useStateExt2[1];
+  var externalDragOver = _useStateExt[0];
+  var setExternalDragOver = _useStateExt[1];
 
   var inlineRef = useRef(null);
   var committedRef = useRef(false);
@@ -122,6 +119,18 @@ var FileTree = function FileTree(_ref) {
     }, 60);
     return function () { clearTimeout(timer); };
   }, [anchorPath]);
+
+  // Scroll the affected row into view after a create/rename/delete. The
+  // caller expands any ancestor dirs before setting revealTarget, so this
+  // only has to wait for the tree re-render and locate the row.
+  useEffect(function () {
+    if (!revealTarget || !revealTarget.path) return;
+    var timer = setTimeout(function () {
+      var idx = flatItemsRef.current.findIndex(function(item) { return item.kind === 'node' && item.node.path === revealTarget.path; });
+      if (idx >= 0) scrollToItem(idx);
+    }, 80);
+    return function () { clearTimeout(timer); };
+  }, [revealTarget]);
 
   // Auto-reveal: when activePath changes, expand all ancestor dirs and scroll into view
   useEffect(function () {
@@ -651,7 +660,8 @@ var FileTree = function FileTree(_ref) {
             onContextMenu: function(e) {
               e.preventDefault();
               e.stopPropagation();
-              selectNode(node);
+              var isPartOfMultiSelect = selectedPaths && selectedPaths.size > 1 && selectedPaths.has(node.path);
+              if (!isPartOfMultiSelect) selectNode(node);
               if (onContextMenu) onContextMenu(e, node);
             }
           },
@@ -715,7 +725,11 @@ var FileTreeMemo = React.memo(FileTree, function(prev, next) {
     prev.gitFiles === next.gitFiles &&
     prev.expandedDirs === next.expandedDirs &&
     prev.pendingCreate === next.pendingCreate &&
-    prev.pendingRename === next.pendingRename;
+    prev.pendingRename === next.pendingRename &&
+    // A fresh object per reveal request, so identity is the signal. Without it
+    // the reveal only lands when the tree happened to change in the same batch,
+    // which is most of the time and never all of it.
+    prev.revealTarget === next.revealTarget;
 });
 
 // Expose globally for sprockets require

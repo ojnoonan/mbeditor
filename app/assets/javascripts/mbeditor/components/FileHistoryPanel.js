@@ -6,19 +6,16 @@ var FileHistoryPanel = function FileHistoryPanel(_ref) {
   var onClose = _ref.onClose;
 
   var _React$useState = React.useState([]),
-      _React$useState2 = _slicedToArray(_React$useState, 2),
-      commits = _React$useState2[0],
-      setCommits = _React$useState2[1];
+      commits = _React$useState[0],
+      setCommits = _React$useState[1];
 
   var _React$useState3 = React.useState(true),
-      _React$useState4 = _slicedToArray(_React$useState3, 2),
-      loading = _React$useState4[0],
-      setLoading = _React$useState4[1];
+      loading = _React$useState3[0],
+      setLoading = _React$useState3[1];
 
   var _React$useState5 = React.useState(null),
-      _React$useState6 = _slicedToArray(_React$useState5, 2),
-      error = _React$useState6[0],
-      setError = _React$useState6[1];
+      error = _React$useState5[0],
+      setError = _React$useState5[1];
 
   React.useEffect(function () {
     if (!path) return;

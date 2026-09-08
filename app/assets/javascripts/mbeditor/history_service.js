@@ -40,16 +40,6 @@ var HistoryService = (function () {
     }
   }
 
-  function stopTracking(filePath) {
-    var rec = _tracking[filePath];
-    if (!rec) return;
-    var k = _key(rec.branch, filePath);
-    clearTimeout(_idleTimers[k]);
-    delete _idleTimers[k];
-    flush(rec.branch, filePath);
-    delete _tracking[filePath];
-  }
-
   function setReplayInProgress(filePath, inProgress) {
     if (inProgress) {
       _replayingPaths[filePath] = true;
@@ -161,10 +151,8 @@ var HistoryService = (function () {
   return {
     beginTracking:       beginTracking,
     resumeTracking:      resumeTracking,
-    stopTracking:        stopTracking,
     setReplayInProgress: setReplayInProgress,
     recordOps:           recordOps,
-    flush:               flush,
     flushAll:            flushAll,
     flushForPath:        flushForPath,
     fetchHistory:        fetchHistory

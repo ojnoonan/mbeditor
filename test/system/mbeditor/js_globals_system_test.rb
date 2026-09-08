@@ -148,8 +148,12 @@ module Mbeditor
     # an argument past the end of the parameter list is dropped and a prop the
     # component never reads is inert, so both are warnings; a required prop
     # that never arrives is undefined by the time the component reads it, so
-    # that is an error. TypeScript folds the JSX cases into one code (2769),
-    # which is why the grading reads the message rather than the code.
+    # that is an error. The grading reads the message rather than the code
+    # because the code is not stable: while an open file was also in the
+    # program as an extraLib, TypeScript saw the component declared twice and
+    # reported both JSX mistakes as 2769 "No overload matches this call
+    # (Overload 1 of 2)"; with the duplicate gone it reports the precise 2322
+    # and 2741. Wait on the messages this test actually grades, not on a code.
     test "excess arguments and unknown props warn while a missing required prop errors" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
@@ -168,7 +172,8 @@ module Mbeditor
         JS
         break if markers.is_a?(Array) &&
                  markers.any? { |m| m["code"] == "2554" } &&
-                 markers.count { |m| m["code"] == "2769" } >= 2
+                 markers.any? { |m| m["message"].include?("bogusPropXyz") } &&
+                 markers.any? { |m| m["message"].include?("is missing in type") }
 
         flunk "call-shape markers never settled; last: #{markers.inspect}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
         sleep 0.5
