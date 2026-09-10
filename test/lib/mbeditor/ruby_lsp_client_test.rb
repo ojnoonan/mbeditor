@@ -224,6 +224,10 @@ module Mbeditor
     end
 
     test "concurrent threaded requests each get their own response" do
+      # A thread that arrives while another is still handshaking is told "not
+      # ready" rather than parked, so start the server before racing.
+      client.ready?
+
       results = 4.times.map do |i|
         Thread.new do
           client.request_with_document("textDocument/definition", File.join(@root, "file#{i}.rb"), "x#{i}\n",
@@ -234,6 +238,68 @@ module Mbeditor
       results.each_with_index do |r, i|
         assert_equal "file://#{@root}/file#{i}.rb", r.first["uri"]
       end
+    end
+
+    def monotonic
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    end
+
+    # A server that reads the initialize frame and then dies answers nothing.
+    # Only EOF on stdout can end that wait; without it the handshake burns the
+    # full INIT_TIMEOUT with the lifecycle lock held.
+    def use_dying_server
+      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, "-e", "STDIN.read(1); exit 0"]
+      RubyLspClient.reset!
+    end
+
+    test "a server that dies during the handshake fails it at once instead of at INIT_TIMEOUT" do
+      use_dying_server
+
+      started = monotonic
+      refute client.ready?
+      assert_operator monotonic - started, :<, 5, "EOF must fail the pending initialize"
+      assert_equal :crashed, client.state
+    end
+
+    test "a second thread is not parked for the whole handshake" do
+      use_dying_server
+
+      starter = Thread.new { client.ready? }
+      sleep 0.05
+      probed = monotonic
+      client.ready?
+      elapsed = monotonic - probed
+
+      assert_operator elapsed, :<, 1, "ready? must answer while a start is in flight"
+      starter.join(RubyLspClient::INIT_TIMEOUT)
+    end
+
+    test "a request that cannot take the document lock times out inside its own budget" do
+      definition_request
+      Mbeditor.configuration.ruby_lsp_timeout = 0.3
+      holder = Thread.new { client.instance_variable_get(:@doc_mutex).synchronize { sleep 5 } }
+      sleep 0.1
+
+      started = monotonic
+      assert_raises(RubyLspClient::TimeoutError) { definition_request(content: "changed\n") }
+      assert_operator monotonic - started, :<, 2, "the queue wait must be inside the request budget"
+    ensure
+      holder&.kill
+    end
+
+    test "the document cache is capped and the evicted document is closed on the server" do
+      cap = RubyLspClient::MAX_OPEN_DOCUMENTS
+      (cap + 1).times { |i| definition_request(content: "x#{i}\n", path: "f#{i}.rb") }
+
+      log = client.request("fake/syncLog", nil)
+      closes = log.select { |e| e["type"] == "close" }.map { |e| e["uri"] }
+
+      assert_equal ["file://#{@root}/f0.rb"], closes, "the least recently used document is closed"
+      assert_equal cap, client.instance_variable_get(:@docs).length
+    end
+
+    test "every restart backoff step is reachable within the crash budget" do
+      assert_equal RubyLspClient::MAX_RESTARTS - 1, RubyLspClient::RESTART_BACKOFFS.length
     end
 
     test "stop shuts the child down" do

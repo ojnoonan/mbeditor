@@ -69,23 +69,6 @@ module Mbeditor
       end
     end
 
-    # Temporarily wrap ProcessRunner.call so every subprocess invocation is
-    # recorded (cmd + timeout) while still delegating to the real runner.
-    def with_process_runner_recorder(captured)
-      real = ProcessRunner.method(:call)
-      verbose = $VERBOSE
-      $VERBOSE = nil
-      ProcessRunner.singleton_class.send(:define_method, :call) do |cmd, **kwargs|
-        captured << { cmd: cmd, timeout: kwargs[:timeout] }
-        real.call(cmd, **kwargs)
-      end
-      $VERBOSE = verbose
-      yield
-    ensure
-      $VERBOSE = nil
-      ProcessRunner.singleton_class.send(:define_method, :call, real)
-      $VERBOSE = verbose
-    end
 
     # Records any direct Open3.capture3 subprocess (one that bypasses
     # ProcessRunner, and therefore config.git_timeout) during the block.

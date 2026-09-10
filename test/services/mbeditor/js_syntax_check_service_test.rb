@@ -81,6 +81,44 @@ module Mbeditor
       assert_nil JsSyntaxCheckService.check("var x = 1;")
     end
 
+    test "a babel bundle that fails to evaluate is read once, not on every check" do
+      File.write(@babel_path, "throw new Error('boom');")
+      JsSyntaxCheckService.reset!
+
+      reads = []
+      original = File.method(:read)
+      File.singleton_class.send(:define_method, :read) do |path, *rest|
+        reads << path.to_s
+        original.call(path, *rest)
+      end
+      begin
+        assert_nil JsSyntaxCheckService.check("var x = 1;")
+        assert_nil JsSyntaxCheckService.check("var y = 2;")
+      ensure
+        File.singleton_class.send(:remove_method, :read)
+      end
+
+      assert_equal 1, reads.count(@babel_path)
+      assert_not JsSyntaxCheckService.available?, "a broken bundle disables the checker"
+    end
+
+    test "check reports clean promptly instead of queueing behind a held lock" do
+      mutex = JsSyntaxCheckService.class_eval("MUTEX")
+      held = Queue.new
+      holder = Thread.new { mutex.synchronize { held << true; sleep 2 } }
+      held.pop
+
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      result = JsSyntaxCheckService.check("var x = 1;")
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+      assert_nil result
+      assert_operator elapsed, :<, 1.0
+    ensure
+      holder&.kill
+      holder&.join
+    end
+
     # -------------------------------------------------------------------------
     # scope_lint — plumbing tests against a canned __mbLint. The real
     # parser/traverse logic requires real babel-standalone (host-provided, too

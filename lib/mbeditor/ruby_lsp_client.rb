@@ -30,7 +30,11 @@ module Mbeditor
     SHUTDOWN_GRACE = 2 # seconds before pgroup KILL
     MAX_RESTARTS = 3
     RESTART_WINDOW = 300 # seconds
-    RESTART_BACKOFFS = [1, 5, 25].freeze # min seconds between crash and retry
+    # One step per retry the crash budget actually allows: restart_allowed?
+    # latches :failed at MAX_RESTARTS crashes, so a third entry is unreachable.
+    RESTART_BACKOFFS = [1, 5].freeze # min seconds between crash and retry
+    MAX_OPEN_DOCUMENTS = 20 # LRU cap; the evicted URI is didClose'd
+    DOC_LOCK_POLL = 0.005 # seconds between @doc_mutex acquire attempts
 
     REGISTRY_MUTEX = Mutex.new
     private_constant :REGISTRY_MUTEX
@@ -68,6 +72,13 @@ module Mbeditor
 
     def initialize(root)
       @root         = root
+      # Lock order, never taken in any other sequence:
+      #   @doc_mutex   → @write_mutex
+      #   @state_mutex → @write_mutex
+      #   @pending_mutex is a leaf; no other lock is taken while holding it.
+      # @state_mutex is never held across the initialize handshake or a
+      # round-trip other than shutdown's, so a wedged server cannot park the
+      # threads that only want to ask whether it is up.
       @state_mutex  = Mutex.new # lifecycle transitions
       @write_mutex  = Mutex.new # stdin framing
       @pending_mutex = Mutex.new # id => Queue map + id allocation
@@ -75,7 +86,7 @@ module Mbeditor
       @pending      = {}
       @docs         = {}
       @next_id      = 0
-      @state        = :stopped # :stopped | :ready | :crashed | :failed
+      @state        = :stopped # :stopped | :starting | :ready | :crashed | :failed
       @crash_times  = []
       @last_error   = nil # last start failure, surfaced to the editor's status chip
     end
@@ -128,11 +139,35 @@ module Mbeditor
 
       uri = file_uri(path)
       timeout ||= (Mbeditor.configuration.ruby_lsp_timeout || 3).to_f
-      id, queue = @doc_mutex.synchronize do
+      # One deadline covers the queue wait and the round-trip. Timing only the
+      # round-trip let a hover queued behind a 10s diagnostics call hold a Puma
+      # thread for 13s while doing nothing.
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+      id, queue = with_doc_lock(method, deadline) do
         sync_document(uri, content)
         send_request(method, params.merge(textDocument: { uri: uri }))
       end
-      await_response(method, id, queue, timeout)
+      await_response(method, id, queue, remaining(deadline))
+    end
+
+    def remaining(deadline)
+      [deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC), 0].max
+    end
+
+    # ponytail: polled try_lock rather than a queue of waiters. The ceiling is
+    # DOC_LOCK_POLL of granularity and no FIFO fairness; swap in a
+    # ConditionVariable if either ever shows up in a profile.
+    def with_doc_lock(method, deadline)
+      until @doc_mutex.try_lock
+        raise TimeoutError, "#{method} timed out waiting for the document lock" if remaining(deadline).zero?
+
+        sleep DOC_LOCK_POLL
+      end
+      begin
+        yield
+      ensure
+        @doc_mutex.unlock
+      end
     end
 
     def request(method, params, timeout: nil)
@@ -238,13 +273,18 @@ module Mbeditor
       nil
     end
 
+    # :starting is what lets the handshake run outside @state_mutex: it claims
+    # the start for one thread, so a concurrent caller neither starts a second
+    # process nor waits on a server that may take INIT_TIMEOUT to answer. Such
+    # a caller is told "not ready" and falls back to the grep/Ripper path.
     def ensure_started
       @state_mutex.synchronize do
-        return if @state == :ready || @state == :failed
+        return if %i[ready failed starting].include?(@state)
         return unless restart_allowed?
 
-        start_locked
+        @state = :starting
       end
+      start_handshake
     end
 
     def restart_allowed?
@@ -260,7 +300,7 @@ module Mbeditor
       now - @crash_times.last >= backoff
     end
 
-    def start_locked
+    def start_handshake
       cmd = resolve_command
       @stdin, @stdout, @stderr, @wait_thr = Open3.popen3(*cmd, chdir: @root, pgroup: true)
       @stdin.binmode
@@ -286,13 +326,19 @@ module Mbeditor
 
       write_message({ jsonrpc: "2.0", method: "initialized", params: {} })
       @docs = {}
-      @state = :ready
+      # Still :starting means nobody else has ruled on this process: the
+      # monitor thread reaching the exit first, or a stop, owns the transition.
+      @state_mutex.synchronize { @state = :ready if @state == :starting }
     rescue StandardError => e
       Rails.logger.warn("[mbeditor] ruby-lsp start failed: #{e.class}: #{e.message}") if defined?(Rails)
-      @last_error = "#{e.class}: #{e.message}"
-      record_crash
-      cleanup_process
-      @state = @crash_times.length >= MAX_RESTARTS ? :failed : :crashed
+      @state_mutex.synchronize do
+        next unless @state == :starting
+
+        @last_error = "#{e.class}: #{e.message}"
+        record_crash
+        cleanup_process
+        @state = @crash_times.length >= MAX_RESTARTS ? :failed : :crashed
+      end
     end
 
     def resolve_command
@@ -324,6 +370,11 @@ module Mbeditor
 
           dispatch(msg)
         end
+        # EOF is the first and cheapest news that the server is gone. The
+        # monitor thread also fails pending requests, but only after it can
+        # take @state_mutex, so waiting for it costs the caller its whole
+        # timeout — INIT_TIMEOUT for the handshake.
+        fail_pending_requests if @stdout.equal?(stdout)
       rescue StandardError
         nil
       end
@@ -448,8 +499,13 @@ module Mbeditor
     # copy wholesale and is guaranteed correct for unsaved buffers.
     def sync_document(uri, content)
       digest = Digest::SHA1.hexdigest(content)
-      doc = @docs[uri]
-      return if doc && doc[:digest] == digest
+      # Deleted and re-inserted below, so @docs stays in least-recently-used
+      # order: a plain Hash preserves insertion order, which is the whole LRU.
+      doc = @docs.delete(uri)
+      if doc && doc[:digest] == digest
+        @docs[uri] = doc
+        return
+      end
 
       version = doc ? doc[:version] + 1 : 1
       if doc
@@ -461,6 +517,18 @@ module Mbeditor
         textDocument: { uri: uri, languageId: "ruby", version: version, text: content }
       } })
       @docs[uri] = { version: version, digest: digest }
+      evict_documents
+    end
+
+    # Nothing tells the client that a tab closed, so without a cap the server
+    # keeps every file ever hovered open and indexed for the whole session.
+    def evict_documents
+      while @docs.length > MAX_OPEN_DOCUMENTS
+        stale_uri, = @docs.shift
+        write_message({ jsonrpc: "2.0", method: "textDocument/didClose", params: {
+          textDocument: { uri: stale_uri }
+        } })
+      end
     end
   end
 end
