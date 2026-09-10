@@ -332,6 +332,78 @@ module Mbeditor
       end
     end
 
+    # ── audit_log ────────────────────────────────────────────────────────────
+
+    test "audit_log downloads the merged client and server events" do
+      Mbeditor::AuditLog.clear!
+      Mbeditor::AuditLog.record(:save, ms: 7)
+
+      post "/mbeditor/audit_log",
+           params: { events: [[12, 1, 340, 0, 0]] }.to_json,
+           headers: { "CONTENT_TYPE" => "application/json" }
+      assert_response :no_content
+
+      get "/mbeditor/audit_log"
+      assert_response :ok
+      assert_match(/attachment; filename="mbeditor-audit-\d{8}-\d{6}\.json"/, response.headers["Content-Disposition"])
+
+      body = JSON.parse(response.body)
+      assert_equal 1, body["schema"]
+      assert_equal [[12, 1, 340, 0, 0]], body["client"]["events"]
+      refute body["client"].key?("legend"), "the legend is stitched on client side, never stored"
+      assert_equal "save", body["server"]["events"].first["event"]
+      assert_equal 7, body["server"]["events"].first["ms"]
+    ensure
+      Mbeditor::AuditLog.clear!
+    end
+
+    test "audit_log ingest drops malformed batches without failing the request" do
+      Mbeditor::AuditLog.clear!
+
+      post "/mbeditor/audit_log", params: "not json",
+                                  headers: { "CONTENT_TYPE" => "application/json" }
+      assert_response :no_content
+
+      post "/mbeditor/audit_log",
+           params: { events: [[1, 2, 3], "app/models/user.rb"] }.to_json,
+           headers: { "CONTENT_TYPE" => "application/json" }
+      assert_response :no_content
+
+      get "/mbeditor/audit_log"
+      assert_empty JSON.parse(response.body)["client"]["events"]
+      refute_includes response.body, "user.rb"
+    ensure
+      Mbeditor::AuditLog.clear!
+    end
+
+    test "audit_log can be cleared" do
+      Mbeditor::AuditLog.record(:save, ms: 1)
+
+      delete "/mbeditor/audit_log"
+      assert_response :ok
+
+      get "/mbeditor/audit_log"
+      body = JSON.parse(response.body)
+      # Genuinely empty. The three audit actions skip :request recording, so
+      # neither the DELETE nor this GET leaves a row behind — a cleared log is
+      # what you get, which is the whole point of the button.
+      assert_empty body["server"]["events"]
+      assert_empty body["client"]["events"]
+    ensure
+      Mbeditor::AuditLog.clear!
+    end
+
+    test "audit_log writes require the client header" do
+      ActionDispatch::Integration::Session.new(Rails.application).tap do |sess|
+        sess.post "/mbeditor/audit_log", params: { events: [] }.to_json,
+                                         headers: { "CONTENT_TYPE" => "application/json" }
+        assert_equal 403, sess.response.status
+
+        sess.delete "/mbeditor/audit_log", as: :json
+        assert_equal 403, sess.response.status
+      end
+    end
+
     # ── ruby_rename ──────────────────────────────────────────────────────────
 
     def with_fake_lsp
@@ -3137,6 +3209,90 @@ module Mbeditor
       $VERBOSE = nil
       ProcessRunner.singleton_class.send(:define_method, :call, real)
       $VERBOSE = verbose
+    end
+
+    # ---------------------------------------------------------------------------
+    # Audit log
+    # ---------------------------------------------------------------------------
+
+    def audit_events(event)
+      AuditLog.payload[:server][:events].select { |e| e[:event] == event }
+    end
+
+    # Swap RubyLspClient.for for a double, so the failure path is exercised
+    # without a real language server. Mirrors with_rg_available in
+    # search_replace_service_test.rb.
+    def with_lsp_client(double)
+      original = RubyLspClient.method(:for)
+      RubyLspClient.define_singleton_method(:for) { |*| double }
+      yield
+    ensure
+      RubyLspClient.singleton_class.send(:remove_method, :for)
+      RubyLspClient.define_singleton_method(:for, original)
+    end
+
+    test "a request records one :request entry naming the action and status" do
+      Mbeditor.configuration.audit_log = true
+      AuditLog.clear!
+
+      get "/mbeditor/workspace"
+      assert_response :ok
+
+      entries = audit_events(:request)
+      assert_equal 1, entries.length
+      assert_equal :workspace, entries.first[:action]
+      assert_equal response.status, entries.first[:status]
+      assert_kind_of Numeric, entries.first[:ms]
+      refute_includes AuditLog.payload.to_s, @workspace
+    ensure
+      AuditLog.clear!
+    end
+
+    test "ruby_lsp records a :ruby_lsp entry with ok true on a successful round trip" do
+      Mbeditor.configuration.audit_log = true
+      AuditLog.clear!
+
+      with_fake_lsp do
+        post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "app/models/user.rb",
+                                             content: "class User\nend\n", line: 1, character: 7 }
+        assert_response :ok
+      end
+
+      entries = audit_events(:ruby_lsp)
+      assert_equal 1, entries.length
+      assert_equal :definition, entries.first[:method]
+      assert_equal true, entries.first[:ok]
+      assert_kind_of Numeric, entries.first[:ms]
+      refute_includes AuditLog.payload.to_s, "user.rb"
+    ensure
+      AuditLog.clear!
+    end
+
+    test "ruby_lsp records a :ruby_lsp entry with ok false when the client raises" do
+      Mbeditor.configuration.audit_log = true
+      AuditLog.clear!
+
+      double = Object.new
+      double.define_singleton_method(:request_with_document) do |*|
+        raise RubyLspClient::NotReadyError, "no server"
+      end
+      double.define_singleton_method(:state) { :failed }
+
+      with_ruby_lsp_available(true) do
+        with_lsp_client(double) do
+          post "/mbeditor/ruby_lsp", params: { lsp_method: "hover", path: "app/models/user.rb",
+                                               content: "class User\nend\n", line: 1, character: 7 }
+          assert_response :ok
+          assert json["fallback"]
+        end
+      end
+
+      entries = audit_events(:ruby_lsp)
+      assert_equal 1, entries.length
+      assert_equal :hover, entries.first[:method]
+      assert_equal false, entries.first[:ok]
+    ensure
+      AuditLog.clear!
     end
   end
 end

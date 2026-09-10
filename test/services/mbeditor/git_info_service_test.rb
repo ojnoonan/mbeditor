@@ -400,5 +400,40 @@ module Mbeditor
                    "expected no raw Open3.capture3 calls, but these git commands " \
                    "bypassed the timeout mechanism: #{captured.inspect}"
     end
+
+    # -------------------------------------------------------------------------
+    # Audit log
+    # -------------------------------------------------------------------------
+
+    def test_a_fan_out_records_one_git_wave_entry_without_the_repo_path
+      Mbeditor.configuration.audit_log = true
+      GitInfoService.invalidate(REPO_PATH)
+      AuditLog.clear!
+
+      result = GitInfoService.call(REPO_PATH)
+      assert result[:ok], "expected ok: true, got: #{result.inspect}"
+
+      entries = AuditLog.payload[:server][:events].select { |e| e[:event] == :git_wave }
+      assert_equal 1, entries.length
+      assert_kind_of Numeric, entries.first[:ms]
+
+      dump = AuditLog.payload.to_s
+      refute_includes dump, REPO_PATH
+      refute_includes dump, File.basename(REPO_PATH)
+    ensure
+      AuditLog.clear!
+    end
+
+    def test_a_cache_hit_records_no_further_git_wave
+      GitInfoService.invalidate(REPO_PATH)
+      GitInfoService.call(REPO_PATH)
+      AuditLog.clear!
+
+      GitInfoService.call(REPO_PATH)
+
+      assert_empty AuditLog.payload[:server][:events].select { |e| e[:event] == :git_wave }
+    ensure
+      AuditLog.clear!
+    end
   end
 end

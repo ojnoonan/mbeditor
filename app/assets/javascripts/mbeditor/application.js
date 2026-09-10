@@ -1,4 +1,5 @@
 //= require mbeditor/application_iife_head
+//= require mbeditor/audit_log
 //= require mbeditor/editor_store
 //= require mbeditor/file_icon
 //= require mbeditor/file_service

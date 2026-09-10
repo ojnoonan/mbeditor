@@ -232,6 +232,18 @@ var CollaborationService = (function () {
   // Room lifecycle
   // ---------------------------------------------------------------------------
 
+  // ms is the room's age — the only per-room duration this file has, and what
+  // makes the join/seed/attach/defer ordering legible in the trace.
+  function _recCollab(room, phase) {
+    var audit = window.MbeditorAudit;
+    if (!audit) return;
+    var peers = 0;
+    try {
+      if (room.awareness) peers = Math.max(0, room.awareness.getStates().size - 1);
+    } catch (e) { /* awareness torn down mid-teardown */ }
+    audit.rec(audit.EV.COLLAB, audit.code('collabPhase', phase), peers, Date.now() - room.auditStartedAt);
+  }
+
   // Open the Yjs document + channel subscription for a file and start the sync
   // handshake. Idempotent. Returns true when a live room exists (so the caller
   // can gate its own behavior), false when collaboration could not activate.
@@ -260,6 +272,7 @@ var CollaborationService = (function () {
       attachRequested: false,
       degraded: false,
       fallbackTimer: null,
+      auditStartedAt: Date.now(),
       // Awareness (slice 5): editors is the LIVE set y-monaco renders remote
       // carets into; cursorDisposers holds our per-editor cursor->awareness
       // writers; seenClients tracks peers we've announced ourselves to.
@@ -295,6 +308,7 @@ var CollaborationService = (function () {
     }
 
     _rooms[path] = room;
+    _recCollab(room, 'join');
     return true;
   }
 
@@ -316,6 +330,13 @@ var CollaborationService = (function () {
       _maybeAttach(room);
     } else if (data.type === 'doc_update') {
       if (data.update) window.Y.applyUpdate(room.doc, _b64ToU8(data.update), REMOTE);
+      // One sample a second: a peer typing produces an update per keystroke,
+      // and the trace wants the shape of the traffic, not every packet.
+      var updatedAt = Date.now();
+      if (updatedAt - (room.auditLastUpdate || 0) >= 1000) {
+        room.auditLastUpdate = updatedAt;
+        _recCollab(room, 'update');
+      }
       // A client that deferred attaching (empty room, seed granted to someone
       // else) is waiting for exactly this: the seeder's content has landed.
       _maybeAttach(room);
@@ -353,6 +374,7 @@ var CollaborationService = (function () {
         connected: function () {
           _sendLocalAwareness(room);
           if (room.binding) pushSnapshot(path);
+          _recCollab(room, 'reconnect');
         },
         received: function (data) { _onMessage(room, data); }
       });
@@ -393,7 +415,10 @@ var CollaborationService = (function () {
     // so when its content lands EditorPanel pushes the whole file through the live
     // binding at offset 0, and two clients doing that concatenate the file into
     // itself. Wait for the first doc_update, contentReady(), or the fallback timer.
-    if (room.text.length === 0 && !(room.seedGranted && room.model.getValue().length > 0)) return;
+    if (room.text.length === 0 && !(room.seedGranted && room.model.getValue().length > 0)) {
+      if (!room.auditDeferred) { room.auditDeferred = true; _recCollab(room, 'defer'); }
+      return;
+    }
     _doAttach(room);
   }
 
@@ -415,6 +440,7 @@ var CollaborationService = (function () {
       // Only ever the client the SERVER picked — two clients each seeding an
       // empty room merge into two concatenated copies of the file.
       room.doc.transact(function () { room.text.insert(0, model.getValue()); });
+      _recCollab(room, 'seed');
     }
 
     // Awareness carries each participant's caret/selection + identity. Optional:
@@ -442,6 +468,7 @@ var CollaborationService = (function () {
     if (preView && model.getValue() !== preValue) room.boundEditor.restoreViewState(preView);
 
     if (room.awareness) _initAwareness(room);
+    _recCollab(room, 'attach');
 
     // Undo scoped to this client's edits only: y-monaco tags model->doc edits with
     // the binding as origin, so undo can never revert a peer's edit.
@@ -775,6 +802,7 @@ var CollaborationService = (function () {
     if (room.broadcastAwareness && room.broadcastAwareness.cancel) {
       room.broadcastAwareness.cancel();
     }
+    _recCollab(room, 'leave');
     if (room.awareness) {
       // Tell peers our caret is gone before tearing down (file closed). Remove our
       // state, then send the resulting (null-state) update directly — the throttled

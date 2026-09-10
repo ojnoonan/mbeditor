@@ -339,6 +339,49 @@ A client that is *not* granted the seed and finds the room empty must **defer
 attaching** — binding to an empty `Y.Text` wipes its buffer. It attaches on the
 first `doc_update`, or falls back to local after the 6 s timer.
 
+## Audit log: numbers only, and why that is the whole design
+
+`MbeditorAudit` (`app/assets/javascripts/mbeditor/audit_log.js`) and
+`Mbeditor::AuditLog` (`lib/mbeditor/audit_log.rb`) record a trace the developer
+downloads from the status bar and hands to an AI. It must never contain code,
+file names, URLs or host paths.
+
+That is enforced structurally, not by scrubbing. `rec(ev, a, b, c)` drops any
+argument whose `typeof` is not `'number'`; `AuditLog.record` keeps a field only
+when it is `Numeric`, `true`, `false` or a `Symbol`. A Symbol is authored in
+code and can never be user data, a String can. Neither channel is *able* to
+carry a path, so there is no scrubber to keep ahead of new call sites.
+
+Consequences worth knowing before you extend it:
+
+- **Enumerated dimensions travel as integers**, resolved through
+  `MbeditorAudit.code('ext', ...)` against `LEGEND`. Passing the name itself
+  silently records 0.
+- **Never `.to_sym` anything derived from a request, a filename or subprocess
+  output.** That launders user data straight through the guard. `ProcessRunner`
+  maps executables through a hard-coded `TOOL_SYMBOLS` table defaulting to
+  `:other` for exactly this reason.
+- **`LEGEND` never crosses the wire.** It is a constant of the browser bundle
+  and is stitched into the payload client-side at download time. It used to be
+  uploaded and stored verbatim, which was the one string-shaped hole through
+  the guarantee; `AuditLog.ingest` takes one argument and a test asserts its
+  arity so it cannot grow a second.
+- **The audit endpoints skip `:request` recording.** Otherwise every ring flush
+  writes a row about the flush, and Clear log ends with the DELETE's own row in
+  the ring it just emptied.
+- **`record`/`ingest` never raise.** Every server call site is an `ensure` block
+  wrapping real work, where a raise would replace the exception being unwound
+  and a telemetry failure would masquerade as the bug it was recording.
+- **Instrument coarse operations only.** One record per request, search, git
+  wave or subprocess. `record` takes a mutex, so it must not go in a per-file
+  loop, and `rec` must never sit in a render or a `setState` updater. When you
+  instrument a poll, reuse work it already does: the tree poll hands its
+  signature to `_treeUpdater` rather than stringifying the tree a second time.
+
+`test/lib/mbeditor/audit_log_test.rb` pushes host paths through every argument
+position of both entry points and greps the payload and the persisted file. If
+you add a channel, add it there.
+
 ## Release workflow
 
 Say **"make a release for vX.Y.Z"** (or just "make a release") and Claude will:

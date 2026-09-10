@@ -12,7 +12,7 @@ module Mbeditor
                   :js_program, :js_program_exclude,
                   :js_syntax_check, :babel_standalone_path, :js_scope_lint,
                   :ruby_lsp, :ruby_lsp_command, :ruby_lsp_timeout,
-                  :exception_capture, :model_graph_max_models,
+                  :exception_capture, :audit_log, :model_graph_max_models,
                   :search_respect_gitignore, :ripgrep_command
 
     def initialize
@@ -98,6 +98,11 @@ module Mbeditor
       # same exposure the log panel already has, since it tails the dev log.
       # Set to false to record nothing.
       @exception_capture = :auto
+      # Record an audit/telemetry log the developer can download and hand to an
+      # AI to analyse. It carries numbers only — no code, file names, URLs or
+      # host paths — because both the browser ring and AuditLog.record refuse
+      # to store a String at all. Set to false to record nothing.
+      @audit_log = true
       # Models drawn in the model graph before it reports itself truncated.
       # nil uses ModelGraphService::DEFAULT_MAX_MODELS.
       @model_graph_max_models = nil

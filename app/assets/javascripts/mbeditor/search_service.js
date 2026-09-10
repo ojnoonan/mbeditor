@@ -145,6 +145,7 @@ var SearchService = (function () {
     var controller = new AbortController();
     _searchController = controller;
 
+    var startedAt = Date.now();
     return axios.get(window.mbeditorBasePath() + '/search', {
       params: { q: query, offset: off, limit: lim, regex: useRegex ? 'true' : 'false', match_case: matchCase ? 'true' : 'false', whole_word: wholeWord ? 'true' : 'false' },
       signal: controller.signal
@@ -154,6 +155,12 @@ var SearchService = (function () {
         var results    = Array.isArray(data) ? data : (data && data.results || []);
         var hasMore    = !Array.isArray(data) && !!(data && data.has_more);
         var totalCount = (data && data.total_count != null) ? data.total_count : null;
+
+        var audit = window.MbeditorAudit;
+        if (audit) {
+          audit.rec(audit.EV.SEARCH, audit.code('searchBackend', window.MBEDITOR_SEARCH_BACKEND),
+                    Date.now() - startedAt, results.length);
+        }
 
         var payload = { results: results, hasMore: hasMore, totalCount: totalCount };
         _cacheSet(key, payload);
@@ -170,6 +177,8 @@ var SearchService = (function () {
         if (axios.isCancel(err) || (err && err.name === 'CanceledError')) {
           return { results: [], hasMore: false, totalCount: null };
         }
+        var audit = window.MbeditorAudit;
+        if (audit) audit.rec(audit.EV.ERR, audit.EV.SEARCH);
         EditorStore.setStatus("Search failed: " + err.message, "error");
         return { results: [], hasMore: false, totalCount: null };
       });

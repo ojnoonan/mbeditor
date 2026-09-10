@@ -11,10 +11,34 @@ module Mbeditor
     CHUNK_BYTES = 64 * 1024
     private_constant :CHUNK_BYTES
 
+    # Known subprocess executables, by basename, mapped to a fixed audit Symbol.
+    # Anything unlisted — including a host-configured command like
+    # `rubocop_command` — is :other. Interning the executable string instead
+    # would launder host data through the audit log's Symbol-only guard.
+    TOOL_SYMBOLS = {
+      "git" => :git,
+      "rg" => :rg,
+      "grep" => :grep,
+      "rubocop" => :rubocop,
+      "haml-lint" => :haml_lint,
+      "haml_lint" => :haml_lint,
+      "rspec" => :rspec,
+      "rails" => :rails,
+      "bundle" => :bundle,
+      "ruby" => :ruby
+    }.freeze
+    private_constant :TOOL_SYMBOLS
+
+    def tool_symbol(cmd)
+      TOOL_SYMBOLS[File.basename(Array(cmd).first.to_s)] || :other
+    end
+    private_class_method :tool_symbol
+
     # +max_bytes+ bounds how much of each stream is kept in memory (nil =
     # unbounded). Anything past the cap is still read and discarded — stopping
     # would block the child on a full pipe and hang the wait below.
     def call(cmd, timeout: nil, env: {}, stdin_data: nil, chdir: nil, max_bytes: nil)
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       out = +""
       err = +""
       exit_status = nil
@@ -61,6 +85,14 @@ module Mbeditor
       raise TimeoutError, "process timed out after #{timeout}s" if timed_out
 
       { stdout: out, stderr: err, exit_status: exit_status }
+    ensure
+      # One record per spawn: `tool` is the mapped Symbol for a known
+      # executable (never the raw command), `ms` wall time, `status` a
+      # code-authored outcome — never the process's own output.
+      AuditLog.record(:subprocess,
+                      tool: tool_symbol(cmd),
+                      ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round,
+                      status: timed_out ? :timeout : (exit_status&.success? ? :ok : :error))
     end
 
     def read_capped(io, max_bytes)
