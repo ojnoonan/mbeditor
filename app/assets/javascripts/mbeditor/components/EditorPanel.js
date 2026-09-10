@@ -151,12 +151,6 @@ var EditorPanel = function EditorPanel(_ref) {
   var vimStatusRef = useRef(null);
   var vimModeObjRef = useRef(null);
 
-  function humanSize(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-  }
-
   var clearTestZones = function clearTestZones(editor) {
     if (!editor) return;
     if (testZoneIdsRef.current.length === 0) return;
@@ -637,7 +631,7 @@ var EditorPanel = function EditorPanel(_ref) {
       quickSuggestions: editorPrefs.quickSuggestions !== false,
       wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',
       acceptSuggestionOnEnter: editorPrefs.acceptSuggestionOnEnter || 'on',
-      linkedEditing: !!(editorPrefs.linkedEditing),
+      linkedEditing: true,
       fixedOverflowWidgets: true,
       hover: { above: false }
     });
@@ -1216,7 +1210,7 @@ var EditorPanel = function EditorPanel(_ref) {
         formatOnType: editorPrefs.formatOnType === true, // off by default: on-type formatting adds per-keystroke latency on slow machines
         quickSuggestions: editorPrefs.quickSuggestions !== false,
         wordBasedSuggestions: editorPrefs.wordBasedSuggestions || 'currentDocument',
-        linkedEditing: !!(editorPrefs.linkedEditing),
+        linkedEditing: true,
         acceptSuggestionOnEnter: editorPrefs.acceptSuggestionOnEnter || 'on'
       });
       // Re-apply large-file tuning last so a prefs change can't re-enable the
@@ -2398,7 +2392,7 @@ var EditorPanel = function EditorPanel(_ref) {
       React.createElement(
         'span',
         { style: { flex: 1, textAlign: 'center' } },
-        'Lines ' + (pageStartLine + 1) + '–' + (pageStartLine + pageLineCount) + ' of ' + pageTotalLines + ' (' + humanSize(pageTotalBytes) + ')'
+        'Lines ' + (pageStartLine + 1) + '–' + (pageStartLine + pageLineCount) + ' of ' + pageTotalLines + ' (' + formatSize(pageTotalBytes) + ')'
       ),
       React.createElement(
         'button',

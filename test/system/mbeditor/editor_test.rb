@@ -78,6 +78,8 @@ module Mbeditor
         end
       RUBY
       File.write(File.join(@workspace, "component.jsx"), "<div")
+      File.write(File.join(@workspace, "view_example.html.erb"), "<div")
+      File.write(File.join(@workspace, "page_example.html"), "<div")
       Mbeditor.configure do |c|
         c.allowed_environments = %i[test development]
         c.workspace_root       = @workspace
@@ -854,6 +856,127 @@ module Mbeditor
       assert_equal({ "lineNumber" => 1, "column" => 6 }, active_editor_position)
     end
 
+    test "erb auto-close inserts matching closing tag outside erb tags" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "view_example.html.erb").click
+      assert_selector ".monaco-editor", wait: 10
+
+      page.execute_script(<<~'JS')
+        var editor = window.__mbeditorActiveEditor;
+        editor.setValue("<div");
+        editor.setPosition({ lineNumber: 1, column: editor.getModel().getLineMaxColumn(1) });
+        editor.focus();
+        editor.trigger('keyboard', 'type', { text: '>' });
+      JS
+
+      wait_for_editor_value("<div></div>")
+      assert_equal({ "lineNumber" => 1, "column" => 6 }, active_editor_position)
+    end
+
+    test "typing a closing tag opener completes the nearest unclosed tag in html" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "page_example.html").click
+      assert_selector ".monaco-editor", wait: 10
+
+      page.execute_script(<<~'JS')
+        var editor = window.__mbeditorActiveEditor;
+        editor.setValue("<section>\n  <br>\n  <span>hi\n  ");
+        editor.setPosition({ lineNumber: 4, column: editor.getModel().getLineMaxColumn(4) });
+        editor.focus();
+        editor.trigger('keyboard', 'type', { text: '<' });
+        editor.trigger('keyboard', 'type', { text: '/' });
+      JS
+
+      wait_for_editor_value("<section>\n  <br>\n  <span>hi\n  </span>")
+    end
+
+    test "jsx auto-close completes a multi-line opener holding an arrow-function attribute" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      page.execute_script(<<~'JS')
+        var editor = window.__mbeditorActiveEditor;
+        editor.setValue("<div\n  onClick={() => go()}\n");
+        editor.setPosition({ lineNumber: 3, column: editor.getModel().getLineMaxColumn(3) });
+        editor.focus();
+        editor.trigger('keyboard', 'type', { text: '>' });
+      JS
+
+      wait_for_editor_value("<div\n  onClick={() => go()}\n></div>")
+      assert_equal({ "lineNumber" => 3, "column" => 2 }, active_editor_position)
+    end
+
+    test "typing a closing tag opener skips past an arrow-function attribute in jsx" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      page.execute_script(<<~'JS')
+        var editor = window.__mbeditorActiveEditor;
+        editor.setValue("<button onClick={() => x}>hi\n  ");
+        editor.setPosition({ lineNumber: 2, column: editor.getModel().getLineMaxColumn(2) });
+        editor.focus();
+        editor.trigger('keyboard', 'type', { text: '<' });
+        editor.trigger('keyboard', 'type', { text: '/' });
+      JS
+
+      wait_for_editor_value("<button onClick={() => x}>hi\n  </button>")
+    end
+
+    test "linked editing pairs an opening tag with its closing tag" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      result = page.evaluate_script(<<~'JS')
+        (function () {
+          var editor = window.__mbeditorActiveEditor;
+          editor.setValue("<section>\n  <p>hi</p>\n</section>");
+          var ranges = window.MbeditorEditorPlugins
+            .linkedEditingRanges(editor.getModel(), { lineNumber: 1, column: 4 });
+          return {
+            lines: (ranges && ranges.ranges || []).map(function (r) { return r.startLineNumber; }),
+            columns: (ranges && ranges.ranges || []).map(function (r) { return r.startColumn; }),
+            enabled: editor.getOption(window.monaco.editor.EditorOption.linkedEditing)
+          };
+        })()
+      JS
+
+      assert_equal [1, 3], result["lines"]
+      assert_equal [2, 3], result["columns"]
+      assert_equal true, result["enabled"]
+    end
+
+    test "jsx props completion offers props read through the props object" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "component.jsx").click
+      assert_selector ".monaco-editor", wait: 10
+
+      labels = page.evaluate_script(<<~'JS')
+        (function () {
+          var editor = window.__mbeditorActiveEditor;
+          var monaco = window.monaco;
+          monaco.languages.typescript.javascriptDefaults.addExtraLib(
+            "function Badge(props) { return props.label + props.tone; }\n",
+            "file:///badge.js"
+          );
+          editor.setValue("function App() { return <Badge  />; }");
+          var result = window.MbeditorEditorPlugins.jsxPropsProvider
+            .provideCompletionItems(editor.getModel(), { lineNumber: 1, column: 32 });
+          return (result && result.suggestions || []).map(function (s) { return s.label; });
+        })()
+      JS
+
+      assert_equal %w[label tone], labels
+    end
+
     test "tab key does not collapse multi-line selections in jsx" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
@@ -1375,6 +1498,28 @@ module Mbeditor
       # severity 4 = Monaco MarkerSeverity.Warning (not 8 = Error)
       assert wait_for_monaco_marker(matching: /unusedThing/, severity: 4),
              "Expected Monaco to show 'unusedThing' as a Warning (severity 4), not an Error"
+    end
+
+    test "test-result cache caps entry count and keeps the newest" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      counts = page.evaluate_script(<<~'JS')
+        (function () {
+          var prefix = window.__mbeditorTestCache.prefix;
+          for (var i = 0; i < 60; i++) {
+            localStorage.setItem(prefix + 'seed_' + i + '.rb', JSON.stringify({ ok: true, ts: i }));
+          }
+          var before = Object.keys(localStorage).filter(function (k) { return k.indexOf(prefix) === 0; }).length;
+          window.__mbeditorTestCache.save('newest.rb', { ok: true, tests: [] });
+          var keys = Object.keys(localStorage).filter(function (k) { return k.indexOf(prefix) === 0; });
+          return { before: before, after: keys.length, hasNewest: keys.indexOf(prefix + 'newest.rb') !== -1 };
+        })()
+      JS
+
+      assert_equal 60, counts["before"], "expected all 60 seeded entries present before capping"
+      assert_operator counts["after"], :<=, 50, "expected the cache capped at 50 entries, got #{counts['after']}"
+      assert counts["hasNewest"], "expected the just-saved entry to survive eviction"
     end
 
     private

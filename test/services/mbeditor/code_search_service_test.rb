@@ -321,24 +321,6 @@ module Mbeditor
       Mbeditor.configuration.search_timeout = previous
     end
 
-    # Temporarily wrap ProcessRunner.call to record cmd + timeout while still
-    # delegating to the real runner. Mirrors the recorder in
-    # editors_controller_test.rb / git_info_service_test.rb.
-    def with_process_runner_recorder(captured)
-      real = ProcessRunner.method(:call)
-      verbose = $VERBOSE
-      $VERBOSE = nil
-      ProcessRunner.singleton_class.send(:define_method, :call) do |cmd, **kwargs|
-        captured << { cmd: cmd, timeout: kwargs[:timeout] }
-        real.call(cmd, **kwargs)
-      end
-      $VERBOSE = verbose
-      yield
-    ensure
-      $VERBOSE = nil
-      ProcessRunner.singleton_class.send(:define_method, :call, real)
-      $VERBOSE = verbose
-    end
 
     def stub_process_runner_raising(error)
       real = ProcessRunner.method(:call)

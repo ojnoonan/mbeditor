@@ -505,6 +505,38 @@ function FileReloadBanner(_ref) {
   );
 }
 
+// ── Test-result cache (localStorage) ────────────────────────────────────
+// One entry per test file, capped so an unbounded suite can't fill the
+// origin's quota and take the unsaved-draft backup down with it (#84).
+var TEST_CACHE_PREFIX = 'mbeditor_test_result_';
+var TEST_CACHE_MAX_ENTRIES = 50;
+
+// ponytail: full localStorage scan per save, fine at a 50-entry cap.
+function _trimTestResultCache(maxEntries) {
+  var entries = [];
+  for (var i = 0; i < localStorage.length; i++) {
+    var key = localStorage.key(i);
+    if (key && key.indexOf(TEST_CACHE_PREFIX) === 0) {
+      var ts = 0;
+      try { ts = (JSON.parse(localStorage.getItem(key)) || {}).ts || 0; } catch (e) {}
+      entries.push({ key: key, ts: ts });
+    }
+  }
+  entries.sort(function (a, b) { return a.ts - b.ts; });
+  while (entries.length > maxEntries) localStorage.removeItem(entries.shift().key);
+}
+
+function saveCachedTestResult(filePath, result) {
+  var payload = JSON.stringify(_extends({}, result, { ts: Date.now() }));
+  try {
+    localStorage.setItem(TEST_CACHE_PREFIX + filePath, payload);
+  } catch (e) {
+    _trimTestResultCache(Math.floor(TEST_CACHE_MAX_ENTRIES / 2));
+    try { localStorage.setItem(TEST_CACHE_PREFIX + filePath, payload); } catch (e2) { return; }
+  }
+  _trimTestResultCache(TEST_CACHE_MAX_ENTRIES);
+}
+
 var MbeditorApp = function MbeditorApp() {
   var _useState = useState(EditorStore.getState());
 
@@ -1025,6 +1057,7 @@ var MbeditorApp = function MbeditorApp() {
 
   // ── Draft backup helpers ─────────────────────────────────────────────────
   var draftWriteTimerRef = useRef({});
+  var draftWriteWarnedRef = useRef({});
   var serverOnlineRef = useRef(true);
 
   var _draftKey = function _draftKey(path) {
@@ -1033,7 +1066,15 @@ var MbeditorApp = function MbeditorApp() {
   };
   var _saveDraftNow = function _saveDraftNow(path, content) {
     var doWrite = function() {
-      try { localStorage.setItem(_draftKey(path), JSON.stringify({ content: content, ts: Date.now() })); } catch (e) {}
+      try {
+        localStorage.setItem(_draftKey(path), JSON.stringify({ content: content, ts: Date.now() }));
+      } catch (e) {
+        // Once per path: this fires on every debounced keystroke otherwise.
+        if (!draftWriteWarnedRef.current[path]) {
+          draftWriteWarnedRef.current[path] = true;
+          EditorStore.setStatus('Crash-recovery backup failed for ' + path + ' (storage full)', 'error');
+        }
+      }
     };
     if (typeof requestIdleCallback !== 'undefined') {
       requestIdleCallback(doWrite, { timeout: 2000 });
@@ -3689,14 +3730,6 @@ var MbeditorApp = function MbeditorApp() {
     })["finally"](function () {
       setLoading(function (prev) { return _extends({}, prev, { format: false }); });
     });
-  };
-
-  var TEST_CACHE_PREFIX = 'mbeditor_test_result_';
-
-  var saveCachedTestResult = function saveCachedTestResult(filePath, result) {
-    try {
-      localStorage.setItem(TEST_CACHE_PREFIX + filePath, JSON.stringify(result));
-    } catch (e) {}
   };
 
   var executeTestRun = function executeTestRun(filePath, line) {
@@ -6812,4 +6845,6 @@ var MbeditorApp = function MbeditorApp() {
 };
 
 window.MbeditorApp = MbeditorApp;
+// Test-only: lets the system test seed/inspect the test-result cache directly.
+window.__mbeditorTestCache = { save: saveCachedTestResult, prefix: TEST_CACHE_PREFIX };
 /* TITLE BAR */ /* SIDEBAR */ /* EDITOR AREA */ /* STATUS BAR */ /* Right-click context menu */

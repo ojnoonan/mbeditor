@@ -76,7 +76,7 @@ Current state:
 
 ## Unfiled — docs
 
-**`AGENTS.md`/`CLAUDE.md` test counts are stale** — they say `495 tests,
+**`CLAUDE.md` test counts are stale** — they say `495 tests,
 1681 assertions`; the suite outgrew that long ago (last recorded count was
 889 runs / 2927 assertions at the previous review). Worth running the suite
 once and writing the real number in.
