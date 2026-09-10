@@ -343,8 +343,8 @@ first `doc_update`, or falls back to local after the 6 s timer.
 
 `MbeditorAudit` (`app/assets/javascripts/mbeditor/audit_log.js`) and
 `Mbeditor::AuditLog` (`lib/mbeditor/audit_log.rb`) record a trace the developer
-downloads from the status bar and hands to an AI. It must never contain code,
-file names, URLs or host paths.
+downloads from the Diagnostics section of settings and hands to an AI. It must
+never contain code, file names, URLs or host paths.
 
 That is enforced structurally, not by scrubbing. `rec(ev, a, b, c)` drops any
 argument whose `typeof` is not `'number'`; `AuditLog.record` keeps a field only

@@ -271,7 +271,8 @@ var SETTINGS_ROWS = [
 
   { header: 'Diagnostics' },
   { key: 'auditLog', type: 'checkbox', label: 'Record audit log', title: 'Record a numbers-only trace of editor activity you can download and hand to an AI to analyse. It never contains code, file names, URLs or host paths.', def: true },
-  { key: 'auditLogClear', type: 'button', label: 'Audit log', action: 'Clear log', title: 'Discard everything recorded so far, so the next download is a clean trace', onClick: clearAuditLog }
+  { key: 'auditLogDownload', type: 'button', label: 'Download log', action: 'Download', title: 'Save the recorded trace as a JSON file to hand to an AI. It carries numbers only — no code, file names, URLs or host paths', onClick: downloadAuditLog },
+  { key: 'auditLogClear', type: 'button', label: 'Clear log', action: 'Clear', title: 'Discard everything recorded so far, so the next download is a clean trace', onClick: clearAuditLog }
 ];
 
 // Drops both rings — the browser's and the server's — so the next download is
@@ -6519,17 +6520,6 @@ var MbeditorApp = function MbeditorApp() {
           }
         },
         React.createElement("i", { className: "fas fa-paragraph" })
-      ),
-      editorPrefs.auditLog !== false && React.createElement(
-        "button",
-        {
-          type: "button",
-          className: "statusbar-btn",
-          title: "Download the audit log — a numbers-only trace of this session you can hand to an AI",
-          onClick: downloadAuditLog
-        },
-        React.createElement("i", { className: "fas fa-clipboard-list" }),
-        !toolbarIconOnly && " Audit log"
       ),
       React.createElement(CursorPosition, null),
       activeEOL && React.createElement(
