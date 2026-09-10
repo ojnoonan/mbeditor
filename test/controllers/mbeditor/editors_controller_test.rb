@@ -3185,7 +3185,13 @@ module Mbeditor
       Mbeditor::ApplicationController.define_method(:current_user) { user }
       yield
     ensure
-      Mbeditor::ApplicationController.remove_method(:current_user)
+      # Guarded because remove_method raises NameError when the method is not
+      # on this exact class, and an ensure that raises replaces whatever the
+      # test actually failed on with a misleading one. That masking is how a
+      # real failure in here reached CI as an unexplained NameError.
+      if Mbeditor::ApplicationController.instance_methods(false).include?(:current_user)
+        Mbeditor::ApplicationController.remove_method(:current_user)
+      end
     end
 
     def json

@@ -139,6 +139,33 @@ module Mbeditor
       assert_equal [[7, 1, 99, 0, 0]], client_events
     end
 
+    # ProcessRunner is the choke point every subprocess goes through, and
+    # AvailabilityProbe runs its probes concurrently and deliberately outside
+    # that service's own mutex. record must not put that serialisation back.
+    def test_record_never_blocks_on_a_held_lock
+      mutex = AuditLog.const_get(:MUTEX)
+      mutex.lock
+      begin
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        200.times { AuditLog.record(:probe, ms: 1) }
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+        assert_operator elapsed, :<, 0.5, "record blocked while another thread held the lock"
+      ensure
+        mutex.unlock
+      end
+    end
+
+    def test_record_does_no_file_io
+      path = Rails.root.join("tmp", "mbeditor_audit.json")
+      File.delete(path) if File.exist?(path)
+
+      AuditLog.record(:probe, ms: 1)
+
+      refute File.exist?(path), "record wrote the log file inline; persistence rides on ingest and payload"
+      AuditLog.payload
+      assert File.exist?(path), "payload still persists"
+    end
+
     def test_disabled_records_nothing
       Mbeditor.configuration.audit_log = false
 

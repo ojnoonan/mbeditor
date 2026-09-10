@@ -52,12 +52,22 @@ module Mbeditor
         entry = { at: Time.now.utc.iso8601, event: event }
         fields.each { |key, value| entry[key] = value if safe?(value) }
 
-        MUTEX.synchronize do
+        # try_lock, not synchronize, and no file write. ProcessRunner is the
+        # choke point every subprocess goes through, including AvailabilityProbe's
+        # concurrent probes, which are deliberately run outside that service's own
+        # mutex so they do not serialise (see CLAUDE.md). Blocking them on a
+        # telemetry lock would put that back. A dropped sample under contention
+        # is the right trade: contention is exactly when blocking would hurt, and
+        # an uncontended record — the normal case — never drops.
+        return nil unless MUTEX.try_lock
+
+        begin
           load_unlocked
           bound(@entries << entry)
           @dirty = true
+        ensure
+          MUTEX.unlock
         end
-        persist!
         entry
       # Every caller is an `ensure` block wrapping real work. A raise here would
       # replace the exception that block is unwinding, so a telemetry failure
@@ -92,6 +102,10 @@ module Mbeditor
         nil
       end
 
+      # Persisting is driven from ingest and payload, never from record: the
+      # client flush is already batched and the download is a deliberate act,
+      # whereas record runs inside every request and subprocess.
+      #
       # The download payload. Persists unconditionally first, so the file on
       # disk always matches what the developer just downloaded.
       def payload
