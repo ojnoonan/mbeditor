@@ -5363,100 +5363,117 @@ var MbeditorApp = function MbeditorApp() {
             React.createElement(
               "div",
               { style: { marginBottom: "12px" } },
-              state.panes.map(function (pane) {
-                if (pane.tabs.length === 0) return null;
-                var isPane2 = pane.id === 2;
-                return React.createElement(
-                  "div",
-                  {
-                    key: pane.id,
-                    className: "open-editors-group",
-                    style: { marginBottom: pane.id === 1 && state.panes[1].tabs.length > 0 ? "10px" : "0" }
-                  },
-                  React.createElement(
+              (function () {
+                // VS Code drops the "GROUP N" sub-header when only one group
+                // is populated — it's only useful to tell groups apart.
+                var activePanes = state.panes.filter(function (p) { return p.tabs.length > 0; });
+                var showGroupHeaders = activePanes.length > 1;
+                return state.panes.map(function (pane) {
+                  if (pane.tabs.length === 0) return null;
+                  var isPane2 = pane.id === 2;
+                  return React.createElement(
                     "div",
-                    { className: "ide-sidebar-header open-editors-group-header" },
-                    React.createElement(
-                      "span",
-                      { className: "open-editors-group-title" },
-                      "GROUP ",
-                      pane.id
+                    {
+                      key: pane.id,
+                      className: "open-editors-group",
+                      style: { marginBottom: pane.id === 1 && state.panes[1].tabs.length > 0 ? "10px" : "0" }
+                    },
+                    showGroupHeaders && React.createElement(
+                      "div",
+                      { className: "ide-sidebar-header open-editors-group-header" },
+                      React.createElement(
+                        "span",
+                        { className: "open-editors-group-title" },
+                        "GROUP ",
+                        pane.id
+                      ),
+                      React.createElement(
+                        SectionActionGroup,
+                        { ariaLabel: "Group " + pane.id + " actions", className: "collapsible-actions open-editors-group-actions" },
+                        React.createElement(SidebarActionButton, {
+                          title: "Close all editors in Group " + pane.id,
+                          ariaLabel: "Close all editors in Group " + pane.id,
+                          iconClass: "far fa-window-close",
+                          onClick: function (e) {
+                            e.stopPropagation();handleCloseEditorsInGroup(pane.id);
+                          }
+                        })
+                      )
                     ),
                     React.createElement(
-                      SectionActionGroup,
-                      { ariaLabel: "Group " + pane.id + " actions", className: "collapsible-actions open-editors-group-actions" },
-                      React.createElement(SidebarActionButton, {
-                        title: "Close all editors in Group " + pane.id,
-                        ariaLabel: "Close all editors in Group " + pane.id,
-                        iconClass: "far fa-window-close",
-                        onClick: function (e) {
-                          e.stopPropagation();handleCloseEditorsInGroup(pane.id);
-                        }
-                      })
-                    )
-                  ),
-                  React.createElement(
-                    "div",
-                    { className: "file-tree" },
-                    pane.tabs.map(function (tab) {
-                      return React.createElement(
-                        "div",
-                        {
-                          key: tab.id,
-                          className: "tree-item " + (pane.activeTabId === tab.id && state.focusedPaneId === pane.id ? "active" : ""),
-                          // The name ellipsises in a narrow sidebar, so the row
-                          // carries the full path the way file-tree rows do.
-                          title: tab.path || tab.name,
-                          onClick: function () {
-                            if (tab.path && !tab.path.startsWith('mbeditor://') && tab.path !== '__settings__') {
-                              handleNodeSelect({ path: tab.path, name: tab.name, type: 'file' });
+                      "div",
+                      { className: "file-tree" },
+                      pane.tabs.map(function (tab) {
+                        var isActive = pane.activeTabId === tab.id && state.focusedPaneId === pane.id;
+                        var dir = tab.path ? tab.path.split('/').slice(0, -1).join('/') : '';
+                        return React.createElement(
+                          "div",
+                          {
+                            key: tab.id,
+                            className: "tree-item open-editors-item " + (isActive ? "active" : ""),
+                            // The name ellipsises in a narrow sidebar, so the row
+                            // carries the full path the way file-tree rows do.
+                            title: tab.path || tab.name,
+                            onClick: function () {
+                              if (tab.path && !tab.path.startsWith('mbeditor://') && tab.path !== '__settings__') {
+                                handleNodeSelect({ path: tab.path, name: tab.name, type: 'file' });
+                              }
+                              TabManager.focusPane(pane.id);TabManager.switchTab(pane.id, tab.id);
                             }
-                            TabManager.focusPane(pane.id);TabManager.switchTab(pane.id, tab.id);
-                          }
-                        },
-                        React.createElement("i", { className: "tree-item-icon " + (window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code') + " tree-file-icon" }),
-                        React.createElement(
-                          "div",
-                          // minWidth:0 on both the row's name cell and the label
-                          // itself: without it a flex item refuses to shrink
-                          // below its content, so a long filename pushed out
-                          // under the (formerly absolute) action buttons.
-                          { className: "tree-item-name", style: { display: 'flex', alignItems: 'center', minWidth: 0 } },
-                          React.createElement(
-                            "span",
-                            { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } },
-                            tab.name
-                          ),
-                          tab.dirty && React.createElement("i", { className: "fas fa-circle", style: { fontSize: '5px', color: '#e3d286', marginLeft: '6px', marginTop: '1px', flexShrink: 0 } })
-                        ),
-                        React.createElement(
-                          "div",
-                          // In flow, not absolute — the buttons now claim their
-                          // own width so the name truncates instead of running
-                          // underneath them.
-                          { className: "tab-actions", style: { display: 'flex', alignItems: 'center', flexShrink: 0, marginLeft: 'auto' } },
+                          },
+                          React.createElement("i", { className: "tree-item-icon " + (window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code') + " tree-file-icon" }),
                           React.createElement(
                             "div",
-                            { className: "tab-split", onClick: function (e) {
-                                e.stopPropagation();TabManager.moveTabToPane(pane.id, pane.id === 1 ? 2 : 1, tab.id);
-                              }, style: { padding: '0 4px', cursor: 'pointer', opacity: 0.6 }, title: "Move to Group " + (pane.id === 1 ? 2 : 1) },
-                            React.createElement("i", { className: isPane2 ? "fas fa-chevron-left" : "fas fa-chevron-right" })
+                            // minWidth:0 on both the row's name cell and the label
+                            // itself: without it a flex item refuses to shrink
+                            // below its content, so a long filename pushed out
+                            // under the (formerly absolute) action buttons.
+                            { className: "tree-item-name", style: { display: 'flex', alignItems: 'center', minWidth: 0 } },
+                            React.createElement(
+                              "span",
+                              { className: "open-editors-name", style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flexShrink: 0 } },
+                              tab.name
+                            ),
+                            dir && React.createElement(
+                              "span",
+                              { className: "open-editors-dir" },
+                              dir
+                            )
                           ),
                           React.createElement(
-                            "button",
-                            { type: "button", className: "tab-close", onClick: function (e) {
-                                e.stopPropagation();requestCloseTab(pane.id, tab.id);
-                              }, style: { padding: '0 4px', opacity: 0.6 },
-                              title: "Close " + tab.name + (tab.dirty ? " (unsaved changes)" : ""),
-                              'aria-label': "Close " + tab.name + (tab.dirty ? " (unsaved changes)" : "") },
-                            React.createElement("i", { className: "fas fa-times" })
+                            "div",
+                            // In flow, not absolute — the buttons now claim their
+                            // own width so the name truncates instead of running
+                            // underneath them.
+                            { className: "tab-actions", style: { display: 'flex', alignItems: 'center', flexShrink: 0, marginLeft: 'auto' } },
+                            React.createElement(
+                              "div",
+                              { className: "tab-split", onClick: function (e) {
+                                  e.stopPropagation();TabManager.moveTabToPane(pane.id, pane.id === 1 ? 2 : 1, tab.id);
+                                }, style: { padding: '0 4px', cursor: 'pointer' }, title: "Move to Group " + (pane.id === 1 ? 2 : 1) },
+                              React.createElement("i", { className: isPane2 ? "fas fa-chevron-left" : "fas fa-chevron-right" })
+                            ),
+                            React.createElement(
+                              "div",
+                              { className: "open-editors-close-slot" },
+                              tab.dirty && React.createElement("i", { className: "fas fa-circle open-editors-dirty-dot", 'aria-hidden': 'true' }),
+                              React.createElement(
+                                "button",
+                                { type: "button", className: "tab-close", onClick: function (e) {
+                                    e.stopPropagation();requestCloseTab(pane.id, tab.id);
+                                  }, style: { padding: '0 4px' },
+                                  title: "Close " + tab.name + (tab.dirty ? " (unsaved changes)" : ""),
+                                  'aria-label': "Close " + tab.name + (tab.dirty ? " (unsaved changes)" : "") },
+                                React.createElement("i", { className: "fas fa-times" })
+                              )
+                            )
                           )
-                        )
-                      );
-                    })
-                  )
-                );
-              })
+                        );
+                      })
+                    )
+                  );
+                });
+              })()
             )
           )
           ),

@@ -2119,6 +2119,38 @@ var EditorPanel = function EditorPanel(_ref) {
     return '\u2026/' + parts.slice(-2).join('/');
   }
 
+  // Breadcrumb: shortPath()'s segments, chevron-separated, the final one an
+  // icon + filename in the normal text colour, everything before it muted \u2014
+  // VS Code's editor breadcrumb. Look only; not a navigation control.
+  function renderBreadcrumb(path) {
+    var segments = shortPath(path).split('/');
+    var last = segments.length - 1;
+    var nodes = [];
+    segments.forEach(function (seg, i) {
+      if (i > 0) {
+        nodes.push(React.createElement('i', {
+          key: 'sep-' + i,
+          className: 'fas fa-chevron-right ide-breadcrumb-sep',
+          'aria-hidden': 'true'
+        }));
+      }
+      if (i === last) {
+        nodes.push(React.createElement(
+          'span',
+          { key: 'seg-' + i, className: 'ide-breadcrumb-file' },
+          React.createElement('i', {
+            className: (window.getFileIcon ? window.getFileIcon(path) : 'far fa-file-code') + ' ide-breadcrumb-file-icon',
+            'aria-hidden': 'true'
+          }),
+          seg
+        ));
+      } else {
+        nodes.push(React.createElement('span', { key: 'seg-' + i, className: 'ide-breadcrumb-dir' }, seg));
+      }
+    });
+    return nodes;
+  }
+
   // While Monaco is still loading, show a lightweight skeleton so the UI is
   // visible immediately without calling monaco.editor.create() too early.
   if (!monacoReady) {
@@ -2197,7 +2229,7 @@ var EditorPanel = function EditorPanel(_ref) {
       React.createElement(
         'span',
         { className: 'ide-editor-file-location', title: tab.path },
-        shortPath(tab.path)
+        renderBreadcrumb(tab.path)
       ),
       gitAvailable && tab.path && React.createElement(
         'button',

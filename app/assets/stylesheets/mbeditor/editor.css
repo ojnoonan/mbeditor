@@ -598,7 +598,7 @@ html, body, #mbeditor-root {
 
 .tab-item-icon {
   width: 14px;
-  margin-right: 8px;
+  margin-right: 6px;
   font-size: 12px;
   text-align: center;
   flex-shrink: 0;
@@ -633,8 +633,10 @@ html, body, #mbeditor-root {
   border: none;
   padding: 0;
   cursor: pointer;
+  opacity: 0.6;
 }
 
+.tab-item:hover .tab-close { opacity: 1; }
 .tab-close:hover { background: var(--ide-hover-bg); color: var(--ide-text); }
 
 .tab-welcome {
@@ -2401,6 +2403,39 @@ html, body, #mbeditor-root {
   transition: opacity 0.12s ease;
 }
 
+/* VS Code-style Open Editors row: 22px, filename dims when the tab isn't the
+   active one, the directory trails it in muted small text, and the
+   move-to-group / close controls stay invisible until the row is hovered. */
+.open-editors-item { height: 22px; padding: 0 8px; }
+.open-editors-name { color: var(--ide-text-muted); }
+.open-editors-item.active .open-editors-name { color: var(--ide-text); }
+.open-editors-dir {
+  margin-left: 6px;
+  color: var(--ide-text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.open-editors-item .tab-split { opacity: 0; }
+.open-editors-item:hover .tab-split { opacity: 0.6; }
+
+/* Dot and close button share one cell: the dot shows at rest for a dirty
+   tab, the close button takes over on hover — same slot, same as VS Code's
+   tab UI, so a hover never shifts the row's width. */
+.open-editors-close-slot {
+  display: grid;
+  width: 20px;
+  height: 16px;
+}
+.open-editors-close-slot > * { grid-area: 1 / 1; place-self: center; }
+.open-editors-dirty-dot { font-size: 5px; color: #e3d286; opacity: 1; }
+.open-editors-item .tab-close { opacity: 0; }
+.open-editors-item:hover .open-editors-dirty-dot { opacity: 0; }
+.open-editors-item:hover .tab-close { opacity: 1; }
+
 .ide-icon-btn {
   min-width: 24px;
   height: 24px;
@@ -2430,7 +2465,8 @@ html, body, #mbeditor-root {
   display: flex;
   justify-content: flex-start;
   align-items: center;
-  padding: 2px 12px;
+  padding: 0 12px;
+  height: 22px;
   min-height: 22px;
   background: var(--ide-bg);
   border-bottom: 1px solid var(--ide-border);
@@ -2446,12 +2482,17 @@ html, body, #mbeditor-root {
   white-space: nowrap;
   text-overflow: ellipsis;
   text-align: left;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--ide-text-muted);
   padding: 0 4px;
   cursor: default;
   user-select: text;
 }
+
+.ide-breadcrumb-dir { color: var(--ide-text-muted); }
+.ide-breadcrumb-file { color: var(--ide-text); }
+.ide-breadcrumb-file-icon { margin-right: 5px; font-size: 12px; }
+.ide-breadcrumb-sep { font-size: 9px; color: var(--ide-text-muted); margin: 0 4px; }
 
 .ide-editor-toolbar .ide-icon-btn {
   flex-shrink: 1;
@@ -2720,20 +2761,32 @@ html, body, #mbeditor-root {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 6vh;
+  padding-top: 6px;
   z-index: 9999;
 }
 
+/* Always a frosted panel — VS Code's Quick Open floats over the editor, not
+   inside it, so it stays readable whether or not the glass theme is on. */
 .quick-open-box {
-  background: var(--ide-panel-bg);
-  border: 1px solid var(--ide-border);
-  border-radius: 6px;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: color-mix(in srgb, var(--ide-panel-bg) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ide-text) 16%, transparent);
+  border-radius: 8px;
   width: min(600px, 94vw);
   max-height: min(440px, 72vh);
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 24px rgba(0,0,0,0.45);
   overflow: hidden;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .quick-open-box {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--ide-panel-bg);
+  }
 }
 
 .quick-open-input-wrap {
@@ -2743,9 +2796,8 @@ html, body, #mbeditor-root {
 }
 
 .quick-open-input {
-  background: var(--ide-input-bg);
-  border: 1px solid var(--ide-border-input);
-  border-radius: 8px;
+  background: transparent;
+  border: none;
   color: var(--ide-text);
   padding: 4px 30px 4px 8px;
   font-size: 13px;
@@ -2813,20 +2865,16 @@ html, body, #mbeditor-root {
 }
 
 .quick-open-result:hover { background: var(--ide-hover-bg); }
-.quick-open-result.selected { background: var(--ide-accent); }
-/* The row's children set their own colours, so the accent fill has to reach
-   them explicitly or the selected row keeps the unselected palette. */
-.quick-open-result.selected,
-.quick-open-result.selected .quick-open-result-name,
-.quick-open-result.selected .quick-open-result-path,
-.quick-open-result.selected .quick-open-result-icon,
-.quick-open-result.selected .quick-open-star-btn { color: var(--ide-on-accent); }
+.quick-open-result.selected { background: var(--ide-active-bg); color: var(--ide-text); }
 
 .quick-open-result-name { color: var(--ide-text); flex-shrink: 0; white-space: nowrap; }
 .quick-open-result-path { color: var(--ide-text-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .quick-open-section { margin-bottom: 4px; }
 .quick-open-section-header { padding: 8px 10px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ide-text); font-weight: 700; }
+.quick-open-section-header-muted { color: var(--ide-text-muted); font-weight: 600; letter-spacing: 0.08em; }
+
+.quick-open-recent-label { font-size: 12px; color: var(--ide-text-muted); flex-shrink: 0; }
 
 .quick-open-star-btn {
   flex-shrink: 0;
