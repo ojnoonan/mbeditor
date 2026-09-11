@@ -539,14 +539,13 @@ html, body, #mbeditor-root {
 .tab-item {
   display: flex;
   align-items: center;
-  padding: 0 10px;
-  height: 35px;
-  min-width: 100px;
-  max-width: 200px;
+  padding: 0 8px 0 10px;
+  height: 27px;
+  margin: 4px 0 4px 4px;
+  max-width: 220px;
   cursor: pointer;
-  border-right: 1px solid var(--ide-border);
-  border-top: 1px solid transparent;
-  background: var(--ide-panel-bg);
+  border-radius: 6px;
+  background: transparent;
   color: var(--ide-text-muted);
   font-size: 13px;
   transition: background 0.1s, color 0.1s;
@@ -565,36 +564,17 @@ html, body, #mbeditor-root {
 }
 
 .tab-item:hover { background: var(--ide-hover-bg); color: var(--ide-text); }
-/* The active tab joins the editor: same fill, and it covers the tab bar's own
-   bottom border so there is no seam between tab and content. */
+/* The active tab is a lifted rounded chip on the tab strip, not a seamless
+   join with the editor: the strip keeps its own bottom border. */
 .tab-item.active {
-  background: var(--ide-bg);
+  background: var(--ide-hover-bg);
   color: var(--ide-text);
-  border-top: 1px solid var(--ide-accent);
-  border-bottom: 1px solid var(--ide-bg);
-  margin-bottom: -1px;
 }
-/* …except when tabs wrap, where every row but the last has a row below it and
-   the overhang would show as a 1px notch on each. */
-.tab-bar.tab-bar-wrap .tab-item.active { border-bottom-color: transparent; margin-bottom: 0; }
 .tab-item.tab-soft .tab-item-name { font-style: italic; }
 
-.tab-has-error {
-  border-bottom: 2px solid var(--ide-danger) !important;
-}
-.tab-item.active.tab-has-error {
-  border-top: 2px solid var(--ide-danger) !important;
-  border-bottom: none !important;
-}
-
-.tab-has-warning {
-  border-bottom: 2px solid var(--ide-warning) !important;
-}
-
-.tab-item.active.tab-has-warning {
-  border-top: 2px solid var(--ide-warning) !important;
-  border-bottom: none !important;
-}
+/* Diagnostics colour the label, as VS Code does; a border would break the chip. */
+.tab-has-error .tab-item-name   { color: var(--ide-danger); }
+.tab-has-warning .tab-item-name { color: var(--ide-warning); }
 
 .tab-item-icon {
   width: 14px;

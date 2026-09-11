@@ -79,28 +79,10 @@ html[data-glass] .panel-divider { background: transparent; border-right: none; }
 html[data-glass] .panel-divider:hover,
 html[data-glass] .panel-divider.active { background: var(--g-hover); }
 
-/* ── Tabs: capsules ───────────────────────────────────────────────────────── */
-html[data-glass] .tab-bar {
-  background: transparent;
-  border-bottom: 1px solid var(--g-edge);
-  padding: 0 6px;
-  gap: 4px;
-  height: 40px;
-}
-html[data-glass] .tab-item {
-  height: 28px;
-  align-self: center;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: transparent;
-  margin-bottom: 0;
-}
+/* ── Tabs: same chips as Modern, on a transparent strip ───────────────────── */
+html[data-glass] .tab-bar { background: transparent; border-bottom: 1px solid var(--g-edge); }
 html[data-glass] .tab-item:hover { background: var(--g-hover); }
-html[data-glass] .tab-item.active {
-  background: var(--g-lift);
-  border: 1px solid var(--g-edge-strong);
-  box-shadow: inset 0 1px 0 var(--g-edge-strong);
-}
+html[data-glass] .tab-item.active { background: var(--g-lift); }
 
 /* ── Editor: the content layer stays solid ────────────────────────────────── */
 html[data-glass] .ide-editor-toolbar { background: transparent; border-bottom: 1px solid var(--g-edge); }
