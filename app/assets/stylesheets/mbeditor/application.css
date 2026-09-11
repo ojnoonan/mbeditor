@@ -859,6 +859,10 @@
   .search-loading-spinner {
     animation-duration: 0.7s !important;
   }
+
+  .statusbar-offline {
+    animation: none;
+  }
 }
 
 .cdiff-ctx  { color: var(--ide-text-muted); }

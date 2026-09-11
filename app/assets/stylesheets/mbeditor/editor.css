@@ -1,11 +1,22 @@
 /* ── Mini Browser Editor Global Styles ──────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
-/* Suppress all focus outlines / coloured glows inside the IDE shell */
+/* Suppress all focus outlines / coloured glows inside the IDE shell, except
+   a keyboard-only ring on interactive elements (not Monaco's own DOM, which
+   draws its own focus treatment). */
 #mbeditor-root *:focus,
 #mbeditor-root *:focus-visible {
   outline: none !important;
   box-shadow: none !important;
+}
+
+#mbeditor-root :is(button, [role="button"], [tabindex], input, select, textarea, a, .tab-item, .ide-activity-btn, .tree-item):focus-visible {
+  outline: 1px solid var(--ide-accent-fg) !important;
+  outline-offset: -1px;
+}
+
+#mbeditor-root .monaco-editor *:focus-visible {
+  outline: none !important;
 }
 
 /* ── Pico containment ──────────────────────────────────────────────────────
@@ -608,8 +619,8 @@ html, body, #mbeditor-root {
 
 .tab-close {
   margin-left: 6px;
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -618,6 +629,10 @@ html, body, #mbeditor-root {
   color: var(--ide-text-muted);
   flex-shrink: 0;
   transition: background 0.1s, color 0.1s;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
 }
 
 .tab-close:hover { background: var(--ide-hover-bg); color: var(--ide-text); }
@@ -1082,7 +1097,7 @@ html, body, #mbeditor-root {
 .statusbar-msg.success { color: var(--ide-success); }
 
 .statusbar-version {
-  color: color-mix(in srgb, var(--ide-accent-text) 45%, transparent);
+  color: color-mix(in srgb, var(--ide-accent-text) 80%, transparent);
   font-size: 10px;
   white-space: nowrap;
   cursor: pointer;

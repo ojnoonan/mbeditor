@@ -226,14 +226,12 @@ var TabBar = function TabBar(_ref) {
           '●'
         ),
         React.createElement(
-          'div',
+          'button',
           {
+            type: 'button',
             className: 'tab-close',
-            // No role="button" here: the host app's Pico CSS skins
-            // [role=button] with a primary background and form padding, which
-            // turns this into a blue square. It is a plain div with a tooltip,
-            // as it was — Ctrl+W is the keyboard path.
             title: 'Close ' + tab.name + (tab.dirty ? ' (unsaved changes)' : ''),
+            'aria-label': 'Close ' + tab.name + (tab.dirty ? ' (unsaved changes)' : ''),
             onClick: function (e) {
               e.stopPropagation();
               onClose(tab.id);
