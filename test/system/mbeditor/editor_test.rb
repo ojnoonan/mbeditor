@@ -441,13 +441,13 @@ module Mbeditor
 
       find(".tree-item-name", text: "nested_example.rb").click
       assert_selector ".monaco-editor", wait: 10
-      assert_selector "button[title='Jump to Method']", text: "Methods"
+      assert_selector "button[title='Jump to Method']"
 
       expand_tree_folder("test")
       expand_tree_folder("test/models")
       find(".tree-item-name", text: "user_test.rb").click
       assert_selector ".monaco-editor", wait: 10
-      assert_selector "button[title='Jump to Outline']", text: "Outline"
+      assert_selector "button[title='Jump to Outline']"
       find("button[title='Jump to Outline']").click
       assert_selector ".ide-methods-dropdown-visibility", text: "PRIVATE"
       assert_selector ".ide-methods-dropdown-item[data-outline-kind='method']", text: "helper"
@@ -1024,7 +1024,7 @@ module Mbeditor
       all(".tree-item-name", text: "README.md", minimum: 1).first.click
       assert_selector ".monaco-editor", wait: 10
 
-      click_button "Blame"
+      find("button[title='Toggle Git Blame']").click
       assert_text "Loaded blame for", wait: 10
 
       header_count = page.evaluate_script(<<~JS)
@@ -1052,7 +1052,7 @@ module Mbeditor
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
 
-      find("button", text: "Git").click
+      find("button.statusbar-btn[title*='the git panel']").click
       assert_selector ".ide-git-right-panel", wait: 5
 
       page.execute_script(<<~'JS')
@@ -1358,7 +1358,7 @@ module Mbeditor
         window.__mbeditorActiveEditor.setValue("const A=()=>{\n  return <div   className='a'>{1}</div>;\n};\n");
       JS
 
-      click_button "Format"
+      find("button[title='Format this document']").click
 
       formatted = wait_for_formatted_value(matching: /\n\t/)
       assert_match(/\n\treturn <div className="a">/, formatted,
@@ -1382,7 +1382,7 @@ module Mbeditor
         page.evaluate_script("EditorStore.getState().panes.reduce(function(n,p){return n+p.tabs.length},0)") >= 3
       end
 
-      click_button "Format All"
+      find("button[title='Format all open documents']").click
 
       contents = wait_for_condition("all open documents to settle") do
         result = page.evaluate_script(<<~'JS')

@@ -2,6 +2,7 @@
  *= require pico.classless
  *= require mbeditor/themes
  *= require mbeditor/editor
+ *= require mbeditor/glass
  */
 
 /* ── Git & Code Review Styles ───────────────────────────────────────── */
@@ -641,7 +642,7 @@
 }
 .redmine-badge {
   background-color: var(--ide-accent);
-  color: var(--ide-accent-text);
+  color: var(--ide-on-accent);
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 10px;

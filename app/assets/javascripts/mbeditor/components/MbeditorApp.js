@@ -115,7 +115,8 @@ var DEFAULT_EDITOR_PREFS = {
   wordBasedSuggestions: 'matchingDocuments',
   acceptSuggestionOnEnter: 'on',
   autoRevealInExplorer: true,
-  toolbarIconOnly: false,
+  toolbarIconOnly: true,
+  glass: false,
   rubocopLintEnabled: true,
   routeHints: true,
   prettierPrintWidth: 80,
@@ -152,6 +153,7 @@ var SETTINGS_ROWS = [
     ['dracula', 'Dracula'], ['night-owl', 'Night Owl'], ['monokai', 'Monokai'], ['nord', 'Nord'],
     ['github-dark', 'GitHub Dark'], ['tomorrow-night', 'Tomorrow Night'], ['github-light', 'GitHub Light']
   ] },
+  { key: 'glass', type: 'checkbox', label: 'Liquid Glass chrome', title: 'Translucent, blurred panels layered over the current theme. Monaco stays solid' },
   { key: 'fontSize', type: 'number', label: 'Font size', title: 'Editor font size in pixels (8–32)', min: 8, max: 32, step: 1, def: 13 },
   { key: 'fontFamily', type: 'text', label: 'Font family', title: 'Font stack used in the editor — the first font available on your system is used', def: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace" },
   { key: 'lineHeight', type: 'number', label: 'Line height (0=auto)', title: 'Row height in pixels. 0 = auto (roughly font size × 1.5)', min: 0, max: 100, step: 1, def: 0, nullish: true },
@@ -230,7 +232,7 @@ var SETTINGS_ROWS = [
   { key: 'quickOpenShowFolders', type: 'checkbox', label: 'Quick Open: show folders', title: 'Include folder names in the Quick Open picker (Ctrl+P / Cmd+P) results, not just files' },
   // The stored preference, not the derived value: at a narrow width the box would
   // otherwise show as checked and unchecking it would appear to do nothing.
-  { key: 'toolbarIconOnly', type: 'checkbox', label: 'Toolbar: icons only', title: 'Hide toolbar button labels and show only icons, giving more horizontal space' },
+  { key: 'toolbarIconOnly', type: 'checkbox', def: true, label: 'Toolbar: icons only', title: 'Hide toolbar button labels and show only icons; every button names itself on hover' },
   { key: 'persistFindState', type: 'checkbox', label: 'Persist find state across files', title: 'Keep the search/replace text when switching between files in the editor', def: true },
   { key: 'branchStateRestore', type: 'checkbox', label: 'Restore tabs on branch switch', title: 'Save which files are open per branch and restore them when switching branches. Disable to always start with a clean slate when switching.', def: true },
   { key: 'routeHints', type: 'checkbox', label: 'Controller route hints', title: 'Show the verb and path that route to each controller action after its def line, and mark public actions nothing routes to', def: true },
@@ -936,9 +938,10 @@ var MbeditorApp = function MbeditorApp() {
   var editorPrefs = _useState18p[0];
   var setEditorPrefs = _useState18p[1];
 
-  // Icon-only toolbar: on by preference, or automatically once the window is
-  // too narrow for the labels to fit beside the title and file search.
-  var toolbarIconOnly = editorPrefs.toolbarIconOnly || narrowToolbar;
+  // Icon-only toolbar: the default, since every button carries its name in a
+  // title attribute. Labels are opt-in, and are dropped regardless once the
+  // window is too narrow for them to fit beside the title and file search.
+  var toolbarIconOnly = editorPrefs.toolbarIconOnly !== false || narrowToolbar;
 
   var _useState19 = useState({
     openEditors: false,
@@ -2593,7 +2596,11 @@ var MbeditorApp = function MbeditorApp() {
 
   useEffect(function() {
     document.documentElement.setAttribute('data-theme', editorPrefs.theme || 'vs-dark');
-  }, [editorPrefs.theme]);
+    // Glass is a layer over the active theme, not a theme, so it rides on its
+    // own attribute and glass.css derives every colour from the theme tokens.
+    if (editorPrefs.glass) document.documentElement.dataset.glass = '1';
+    else delete document.documentElement.dataset.glass;
+  }, [editorPrefs.theme, editorPrefs.glass]);
 
   useEffect(function() {
     EditorStore.setState({ editorPrefs: editorPrefs });

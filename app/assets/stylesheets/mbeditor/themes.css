@@ -7,33 +7,42 @@
  *   document.documentElement.setAttribute('data-theme', editorPrefs.theme)
  * ──────────────────────────────────────────────────────────────────────────── */
 
-/* ══ DEFAULT / vs-dark ══════════════════════════════════════════════════════ */
+/* ══ DEFAULT / vs-dark — VS Code "Dark Modern" ══════════════════════════════
+ * Values are Dark Modern's, with two raised for WCAG AA: --ide-text-muted
+ * (#9d9d9d, ≥5.2:1 on every surface it lands on, including the inactive tab)
+ * and --ide-border-input (#808080, 3.29:1 on the input fill — Dark Modern's
+ * own #3c3c3c is 1.18:1 and effectively invisible).
+ * --ide-accent is the chrome blue; --ide-accent-fg is the lighter foreground
+ * blue, because #0078d4 as text on #1f1f1f is only 3.64:1.
+ * ──────────────────────────────────────────────────────────────────────────── */
 :root,
 [data-theme="vs-dark"] {
   color-scheme: dark;
-  --status-hover-bg:    rgba(255,255,255,0.08);
-  --ide-accent-text:    #ffffff;
+  --status-hover-bg:    rgba(255,255,255,0.10);
+  /* Chrome foreground: the title bar and status bar are panel-coloured in
+     Dark Modern, not accent-filled, so this is a text colour, not "on blue". */
+  --ide-accent-text:    #cccccc;
 
   /* Backgrounds */
-  --ide-bg:             #1e1e1e;
-  --ide-panel-bg:       #252526;
-  --ide-panel-bg-alt:   #202124;
-  --ide-hover-bg:       #2a2d2e;
-  --ide-active-bg:      #094771;
-  --ide-input-bg:       #3c3c3c;
+  --ide-bg:             #1f1f1f;
+  --ide-panel-bg:       #181818;
+  --ide-panel-bg-alt:   #202020;
+  --ide-hover-bg:       #2a2a2a;
+  --ide-active-bg:      #04395e;
+  --ide-input-bg:       #313131;
 
   /* Borders */
-  --ide-border:         #3c3c3c;
-  --ide-border-input:   #555555;
+  --ide-border:         #2b2b2b;
+  --ide-border-input:   #808080;
 
   /* Text */
   --ide-text:           #cccccc;
   --ide-text-dim:       #bbbbbb;
-  --ide-text-muted:     #888888;
+  --ide-text-muted:     #9d9d9d;
 
   /* Accent */
-  --ide-accent:         #007acc;
-  --ide-accent-fg:      #4ec9b0;
+  --ide-accent:         #0078d4;
+  --ide-accent-fg:      #4daafc;
 
   /* Status */
   --ide-success:        #89d185;
@@ -41,37 +50,41 @@
   --ide-warning:        #f9a825;
 
   /* Misc */
-  --ide-scrollbar:      #424242;
+  --ide-scrollbar:      #3c3c3c;
   --ide-graph-line:     #555555;
 }
 
-/* ══ LIGHT / vs ═════════════════════════════════════════════════════════════ */
+/* ══ LIGHT / vs — VS Code "Light Modern" ════════════════════════════════════
+ * Same treatment as Dark Modern: --ide-text-muted #646464 (≥4.8:1 on bg,
+ * panel, hover and the inactive tab), --ide-border-input #8a8a8a (3.45:1 on
+ * white), and warning/success darkened to clear 4.5:1 on white.
+ * ──────────────────────────────────────────────────────────────────────────── */
 [data-theme="vs"] {
   color-scheme: light;
-  --ide-accent-text:    #ffffff;
-  --status-hover-bg:    rgba(0,0,0,0.06);
+  --ide-accent-text:    #3b3b3b;
+  --status-hover-bg:    rgba(0,0,0,0.08);
   --ide-bg:             #ffffff;
-  --ide-panel-bg:       #f3f3f3;
-  --ide-panel-bg-alt:   #ececec;
+  --ide-panel-bg:       #f8f8f8;
+  --ide-panel-bg-alt:   #f0f0f0;
   --ide-hover-bg:       #e8e8e8;
-  --ide-active-bg:      #d4e6f5;
+  --ide-active-bg:      #e4e6f1;
   --ide-input-bg:       #ffffff;
 
-  --ide-border:         #cecece;
-  --ide-border-input:   #bdbdbd;
+  --ide-border:         #e5e5e5;
+  --ide-border-input:   #8a8a8a;
 
-  --ide-text:           #333333;
+  --ide-text:           #3b3b3b;
   --ide-text-dim:       #616161;
-  --ide-text-muted:     #999999;
+  --ide-text-muted:     #646464;
 
-  --ide-accent:         #007acc;
-  --ide-accent-fg:      #0070c1;
+  --ide-accent:         #005fb8;
+  --ide-accent-fg:      #005fb8;
 
-  --ide-success:        #388a34;
+  --ide-success:        #2e7d31;
   --ide-danger:         #d32f2f;
-  --ide-warning:        #b5890a;
+  --ide-warning:        #8a6800;
 
-  --ide-scrollbar:      #c0c0c0;
+  --ide-scrollbar:      #cecece;
   --ide-graph-line:     #bdbdbd;
 }
 
@@ -483,3 +496,25 @@
 :root[data-theme="vs"],
 :root[data-theme="hc-light"],
 :root[data-theme="github-light"] { color-scheme: light; }
+
+/* ══ CHROME SURFACE TOKENS ══════════════════════════════════════════════════
+ * The title bar and status bar are accent-filled in the nine legacy themes and
+ * panel-coloured in the two Modern ones, so the status bar reads its fill from
+ * a token rather than from --ide-accent directly. --ide-on-accent is the text
+ * colour for the few things that really do sit on an accent fill (badges,
+ * primary buttons); it tracks --ide-accent-text everywhere except Modern,
+ * where --ide-accent-text became a chrome text colour rather than "on blue".
+ *
+ * Specificity: :root and :root[data-theme=…] tie on the rule below only
+ * because the Modern block comes last; keep that order.
+ * ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  --ide-statusbar-bg:   var(--ide-accent);
+  --ide-on-accent:      var(--ide-accent-text);
+}
+
+:root[data-theme="vs-dark"],
+:root[data-theme="vs"] {
+  --ide-statusbar-bg:   var(--ide-panel-bg);
+  --ide-on-accent:      #ffffff;
+}

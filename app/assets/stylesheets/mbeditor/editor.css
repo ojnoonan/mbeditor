@@ -121,23 +121,23 @@ html, body, #mbeditor-root {
   align-items: center;
   background: var(--ide-panel-bg);
   border-bottom: 1px solid var(--ide-border);
-  height: 32px;
-  padding: 0 12px;
+  height: 35px;
+  padding: 0 8px;
   flex-shrink: 0;
   user-select: none;
 }
 
 .ide-titlebar-icon {
-  color: var(--ide-accent-fg);
+  color: var(--ide-text-muted);
   margin-right: 8px;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .ide-titlebar-title {
-  font-size: 13px;
-  color: var(--ide-text);
-  font-weight: 500;
-  /* Never wrap: the titlebar is a fixed 32px row, so a second line pushed the
+  font-size: 12px;
+  color: var(--ide-text-muted);
+  font-weight: 400;
+  /* Never wrap: the titlebar is a fixed 35px row, so a second line pushed the
      toolbar buttons out of it. */
   white-space: nowrap;
 }
@@ -164,23 +164,22 @@ html, body, #mbeditor-root {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 75% of the slot, i.e. of the space between the title and the buttons.
-     The floor keeps the placeholder readable once 75% of a shrinking gap
-     stops being enough, and caps at 100% so it can never outgrow its slot
-     and shove the buttons off the edge. */
-  width: 75%;
-  min-width: min(220px, 100%);
-  padding: 3px 12px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px; /* pill */
-  color: #aaa;
+  /* The command centre. Capped so it stays a centred pill rather than a
+     stretched field, floored so the placeholder survives a narrow window. */
+  width: min(38%, 460px);
+  min-width: min(180px, 100%);
+  height: 24px;
+  padding: 0 10px;
+  background: color-mix(in srgb, var(--ide-text) 6%, transparent);
+  border: 1px solid var(--ide-border);
+  border-radius: 6px;
+  color: var(--ide-text-muted);
   font-size: 12px;
   cursor: pointer;
 }
-.ide-titlebar-search:hover { background: rgba(255, 255, 255, 0.10); }
+.ide-titlebar-search:hover { background: color-mix(in srgb, var(--ide-text) 11%, transparent); }
 .ide-titlebar-search-text {
-  opacity: 0.8;
+  opacity: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -205,8 +204,8 @@ html, body, #mbeditor-root {
 
 /* ── Activity Bar (VSCode-style, always visible) ───────── */
 .ide-activity-bar {
-  width: 40px;
-  min-width: 40px;
+  width: 48px;
+  min-width: 48px;
   flex-shrink: 0;
   background: var(--ide-panel-bg);
   border-right: 1px solid var(--ide-border);
@@ -240,42 +239,45 @@ html, body, #mbeditor-root {
    than a bare class and was silently winning. */
 .ide-activity-bar .ide-activity-btn {
   width: 100%;
-  height: 40px;
+  height: 48px;
   background: transparent;
   border: none;
   /* Always reserve the indicator's width so the glyph does not shift sideways
      by a pixel the moment a panel is opened. */
   border-left: 2px solid transparent;
   border-radius: 0;
-  color: var(--ide-text-muted);
+  /* One glyph colour throughout; opacity carries the state, which is what
+     stops the icons reading as three different palettes at once. */
+  color: var(--ide-text);
+  opacity: 0.6;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 17px;
-  transition: color 0.12s ease;
+  font-size: 16px;
+  transition: opacity 0.1s ease, border-color 0.1s ease;
 }
 
 /* The glyph carries the state, not a filled box behind it. */
 .ide-activity-bar .ide-activity-btn:hover {
   background: transparent;
-  color: var(--ide-text);
+  opacity: 1;
 }
 
 .ide-activity-bar .ide-activity-btn.active {
-  color: var(--ide-accent-fg);
-  border-left-color: var(--ide-accent-fg);
+  opacity: 1;
+  background: transparent;
+  border-left-color: var(--ide-accent);
 }
 
 .sidebar-panel-title {
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ide-fg-muted, var(--ide-text-muted, #888));
-  padding: 10px 12px 6px;
+  letter-spacing: 0.06em;
+  color: var(--ide-text);
+  padding: 9px 20px 7px;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--ide-border);
 }
 
 
@@ -283,7 +285,29 @@ html, body, #mbeditor-root {
   flex-shrink: 0;
   cursor: col-resize;
   transition: background 0.12s ease;
+  position: relative;
 }
+
+/* Three 3px dots, centred. A flat 6px strip gives no sign it can be dragged,
+   and the cursor only says so once you are already on it. One tiled radial
+   gradient rather than three elements: the divider has no children and adding
+   some would put a hit-testable node inside the drag target. */
+.panel-divider::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 15px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle 1.5px at 1.5px 1.5px, var(--ide-text-muted) 99%, transparent) 0 0 / 3px 6px repeat-y;
+  opacity: 0.55;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.panel-divider:hover::before,
+.panel-divider.active::before { opacity: 1; }
 
 .sidebar-divider {
   width: 6px;
@@ -504,15 +528,16 @@ html, body, #mbeditor-root {
 .tab-item {
   display: flex;
   align-items: center;
-  padding: 0 12px;
+  padding: 0 10px;
   height: 35px;
   min-width: 100px;
   max-width: 200px;
   cursor: pointer;
   border-right: 1px solid var(--ide-border);
-  background: var(--ide-input-bg);
+  border-top: 1px solid transparent;
+  background: var(--ide-panel-bg);
   color: var(--ide-text-muted);
-  font-size: 12px;
+  font-size: 13px;
   transition: background 0.1s, color 0.1s;
   white-space: nowrap;
   overflow: hidden;
@@ -528,8 +553,19 @@ html, body, #mbeditor-root {
   opacity: 0.55;
 }
 
-.tab-item:hover { background: var(--ide-panel-bg-alt); color: var(--ide-text); }
-.tab-item.active { background: var(--ide-bg); color: var(--ide-text); border-top: 1px solid var(--ide-accent-fg); }
+.tab-item:hover { background: var(--ide-hover-bg); color: var(--ide-text); }
+/* The active tab joins the editor: same fill, and it covers the tab bar's own
+   bottom border so there is no seam between tab and content. */
+.tab-item.active {
+  background: var(--ide-bg);
+  color: var(--ide-text);
+  border-top: 1px solid var(--ide-accent);
+  border-bottom: 1px solid var(--ide-bg);
+  margin-bottom: -1px;
+}
+/* …except when tabs wrap, where every row but the last has a row below it and
+   the overhang would show as a 1px notch on each. */
+.tab-bar.tab-bar-wrap .tab-item.active { border-bottom-color: transparent; margin-bottom: 0; }
 .tab-item.tab-soft .tab-item-name { font-style: italic; }
 
 .tab-has-error {
@@ -884,12 +920,13 @@ html, body, #mbeditor-root {
 .ide-statusbar {
   display: flex;
   align-items: center;
-  background: var(--ide-accent);
+  background: var(--ide-statusbar-bg);
+  border-top: 1px solid var(--ide-border);
   height: 22px;
   padding: 0;
   gap: 0;
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
   color: var(--ide-accent-text);
 }
@@ -897,7 +934,7 @@ html, body, #mbeditor-root {
 /* One cell rhythm for every item, button or not. The branch, the message and
  * the chips each carried their own padding on top of the bar's, so the gaps
  * between them were all different widths. */
-.ide-statusbar > * { padding: 0 8px; }
+.ide-statusbar > * { padding: 0 6px; }
 
 .statusbar-branch {
   display: flex;
@@ -948,15 +985,16 @@ html, body, #mbeditor-root {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 8px;
-  height: 22px;
+  padding: 0 6px;
+  height: 20px;
+  margin: 0 1px;
   flex-shrink: 0;
   background: transparent;
   border: none;
   color: var(--ide-accent-text);
   cursor: pointer;
-  font-size: 11px;
-  border-radius: 2px;
+  font-size: 12px;
+  border-radius: 5px;
   transition: background 0.1s;
   white-space: nowrap;
 }
@@ -966,8 +1004,8 @@ html, body, #mbeditor-root {
 .statusbar-cursor {
   display: flex;
   align-items: center;
-  padding: 0 8px;
-  height: 22px;
+  padding: 0 6px;
+  height: 20px;
   flex-shrink: 0;
   color: var(--ide-accent-text);
   font-variant-numeric: tabular-nums;
@@ -1192,13 +1230,20 @@ html, body, #mbeditor-root {
   background: var(--ide-input-bg);
   color: var(--ide-text);
   border: 1px solid var(--ide-border-input);
-  border-radius: 4px;
+  border-radius: 8px;
   font-size: 12px;
   outline: none;
   box-sizing: border-box;
 }
 .search-input::placeholder { color: var(--ide-text-muted); }
-.search-input:focus { border-color: var(--ide-border-input); }
+.search-input:focus { border-color: var(--ide-accent); }
+
+/* 8px on every text field, so the search box, the rename box and the import
+   destination box are one shape rather than three. Pico's own 0.25rem applies
+   to bare elements, hence the element selectors rather than a class list. */
+#mbeditor-root :is(input[type="text"], input[type="search"], input[type="number"], textarea, select) {
+  border-radius: 8px;
+}
 
 /* ── Results area wrapper (positions the loading overlay) ── */
 .search-results-area {
@@ -2346,7 +2391,7 @@ html, body, #mbeditor-root {
   height: 24px;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: 5px;
   color: var(--ide-text-muted);
   display: inline-flex;
   align-items: center;
@@ -2370,8 +2415,9 @@ html, body, #mbeditor-root {
   display: flex;
   justify-content: flex-start;
   align-items: center;
-  padding: 4px 8px;
-  background: var(--ide-panel-bg);
+  padding: 2px 12px;
+  min-height: 22px;
+  background: var(--ide-bg);
   border-bottom: 1px solid var(--ide-border);
   gap: 4px;
   overflow: hidden;
@@ -2385,12 +2431,11 @@ html, body, #mbeditor-root {
   white-space: nowrap;
   text-overflow: ellipsis;
   text-align: left;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ide-text-muted);
   padding: 0 4px;
   cursor: default;
   user-select: text;
-  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
 }
 
 .ide-editor-toolbar .ide-icon-btn {
@@ -2648,42 +2693,47 @@ html, body, #mbeditor-root {
   }
 }
 
-/* ── Quick Open Dialog ─────────────────────────────────────── */
+/* ── Quick Open Dialog ───────────────────────────────────────
+   VS Code's command palette: a 600px sheet anchored near the top of the
+   window, not a centred modal. The rows are 22px and single-line — the path
+   sits beside the name rather than under it, which is what lets a full
+   viewport of results be scanned without scrolling. */
 .quick-open-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0,0,0,0.35);
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 12vh;
+  padding-top: 6vh;
   z-index: 9999;
 }
 
 .quick-open-box {
   background: var(--ide-panel-bg);
-  border: 1px solid var(--ide-border-input);
-  border-radius: 8px;
-  /* vw/vh caps keep the larger dialog inside a phone-sized viewport */
-  width: min(760px, 94vw);
-  max-height: min(620px, 72vh);
+  border: 1px solid var(--ide-border);
+  border-radius: 6px;
+  width: min(600px, 94vw);
+  max-height: min(440px, 72vh);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
   overflow: hidden;
 }
 
 .quick-open-input-wrap {
   position: relative;
+  padding: 6px;
+  flex-shrink: 0;
 }
 
 .quick-open-input {
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--ide-border);
+  background: var(--ide-input-bg);
+  border: 1px solid var(--ide-border-input);
+  border-radius: 8px;
   color: var(--ide-text);
-  padding: 14px 40px 14px 18px;
-  font-size: 16px;
+  padding: 4px 30px 4px 8px;
+  font-size: 13px;
   outline: none;
   width: 100%;
   box-sizing: border-box;
@@ -2692,13 +2742,13 @@ html, body, #mbeditor-root {
 
 .quick-open-clear-btn {
   position: absolute;
-  right: 8px;
+  right: 10px;
   top: 50%;
   transform: translateY(-50%);
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   border: none;
-  border-radius: 4px;
+  border-radius: 5px;
   background: transparent;
   color: var(--ide-text-muted);
   cursor: pointer;
@@ -2709,53 +2759,68 @@ html, body, #mbeditor-root {
 
 .quick-open-clear-btn:hover {
   background: var(--ide-hover-bg);
-  color: var(--ide-text-dim);
+  color: var(--ide-text);
 }
 
 .quick-open-results {
   overflow-y: auto;
   flex: 1;
+  padding-bottom: 4px;
 }
 
 .quick-open-result {
-  padding: 8px 18px;
+  padding: 0 10px;
+  height: 22px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 14px;
-  transition: background 0.1s;
+  gap: 8px;
+  font-size: 13px;
 }
 
 .quick-open-result-icon {
   flex-shrink: 0;
-  width: 18px;
+  width: 16px;
+  font-size: 12px;
   text-align: center;
   color: #78b4e0;
 }
 
+/* Name and path on one line: the name at its natural width, the path taking
+   the slack and ellipsing. Two stacked lines would double the row height. */
 .quick-open-result-body {
   min-width: 0;
   flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
 }
 
-.quick-open-result:hover,
-.quick-open-result.selected { background: var(--ide-active-bg); }
+.quick-open-result:hover { background: var(--ide-hover-bg); }
+.quick-open-result.selected { background: var(--ide-accent); }
+/* The row's children set their own colours, so the accent fill has to reach
+   them explicitly or the selected row keeps the unselected palette. */
+.quick-open-result.selected,
+.quick-open-result.selected .quick-open-result-name,
+.quick-open-result.selected .quick-open-result-path,
+.quick-open-result.selected .quick-open-result-icon,
+.quick-open-result.selected .quick-open-star-btn { color: var(--ide-on-accent); }
 
-.quick-open-result-name { color: var(--ide-text); }
+.quick-open-result-name { color: var(--ide-text); flex-shrink: 0; white-space: nowrap; }
 .quick-open-result-path { color: var(--ide-text-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .quick-open-section { margin-bottom: 4px; }
-.quick-open-section-header { padding: 8px 18px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ide-text-muted); font-weight: 600; }
+.quick-open-section-header { padding: 8px 10px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ide-text); font-weight: 700; }
 
 .quick-open-star-btn {
   flex-shrink: 0;
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px 6px;
+  padding: 0 4px;
   color: var(--ide-text-muted);
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1;
   opacity: 0;
   transition: opacity 0.1s, color 0.1s;
@@ -2866,7 +2931,7 @@ html, body, #mbeditor-root {
 .ide-draft-restore-btn:hover { background: var(--ide-hover-bg); }
 .ide-draft-restore-btn-primary {
   background: var(--ide-accent);
-  color: var(--ide-accent-text);
+  color: var(--ide-on-accent);
   border-color: var(--ide-accent);
 }
 .ide-draft-restore-btn-primary:hover { opacity: 0.9; }
@@ -3012,12 +3077,12 @@ textarea {
 .ide-statusbar button,
 .statusbar-btn {
   --pico-form-element-spacing-vertical: 0;
-  --pico-form-element-spacing-horizontal: 8px;
-  height: 22px;
-  padding: 0 8px;
-  font-size: 11px;
+  --pico-form-element-spacing-horizontal: 6px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 12px;
   line-height: 1;
-  border-radius: 2px;
+  border-radius: 5px;
   border: none;
   background: transparent;
   color: var(--ide-accent-text);
