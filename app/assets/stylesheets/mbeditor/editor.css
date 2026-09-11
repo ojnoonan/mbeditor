@@ -322,9 +322,38 @@ html, body, #mbeditor-root {
 
 .sidebar-divider {
   width: 6px;
-  background: var(--ide-panel-bg-alt);
-  border-right: 1px solid var(--ide-border);
+  background: transparent;
+  border-right: none;
 }
+
+/* Horizontal counterpart of .panel-divider::before, for handles that resize a
+   panel's height rather than its width (log/problems drawers, open editors
+   list). Same tiled radial-gradient dot, rotated: dots run left-to-right
+   instead of top-to-bottom. */
+.resize-grip-h {
+  flex: 0 0 auto;
+  height: 6px;
+  cursor: row-resize;
+  background: transparent;
+  position: relative;
+  transition: background 0.12s ease;
+}
+.resize-grip-h::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 15px;
+  height: 3px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle 1.5px at 1.5px 1.5px, var(--ide-text-muted) 99%, transparent) 0 0 / 6px 3px repeat-x;
+  opacity: 0.55;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+.resize-grip-h:hover { background: var(--ide-hover-bg); }
+.resize-grip-h:hover::before,
+.resize-grip-h.active::before { opacity: 1; }
 
 
 .pane-divider {
@@ -2356,17 +2385,6 @@ html, body, #mbeditor-root {
 .ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-track { background: transparent; }
 .ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 3px; }
 
-.open-editors-resize-handle {
-  height: 4px;
-  flex-shrink: 0;
-  cursor: row-resize;
-  background: transparent;
-  transition: background 0.15s;
-}
-.open-editors-resize-handle:hover {
-  background: var(--ide-border);
-}
-
 .open-editors-group-header {
   font-size: 10px;
   padding-left: 8px;
@@ -3336,15 +3354,6 @@ button:not(.pico-btn) { margin-bottom: 0; }
   background: var(--ide-panel-bg, #1e1e1e);
   border-top: 1px solid var(--ide-border, #333);
 }
-.ide-log-resize {
-  flex: 0 0 auto;
-  height: 6px;
-  cursor: ns-resize;
-  background: transparent;
-}
-.ide-log-resize:hover {
-  background: var(--ide-accent, #569cd6);
-}
 .ide-log-header {
   display: flex;
   align-items: center;
@@ -3412,25 +3421,35 @@ button:not(.pico-btn) { margin-bottom: 0; }
   background: var(--ide-panel-bg, #1e1e1e);
   border-top: 1px solid var(--ide-border, #333);
 }
-.ide-problems-resize {
-  flex: 0 0 auto;
-  height: 6px;
-  cursor: ns-resize;
-  background: transparent;
-}
-.ide-problems-resize:hover { background: var(--ide-accent, #569cd6); }
 .ide-problems-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 10px;
+  height: 35px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--ide-border, #333);
   font-size: 12px;
-  color: var(--ide-fg-muted, #ccc);
+  color: var(--ide-text, #ccc);
 }
-.ide-problems-title { font-weight: 600; }
-/* Severity toggles. Pushed to the right of the summary; the text filter that
-   follows keeps its own left margin off `auto` so the two sit together. */
+.ide-problems-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ide-problems-total-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--ide-hover-bg, #2a2a2a);
+  color: var(--ide-text, #ccc);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+/* Severity toggles. Pushed to the right of the title/count; the text filter
+   that follows keeps its own left margin off `auto` so the two sit together. */
 .ide-problems-severity-filter {
   margin-left: auto;
   display: flex;
@@ -3441,50 +3460,42 @@ button:not(.pico-btn) { margin-bottom: 0; }
   align-items: center;
   gap: 4px;
   background: transparent;
-  border: 1px solid transparent;
+  border: none;
   border-radius: 3px;
   padding: 1px 6px;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
-  /* Off is legible but clearly recessive — a disabled-looking chip reads as
-     "broken" rather than "toggled off". */
   color: var(--ide-text-muted, #858585);
-  opacity: 0.55;
 }
-.ide-problems-sev-chip:hover { opacity: 0.85; }
-.ide-problems-sev-chip.is-on {
-  opacity: 1;
-  border-color: var(--ide-border, #333);
-  background: var(--ide-input-bg, #2d2d2d);
-}
-.ide-problems-sev-chip.is-on.ide-problems-sev-error { color: var(--ide-error, #f14c4c); }
-.ide-problems-sev-chip.is-on.ide-problems-sev-warning { color: var(--ide-warning, #cca700); }
-.ide-problems-sev-chip.is-on.ide-problems-sev-info { color: var(--ide-info, #3794ff); }
+.ide-problems-sev-chip:hover,
+.ide-problems-sev-chip.is-on { color: var(--ide-text, #ccc); }
 
 .ide-problems-filter {
   margin-left: 8px;
   background: var(--ide-input-bg, #2d2d2d);
-  color: var(--ide-fg, #eee);
-  border: 1px solid var(--ide-border, #333);
-  border-radius: 3px;
-  padding: 2px 6px;
+  color: var(--ide-text, #eee);
+  border: 1px solid var(--ide-border-input, #333);
+  border-radius: 4px;
+  padding: 0 6px;
+  height: 22px;
   font-size: 12px;
-  width: 180px;
+  width: 140px;
 }
 .ide-problems-btn {
   background: transparent;
   border: none;
-  color: var(--ide-fg-muted, #ccc);
+  color: var(--ide-text-muted, #ccc);
   cursor: pointer;
   padding: 2px 6px;
 }
-.ide-problems-btn:hover { color: var(--ide-fg, #fff); }
+.ide-problems-btn:hover { color: var(--ide-text, #fff); }
 .ide-problems-btn:disabled { opacity: 0.4; cursor: default; }
-.ide-problems-btn:disabled:hover { color: var(--ide-fg-muted, #ccc); }
+.ide-problems-btn:disabled:hover { color: var(--ide-text-muted, #ccc); }
 .ide-problems-actions { display: flex; gap: 2px; }
-.ide-problems-actions .ide-problems-btn { white-space: nowrap; }
-.ide-problems-btn.is-on { color: var(--ide-accent, #0a84ff); }
+.ide-problems-actions .ide-icon-btn,
+.ide-problems-header > .ide-icon-btn { min-width: 22px; width: 22px; height: 22px; font-size: 13px; }
+.ide-problems-actions .ide-icon-btn:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
 .ide-problems-body { flex: 1; overflow: auto; padding: 4px 0; font-size: 12px; }
 .ide-problems-empty {
   padding: 10px 14px;
@@ -3495,9 +3506,18 @@ button:not(.pico-btn) { margin-bottom: 0; }
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px 3px;
-  color: var(--ide-fg-muted, #ccc);
-  font-weight: 600;
+  height: 22px;
+  padding: 0 12px;
+  color: var(--ide-text, #ccc);
+}
+.ide-problems-file-name .fa-chevron-down {
+  color: var(--ide-text-muted, #858585);
+  font-size: 10px;
+  width: 10px;
+}
+.ide-problems-file-name .ide-problems-dir {
+  color: var(--ide-text-muted, #858585);
+  font-size: 12px;
 }
 .ide-problems-file-count {
   background: var(--ide-hover-bg, #2a2a2a);
@@ -3512,22 +3532,23 @@ button:not(.pico-btn) { margin-bottom: 0; }
   align-items: baseline;
   gap: 8px;
   width: 100%;
-  padding: 3px 12px 3px 28px;
+  height: 22px;
+  padding: 0 12px 0 28px;
   background: transparent;
   border: none;
-  color: var(--ide-fg, #d4d4d4);
+  color: var(--ide-text, #d4d4d4);
   font-size: 12px;
   font-family: inherit;
   text-align: left;
   cursor: pointer;
 }
-.ide-problems-item:hover,
-.ide-problems-item:focus-visible { background: var(--ide-hover-bg, #2a2a2a); }
+.ide-problems-item:hover { background: var(--ide-hover-bg, #2a2a2a); }
+.ide-problems-item:focus-visible { background: var(--ide-active-bg, #2a2a2a); }
 .ide-problems-icon { flex-shrink: 0; }
 .ide-problems-item-error .ide-problems-icon { color: var(--ide-danger); }
 .ide-problems-item-warning .ide-problems-icon { color: var(--ide-warning); }
 .ide-problems-item-info .ide-problems-icon { color: var(--ide-accent, #3794ff); }
-.ide-problems-msg { flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ide-problems-msg { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ide-text, #d4d4d4); }
 /* The offending source line, dimmed so it reads as context rather than as part
    of the message. It is the one part of the row allowed to shrink, so a long
    line gives way to the message and location instead of pushing them out. */
@@ -3537,7 +3558,6 @@ button:not(.pico-btn) { margin-bottom: 0; }
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ide-text-muted, #858585);
-  opacity: 0.8;
   font-family: var(--ide-mono, monospace);
   font-size: 11px;
 }
@@ -3566,6 +3586,7 @@ button:not(.pico-btn) { margin-bottom: 0; }
   margin-left: auto;
   color: var(--ide-text-muted, #858585);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Model graph ──────────────────────────────────────────────────────────
@@ -3721,8 +3742,7 @@ button:not(.pico-btn) { margin-bottom: 0; }
    The gap is the icon-to-its-own-number spacing; the warning icon opens the
    second pair, so it gets the wider separator. */
 .statusbar-problems { gap: 4px; }
-.statusbar-problems-error-icon { color: var(--ide-danger); }
-.statusbar-problems-warning-icon { color: var(--ide-warning); margin-left: 8px; }
+.statusbar-problems-warning-icon { margin-left: 8px; }
 .statusbar-problems-count { font-variant-numeric: tabular-nums; }
 
 /* Search decorations off across engines — Chrome/Safari draw their own

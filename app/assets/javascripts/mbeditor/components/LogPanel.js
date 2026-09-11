@@ -131,7 +131,7 @@ var LogPanel = function LogPanel(_ref) {
     'div',
     { className: 'ide-log-drawer', style: { height: height + 'px' } },
     React.createElement('div', {
-      className: 'ide-log-resize',
+      className: 'resize-grip-h',
       title: 'Drag to resize',
       onMouseDown: onResizeMouseDown
     }),

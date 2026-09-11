@@ -5479,7 +5479,7 @@ var MbeditorApp = function MbeditorApp() {
           ),
           state.panes.flatMap(function (p) { return p.tabs; }).length > 0 && React.createElement(
             "div",
-            { className: "open-editors-resize-handle", onMouseDown: startOpenEditorsResize }
+            { className: "resize-grip-h", onMouseDown: startOpenEditorsResize }
           ),
           React.createElement(
             "div",

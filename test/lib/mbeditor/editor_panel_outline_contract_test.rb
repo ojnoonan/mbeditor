@@ -60,6 +60,8 @@ module Mbeditor
         };
 
         window.React = React;
+        var ReactDOM = { createPortal: function (node) { return node; } };
+        window.ReactDOM = ReactDOM;
         window.innerWidth = 1000;
         window.document = {
           addEventListener: function () {},
