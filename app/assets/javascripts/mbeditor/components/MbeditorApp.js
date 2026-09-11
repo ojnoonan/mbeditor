@@ -6337,19 +6337,6 @@ var MbeditorApp = function MbeditorApp() {
       }),
       // With the drawer closed, the gutter above the status bar is a handle:
       // drag it up to open Problems at the dragged height.
-      // ponytail: opens on release, no live preview; track the drag if that grates.
-      !showProblemsPanel && !zenMode && React.createElement((window.Gutter || Gutter), {
-        orientation: 'horizontal',
-        className: 'ide-gutter-drawer-open',
-        label: "Drag up to open Problems",
-        snapThreshold: 40,
-        onSnap: function (dragged) {
-          var h = Math.max(DRAWER_MIN_HEIGHT, dragged);
-          try { window.localStorage.setItem('mbeditorProblemsHeight', String(h)); } catch (err) {}
-          setProblemsHeight(h);
-          setShowProblemsPanel(true);
-        }
-      }),
       showProblemsPanel && !zenMode && React.createElement((window.Gutter || Gutter), {
         orientation: 'horizontal',
         label: "Resize problems drawer",
@@ -6372,6 +6359,12 @@ var MbeditorApp = function MbeditorApp() {
       ),
 
       // Right-side Git panel (children of ide-body, alongside sidebar and ide-main)
+      !showGitPanel && !zenMode && React.createElement((window.Gutter || Gutter), {
+        orientation: 'vertical',
+        label: "Drag left to open the git panel",
+        snapDirection: -1,
+        onSnap: function () { setShowGitPanel(true); }
+      }),
       showGitPanel && !zenMode && React.createElement((window.Gutter || Gutter), {
         orientation: 'vertical',
         className: 'ide-gutter-gitpanel',
@@ -6395,6 +6388,19 @@ var MbeditorApp = function MbeditorApp() {
         })
       ),
     ),
+    // ponytail: opens on release, no live preview; track the drag if that grates.
+    !showProblemsPanel && !zenMode && React.createElement((window.Gutter || Gutter), {
+      orientation: 'horizontal',
+      className: 'ide-gutter-drawer-open',
+      label: "Drag up to open Problems",
+      snapThreshold: 40,
+      onSnap: function (dragged) {
+        var h = Math.max(DRAWER_MIN_HEIGHT, dragged);
+        try { window.localStorage.setItem('mbeditorProblemsHeight', String(h)); } catch (err) {}
+        setProblemsHeight(h);
+        setShowProblemsPanel(true);
+      }
+    }),
     React.createElement(
       "div",
       { className: "ide-statusbar" },

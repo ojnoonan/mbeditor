@@ -79,7 +79,6 @@ html[data-glass] .ide-titlebar-search {
 html[data-glass] .ide-titlebar-search:hover { background: var(--g-hover); color: var(--ide-text); }
 
 /* ── Activity bar ─────────────────────────────────────────────────────────── */
-html[data-glass] .ide-activity-bar .ide-activity-btn:hover { background: var(--g-hover); }
 
 /* ── The gutter ───────────────────────────────────────────────────────────── */
 /* Same 6px as everywhere else — a wider one reads as a gap in the layout
@@ -108,8 +107,8 @@ html[data-glass] .ide-editor-wrapper .monaco-editor .margin { background-color: 
 html[data-glass] .ide-statusbar { border-top: 1px solid var(--g-edge); height: 28px; margin: 0 0 -2px; }
 /* The drawer-open handle lies over the 6px gutter between the editor card and
    the status bar rather than adding a strip of its own above it. */
-html[data-glass] .ide-center-column { position: relative; }
-html[data-glass] .ide-gutter-drawer-open { position: absolute; left: 0; right: 0; bottom: -6px; }
+/* Sits in the shell's own 6px gap between the body and the status bar. */
+html[data-glass] .ide-gutter-drawer-open { margin: -6px 0; }
 /* .statusbar-version carries .statusbar-btn too, so one rule covers both. */
 html[data-glass] .statusbar-btn { border-radius: 999px; padding: 0 9px; }
 html[data-glass] .statusbar-btn:hover { background: var(--g-hover); }
