@@ -2206,8 +2206,8 @@ var EditorPanel = function EditorPanel(_ref) {
           onClick: function() { if (onShowHistory) onShowHistory(tab.path); },
           title: 'File History'
         },
-        React.createElement('i', { className: 'fas fa-history', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
-        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, 'History')
+        React.createElement('i', { className: 'fas fa-history', style: { marginRight: editorPrefs.toolbarLabels ? '5px' : 0, flexShrink: 0 } }),
+        editorPrefs.toolbarLabels && React.createElement('span', { className: 'ide-toolbar-label' }, 'History')
       ),
       hasOutline && React.createElement(
         'button',
@@ -2261,8 +2261,8 @@ var EditorPanel = function EditorPanel(_ref) {
           },
           title: isTestOutline ? 'Jump to Outline' : 'Jump to Method'
         },
-        React.createElement('i', { className: 'fas fa-list-ul', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
-        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, isTestOutline ? 'Outline' : 'Methods')
+        React.createElement('i', { className: 'fas fa-list-ul', style: { marginRight: editorPrefs.toolbarLabels ? '5px' : 0, flexShrink: 0 } }),
+        editorPrefs.toolbarLabels && React.createElement('span', { className: 'ide-toolbar-label' }, isTestOutline ? 'Outline' : 'Methods')
       ),
       gitAvailable && React.createElement(
         'button',
@@ -2271,8 +2271,8 @@ var EditorPanel = function EditorPanel(_ref) {
           onClick: function() { setIsBlameVisible(function(prev) { return !prev; }); },
           title: 'Toggle Git Blame'
         },
-        React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
-        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, isBlameLoading ? 'Loading...' : 'Blame')
+        React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: editorPrefs.toolbarLabels ? '5px' : 0, flexShrink: 0 } }),
+        editorPrefs.toolbarLabels && React.createElement('span', { className: 'ide-toolbar-label' }, isBlameLoading ? 'Loading...' : 'Blame')
       ),
     ),
     conflictCount > 0 && React.createElement(

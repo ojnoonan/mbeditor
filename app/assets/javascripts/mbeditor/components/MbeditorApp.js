@@ -115,7 +115,7 @@ var DEFAULT_EDITOR_PREFS = {
   wordBasedSuggestions: 'matchingDocuments',
   acceptSuggestionOnEnter: 'on',
   autoRevealInExplorer: true,
-  toolbarIconOnly: true,
+  toolbarLabels: false,
   glass: false,
   rubocopLintEnabled: true,
   routeHints: true,
@@ -230,9 +230,9 @@ var SETTINGS_ROWS = [
     ['scroll', 'Scroll'], ['wrap', 'Wrap (multi-row)']
   ] },
   { key: 'quickOpenShowFolders', type: 'checkbox', label: 'Quick Open: show folders', title: 'Include folder names in the Quick Open picker (Ctrl+P / Cmd+P) results, not just files' },
-  // The stored preference, not the derived value: at a narrow width the box would
-  // otherwise show as checked and unchecking it would appear to do nothing.
-  { key: 'toolbarIconOnly', type: 'checkbox', def: true, label: 'Toolbar: icons only', title: 'Hide toolbar button labels and show only icons; every button names itself on hover' },
+  // The stored preference, not the derived value: at a narrow width labels are
+  // dropped regardless, and the box must not appear to do nothing.
+  { key: 'toolbarLabels', type: 'checkbox', label: 'Toolbar: show labels', title: 'Show a text label beside each toolbar icon. Every button already names itself on hover' },
   { key: 'persistFindState', type: 'checkbox', label: 'Persist find state across files', title: 'Keep the search/replace text when switching between files in the editor', def: true },
   { key: 'branchStateRestore', type: 'checkbox', label: 'Restore tabs on branch switch', title: 'Save which files are open per branch and restore them when switching branches. Disable to always start with a clean slate when switching.', def: true },
   { key: 'routeHints', type: 'checkbox', label: 'Controller route hints', title: 'Show the verb and path that route to each controller action after its def line, and mark public actions nothing routes to', def: true },
@@ -941,7 +941,7 @@ var MbeditorApp = function MbeditorApp() {
   // Icon-only toolbar: the default, since every button carries its name in a
   // title attribute. Labels are opt-in, and are dropped regardless once the
   // window is too narrow for them to fit beside the title and file search.
-  var toolbarIconOnly = editorPrefs.toolbarIconOnly !== false || narrowToolbar;
+  var toolbarIconOnly = !editorPrefs.toolbarLabels || narrowToolbar;
 
   var _useState19 = useState({
     openEditors: false,
@@ -5443,13 +5443,12 @@ var MbeditorApp = function MbeditorApp() {
                             React.createElement("i", { className: isPane2 ? "fas fa-chevron-left" : "fas fa-chevron-right" })
                           ),
                           React.createElement(
-                            "div",
-                            { className: "tab-close", onClick: function (e) {
+                            "button",
+                            { type: "button", className: "tab-close", onClick: function (e) {
                                 e.stopPropagation();requestCloseTab(pane.id, tab.id);
-                              }, style: { padding: '0 4px', cursor: 'pointer', opacity: 0.6 },
-                              // See TabBar: role="button" would pick up Pico's
-                              // button skin from the host app and square this off.
-                              title: "Close " + tab.name + (tab.dirty ? " (unsaved changes)" : "") },
+                              }, style: { padding: '0 4px', opacity: 0.6 },
+                              title: "Close " + tab.name + (tab.dirty ? " (unsaved changes)" : ""),
+                              'aria-label': "Close " + tab.name + (tab.dirty ? " (unsaved changes)" : "") },
                             React.createElement("i", { className: "fas fa-times" })
                           )
                         )
