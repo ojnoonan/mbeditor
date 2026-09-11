@@ -95,7 +95,9 @@ html[data-glass] .ide-editor-wrapper .monaco-editor-background,
 html[data-glass] .ide-editor-wrapper .monaco-editor .margin { background-color: var(--ide-bg) !important; }
 
 /* ── Status bar ───────────────────────────────────────────────────────────── */
-html[data-glass] .ide-statusbar { border-top: 1px solid var(--g-edge); }
+/* The bar reclaims the gutter above and below it: 4px tighter on each side,
+   spent on its own height so the chips have room. */
+html[data-glass] .ide-statusbar { border-top: 1px solid var(--g-edge); height: 28px; margin: -4px 0 -2px; }
 /* .statusbar-version carries .statusbar-btn too, so one rule covers both. */
 html[data-glass] .statusbar-btn { border-radius: 999px; padding: 0 9px; }
 html[data-glass] .statusbar-btn:hover { background: var(--g-hover); }
