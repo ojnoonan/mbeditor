@@ -311,8 +311,8 @@ html, body, #mbeditor-root {
   transition: background 0.12s ease;
 }
 
-.ide-gutter-v { width: 6px; cursor: col-resize; }
-.ide-gutter-h { height: 6px; cursor: row-resize; }
+.ide-gutter-v { width: 6px; cursor: col-resize; align-self: stretch; }
+.ide-gutter-h { height: 6px; cursor: row-resize; align-self: stretch; width: 100%; }
 
 .ide-gutter::before {
   content: '';

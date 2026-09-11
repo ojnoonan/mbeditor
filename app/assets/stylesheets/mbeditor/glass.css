@@ -56,7 +56,8 @@ html[data-glass] .ide-statusbar {
 
 /* The centre column is only a layout box: the editor and each bottom drawer
    are separate cards with a gutter between them, like VS Code's panel. */
-html[data-glass] .ide-center-column { gap: 6px; background: transparent; }
+/* No flex gap: the 6px Gutter between the editor and a drawer is the gap. */
+html[data-glass] .ide-center-column { gap: 0; background: transparent; }
 html[data-glass] .ide-log-drawer,
 html[data-glass] .ide-problems-drawer { border-top: 1px solid var(--g-edge); }
 
