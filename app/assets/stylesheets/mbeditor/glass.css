@@ -104,9 +104,13 @@ html[data-glass] .ide-editor-wrapper .monaco-editor-background,
 html[data-glass] .ide-editor-wrapper .monaco-editor .margin { background-color: var(--ide-bg) !important; }
 
 /* ── Status bar ───────────────────────────────────────────────────────────── */
-/* The bar reclaims the gutter above and below it: 4px tighter on each side,
-   spent on its own height so the chips have room. */
-html[data-glass] .ide-statusbar { border-top: 1px solid var(--g-edge); height: 28px; margin: -4px 0 -2px; }
+/* Taller than Modern's 22px so the chips have room; the 6px gutter above it
+   stays, matching the explorer gutter, and it eats 2px of shell padding below. */
+html[data-glass] .ide-statusbar { border-top: 1px solid var(--g-edge); height: 28px; margin: 0 0 -2px; }
+/* The drawer-open handle lies over the 6px gutter between the editor card and
+   the status bar rather than adding a strip of its own above it. */
+html[data-glass] .ide-center-column { position: relative; }
+html[data-glass] .ide-drawer-open-handle { position: absolute; left: 0; right: 0; bottom: -6px; }
 /* .statusbar-version carries .statusbar-btn too, so one rule covers both. */
 html[data-glass] .statusbar-btn { border-radius: 999px; padding: 0 9px; }
 html[data-glass] .statusbar-btn:hover { background: var(--g-hover); }

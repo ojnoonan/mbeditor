@@ -5903,6 +5903,27 @@ var MbeditorApp = function MbeditorApp() {
           })()
         )
       ),
+      // Collapsed: the same gutter is a handle. Drag it right and the
+      // explorer snaps open; there is no intermediate width to preview.
+      sidebarCollapsed && !zenMode && React.createElement("div", {
+        className: "panel-divider sidebar-divider ide-sidebar-open-handle",
+        role: "separator",
+        "aria-orientation": "vertical",
+        "aria-label": "Drag right to open the explorer",
+        title: "Drag right to open the explorer",
+        onMouseDown: function (e) {
+          e.preventDefault();
+          var startX = e.clientX;
+          var onUp = function (ev) {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            if (ev.clientX - startX >= 24) setSidebarCollapsed(false);
+          };
+          var onMove = function (ev) { ev.preventDefault(); };
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        }
+      }),
       /* Sidebar resize divider — only when panel is open */
       !sidebarCollapsed && !zenMode && React.createElement("div", {
         className: "panel-divider sidebar-divider " + (activeResizeMode === 'sidebar' ? 'active' : ''),
