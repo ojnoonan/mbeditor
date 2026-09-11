@@ -1768,6 +1768,9 @@ var MbeditorApp = function MbeditorApp() {
           var reservedRight = EDITOR_MIN_WIDTH + (showGitPanelRef.current ? gitPanelWidthRef.current : 0);
           var maxSidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, rect.width - reservedRight));
           var nextWidth = clientX - rect.left - SIDEBAR_COLLAPSED_WIDTH;
+          // Remembered for mouseup: dragged well under the minimum, the
+          // explorer snaps shut instead of pinning at SIDEBAR_MIN_WIDTH.
+          s.snapClose = nextWidth < SIDEBAR_MIN_WIDTH - 80;
           setSidebarWidth(clamp(nextWidth, SIDEBAR_MIN_WIDTH, maxSidebarWidth));
         }
 
@@ -1790,6 +1793,7 @@ var MbeditorApp = function MbeditorApp() {
 
     var handleMouseUp = function handleMouseUp() {
       if (!resizeSessionRef.current) return;
+      if (resizeSessionRef.current.snapClose) setSidebarCollapsed(true);
 
       if (resizeRafRef.current) {
         cancelAnimationFrame(resizeRafRef.current);
