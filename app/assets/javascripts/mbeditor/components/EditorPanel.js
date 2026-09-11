@@ -2466,7 +2466,10 @@ var EditorPanel = function EditorPanel(_ref) {
       )
     ),
     React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } }),
-    methodsOpen && methodsDropdownPos && React.createElement(
+    // Portalled to body: under the glass chrome the centre column has a
+    // backdrop-filter, which makes it the containing block for position:fixed
+    // and shoves the menu ~130px off its button.
+    methodsOpen && methodsDropdownPos && ReactDOM.createPortal(React.createElement(
       'div',
       {
         ref: methodsDropdownRef,
@@ -2564,7 +2567,7 @@ var EditorPanel = function EditorPanel(_ref) {
               }
               return rows;
             })()
-    ),
+    ), document.body),
     React.createElement('div', { ref: vimStatusRef, className: 'vim-statusbar', style: { display: editorPrefs.vimMode ? 'flex' : 'none', height: '22px', alignItems: 'center', padding: '0 10px', fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace", fontSize: '12px', background: 'var(--ide-statusbar-bg, #1e1e2e)', color: 'var(--ide-statusbar-fg, #9cdcfe)', borderTop: '1px solid var(--ide-border, #3e3e3e)', flexShrink: 0, userSelect: 'none', letterSpacing: '0.02em' } })
   );
 };

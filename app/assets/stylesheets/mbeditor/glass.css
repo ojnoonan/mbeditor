@@ -105,6 +105,9 @@ html[data-glass] .statusbar-sep { background: var(--g-edge); }
 
 /* ── Panels and inputs ────────────────────────────────────────────────────── */
 html[data-glass] .search-panel { background: transparent; }
+/* Sticky section headers share the sidebar's glass instead of sitting on a
+   solid panel block. */
+html[data-glass] .ide-sidebar-scrollable .collapsible-header { background: var(--g-surface); }
 html[data-glass] #mbeditor-root :is(input[type="text"], input[type="search"], input[type="number"], textarea, select),
 html[data-glass] .search-input {
   background: var(--g-surface-2);
