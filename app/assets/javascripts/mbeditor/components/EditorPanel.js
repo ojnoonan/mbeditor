@@ -494,6 +494,8 @@ var EditorPanel = function EditorPanel(_ref) {
       language = 'javascript';
     } else if (/\.css\.erb$/.test(fileNameLower)) {
       language = 'css';
+    } else if (/\.scss\.erb$/.test(fileNameLower)) {
+      language = 'scss';
     } else if (/\.html\.erb$/.test(fileNameLower)) {
       language = 'erb';
     } else if (/\.html\.haml$/.test(fileNameLower)) {
@@ -519,8 +521,14 @@ var EditorPanel = function EditorPanel(_ref) {
         language = 'javascript';break;
       case 'ts':case 'tsx':
         language = 'typescript';break;
-      case 'css':case 'scss':case 'sass':
+      // scss is its own Monaco language. Sent to 'css' it got no highlighting
+      // at all and the CSS validator flagged every $variable, @use, & nesting
+      // and @mixin. '.sass' stays on css: the indented syntax has no Monaco
+      // language, and scss's validator would reject it just as loudly.
+      case 'css':case 'sass':
         language = 'css';break;
+      case 'scss':
+        language = 'scss';break;
       case 'html':
         language = 'html';break;
       case 'erb':
