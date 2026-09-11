@@ -6274,6 +6274,32 @@ var MbeditorApp = function MbeditorApp() {
       showLogPanel && !zenMode && React.createElement(window.LogPanel || LogPanel, {
         onClose: function () { setShowLogPanel(false); }
       }),
+      // With the drawer closed, the strip above the status bar is a handle:
+      // drag it up to open Problems at the dragged height. The drawer reads
+      // its height from localStorage on mount, so writing it first is enough.
+      // ponytail: opens on release, no live preview; pass a height prop if that grates.
+      !showProblemsPanel && !zenMode && React.createElement("div", {
+        className: "resize-grip-h ide-drawer-open-handle",
+        role: "separator",
+        "aria-orientation": "horizontal",
+        "aria-label": "Drag up to open Problems",
+        title: "Drag up to open Problems",
+        onMouseDown: function (e) {
+          e.preventDefault();
+          var startY = e.clientY;
+          var onUp = function (ev) {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            var dragged = startY - ev.clientY;
+            if (dragged < 40) return;
+            try { window.localStorage.setItem('mbeditorProblemsHeight', String(Math.max(120, dragged))); } catch (err) {}
+            setShowProblemsPanel(true);
+          };
+          var onMove = function (ev) { ev.preventDefault(); };
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        }
+      }),
       showProblemsPanel && !zenMode && React.createElement(window.ProblemsPanel || ProblemsPanel, {
         onClose: function () { setShowProblemsPanel(false); },
         onOpenFile: function (path, line, col) {

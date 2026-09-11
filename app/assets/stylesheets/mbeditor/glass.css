@@ -63,10 +63,12 @@ html[data-glass] .ide-problems-drawer { border-top: 1px solid var(--g-edge); }
 /* The activity bar and the sidebar are one card with a seam, not two cards
    butting rounded corners together — there is no gutter between them to fill. */
 html[data-glass] .ide-activity-bar { border-radius: 12px 0 0 12px; border-right: 1px solid var(--g-edge); }
+html[data-glass] .ide-body:not(:has(.ide-sidebar)) .ide-activity-bar { border-radius: 12px; }
 html[data-glass] .ide-sidebar { border-radius: 0 12px 12px 0; border-left: none; }
 
 /* ── Title bar ────────────────────────────────────────────────────────────── */
-html[data-glass] .ide-titlebar { border-bottom: 1px solid var(--g-edge); }
+/* Like the status bar: the title bar takes the gutter above and below as height. */
+html[data-glass] .ide-titlebar { border-bottom: 1px solid var(--g-edge); height: 40px; margin: -2px 0 -4px; }
 html[data-glass] .ide-titlebar-icon { color: var(--ide-accent-fg); }
 html[data-glass] .ide-titlebar-title { color: var(--ide-text); font-weight: 600; }
 html[data-glass] .ide-titlebar-search {
