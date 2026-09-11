@@ -20,6 +20,9 @@ module Mbeditor
     # missed it entirely and served the environment's log file anywhere.
     before_action :ensure_allowed_environment!
     before_action :run_authentication
+    # Registered after the two gates above so it times the action itself, not
+    # the environment check or the host app's authenticate_with proc.
+    around_action :audit_request
 
     private
 
@@ -38,6 +41,18 @@ module Mbeditor
     def ensure_allowed_environment!
       allowed = Array(Mbeditor.configuration.allowed_environments).map(&:to_sym)
       render plain: 'Not found', status: :not_found unless allowed.include?(Rails.env.to_sym)
+    end
+
+    def audit_request
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      yield
+    ensure
+      # One record per request: `action` is a fixed method name of this
+      # controller, never request data; `ms` wall time; `status` the HTTP code.
+      AuditLog.record(:request,
+                      action: action_name.to_sym,
+                      ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round,
+                      status: response.status)
     end
 
     def workspace_root

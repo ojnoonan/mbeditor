@@ -78,6 +78,7 @@ var GitService = (function () {
   // unreachable rather than failing over and over in the console.
   function fetchStatusLite(opts) {
     var cfg = (opts && opts.background) ? { mbeditorBackground: true } : {};
+    var startedAt = Date.now();
     return axios.get(window.mbeditorBasePath() + '/git_status', cfg)
       .then(function(res) {
         var data = res.data;
@@ -86,6 +87,8 @@ var GitService = (function () {
         var st = EditorStore.getState();
         var prevInfo = st.gitInfo;
         var files = data.files || [];
+        var audit = window.MbeditorAudit;
+        if (audit) audit.rec(audit.EV.GIT_POLL, Date.now() - startedAt, files.length);
         var gitSig = function(arr) { return arr.map(function(f) { return f.path + '\x00' + f.status; }).join('\x01'); };
         var branchChanged = (data.branch || "") !== (st.gitBranch || "");
         var treeChanged = gitSig(files) !== gitSig(st.gitFiles || []);
@@ -130,7 +133,11 @@ var GitService = (function () {
 
         return data;
       })
-      .catch(function () {}); // transient poll errors retry on the next tick
+      .catch(function () {
+        // transient poll errors retry on the next tick
+        var audit = window.MbeditorAudit;
+        if (audit) audit.rec(audit.EV.ERR, audit.EV.GIT_POLL);
+      });
   }
 
   function fetchStatus() {

@@ -12,6 +12,11 @@ module Mbeditor
   class EditorsController < ApplicationController
     skip_before_action :verify_authenticity_token
     before_action :verify_mbeditor_client, unless: -> { request.get? || request.head? }
+    # The audit plumbing does not audit itself. Otherwise every ring flush and
+    # every download writes a :request row about the flush, and Clear log ends
+    # with the DELETE's own row already in the freshly emptied ring, so the
+    # clean trace it exists to give you is never clean.
+    skip_around_action :audit_request, only: %i[audit_log ingest_audit_log clear_audit_log]
 
     IMAGE_EXTENSIONS = %w[png jpg jpeg gif svg ico webp bmp avif].freeze
     helper_method :mbeditor_base_path
@@ -563,6 +568,10 @@ module Mbeditor
       "restart"          => :restart
     }.freeze
 
+    # Symbol counterpart of RUBY_LSP_METHODS' keys, for the audit log. Every
+    # value is interned at class-load time, never derived from the request.
+    RUBY_LSP_METHOD_SYMBOLS = RUBY_LSP_METHODS.keys.to_h { |k| [k, k.to_sym] }.freeze
+
     # Passed through as raw LSP JSON rather than translated. Ranges stay 0-based
     # on the wire and are converted by one helper at the Monaco provider.
     RUBY_LSP_RAW = %w[
@@ -641,7 +650,22 @@ module Mbeditor
       timeout = RUBY_LSP_RUBOCOP_METHODS.include?(lsp_method) ? RUBY_LSP_DIAGNOSTICS_TIMEOUT : nil
 
       client = RubyLspClient.for(workspace_root.to_s)
-      result = client.request_with_document(lsp_method, path, content, extra, timeout: timeout)
+      lsp_started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      lsp_ok = true
+      begin
+        result = client.request_with_document(lsp_method, path, content, extra, timeout: timeout)
+      rescue StandardError
+        lsp_ok = false
+        raise
+      ensure
+        # One record per ruby-lsp round trip: which allowlisted LSP method ran,
+        # how long it took, and whether it returned without raising (a timeout
+        # or a client error is ok: false).
+        AuditLog.record(:ruby_lsp,
+                        method: RUBY_LSP_METHOD_SYMBOLS[params[:lsp_method].to_s],
+                        ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - lsp_started) * 1000).round,
+                        ok: lsp_ok)
+      end
       # The URI is what the diagnostics translator checks embedded code-action
       # edits against, so it must be the same string the client sent.
       render json: translate_ruby_lsp_result(params[:lsp_method].to_s, result, "file://#{path}")
@@ -739,6 +763,36 @@ module Mbeditor
     # DELETE /mbeditor/exceptions — clear the recorded exceptions.
     def clear_exceptions
       ExceptionLog.clear!
+      render json: { ok: true }
+    end
+
+    # GET /mbeditor/audit_log — the merged client + server telemetry log, as a
+    # download to hand to an AI. It carries numbers only; see AuditLog.
+    def audit_log
+      send_data JSON.pretty_generate(AuditLog.payload),
+                type: "application/json", disposition: "attachment",
+                filename: "mbeditor-audit-#{Time.now.utc.strftime('%Y%m%d-%H%M%S')}.json"
+    end
+
+    # POST /mbeditor/audit_log — a batch from the browser ring.
+    def ingest_audit_log
+      raw = request.raw_post.to_s
+      # Cap before parsing, not after: MAX_INGEST bounds what is kept, but the
+      # parse of an oversized body has already happened by then.
+      return head(:payload_too_large) if raw.bytesize > AuditLog::MAX_POST_BYTES
+
+      body = begin
+        JSON.parse(raw)
+      rescue JSON::ParserError
+        nil
+      end
+      AuditLog.ingest(body["events"]) if body.is_a?(Hash)
+      head :no_content
+    end
+
+    # DELETE /mbeditor/audit_log — start a clean trace.
+    def clear_audit_log
+      AuditLog.clear!
       render json: { ok: true }
     end
 

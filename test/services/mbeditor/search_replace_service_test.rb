@@ -772,5 +772,30 @@ module Mbeditor
     ensure
       AvailabilityProbe.reset!
     end
+
+    # ---------------------------------------------------------------------------
+    # Audit log
+    # ---------------------------------------------------------------------------
+
+    test "a scan records one :search entry carrying neither the query nor a path" do
+      Mbeditor.configuration.audit_log = true
+      AuditLog.clear!
+      write_file("app/audit_probe.rb", "AUDIT_SEARCH_NEEDLE = 1\n")
+
+      assert_equal 1, search("AUDIT_SEARCH_NEEDLE").length
+
+      entries = AuditLog.payload[:server][:events].select { |e| e[:event] == :search }
+      assert_equal 1, entries.length
+      assert_includes %i[rg git grep], entries.first[:backend]
+      assert_kind_of Numeric, entries.first[:hits]
+      assert_kind_of Numeric, entries.first[:ms]
+
+      dump = AuditLog.payload.to_s
+      refute_includes dump, "AUDIT_SEARCH_NEEDLE"
+      refute_includes dump, "audit_probe.rb"
+      refute_includes dump, @workspace
+    ensure
+      AuditLog.clear!
+    end
   end
 end

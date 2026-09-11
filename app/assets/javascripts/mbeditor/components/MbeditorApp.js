@@ -24,13 +24,22 @@ var useMemo = _React.useMemo;
 // the re-render happened anyway, and the quick-open index was never rebuilt.
 // JSON.stringify over the whole tree measures 0.33 ms for ~1600 nodes, well
 // under the render it saves.
-function _treeUpdater(newData) {
+// newSignature lets a caller that has already stringified newData hand the
+// result in. The tree poll needs its own changed/unchanged answer and cannot
+// read one out of a functional setState updater, which React invokes during a
+// later render and which has to stay pure. Without this the poll stringified
+// the whole tree a second time on every tick, forever.
+function _treeUpdater(newData, newSignature) {
   return function (prevData) {
-    if (JSON.stringify(newData) === JSON.stringify(prevData)) return prevData;
+    var signature = newSignature != null ? newSignature : JSON.stringify(newData);
+    if (signature === JSON.stringify(prevData)) return prevData;
     SearchService.buildIndex(newData);
     return newData;
   };
 }
+
+// The tree poll's own view of the last tree it saw.
+var _lastPolledTree = null;
 
 var SIDEBAR_MIN_WIDTH = 280;
 var SIDEBAR_MAX_WIDTH = 560;
@@ -58,6 +67,27 @@ var SUPPORTED_PRETTIER_EXTS = Object.keys(PRETTIER_PARSERS);
 
 function prettierParserFor(path) {
   return PRETTIER_PARSERS[String(path || '').split('.').pop().toLowerCase()] || null;
+}
+
+// The audit ring takes numbers only, so a path travels as the index of its
+// extension in the legend and can never be reconstructed from the log.
+function _auditExt(path) {
+  var audit = window.MbeditorAudit;
+  return audit ? audit.code('ext', String(path || '').split('.').pop().toLowerCase()) : 0;
+}
+
+// Named rather than passed an EV code so callers need no audit reference.
+function _recErr(evName) {
+  var audit = window.MbeditorAudit;
+  if (audit) audit.rec(audit.EV.ERR, audit.EV[evName]);
+}
+
+// null means no formatter covers this file type, which is not a round trip.
+function _recFormat(path, startedAt, formatted) {
+  var audit = window.MbeditorAudit;
+  if (audit && formatted != null) {
+    audit.rec(audit.EV.FORMAT, _auditExt(path), Date.now() - startedAt, formatted.length);
+  }
 }
 
 // Indentation comes from the editor's own tabSize/insertSpaces, so formatting
@@ -129,7 +159,8 @@ var DEFAULT_EDITOR_PREFS = {
   tabDisplayMode: 'scroll',
   persistFindState: true,
   showDotFiles: false,
-  branchStateRestore: true
+  branchStateRestore: true,
+  auditLog: true
 };
 
 // Indentation of formatted output is the formatter's job, not a post-pass:
@@ -236,8 +267,59 @@ var SETTINGS_ROWS = [
   { key: 'routeHints', type: 'checkbox', label: 'Controller route hints', title: 'Show the verb and path that route to each controller action after its def line, and mark public actions nothing routes to', def: true },
 
   { header: 'RuboCop' },
-  { key: 'rubocopLintEnabled', type: 'checkbox', label: 'Enable RuboCop linting', title: 'Run RuboCop in the background and show lint warnings/errors as markers in the editor gutter', def: true }
+  { key: 'rubocopLintEnabled', type: 'checkbox', label: 'Enable RuboCop linting', title: 'Run RuboCop in the background and show lint warnings/errors as markers in the editor gutter', def: true },
+
+  { header: 'Diagnostics' },
+  { key: 'auditLog', type: 'checkbox', label: 'Record audit log', title: 'Record a numbers-only trace of editor activity you can download and hand to an AI to analyse. It never contains code, file names, URLs or host paths.', def: true },
+  { key: 'auditLogDownload', type: 'button', label: 'Download log', action: 'Download', title: 'Save the recorded trace as a JSON file to hand to an AI. It carries numbers only — no code, file names, URLs or host paths', onClick: downloadAuditLog },
+  { key: 'auditLogClear', type: 'button', label: 'Clear log', action: 'Clear', title: 'Discard everything recorded so far, so the next download is a clean trace', onClick: clearAuditLog }
 ];
+
+// Drops both rings — the browser's and the server's — so the next download is
+// a trace of one session and nothing else.
+function clearAuditLog() {
+  if (window.MbeditorAudit) window.MbeditorAudit.clear();
+  fetch(window.mbeditorBasePath() + '/audit_log', {
+    method: 'DELETE',
+    headers: { 'X-Mbeditor-Client': '1' }
+  }).then(function () {
+    EditorStore.setStatus('Audit log cleared', 'info');
+  })["catch"](function () {
+    EditorStore.setStatus('Could not clear the audit log', 'error');
+  });
+}
+
+// Flush first, so the entries recorded in this session are on the server
+// before it builds the payload.
+function downloadAuditLog() {
+  var fetchLog = function () {
+    return fetch(window.mbeditorBasePath() + '/audit_log').then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    }).then(function (payload) {
+      // The legend lives only in the browser bundle, so it is stitched on here
+      // rather than uploaded — see audit_log.js.
+      if (payload.client && window.MbeditorAudit) payload.client.legend = window.MbeditorAudit.LEGEND;
+      var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      var objectUrl = URL.createObjectURL(blob);
+      var link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = 'mbeditor-audit-' + Date.now() + '.json';
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      // Revoking in the same tick can free the blob before the browser has
+      // started reading it, which cancels the download instead of saving it.
+      setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 60000);
+      EditorStore.setStatus('Downloading audit log...', 'info');
+    });
+  };
+  var flushed = window.MbeditorAudit ? window.MbeditorAudit.flush() : Promise.resolve();
+  flushed.then(fetchLog, fetchLog)["catch"](function (err) {
+    EditorStore.setStatus('Audit log download failed: ' + (err && err.message || 'network error'), 'error');
+  });
+}
 
 function setEditorPref(setEditorPrefs, key, value) {
   setEditorPrefs(function(p) {
@@ -300,6 +382,16 @@ function renderSettingsRow(desc, editorPrefs, setEditorPrefs) {
             if (isNaN(v) || v < desc.min || v > desc.max) e.target.value = String(val);
           }
         })
+      );
+    }
+
+    case 'button': {
+      return React.createElement(
+        'div', { className: 'ide-settings-row ide-settings-row-check', title: desc.title, key: desc.key },
+        React.createElement('span', { className: 'ide-settings-label' }, desc.label),
+        React.createElement('button', {
+          type: 'button', className: 'ide-settings-reset-btn', onClick: desc.onClick
+        }, desc.action)
       );
     }
 
@@ -940,6 +1032,25 @@ var MbeditorApp = function MbeditorApp() {
   // too narrow for the labels to fit beside the title and file search.
   var toolbarIconOnly = editorPrefs.toolbarIconOnly || narrowToolbar;
 
+  // The audit ring never reads preferences itself; enablement is pushed in.
+  // BOOT is recorded on the first enable rather than at mount, because the
+  // stored preference arrives from /state after the default has already been
+  // applied and switching off discards anything buffered before it.
+  var auditBooted = useRef(false);
+  useEffect(function () {
+    var audit = window.MbeditorAudit;
+    if (!audit) return;
+    var on = editorPrefs.auditLog !== false;
+    audit.setEnabled(on);
+    if (!on || auditBooted.current) return;
+    auditBooted.current = true;
+    // Ready is when Monaco is up and the file can be typed in, not when React
+    // mounted: the gap between the two is most of the boot.
+    Promise.resolve(window.__monacoReady).then(function () {
+      audit.rec(audit.EV.BOOT, performance.now() | 0);
+    });
+  }, [editorPrefs.auditLog]);
+
   var _useState19 = useState({
     openEditors: false,
     projects: false
@@ -1336,6 +1447,8 @@ var MbeditorApp = function MbeditorApp() {
       EditorStore.setStatus('Linting...', 'info');
     }
 
+    var startedAt = Date.now();
+
     // ruby-lsp answers diagnostics for Ruby files when it's available: same
     // markers, plus Prism syntax errors, without a per-keystroke rubocop boot.
     // Anything short of a usable answer falls through to the HTTP lint for
@@ -1358,6 +1471,8 @@ var MbeditorApp = function MbeditorApp() {
 
     return lintRequest.then(function (res) {
       var nextMarkers = res.markers || [];
+      var audit = window.MbeditorAudit;
+      if (audit) audit.rec(audit.EV.LINT, _auditExt(tab.path), Date.now() - startedAt, nextMarkers.length);
       applyMarkersForTab(tab.id, nextMarkers);
 
       if (options.showStatus) {
@@ -1367,6 +1482,7 @@ var MbeditorApp = function MbeditorApp() {
 
       return res;
     })["catch"](function (err) {
+      _recErr('LINT');
       if (options.showStatus) {
         EditorStore.setStatus('Lint failed: ' + err.message, 'error');
       }
@@ -1462,6 +1578,9 @@ var MbeditorApp = function MbeditorApp() {
       }
       if (workspace && typeof workspace.rubyLspAvailable === 'boolean') {
         window.MBEDITOR_RUBY_LSP_AVAILABLE = workspace.rubyLspAvailable;
+      }
+      if (workspace && workspace.searchBackend) {
+        window.MBEDITOR_SEARCH_BACKEND = workspace.searchBackend;
       }
       if (workspace && typeof workspace.gitAvailable === 'boolean') {
         setGitAvailable(workspace.gitAvailable);
@@ -2267,8 +2386,18 @@ var MbeditorApp = function MbeditorApp() {
   useEffect(function () {
     var intervalId = setInterval(function () {
       if (document.hidden) return;
+      var startedAt = Date.now();
       FileService.getTree({ background: true }).then(function (data) {
-        setTreeData(_treeUpdater(data || []));
+        var next = data || [];
+        var audit = window.MbeditorAudit;
+        // Stringified once and reused by the updater, so instrumenting the poll
+        // costs no extra pass over the tree.
+        var signature = audit ? JSON.stringify(next) : null;
+        setTreeData(_treeUpdater(next, signature));
+        if (!audit) return;
+        var changed = signature !== _lastPolledTree;
+        _lastPolledTree = signature;
+        audit.rec(audit.EV.TREE_POLL, Date.now() - startedAt, changed ? 1 : 0);
       }).catch(function () {}); // silently ignore auto-refresh errors
     }, 10000);
     return function () { clearInterval(intervalId); };
@@ -2534,7 +2663,10 @@ var MbeditorApp = function MbeditorApp() {
     var input = window.prompt('Save as (path relative to workspace root):', tab.name + '.txt');
     if (!input || !input.trim()) return Promise.reject({ cancelled: true });
     var newPath = input.trim().replace(/^\/+/, '');
+    var startedAt = Date.now();
     return FileService.saveFile(newPath, tab.content).then(function () {
+      var audit = window.MbeditorAudit;
+      if (audit) audit.rec(audit.EV.SAVE, _auditExt(newPath), tab.content.length, Date.now() - startedAt);
       noteLocalSave(newPath, tab.content);
       SearchService.invalidate();
       GitService.fetchStatusLite({ background: true });
@@ -3188,6 +3320,7 @@ var MbeditorApp = function MbeditorApp() {
   // by a formatter problem).
   var _formatContentForSave = function _formatContentForSave(tab) {
     var isRubyLang = /\.(rb|rake|gemspec)$/.test(tab.path) || /(?:^|\/)(Rakefile|Gemfile)$/.test(tab.path);
+    var startedAt = Date.now();
     if (isRubyLang) {
       // Same route as the Format button: formatRubySource tries ruby-lsp and
       // falls back to /format's `rubocop -A`. Calling /format directly here
@@ -3197,12 +3330,25 @@ var MbeditorApp = function MbeditorApp() {
       // format-on-save silently do nothing when only ruby-lsp was present.
       if (!rubocopAvailable && !window.MBEDITOR_RUBY_LSP_AVAILABLE) return Promise.resolve(null);
       return formatRubySource(tab.path, tab.content)
-        .then(function (res) { return (res && res.content) || null; })
-        ["catch"](function () { return null; });
+        .then(function (res) {
+          var out = (res && res.content) || null;
+          _recFormat(tab.path, startedAt, out);
+          return out;
+        })
+        ["catch"](function () {
+          _recErr('FORMAT');
+          return null;
+        });
     }
     var parserName = prettierParserFor(tab.path);
     if (!parserName) return Promise.resolve(null);
-    return runPrettier(tab.content, editorPrefs, parserName)["catch"](function () { return null; });
+    return runPrettier(tab.content, editorPrefs, parserName).then(function (out) {
+      _recFormat(tab.path, startedAt, out);
+      return out;
+    })["catch"](function () {
+      _recErr('FORMAT');
+      return null;
+    });
   };
 
   // Re-read a tab from the store after flushing TabManager's throttled content
@@ -3252,7 +3398,10 @@ var MbeditorApp = function MbeditorApp() {
     });
     EditorStore.setStatus("Saving " + tab.name + "...", "info");
     isSavingRef.current = true;
+    var startedAt = Date.now();
     return FileService.saveFile(tab.path, tab.content).then(function () {
+      var audit = window.MbeditorAudit;
+      if (audit) audit.rec(audit.EV.SAVE, _auditExt(tab.path), tab.content.length, Date.now() - startedAt);
       noteLocalSave(tab.path, tab.content);
       // Reset the AVI clean baseline so undo past this save point shows dirty correctly.
       var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
@@ -3261,6 +3410,7 @@ var MbeditorApp = function MbeditorApp() {
       }
       onSuccess();
     })["catch"](function (err) {
+      _recErr('SAVE');
       EditorStore.setStatus("Save failed: " + err.message, "error");
     })["finally"](function () {
       isSavingRef.current = false;
@@ -3309,8 +3459,11 @@ var MbeditorApp = function MbeditorApp() {
       // sprockets/react-rails pipeline can't transform (errors Monaco's TS
       // worker misses). Save only — never per keystroke.
       if (jsSyntaxCheckAvailableRef.current && /\.(js|jsx)$/i.test(tab.path)) {
+        var lintStartedAt = Date.now();
         FileService.lintFile(tab.path, tab.content, 'javascript').then(function (res) {
           var babelMarkers = (res && res.markers) || [];
+          var audit = window.MbeditorAudit;
+          if (audit) audit.rec(audit.EV.LINT, _auditExt(tab.path), Date.now() - lintStartedAt, babelMarkers.length);
           if (babelMarkers.length > 0) {
             applyMarkersForTab(tab.id, babelMarkers);
             EditorStore.setStatus('Saved — babel: ' + babelMarkers[0].message, 'warning');
@@ -3320,7 +3473,9 @@ var MbeditorApp = function MbeditorApp() {
             // applyMarkersForTab keeps the previous map when it is already empty.
             applyMarkersForTab(tab.id, []);
           }
-        })["catch"](function () {});
+        })["catch"](function () {
+          _recErr('LINT');
+        });
       }
 
       // The server broadcasts files_changed for this very write, and the
@@ -3419,7 +3574,15 @@ var MbeditorApp = function MbeditorApp() {
     // disk stayed dirty and the only thing on offer was to hit Save All again.
     // Each file is now settled on its own result.
     var promises = dirtyTabs.map(function (tab) {
-      return FileService.saveFile(tab.path, tab.content);
+      var startedAt = Date.now();
+      return FileService.saveFile(tab.path, tab.content).then(function (res) {
+        var audit = window.MbeditorAudit;
+        if (audit) audit.rec(audit.EV.SAVE, _auditExt(tab.path), tab.content.length, Date.now() - startedAt);
+        return res;
+      }, function (err) {
+        _recErr('SAVE');
+        throw err;
+      });
     });
     Promise.allSettled(promises).then(function (results) {
       var saved = dirtyTabs.filter(function (tab, i) { return results[i].status === "fulfilled"; });
@@ -3567,6 +3730,7 @@ var MbeditorApp = function MbeditorApp() {
   // rather than the button appearing to do nothing.
   var formatTabContent = function formatTabContent(tab, prefs) {
     prefs = prefs || editorPrefs;
+    var startedAt = Date.now();
     if (isRubyPath(tab.path) || tab.path.endsWith('.rake')) {
       if (!rubocopAvailable) return Promise.reject(new Error("RuboCop is not available for this workspace."));
       // RuboCop's output is taken as-is. Ruby indentation belongs to the
@@ -3575,13 +3739,18 @@ var MbeditorApp = function MbeditorApp() {
       // the same file. The old code tried the opposite — converting the source
       // to tabs *before* handing it over — which RuboCop simply discarded.
       return formatRubySource(tab.path, tab.content).then(function (res) {
-        return (res && res.content) || null;
+        var out = (res && res.content) || null;
+        _recFormat(tab.path, startedAt, out);
+        return out;
       });
     }
 
     var parserName = prettierParserFor(tab.path);
     if (!parserName) return Promise.resolve(null);
-    return runPrettier(tab.content, prefs, parserName);
+    return runPrettier(tab.content, prefs, parserName).then(function (out) {
+      _recFormat(tab.path, startedAt, out);
+      return out;
+    });
   };
 
   // Markers are per-model and only the mounted editor re-lints, so a document
@@ -3674,6 +3843,7 @@ var MbeditorApp = function MbeditorApp() {
       EditorStore.setStatus(formatted === originalContent ? "Already formatted" : "Formatted (Unsaved)", "success");
       GitService.fetchStatus();
     })["catch"](function (err) {
+      _recErr('FORMAT');
       EditorStore.setStatus("Format failed: " + (err && err.message ? err.message : err), "error");
     })["finally"](function () {
       setLoading(function (prev) { return _extends({}, prev, { format: false }); });
