@@ -3,10 +3,11 @@
 require "test_helper"
 
 module Mbeditor
-  # scss shipped mapped to Monaco's 'css' language in two places while
-  # PRETTIER_PARSERS already said 'scss'. The CSS validator then flagged every
-  # $variable, @use, & nesting and @mixin, and the css tokenizer produced no
-  # highlighting at all, so an scss file opened as an unreadable wall of red.
+  # scss shipped mapped to Monaco's 'css' language in two places, and less was
+  # mapped in neither, while PRETTIER_PARSERS already named both. The CSS
+  # validator flagged every $variable, @use, & nesting and @mixin and produced
+  # no highlighting, so scss opened as an unreadable wall of red; less fell
+  # through to plaintext and got no highlighting or language service at all.
   #
   # A source guard, not a behavioural one: the language is chosen inside
   # EditorPanel's render and is only observable through a Monaco stub. It
@@ -21,18 +22,22 @@ module Mbeditor
       File.read(Mbeditor::Engine.root.join(relative))
     end
 
-    test "no stylesheet language map sends scss to css" do
-      SOURCES.each do |relative|
-        body = source(relative)
+    # Monaco registers css, scss and less. Each must reach its own language:
+    # scss was being sent to css, less was reaching nothing.
+    %w[scss less].each do |lang|
+      test "no stylesheet language map sends #{lang} somewhere else" do
+        SOURCES.each do |relative|
+          body = source(relative)
 
-        refute_match(/'scss':\s*'css'/, body, "#{relative} maps scss to css")
-        refute_match(/case 'css':case 'scss'/, body, "#{relative} lumps scss in with css")
-        assert_match(/'scss'/, body, "#{relative} no longer mentions scss at all")
+          refute_match(/'#{lang}':\s*'css'/, body, "#{relative} maps #{lang} to css")
+          refute_match(/case 'css':case '#{lang}'/, body, "#{relative} lumps #{lang} in with css")
+          assert_match(/'#{lang}'/, body, "#{relative} does not map #{lang} at all")
+        end
       end
-    end
 
-    test "scss.erb is treated as scss, the way css.erb is treated as css" do
-      assert_match(/\\.scss\\.erb\$/, source(SOURCES.first))
+      test "#{lang}.erb is treated as #{lang}, the way css.erb is treated as css" do
+        assert_match(/\\.#{lang}\\.erb\$/, source(SOURCES.first))
+      end
     end
   end
 end

@@ -110,7 +110,7 @@ var DiffViewer = function DiffViewer(_ref) {
       'js': 'javascript', 'jsx': 'javascript',
       'ts': 'typescript', 'tsx': 'typescript',
       'json': 'json', 'yml': 'yaml', 'yaml': 'yaml',
-      'css': 'css', 'scss': 'scss', 'sass': 'css',
+      'css': 'css', 'scss': 'scss', 'less': 'less', 'sass': 'css',
       'html': 'html', 'erb': 'erb', 'haml': 'haml',
       'xml': 'xml', 'md': 'markdown', 'markdown': 'markdown',
       'sh': 'shell', 'bash': 'shell', 'zsh': 'shell'
