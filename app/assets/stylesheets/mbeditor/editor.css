@@ -279,6 +279,7 @@ html, body, #mbeditor-root {
 .ide-activity-bar .ide-activity-btn.active {
   opacity: 1;
   background: transparent;
+  color: var(--ide-accent-fg);
   border-left-color: var(--ide-accent);
 }
 
@@ -293,80 +294,61 @@ html, body, #mbeditor-root {
 }
 
 
-.panel-divider {
-  flex-shrink: 0;
-  cursor: col-resize;
-  transition: background 0.12s ease;
+/* ── The gutter ──────────────────────────────────────────────
+   One draggable strip, always in the gap between two cards, never inside
+   either of them. 6px in its thin dimension and transparent: wider reads as a
+   gap in the layout rather than a handle.
+
+   The three dots are a ::before on the gutter itself. A flat strip gives no
+   sign it can be dragged, and the cursor only says so once you are already on
+   it. One tiled radial gradient rather than three elements: the gutter has no
+   children and adding some would put a hit-testable node inside the drag
+   target. */
+.ide-gutter {
+  flex: 0 0 auto;
   position: relative;
+  background: transparent;
+  transition: background 0.12s ease;
 }
 
-/* Three 3px dots, centred. A flat 6px strip gives no sign it can be dragged,
-   and the cursor only says so once you are already on it. One tiled radial
-   gradient rather than three elements: the divider has no children and adding
-   some would put a hit-testable node inside the drag target. */
-.panel-divider::before {
+.ide-gutter-v { width: 6px; cursor: col-resize; }
+.ide-gutter-h { height: 6px; cursor: row-resize; }
+
+.ide-gutter::before {
   content: '';
   position: absolute;
   left: 50%;
   top: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0.55;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+/* Dots run top-to-bottom on a vertical gutter, left-to-right on a horizontal
+   one — the same tile, rotated. */
+.ide-gutter-v::before {
   width: 3px;
   height: 15px;
-  transform: translate(-50%, -50%);
   background: radial-gradient(circle 1.5px at 1.5px 1.5px, var(--ide-text-muted) 99%, transparent) 0 0 / 3px 6px repeat-y;
-  opacity: 0.55;
-  transition: opacity 0.12s ease;
-  pointer-events: none;
 }
 
-.panel-divider:hover::before,
-.panel-divider.active::before { opacity: 1; }
-
-.sidebar-divider {
-  width: 6px;
-  background: transparent;
-  border-right: none;
-}
-
-/* Horizontal counterpart of .panel-divider::before, for handles that resize a
-   panel's height rather than its width (log/problems drawers, open editors
-   list). Same tiled radial-gradient dot, rotated: dots run left-to-right
-   instead of top-to-bottom. */
-.resize-grip-h {
-  flex: 0 0 auto;
-  height: 6px;
-  cursor: row-resize;
-  background: transparent;
-  position: relative;
-  transition: background 0.12s ease;
-}
-.resize-grip-h::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 50%;
+.ide-gutter-h::before {
   width: 15px;
   height: 3px;
-  transform: translate(-50%, -50%);
   background: radial-gradient(circle 1.5px at 1.5px 1.5px, var(--ide-text-muted) 99%, transparent) 0 0 / 6px 3px repeat-x;
-  opacity: 0.55;
-  transition: opacity 0.12s ease;
-  pointer-events: none;
-}
-.resize-grip-h:hover { background: var(--ide-hover-bg); }
-.resize-grip-h:hover::before,
-.resize-grip-h.active::before { opacity: 1; }
-
-
-.pane-divider {
-  width: 4px;
-  background: var(--ide-panel-bg-alt);
-  z-index: 10;
 }
 
-.panel-divider:hover,
-.panel-divider.active {
-  background: var(--ide-accent);
-}
+.ide-gutter:hover { background: var(--ide-hover-bg); }
+.ide-gutter:hover::before,
+.ide-gutter.active::before { opacity: 1; }
+
+/* The split-pane gutter sits over the pane drop overlays. */
+.ide-gutter-pane { z-index: 10; }
+
+/* Modern: the seam beside the git panel card is drawn on the gutter, so the
+   panel itself carries no left border and there is only ever one line. */
+.ide-gutter-gitpanel { border-left: 1px solid var(--ide-border); }
 
 .ide-sidebar-header {
   padding: 6px 12px;
@@ -955,7 +937,7 @@ html, body, #mbeditor-root {
   gap: 0;
   flex-shrink: 0;
   font-size: 12px;
-  line-height: 1;
+  line-height: 20px; /* glyphs centre in the row; line-height 1 sat them high */
   color: var(--ide-accent-text);
 }
 
@@ -1976,8 +1958,9 @@ html, body, #mbeditor-root {
 
 /* ── Right-side Git Panel ───────────────────────────────── */
 .ide-git-right-panel {
-  background: var(--ide-panel-bg-alt);
-  border-left: 1px solid var(--ide-border);
+  /* A card like the sidebar: the seam on its left is drawn by the gutter, not
+     by a border here, so the two never double up. */
+  background: var(--ide-panel-bg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1986,16 +1969,10 @@ html, body, #mbeditor-root {
   max-width: 600px;
 }
 
-.gitpanel-divider {
-  width: 5px;
-  background: var(--ide-panel-bg-alt);
-  border-left: 1px solid var(--ide-border);
-}
-
 .ide-git-panel {
   width: 100%;
   height: 100%;
-  background: var(--ide-panel-bg-alt);
+  background: var(--ide-panel-bg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2377,7 +2354,7 @@ html, body, #mbeditor-root {
 
 /* Open-editors panel: height is controlled by the --open-editors-height CSS variable
    set inline from React state (default 140px ≈ 5-6 items), drag-resizable via the
-   .open-editors-resize-handle strip below. */
+   gutter below it. */
 .ide-sidebar-fixed .collapsible-content {
   max-height: var(--open-editors-height, 140px);
   overflow-y: auto;
@@ -3240,7 +3217,7 @@ button:not(.pico-btn) { margin-bottom: 0; }
   border-radius: 0;
 }
 /* Re-apply border-radius for buttons that intentionally need it */
-.ide-shell .ide-titlebar-search { border-radius: 999px; } /* pill */
+.ide-shell .ide-titlebar-search { border-radius: 6px; }
 .ide-shell .project-action-btn,
 .ide-shell .git-header-btn,
 .ide-shell .git-section-action-btn,

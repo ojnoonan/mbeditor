@@ -34,9 +34,9 @@ html[data-glass] .ide-shell {
   gap: 6px;
 }
 
-html[data-glass] .ide-titlebar,
 html[data-glass] .ide-activity-bar,
 html[data-glass] .ide-sidebar,
+html[data-glass] .ide-git-right-panel,
 html[data-glass] .ide-main,
 html[data-glass] .ide-log-drawer,
 html[data-glass] .ide-problems-drawer,
@@ -67,12 +67,12 @@ html[data-glass] .ide-body:not(:has(.ide-sidebar)) .ide-activity-bar { border-ra
 html[data-glass] .ide-sidebar { border-radius: 0 12px 12px 0; border-left: none; }
 
 /* ── Title bar ────────────────────────────────────────────────────────────── */
-/* Like the status bar: the title bar takes the gutter above and below as height. */
-html[data-glass] .ide-titlebar { border-bottom: 1px solid var(--g-edge); height: 40px; margin: -2px 0 -4px; }
+/* The title bar is not a card: it sits flat on the backdrop like VS Code's,
+   so the first card row starts under a plain strip rather than a second box. */
+html[data-glass] .ide-titlebar { background: transparent; border: none; box-shadow: none; height: 36px; margin: -2px 0 -4px; padding: 0 6px; }
 html[data-glass] .ide-titlebar-icon { color: var(--ide-accent-fg); }
 html[data-glass] .ide-titlebar-title { color: var(--ide-text); font-weight: 600; }
 html[data-glass] .ide-titlebar-search {
-  border-radius: 999px;
   background: var(--g-surface-2);
   border: 1px solid var(--g-edge);
 }
@@ -80,14 +80,13 @@ html[data-glass] .ide-titlebar-search:hover { background: var(--g-hover); color:
 
 /* ── Activity bar ─────────────────────────────────────────────────────────── */
 html[data-glass] .ide-activity-bar .ide-activity-btn:hover { background: var(--g-hover); }
-html[data-glass] .ide-activity-bar .ide-activity-btn.active { background: var(--g-lift); }
 
 /* ── The gutter ───────────────────────────────────────────────────────────── */
 /* Same 6px as everywhere else — a wider one reads as a gap in the layout
    rather than a handle. The 3-dot grip comes from editor.css. */
-html[data-glass] .panel-divider { background: transparent; border-right: none; }
-html[data-glass] .panel-divider:hover,
-html[data-glass] .panel-divider.active { background: var(--g-hover); }
+html[data-glass] .ide-gutter { background: transparent; border: none; }
+html[data-glass] .ide-gutter:hover,
+html[data-glass] .ide-gutter.active { background: var(--g-hover); }
 
 /* ── Tabs: same chips as Modern, on a transparent strip ───────────────────── */
 html[data-glass] .tab-bar { background: transparent; border-bottom: 1px solid var(--g-edge); }
@@ -110,7 +109,7 @@ html[data-glass] .ide-statusbar { border-top: 1px solid var(--g-edge); height: 2
 /* The drawer-open handle lies over the 6px gutter between the editor card and
    the status bar rather than adding a strip of its own above it. */
 html[data-glass] .ide-center-column { position: relative; }
-html[data-glass] .ide-drawer-open-handle { position: absolute; left: 0; right: 0; bottom: -6px; }
+html[data-glass] .ide-gutter-drawer-open { position: absolute; left: 0; right: 0; bottom: -6px; }
 /* .statusbar-version carries .statusbar-btn too, so one rule covers both. */
 html[data-glass] .statusbar-btn { border-radius: 999px; padding: 0 9px; }
 html[data-glass] .statusbar-btn:hover { background: var(--g-hover); }

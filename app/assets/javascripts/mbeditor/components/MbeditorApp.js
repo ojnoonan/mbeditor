@@ -39,6 +39,7 @@ var GIT_PANEL_MIN_WIDTH = 280;
 var PANE_MIN_WIDTH_PERCENT = 20;
 var PANE_MAX_WIDTH_PERCENT = 80;
 var SIDEBAR_COLLAPSED_WIDTH = 48;
+var DRAWER_MIN_HEIGHT = 120;
 // Extension -> Prettier parser. Limited to what the vendored plugins actually
 // parse (babel, estree, html, postcss, markdown); anything outside this map
 // falls through to Monaco's re-indent.
@@ -981,6 +982,20 @@ var MbeditorApp = function MbeditorApp() {
   var openEditorsHeight = _useState24[0];
   var setOpenEditorsHeight = _useState24[1];
 
+  // Both bottom drawers are resized by a gutter that sits between the editor
+  // card and the drawer, so the height lives here rather than in the drawer —
+  // a panel cannot own the handle that is no longer inside it.
+  var _drawerHeight = function (key) {
+    var saved = parseInt(window.localStorage.getItem(key), 10);
+    return (saved && saved >= DRAWER_MIN_HEIGHT) ? saved : 240;
+  };
+  var _useStateLogH = useState(function () { return _drawerHeight('mbeditorLogHeight'); });
+  var logHeight = _useStateLogH[0];
+  var setLogHeight = _useStateLogH[1];
+  var _useStateProblemsH = useState(function () { return _drawerHeight('mbeditorProblemsHeight'); });
+  var problemsHeight = _useStateProblemsH[0];
+  var setProblemsHeight = _useStateProblemsH[1];
+
   // One-shot target for post-operation scroll reveal (create/rename/delete).
   // A fresh object each time so the effect re-fires even for a repeated path.
   var _useState25 = useState(null);
@@ -1788,12 +1803,26 @@ var MbeditorApp = function MbeditorApp() {
           var nextHeight = Math.max(60, Math.min(400, s.startHeight + delta));
           setOpenEditorsHeight(nextHeight);
         }
+
+        // Bottom drawers. Delta-based and inverted: dragging the gutter up
+        // grows the drawer. Independent of where the drawer is anchored and
+        // survives a zero/unknown viewport height.
+        if (s.mode === 'log' || s.mode === 'problems') {
+          var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+          var maxH = vh > 0 ? Math.round(vh * 0.85) : Infinity;
+          s.lastHeight = Math.min(maxH, Math.max(DRAWER_MIN_HEIGHT, s.startHeight + (s.startY - clientY)));
+          (s.mode === 'log' ? setLogHeight : setProblemsHeight)(s.lastHeight);
+        }
       });
     };
 
     var handleMouseUp = function handleMouseUp() {
       if (!resizeSessionRef.current) return;
       if (resizeSessionRef.current.snapClose) setSidebarCollapsed(true);
+      var s = resizeSessionRef.current;
+      if (s.storeKey && s.lastHeight) {
+        try { window.localStorage.setItem(s.storeKey, String(s.lastHeight)); } catch (err) {}
+      }
 
       if (resizeRafRef.current) {
         cancelAnimationFrame(resizeRafRef.current);
@@ -4344,6 +4373,16 @@ var MbeditorApp = function MbeditorApp() {
     document.body.style.userSelect = 'none';
   };
 
+  var startDrawerResize = function startDrawerResize(mode, startHeight, storeKey) {
+    return function (e) {
+      e.preventDefault();
+      resizeSessionRef.current = { mode: mode, startY: e.clientY, startHeight: startHeight, storeKey: storeKey };
+      setActiveResizeMode(mode);
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+    };
+  };
+
   var handleActivityBarClick = function handleActivityBarClick(tab) {
     if (tab === 'settings') {
       openSettingsTab();
@@ -5481,10 +5520,12 @@ var MbeditorApp = function MbeditorApp() {
             )
           )
           ),
-          state.panes.flatMap(function (p) { return p.tabs; }).length > 0 && React.createElement(
-            "div",
-            { className: "resize-grip-h", onMouseDown: startOpenEditorsResize }
-          ),
+          state.panes.flatMap(function (p) { return p.tabs; }).length > 0 && React.createElement((window.Gutter || Gutter), {
+            orientation: 'horizontal',
+            label: "Resize open editors list",
+            active: activeResizeMode === 'openeditors',
+            onDragStart: startOpenEditorsResize
+          }),
           React.createElement(
             "div",
             { className: "ide-sidebar-scrollable" },
@@ -5909,32 +5950,17 @@ var MbeditorApp = function MbeditorApp() {
       ),
       // Collapsed: the same gutter is a handle. Drag it right and the
       // explorer snaps open; there is no intermediate width to preview.
-      sidebarCollapsed && !zenMode && React.createElement("div", {
-        className: "panel-divider sidebar-divider ide-sidebar-open-handle",
-        role: "separator",
-        "aria-orientation": "vertical",
-        "aria-label": "Drag right to open the explorer",
-        title: "Drag right to open the explorer",
-        onMouseDown: function (e) {
-          e.preventDefault();
-          var startX = e.clientX;
-          var onUp = function (ev) {
-            document.removeEventListener('mousemove', onMove);
-            document.removeEventListener('mouseup', onUp);
-            if (ev.clientX - startX >= 24) setSidebarCollapsed(false);
-          };
-          var onMove = function (ev) { ev.preventDefault(); };
-          document.addEventListener('mousemove', onMove);
-          document.addEventListener('mouseup', onUp);
-        }
+      sidebarCollapsed && !zenMode && React.createElement((window.Gutter || Gutter), {
+        orientation: 'vertical',
+        label: "Drag right to open the explorer",
+        onSnap: function () { setSidebarCollapsed(false); }
       }),
-      /* Sidebar resize divider — only when panel is open */
-      !sidebarCollapsed && !zenMode && React.createElement("div", {
-        className: "panel-divider sidebar-divider " + (activeResizeMode === 'sidebar' ? 'active' : ''),
-        onMouseDown: startSidebarResize,
-        role: "separator",
-        "aria-orientation": "vertical",
-        "aria-label": "Resize explorer panel"
+      /* Sidebar resize gutter — only when panel is open */
+      !sidebarCollapsed && !zenMode && React.createElement((window.Gutter || Gutter), {
+        orientation: 'vertical',
+        label: "Resize explorer panel",
+        active: activeResizeMode === 'sidebar',
+        onDragStart: startSidebarResize
       }),
       // Column wrapping the split panes and the bottom drawers. ide-main is a
       // row of panes, so the drawers need a vertical parent to push against;
@@ -6141,9 +6167,12 @@ var MbeditorApp = function MbeditorApp() {
           return React.createElement(
             React.Fragment,
             { key: pane.id },
-            idx === 1 && isSplit && React.createElement("div", {
-              className: "panel-divider pane-divider " + (activeResizeMode === 'pane' ? 'active' : ''),
-              onMouseDown: startPaneResize
+            idx === 1 && isSplit && React.createElement((window.Gutter || Gutter), {
+              orientation: 'vertical',
+              className: 'ide-gutter-pane',
+              label: "Resize editor groups",
+              active: activeResizeMode === 'pane',
+              onDragStart: startPaneResize
             }),
             React.createElement(
               "div",
@@ -6296,36 +6325,39 @@ var MbeditorApp = function MbeditorApp() {
           );
         })
       ),
+      showLogPanel && !zenMode && React.createElement((window.Gutter || Gutter), {
+        orientation: 'horizontal',
+        label: "Resize log drawer",
+        active: activeResizeMode === 'log',
+        onDragStart: startDrawerResize('log', logHeight, 'mbeditorLogHeight')
+      }),
       showLogPanel && !zenMode && React.createElement(window.LogPanel || LogPanel, {
+        height: logHeight,
         onClose: function () { setShowLogPanel(false); }
       }),
-      // With the drawer closed, the strip above the status bar is a handle:
-      // drag it up to open Problems at the dragged height. The drawer reads
-      // its height from localStorage on mount, so writing it first is enough.
-      // ponytail: opens on release, no live preview; pass a height prop if that grates.
-      !showProblemsPanel && !zenMode && React.createElement("div", {
-        className: "resize-grip-h ide-drawer-open-handle",
-        role: "separator",
-        "aria-orientation": "horizontal",
-        "aria-label": "Drag up to open Problems",
-        title: "Drag up to open Problems",
-        onMouseDown: function (e) {
-          e.preventDefault();
-          var startY = e.clientY;
-          var onUp = function (ev) {
-            document.removeEventListener('mousemove', onMove);
-            document.removeEventListener('mouseup', onUp);
-            var dragged = startY - ev.clientY;
-            if (dragged < 40) return;
-            try { window.localStorage.setItem('mbeditorProblemsHeight', String(Math.max(120, dragged))); } catch (err) {}
-            setShowProblemsPanel(true);
-          };
-          var onMove = function (ev) { ev.preventDefault(); };
-          document.addEventListener('mousemove', onMove);
-          document.addEventListener('mouseup', onUp);
+      // With the drawer closed, the gutter above the status bar is a handle:
+      // drag it up to open Problems at the dragged height.
+      // ponytail: opens on release, no live preview; track the drag if that grates.
+      !showProblemsPanel && !zenMode && React.createElement((window.Gutter || Gutter), {
+        orientation: 'horizontal',
+        className: 'ide-gutter-drawer-open',
+        label: "Drag up to open Problems",
+        snapThreshold: 40,
+        onSnap: function (dragged) {
+          var h = Math.max(DRAWER_MIN_HEIGHT, dragged);
+          try { window.localStorage.setItem('mbeditorProblemsHeight', String(h)); } catch (err) {}
+          setProblemsHeight(h);
+          setShowProblemsPanel(true);
         }
       }),
+      showProblemsPanel && !zenMode && React.createElement((window.Gutter || Gutter), {
+        orientation: 'horizontal',
+        label: "Resize problems drawer",
+        active: activeResizeMode === 'problems',
+        onDragStart: startDrawerResize('problems', problemsHeight, 'mbeditorProblemsHeight')
+      }),
       showProblemsPanel && !zenMode && React.createElement(window.ProblemsPanel || ProblemsPanel, {
+        height: problemsHeight,
         onClose: function () { setShowProblemsPanel(false); },
         onOpenFile: function (path, line, col) {
           handleSelectFile(path, path.split('/').pop(), line, col);
@@ -6340,12 +6372,12 @@ var MbeditorApp = function MbeditorApp() {
       ),
 
       // Right-side Git panel (children of ide-body, alongside sidebar and ide-main)
-      showGitPanel && !zenMode && React.createElement("div", {
-        className: "panel-divider gitpanel-divider " + (activeResizeMode === 'gitpanel' ? 'active' : ''),
-        onMouseDown: startGitPanelResize,
-        role: "separator",
-        "aria-orientation": "vertical",
-        "aria-label": "Resize git panel"
+      showGitPanel && !zenMode && React.createElement((window.Gutter || Gutter), {
+        orientation: 'vertical',
+        className: 'ide-gutter-gitpanel',
+        label: "Resize git panel",
+        active: activeResizeMode === 'gitpanel',
+        onDragStart: startGitPanelResize
       }),
       showGitPanel && !zenMode && React.createElement(
         "div",

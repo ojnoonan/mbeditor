@@ -137,6 +137,9 @@ var ProblemsPanel = (function () {
 
   var Panel = function ProblemsPanelComponent(_ref) {
     var onClose = _ref.onClose;
+    // Height is owned by MbeditorApp: the gutter that drags it lives between
+    // the editor card and this drawer, not inside it.
+    var height = _ref.height;
     var onOpenFile = _ref.onOpenFile;
     // Called after `-a` has rewritten files on disk, so the app can re-read
     // every open tab. Nothing else would: the write came from a subprocess,
@@ -252,34 +255,6 @@ var ProblemsPanel = (function () {
       });
     };
 
-    var MIN_HEIGHT = 120;
-    var _height = React.useState(function () {
-      var saved = parseInt(window.localStorage.getItem('mbeditorProblemsHeight'), 10);
-      return (saved && saved >= MIN_HEIGHT) ? saved : 240;
-    });
-    var height = _height[0], setHeight = _height[1];
-    var heightRef = React.useRef(height);
-    heightRef.current = height;
-
-    // Same delta-based resize as the log drawer.
-    var onResizeMouseDown = function (e) {
-      e.preventDefault();
-      var startY = e.clientY;
-      var startHeight = heightRef.current;
-      var onMove = function (ev) {
-        var vh = window.innerHeight || document.documentElement.clientHeight || 0;
-        var maxH = vh > 0 ? Math.round(vh * 0.85) : Infinity;
-        setHeight(Math.min(maxH, Math.max(MIN_HEIGHT, startHeight + (startY - ev.clientY))));
-      };
-      var onUp = function () {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-        window.localStorage.setItem('mbeditorProblemsHeight', String(heightRef.current));
-      };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    };
-
     React.useEffect(function () {
       if (!window.monaco || !window.monaco.editor) return;
       // Debounced for the same reason the status-bar tally is: markers change
@@ -340,11 +315,6 @@ var ProblemsPanel = (function () {
     return React.createElement(
       'div',
       { className: 'ide-problems-drawer', style: { height: height + 'px' } },
-      React.createElement('div', {
-        className: 'resize-grip-h',
-        title: 'Drag to resize',
-        onMouseDown: onResizeMouseDown
-      }),
       React.createElement(
         'div',
         { className: 'ide-problems-header' },
