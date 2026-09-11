@@ -494,6 +494,10 @@ var EditorPanel = function EditorPanel(_ref) {
       language = 'javascript';
     } else if (/\.css\.erb$/.test(fileNameLower)) {
       language = 'css';
+    } else if (/\.scss\.erb$/.test(fileNameLower)) {
+      language = 'scss';
+    } else if (/\.less\.erb$/.test(fileNameLower)) {
+      language = 'less';
     } else if (/\.html\.erb$/.test(fileNameLower)) {
       language = 'erb';
     } else if (/\.html\.haml$/.test(fileNameLower)) {
@@ -519,8 +523,16 @@ var EditorPanel = function EditorPanel(_ref) {
         language = 'javascript';break;
       case 'ts':case 'tsx':
         language = 'typescript';break;
-      case 'css':case 'scss':case 'sass':
+      // scss and less are their own Monaco languages, and reach nothing useful
+      // without these: scss went to css and got flagged line by line, less went
+      // nowhere and fell through to plaintext. '.sass' stays on css because
+      // Monaco has no sass language, and scss would reject it just as loudly.
+      case 'css':case 'sass':
         language = 'css';break;
+      case 'scss':
+        language = 'scss';break;
+      case 'less':
+        language = 'less';break;
       case 'html':
         language = 'html';break;
       case 'erb':
