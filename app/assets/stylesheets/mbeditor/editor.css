@@ -527,6 +527,7 @@ html, body, #mbeditor-root {
 .tab-bar {
   display: flex;
   align-items: center;
+  padding-left: 4px;
   background: var(--ide-panel-bg);
   border-bottom: 1px solid var(--ide-border);
   height: 35px;

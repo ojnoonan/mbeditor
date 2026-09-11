@@ -37,7 +37,9 @@ html[data-glass] .ide-shell {
 html[data-glass] .ide-titlebar,
 html[data-glass] .ide-activity-bar,
 html[data-glass] .ide-sidebar,
-html[data-glass] .ide-center-column,
+html[data-glass] .ide-main,
+html[data-glass] .ide-log-drawer,
+html[data-glass] .ide-problems-drawer,
 html[data-glass] .ide-statusbar {
   backdrop-filter: var(--g-blur);
   -webkit-backdrop-filter: var(--g-blur);
@@ -51,6 +53,12 @@ html[data-glass] .ide-statusbar {
      search results live in. A clipped shadow is the cheaper loss. */
   overflow: hidden;
 }
+
+/* The centre column is only a layout box: the editor and each bottom drawer
+   are separate cards with a gutter between them, like VS Code's panel. */
+html[data-glass] .ide-center-column { gap: 6px; background: transparent; }
+html[data-glass] .ide-log-drawer,
+html[data-glass] .ide-problems-drawer { border-top: 1px solid var(--g-edge); }
 
 /* The activity bar and the sidebar are one card with a seam, not two cards
    butting rounded corners together — there is no gutter between them to fill. */
@@ -86,7 +94,6 @@ html[data-glass] .tab-item.active { background: var(--g-lift); }
 
 /* ── Editor: the content layer stays solid ────────────────────────────────── */
 html[data-glass] .ide-editor-toolbar { background: transparent; border-bottom: 1px solid var(--g-edge); }
-html[data-glass] .ide-main { background: transparent; }
 html[data-glass] .ide-icon-btn:hover { background: var(--g-hover); }
 html[data-glass] .ide-editor-wrapper { background: var(--ide-bg); }
 html[data-glass] .ide-editor-wrapper .monaco-editor,
