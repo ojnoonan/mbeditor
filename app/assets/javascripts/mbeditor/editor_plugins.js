@@ -527,6 +527,37 @@
     }
   }
 
+  // True when a hover provider should actually run here: real buffer text,
+  // not a `#` comment. Route-hint decorations (EditorPanel.js) render their
+  // label via a zero-width decoration's `after.content` — text that is never
+  // part of the model — anchored at a column past the real end of the line.
+  // Monaco still resolves a mouse position over that rendered text, but the
+  // column it reports exceeds getLineMaxColumn, which a position over real
+  // content can never do. getWordAtPosition doesn't reject that
+  // out-of-range column — it just snaps to the nearest real word — so
+  // without this check hovering the decoration silently hovers whatever word
+  // precedes it. Comment membership comes from Monaco's own tokenizer
+  // (getLineTokens/StandardTokenType) rather than a `#` regex, so a `#`
+  // inside a string isn't misread as a comment opener. Exposed so both
+  // cases can be asserted directly in system tests.
+  function isRealHoverPosition(model, position) {
+    if (!model || !position) return false;
+    if (position.column > model.getLineMaxColumn(position.lineNumber)) return false;
+    // Standard token types: Other 0, Comment 1, String 2, RegEx 3. The enum
+    // object is not exported by this Monaco build, and getLineTokens lives on
+    // model.tokenization, not the model — both misses were swallowed by the
+    // catch below and made the guard a no-op.
+    var COMMENT = 1;
+    try {
+      var tk = model.tokenization || model;
+      if (tk.forceTokenization) tk.forceTokenization(position.lineNumber);
+      var lineTokens = tk.getLineTokens(position.lineNumber);
+      var idx = lineTokens.findTokenIndexAtOffset(position.column - 1);
+      if (idx >= 0 && lineTokens.getStandardTokenType(idx) === COMMENT) return false;
+    } catch (e) { /* tokenizer not ready — treat as real text */ }
+    return true;
+  }
+
   // Rails view helpers are defined inside the framework, not the workspace, so
   // looking them up from ERB only ever produces empty round-trips.
   var RAILS_VIEW_HELPERS = {
@@ -2320,11 +2351,24 @@
       var isErb = languageId === 'erb';
 
       monaco.languages.registerDefinitionProvider(languageId, {
-        provideDefinition: function provideDefinition(model, position) {
+        provideDefinition: function provideDefinition(model, position, token) {
           var word = rubyNavigableWord(model, position, isErb);
           if (!word) return null;
 
-          var lsp = isErb ? Promise.resolve(null) : tryRubyLsp('definition', model, position);
+          // Passing token lets tryRubyLsp abort the outstanding request (see
+          // its own comment) when this ctrl-click is abandoned — a second
+          // click before the first answers, most obviously — instead of
+          // leaving an abandoned axios request to run to completion unread.
+          var lsp = isErb ? Promise.resolve(null) : tryRubyLsp('definition', model, position, null, token);
+          // Started alongside ruby-lsp, not inside its .then(): when ruby-lsp
+          // is slow or times out (server-side budget is 3s by default — see
+          // Mbeditor.configuration.ruby_lsp_timeout), waiting for it to
+          // settle before even starting the Ripper-backed fallback tacked a
+          // full extra round trip onto an already-slow answer. The result is
+          // only used when ruby-lsp comes back empty, so a fast ruby-lsp
+          // answer is unaffected — this promise is simply left to resolve
+          // unused.
+          var legacy = legacyRubyDefinition(word);
           return lsp.then(function (data) {
             if (data && data.results && data.results.length) {
               return data.results.map(function (r) {
@@ -2335,7 +2379,7 @@
                 };
               });
             }
-            return legacyRubyDefinition(word);
+            return legacy;
           });
         }
       });
@@ -2682,6 +2726,7 @@
       provideHover: function provideHover(model, position, token) {
         var isErb = lang === 'erb';
         if (isErb && !isInsideErbTag(model, position)) return null;
+        if (!isRealHoverPosition(model, position)) return null;
 
         var wordInfo = model.getWordAtPosition(position);
         if (!wordInfo) return null;
@@ -3102,6 +3147,9 @@
     markerFixKey: markerFixKey,
     // Exposed so the ERB gating can be asserted directly in system tests.
     isInsideErbTag: isInsideErbTag,
+    // Exposed so the hover-provider comment/decoration guard can be asserted
+    // directly in system tests.
+    isRealHoverPosition: isRealHoverPosition,
     // Exposed so JSX prop completion can be asserted without the suggest widget.
     jsxPropsProvider: jsxPropsProvider,
     // Exposed so tag-pair linking can be asserted without driving a rename.

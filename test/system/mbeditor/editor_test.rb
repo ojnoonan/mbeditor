@@ -54,6 +54,20 @@ module Mbeditor
         end
       RUBY
       File.write(File.join(@workspace, "nested_example.rb"), "class Demo\n    def call\nend")
+      # Hover-guard fixture: a `#` comment with a word inside it, and a short
+      # def line with decoration space after it.
+      File.write(File.join(@workspace, "widget.rb"), <<~RUBY)
+        class Widget
+          # prepare_data builds the payload
+          def build
+            prepare_data
+          end
+
+          def prepare_data
+            {}
+          end
+        end
+      RUBY
       # Task 2 tokenizer fixture. Keep it outside Task 3's test/ and spec/
       # outline fixtures so each task owns its own setup data.
       File.write(File.join(@workspace, "tokenization_test.rb"), "class TokenizationTest; end\n")
@@ -772,6 +786,43 @@ module Mbeditor
 
       assert_equal "goto_here.js", active_tab_path,
                    "the picker must not navigate anywhere until a choice is made"
+    end
+
+    # Both hover defects share one guard, isRealHoverPosition (editor_plugins.js):
+    # it must reject a `#` comment (real token, wrong content) and any column
+    # past the line's real text (a route-hint decoration's rendered space,
+    # which is not part of the buffer). Asserted directly against the live
+    # model, the same way isInsideErbTag is in erb_intellisense_system_test.rb
+    # — hover-popup timing is not a deterministic thing to assert on.
+    test "the hover guard rejects comments and decoration space, accepts real code" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "widget.rb").click
+      assert_selector ".monaco-editor", wait: 10
+      wait_for_formatted_value(matching: /prepare_data/)
+
+      probe = page.evaluate_script(<<~'JS')
+        (function () {
+          var m = window.__mbeditorActiveEditor.getModel();
+          var f = window.MbeditorEditorPlugins.isRealHoverPosition;
+          return {
+            // "  # prepare_data builds the payload" — column 6 sits inside
+            // "prepare_data" but *after* the `#`, so this is only rejected if
+            // comment membership comes from real tokenization, not "the word
+            // looks fine".
+            insideComment: f(m, { lineNumber: 2, column: 6 }),
+            // "  def build" is 11 characters; a route hint's decoration text
+            // renders past that, so a hover in that space reports a column
+            // beyond the line's real length.
+            pastLineEnd: f(m, { lineNumber: 3, column: 40 }),
+            onRealWord: f(m, { lineNumber: 3, column: 8 })
+          };
+        })()
+      JS
+
+      assert_equal false, probe["insideComment"], "a word inside a # comment must not hover"
+      assert_equal false, probe["pastLineEnd"], "a column past the real line length must not hover"
+      assert_equal true, probe["onRealWord"], "a real word on a real line must still hover"
     end
 
     test "server-online heartbeat shows no offline indicator" do
