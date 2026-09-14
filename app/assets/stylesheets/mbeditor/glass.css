@@ -79,8 +79,6 @@ html[data-glass] .ide-titlebar-search {
 }
 html[data-glass] .ide-titlebar-search:hover { background: var(--g-hover); color: var(--ide-text); }
 
-/* ── Activity bar ─────────────────────────────────────────────────────────── */
-
 /* ── The gutter ───────────────────────────────────────────────────────────── */
 /* Same 6px as everywhere else — a wider one reads as a gap in the layout
    rather than a handle. The 3-dot grip comes from editor.css. */
