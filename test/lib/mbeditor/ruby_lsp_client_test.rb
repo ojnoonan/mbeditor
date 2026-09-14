@@ -94,16 +94,27 @@ module Mbeditor
       use_fake_server("FAKE_LSP_DELAY_MS" => "700")
       Mbeditor.configuration.ruby_lsp_timeout = 0.3
       RubyLspClient.reset!
+      pid = nil
 
-      assert_raises(RubyLspClient::TimeoutError) do
-        client.request_with_document("textDocument/definition", File.join(@root, "app.rb"), "x\n",
-                                     { position: { line: 0, character: 0 } })
+      begin
+        assert_raises(RubyLspClient::TimeoutError) do
+          client.request_with_document("textDocument/definition", File.join(@root, "app.rb"), "x\n",
+                                       { position: { line: 0, character: 0 } })
+        end
+
+        pid = fake_server_pid(client)
+        result = client.request("textDocument/hover", { textDocument: { uri: "file://#{@root}/app.rb" },
+                                                        position: { line: 0, character: 0 } }, timeout: 5)
+        assert result, "process should still answer after an earlier timeout"
+        assert_equal :ready, client.state
+      ensure
+        # The delayed child can still be mid-sleep when the timeout fires. Tear it
+        # down here so it cannot outlive the test and fail another test's leak
+        # assertion (it used to leak and trip the global pgrep in "stop shuts the
+        # child down").
+        client.stop
+        assert_process_group_gone(pid) if pid
       end
-
-      result = client.request("textDocument/hover", { textDocument: { uri: "file://#{@root}/app.rb" },
-                                                      position: { line: 0, character: 0 } }, timeout: 5)
-      assert result, "process should still answer after an earlier timeout"
-      assert_equal :ready, client.state
     end
 
     # Queue#pop only takes a timeout: keyword on Ruby >= 3.2, but the gem
@@ -306,11 +317,37 @@ module Mbeditor
       definition_request
       assert_equal :ready, client.state
 
+      pid = fake_server_pid(client)
       client.stop
       assert_equal :stopped, client.state
 
-      out = `pgrep -f fake_lsp_server.rb`
-      assert_equal "", out.strip, "no fake server process should remain after stop"
+      # Scoped to the process group this client started (Open3 was given
+      # pgroup: true, so the child leads its own group). The old global
+      # `pgrep -f fake_lsp_server.rb` failed whenever any other test's child was
+      # still shutting down.
+      assert_process_group_gone(pid)
+    end
+
+    private
+
+    # The pid of the running child, or nil when no server is up. Open3's
+    # wait_thr is where the pid lives; cleanup_process nils it on stop.
+    def fake_server_pid(client)
+      client.instance_variable_get(:@wait_thr)&.pid
+    end
+
+    # Poll, because a KILLed process group can still be listed for a moment
+    # after the signal. `pgrep -g` matches the process group id, which is the
+    # child's pid under Open3's pgroup: true.
+    def assert_process_group_gone(pid, timeout: 3)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+      loop do
+        return if `pgrep -g #{pid} 2>/dev/null`.strip.empty?
+        break if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+        sleep 0.05
+      end
+      flunk "fake server process group #{pid} still alive: #{`pgrep -g #{pid}`.strip}"
     end
   end
 end

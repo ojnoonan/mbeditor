@@ -634,17 +634,24 @@ var TabManager = (function () {
   function _queueContent(paneId, path, content, updates, markdown) {
     var key = paneId + ' ' + path;
     if (updates) {
-      // A state transition has to land now, and it takes the content with it.
-      delete _pendingContent[key];
-      updates.content = content;
+      // A clean<->dirty transition must land now, but the full buffer is still
+      // materialized only on the trailing edge below. Callers pass a provider
+      // (a function) from the per-keystroke content listener so getValue() runs
+      // once per flush instead of once per keypress; everything else passes the
+      // string it already holds.
       _updateTab(paneId, path, updates);
-      if (markdown) _syncMarkdownPreviewContent(path, content);
-      return;
     }
     _pendingContent[key] = { paneId: paneId, path: path, content: content, markdown: markdown };
     if (_contentTimer === null) {
       _contentTimer = setTimeout(flushContent, CONTENT_WRITE_MS);
     }
+  }
+
+  // A pending content slot holds either a string or a provider invoked at flush
+  // time. A provider whose model has gone away returns nothing and is skipped.
+  function _resolveContent(content) {
+    if (typeof content !== 'function') return content;
+    try { return content(); } catch (e) { return null; }
   }
 
   function flushContent() {
@@ -656,8 +663,10 @@ var TabManager = (function () {
     _pendingContent = {};
     Object.keys(pending).forEach(function (k) {
       var p = pending[k];
-      _updateTab(p.paneId, p.path, { content: p.content });
-      if (p.markdown) _syncMarkdownPreviewContent(p.path, p.content);
+      var content = _resolveContent(p.content);
+      if (typeof content !== 'string') return;
+      _updateTab(p.paneId, p.path, { content: content });
+      if (p.markdown) _syncMarkdownPreviewContent(p.path, content);
     });
   }
 

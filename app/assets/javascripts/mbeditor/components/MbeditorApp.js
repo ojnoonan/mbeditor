@@ -1175,7 +1175,20 @@ var MbeditorApp = function MbeditorApp() {
     var base = typeof window.mbeditorBasePath === 'function' ? window.mbeditorBasePath() : '';
     return 'mbeditor_draft\x00' + base + '\x00' + path;
   };
+  // localStorage is UTF-16 and most browsers cap it near 5MB, so a draft for a
+  // file past this can never fit: every debounced write failed, warned once, and
+  // then kept stringifying + attempting the whole buffer every 500ms of typing.
+  // Skip it outright; an explicit save is the safety net for huge files.
+  var MAX_DRAFT_CHARS = 1000000;
   var _saveDraftNow = function _saveDraftNow(path, content) {
+    if (typeof content === 'string' && content.length > MAX_DRAFT_CHARS) {
+      if (!draftWriteWarnedRef.current[path]) {
+        draftWriteWarnedRef.current[path] = true;
+        EditorStore.setStatus('Crash-recovery backup skipped for ' + path + ' (file too large)', 'info');
+      }
+      _clearDraft(path);
+      return;
+    }
     var doWrite = function() {
       try {
         localStorage.setItem(_draftKey(path), JSON.stringify({ content: content, ts: Date.now() }));
@@ -2218,7 +2231,10 @@ var MbeditorApp = function MbeditorApp() {
     function handleFileSaved(data) {
       var path = data && data.path;
       if (!path) return;
-      if (typeof CollaborationService === 'undefined' || !CollaborationService.isBound(path)) return;
+      // Only an attached (CRDT-bound) tab has the peer's content. A room that is
+      // still deferring, or degraded to local, holds its own buffer — a peer save
+      // is an external change for it, handled by the files_changed path.
+      if (typeof CollaborationService === 'undefined' || !CollaborationService.isAttached(path)) return;
 
       var st = EditorStore.getState();
       var changed = false;
@@ -3229,7 +3245,9 @@ var MbeditorApp = function MbeditorApp() {
     });
   }, [activeTab ? activeTab.id : null, gitAvailable]);
 
-  // Update EOL indicator whenever active tab or its content changes
+  // Update EOL indicator on external loads, not on every content write. The
+  // content effect fires on the 250ms typing flush, and scanning the whole
+  // buffer for '\r' there was pure waste — typing cannot change the line ending.
   useEffect(function () {
     if (!activeTab || typeof activeTab.content !== 'string' ||
         activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCommitGraph || activeTab.isPreview) {
@@ -3243,7 +3261,7 @@ var MbeditorApp = function MbeditorApp() {
     } else {
       setActiveEOL('LF');
     }
-  }, [activeTab ? activeTab.id : null, activeTab ? activeTab.content : null]);
+  }, [activeTab ? activeTab.id : null, activeTab ? activeTab.externalContentVersion : null]);
 
   useEffect(function () {
     if (!activeTab || typeof activeTab.content !== 'string') return;
@@ -3440,7 +3458,9 @@ var MbeditorApp = function MbeditorApp() {
       });
       EditorStore.setState({ panes: newPanes });
       // Collab: push a fresh snapshot so the server compacts the buffered deltas.
-      if (typeof CollaborationService !== 'undefined' && CollaborationService.isBound(tab.path)) {
+      // Only for an attached tab — a deferred or degraded room pushing its local
+      // buffer as a snapshot could seed a second copy into what a peer holds.
+      if (typeof CollaborationService !== 'undefined' && CollaborationService.isAttached(tab.path)) {
         CollaborationService.pushSnapshot(tab.path);
       }
       EditorStore.setStatus("Saved", "success");

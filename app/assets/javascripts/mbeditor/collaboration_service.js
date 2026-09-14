@@ -155,11 +155,16 @@ var CollaborationService = (function () {
   // the server never advertised, a rejected handshake, or simply nobody else
   // being here. Someone debugging this on another machine cannot paste a console
   // snippet back, so the editor has to be able to say which.
+  // True when any open file's room fell back to local editing. Surfaced in the
+  // diagnostics panel so a silent degrade to single-user mode is visible (#99).
+  function _anyDegradedRoom() {
+    return Object.keys(_rooms).some(function (path) { return _rooms[path].degraded; });
+  }
+
   function diagnostics() {
     var cableStatus = (typeof WebSocketService !== 'undefined' &&
                        typeof WebSocketService.cableStatus === 'function')
       ? WebSocketService.cableStatus() : 'unknown';
-
     var checks = [
       {
         key: 'libraries',
@@ -195,8 +200,18 @@ var CollaborationService = (function () {
         key: 'peers',
         label: 'Another participant connected',
         ok: _peerPresent,
-        detail: 'Presence is held per web process. If two people are on different Puma workers ' +
-                'they never see each other — run a single worker (WEB_CONCURRENCY=0) while pairing.'
+        detail: 'Presence is held per web process. With the default async cable adapter two people on ' +
+                'different Puma workers never see each other; with a cross-process adapter ' +
+                '(redis/postgres/solid_cable) they do, but each worker keeps its own document store, so ' +
+                'run a single worker (WEB_CONCURRENCY=0) while pairing.'
+      },
+      {
+        key: 'degraded',
+        label: 'Every collaborative file is live',
+        ok: !_anyDegradedRoom(),
+        detail: 'A file fell back to local editing because the collaboration handshake did not arrive ' +
+                'in time (slow ruby-lsp boot, a busy git wave, a saturated Puma thread pool, or a cable ' +
+                'reconnect). It stays local for the life of the tab, so edits made now will not reach a peer.'
       }
     ];
 
@@ -257,6 +272,7 @@ var CollaborationService = (function () {
     var doc = new window.Y.Doc();
     var room = {
       doc: doc,
+      path: path,
       text: doc.getText('monaco'),
       subscription: null,
       synced: false,
@@ -272,6 +288,20 @@ var CollaborationService = (function () {
       attachRequested: false,
       degraded: false,
       fallbackTimer: null,
+      // Highest server-assigned delta sequence this client has applied. Sent back
+      // with each snapshot so the server keeps only the deltas the snapshot does
+      // not already contain (#97).
+      lastServerSeq: 0,
+      // A peer snapshot has been requested and not yet answered. Guards against
+      // re-asking on every doc_update while the replay is still incomplete.
+      snapshotRequested: false,
+      // Counters for the periodic snapshot while dirty, so the server's delta
+      // buffer cannot overflow between saves (#97).
+      updatesSinceSnapshot: 0,
+      lastSnapshotAt: 0,
+      // True between rejoinRooms() and the first sync of the new subscription: a
+      // room that existed before the drop must never seed again (#96).
+      rejoining: false,
       auditStartedAt: Date.now(),
       // Awareness (slice 5): editors is the LIVE set y-monaco renders remote
       // carets into; cursorDisposers holds our per-editor cursor->awareness
@@ -280,6 +310,11 @@ var CollaborationService = (function () {
       // follower can track where we've scrolled.
       awareness: null,
       editors: new Set(),
+      // Editors that bound before the room finished its handshake, so there was
+      // no binding to register them with yet. _doAttach folds them in. Without
+      // this, the same file open in two panes loses the pane that bound first:
+      // it is never added to the live set and never broadcasts its caret (#98).
+      pendingEditors: new Set(),
       boundEditor: null,
       broadcastAwareness: null,
       cursorDisposers: new Map(),
@@ -296,6 +331,7 @@ var CollaborationService = (function () {
       try {
         room.subscription.perform('doc_update', { update: _u8ToB64(update) });
       } catch (e) { /* not connected yet / cable down — peers reconcile on next op */ }
+      _maybePeriodicSnapshot(room);
     });
 
     room.subscription = WebSocketService.subscribeCollaboration(path, {
@@ -321,15 +357,30 @@ var CollaborationService = (function () {
         window.Y.applyUpdate(room.doc, _b64ToU8(data.snapshot), REMOTE);
       }
       if (data.deltas && data.deltas.length) {
-        data.deltas.forEach(function (d) {
-          if (d) window.Y.applyUpdate(room.doc, _b64ToU8(d), REMOTE);
+        data.deltas.forEach(function (d, i) {
+          if (!d) return;
+          window.Y.applyUpdate(room.doc, _b64ToU8(d), REMOTE);
+          var seq = data.delta_seqs && data.delta_seqs[i];
+          if (typeof seq === 'number' && seq > room.lastServerSeq) room.lastServerSeq = seq;
         });
       }
-      room.seedGranted = !!data.seed;
+      if (typeof data.snapshot_seq === 'number' && data.snapshot_seq > room.lastServerSeq) {
+        room.lastServerSeq = data.snapshot_seq;
+      }
+      // A seed is only ever granted on the room's first handshake. On a reconnect
+      // the room already existed (rejoining), and taking the grant would seed a
+      // second copy of the file into whatever a peer still holds (#96). A
+      // degraded room stays local for the life of the tab (#99).
+      var firstSync = !room.synced;
+      room.seedGranted = !!data.seed && firstSync && !room.rejoining && !room.degraded;
+      room.rejoining = false;
       room.synced = true;
       _maybeAttach(room);
     } else if (data.type === 'doc_update') {
       if (data.update) window.Y.applyUpdate(room.doc, _b64ToU8(data.update), REMOTE);
+      if (typeof data.seq === 'number' && data.seq > room.lastServerSeq) {
+        room.lastServerSeq = data.seq;
+      }
       // One sample a second: a peer typing produces an update per keystroke,
       // and the trace wants the shape of the traffic, not every packet.
       var updatedAt = Date.now();
@@ -340,6 +391,22 @@ var CollaborationService = (function () {
       // A client that deferred attaching (empty room, seed granted to someone
       // else) is waiting for exactly this: the seeder's content has landed.
       _maybeAttach(room);
+    } else if (data.type === 'snapshot') {
+      // A full state update relayed by a peer (answer to request_snapshot, or a
+      // periodic push). Y.applyUpdate is idempotent, so overlap with what we
+      // already hold is harmless. This is how a client whose delta replay was
+      // incomplete — or that rejoined after a restart — catches up without
+      // waiting for the peer's next keystroke (#96, #97).
+      if (data.snapshot) window.Y.applyUpdate(room.doc, _b64ToU8(data.snapshot), REMOTE);
+      if (typeof data.applied_seq === 'number' && data.applied_seq > room.lastServerSeq) {
+        room.lastServerSeq = data.applied_seq;
+      }
+      room.snapshotRequested = false;
+      _maybeAttach(room);
+    } else if (data.type === 'request_snapshot') {
+      // A peer's replay was incomplete. Answer with our full state if we hold
+      // one, so it can attach instead of diverging on stale text.
+      if (room.binding && room.text.length > 0) pushSnapshot(room.path);
     } else if (data.type === 'awareness') {
       if (data.awareness && room.awareness && window.awarenessProtocol) {
         // REMOTE origin keeps the outbound handler from echoing peer state back.
@@ -348,6 +415,47 @@ var CollaborationService = (function () {
         );
         _announceToNewPeers(room);
       }
+    }
+  }
+
+  // True when the applied replay left structs pending on missing dependencies:
+  // the delta buffer overflowed (MAX_DELTAS) or a snapshot skipped a concurrent
+  // update, so the document is incomplete. Yjs parks such structs in the store
+  // until the missing update arrives; attaching now would show stale text and
+  // then overwrite the peer's work on the next save (#97).
+  function _replayIncomplete(room) {
+    try {
+      var store = room.doc && room.doc.store;
+      return !!(store && (store.pendingStructs || store.pendingDs));
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Ask the room for a full snapshot. Any bound peer answers via #snapshot; the
+  // fallback timer degrades to local if nobody does.
+  function _requestSnapshot(room) {
+    if (room.snapshotRequested || !room.subscription) return;
+    room.snapshotRequested = true;
+    try { room.subscription.perform('request_snapshot', {}); } catch (e) { /* cable down */ }
+    if (!room.auditDeferred) { room.auditDeferred = true; _recCollab(room, 'defer'); }
+  }
+
+  // Push a full snapshot every so often while attached, so a long typing session
+  // cannot overflow the server's delta buffer between saves. Count-based first
+  // (keystrokes), time-based as a floor for slow editors.
+  var SNAPSHOT_EVERY_UPDATES = 200;
+  var SNAPSHOT_EVERY_MS = 30000;
+  function _maybePeriodicSnapshot(room) {
+    if (!room.binding || !room.subscription) return;
+    var now = Date.now();
+    room.updatesSinceSnapshot += 1;
+    var byCount = room.updatesSinceSnapshot >= SNAPSHOT_EVERY_UPDATES;
+    var byTime = room.lastSnapshotAt > 0 && (now - room.lastSnapshotAt) >= SNAPSHOT_EVERY_MS;
+    if (!byCount && !byTime) return;
+    if (pushSnapshot(room.path)) {
+      room.updatesSinceSnapshot = 0;
+      room.lastSnapshotAt = now;
     }
   }
 
@@ -364,13 +472,23 @@ var CollaborationService = (function () {
   function rejoinRooms() {
     Object.keys(_rooms).forEach(function (path) {
       var room = _rooms[path];
+      // A degraded room is local for the life of the tab; re-subscribing it would
+      // let it seed the restarted server from its own model (#99).
+      if (room.degraded) return;
       try { if (room.subscription) room.subscription.unsubscribe(); } catch (e) { /* already dead */ }
+      room.rejoining = true;
+      room.snapshotRequested = false;
       room.subscription = WebSocketService.subscribeCollaboration(path, {
         // Awareness is never server-persisted, so peers lost our caret with the
         // connection and would not see it again until we happened to move.
         // The server may have lost the room entirely (restart): re-publish our
         // content so the next opener late-joins instead of being granted a seed
         // that would merge a second copy into what we still hold.
+        //
+        // Only a room that was actually bound may push: it holds converged
+        // content. A deferred room must not seed the restarted server from its
+        // disk copy — a peer re-pushing a different version would merge into two
+        // concatenated copies. It waits for the peer's snapshot instead.
         connected: function () {
           _sendLocalAwareness(room);
           if (room.binding) pushSnapshot(path);
@@ -396,10 +514,12 @@ var CollaborationService = (function () {
 
     // The editor is recreated on every tab switch while the model (and binding)
     // persist. If the binding already exists, register this fresh editor so its
-    // caret broadcasts and remote carets render in it.
+    // caret broadcasts and remote carets render in it. Otherwise remember it for
+    // _doAttach, which folds every pre-handshake editor into the live set.
     if (room.binding) _attachEditorToBinding(room, editor);
+    else room.pendingEditors.add(editor);
 
-    if (!room.fallbackTimer && !room.binding) {
+    if (!room.fallbackTimer && !room.binding && !room.degraded) {
       // Safety net: if the sync handshake never lands (e.g. channel rejected),
       // stop waiting and let the natively-loaded content stand.
       room.fallbackTimer = setTimeout(function () { _fallbackLocal(room); }, 6000);
@@ -409,6 +529,16 @@ var CollaborationService = (function () {
 
   function _maybeAttach(room) {
     if (room.binding || !room.synced || !room.attachRequested || !room.model) return;
+    // Once degraded to local, stay local for the life of the tab. Attaching on a
+    // late sync would have the binding replace every edit made in the degraded
+    // window with the server's text, with no dirty marker and no undo (#99).
+    if (room.degraded) return;
+    // An incomplete replay means attaching would show stale text and overwrite
+    // the peer's work on save; ask for a snapshot and wait (#97).
+    if (_replayIncomplete(room)) {
+      _requestSnapshot(room);
+      return;
+    }
     // Nobody may attach to an empty shared doc except the seed grantee, and only
     // once its own disk content has arrived. Binding to an empty Y.Text wipes the
     // buffer, and a client that attaches empty reports consumesDiskLoad() false —
@@ -469,6 +599,14 @@ var CollaborationService = (function () {
 
     if (room.awareness) _initAwareness(room);
     _recCollab(room, 'attach');
+
+    // Fold in every editor that bound during the handshake. boundEditor was
+    // added before construction (y-monaco owns its caret writer); the rest get
+    // an equivalent writer from _attachEditorToBinding.
+    room.pendingEditors.forEach(function (ed) {
+      if (ed !== room.boundEditor) _attachEditorToBinding(room, ed);
+    });
+    room.pendingEditors.clear();
 
     // Undo scoped to this client's edits only: y-monaco tags model->doc edits with
     // the binding as origin, so undo can never revert a peer's edit.
@@ -749,6 +887,7 @@ var CollaborationService = (function () {
     room.fallbackTimer = null;
     if (room.binding || room.degraded) return;
     room.degraded = true;
+    _recCollab(room, 'degrade');
     if (room.onSeeded) {
       try { room.onSeeded(); } catch (e) { /* best-effort */ }
     }
@@ -763,15 +902,23 @@ var CollaborationService = (function () {
     return !!(room && room.binding && room.lateJoin);
   }
 
-  // Detach the current editor (tab switch / editor dispose). The binding stays
-  // bound to the persistent model, so the room and its undo history survive.
-  function unbindEditor(path) {
+  // Detach one editor (tab switch / editor dispose). The binding stays bound to
+  // the persistent model, so the room and its undo history survive.
+  //
+  // The editor is passed in, not read from room.editor: room.editor is only ever
+  // "the most recent editor bound" (used by _doAttach to pick boundEditor), and
+  // with the same file open in both panes that is the *other* pane's editor.
+  // Detaching that one left the disposed editor in room.editors, where y-monaco
+  // iterates it on every awareness change and throws. Callers always have the
+  // editor in scope; room.editor remains the fallback for legacy callers.
+  function unbindEditor(path, editor) {
     var room = _rooms[path];
     if (!room) return;
-    var editor = room.editor;
+    editor = editor || room.editor;
     if (editor) {
       // Detach this editor from the binding so a disposed editor isn't iterated
       // and stops broadcasting a stale caret.
+      room.pendingEditors.delete(editor);
       room.editors.delete(editor);
       var dispose = room.cursorDisposers.get(editor);
       if (dispose) { dispose(); room.cursorDisposers.delete(editor); }
@@ -785,7 +932,7 @@ var CollaborationService = (function () {
       room.awareness.setLocalStateField('selection', null);
       room.awareness.setLocalStateField('viewport', null);
     }
-    room.editor = null;
+    if (room.editor === editor) room.editor = null;
   }
 
   // Destroy the room entirely. Called when the Monaco model is actually disposed
@@ -798,6 +945,7 @@ var CollaborationService = (function () {
     room.cursorDisposers.clear();
     room.viewportDisposers.forEach(function (dispose) { try { dispose(); } catch (e) { /* ignore */ } });
     room.viewportDisposers.clear();
+    room.pendingEditors.clear();
     if (room.identityUnsub) { try { room.identityUnsub(); } catch (e) { /* ignore */ } }
     if (room.broadcastAwareness && room.broadcastAwareness.cancel) {
       room.broadcastAwareness.cancel();
@@ -837,16 +985,18 @@ var CollaborationService = (function () {
   }
 
   // Push a fresh full snapshot to the server so it can compact the doc store:
-  // CollaborationDocStore.replace_snapshot swaps the cached snapshot and clears
-  // the buffered deltas. Called after a manual save, when the shared buffer is
-  // known to be coherent and matches what just landed on disk. No-op when the
-  // file is not collaboratively bound or the wire isn't ready.
+  // CollaborationDocStore.replace_snapshot swaps the cached snapshot and keeps
+  // only the deltas recorded after `applied_seq` (the newest sequence this client
+  // has applied). Called after a manual save and periodically while typing.
   function pushSnapshot(path) {
     var room = _rooms[path];
-    if (!room || !room.subscription || !_globalsReady()) return false;
+    if (!room || !room.subscription) return false;
     try {
       var snapshot = window.Y.encodeStateAsUpdate(room.doc);
-      room.subscription.perform('snapshot', { snapshot: _u8ToB64(snapshot) });
+      room.subscription.perform('snapshot', {
+        snapshot: _u8ToB64(snapshot),
+        applied_seq: room.lastServerSeq || 0
+      });
       return true;
     } catch (e) {
       return false;

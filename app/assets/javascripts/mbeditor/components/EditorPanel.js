@@ -857,7 +857,25 @@ var EditorPanel = function EditorPanel(_ref) {
     // below can swap the model, so this must be re-attached to the replacement —
     // a listener left on the old model would silently stop tracking edits.
     var _attachContentListener = function (model) {
-      return model.onDidChangeContent(function (e) {
+      // onDidChangeContent fires per keystroke, and the full-buffer work it used
+      // to do — one getValue() plus two whole-file CRLF normalisations — costs
+      // ~12ms per keystroke on a large file, on the main thread, ahead of
+      // Monaco's own processing. The AVI bookkeeping below stays per-event and
+      // O(1); the buffer is materialised once on a trailing edge (and once more
+      // by TabManager's own 250ms flush, via the provider passed to markDirty).
+      var _contentSyncTimer = null;
+      var _contentProvider = function () {
+        return model.isDisposed() ? null : model.getValue();
+      };
+      var _flushContentSync = function () {
+        _contentSyncTimer = null;
+        var val = _contentProvider();
+        if (val === null) return;
+        latestContentRef.current = val;
+        onContentChange(val);
+      };
+
+      var _contentListener = model.onDidChangeContent(function (e) {
         if (!_collabActive && typeof HistoryService !== 'undefined') {
           HistoryService.recordOps(tab.path, e.changes);
         }
@@ -875,8 +893,6 @@ var EditorPanel = function EditorPanel(_ref) {
           EditorStore.setState({ canUndo: newCanUndo, canRedo: newCanRedo });
         }
 
-        var val = model.getValue();
-
         // Dirty-state tracking via alternativeVersionId — O(1), no string comparison.
         // AVI decrements on undo so it returns to cleanVersionId after a full undo.
         // Skip entirely when cleanVersionId is null — file is mid-load, not yet settled.
@@ -884,24 +900,24 @@ var EditorPanel = function EditorPanel(_ref) {
         var _cleanAvi = _entry && _entry.cleanVersionId;
         if (_cleanAvi !== null && _cleanAvi !== undefined) {
           if (currentAvi !== _cleanAvi) {
-            TabManager.markDirty(paneId, tab.id, val);
+            TabManager.markDirty(paneId, tab.id, _contentProvider);
           } else {
-            TabManager.markClean(paneId, tab.id, val);
+            TabManager.markClean(paneId, tab.id, _contentProvider);
           }
         }
 
-        var currentContent = latestContentRef.current;
-
-        // Normalize before comparing to prevent false positive dirty edits
-        var vNorm = val.replace(/\r\n/g, '\n');
-        var cNorm = currentContent.replace(/\r\n/g, '\n');
-        if (vNorm !== cNorm) {
-          // Update the ref immediately so rapid undo/redo events compare against the
-          // latest content rather than a stale snapshot from a previous React render.
-          latestContentRef.current = val;
-          onContentChange(val);
+        // Draft persistence is the only remaining consumer of the full text.
+        // Coalesce it onto the same 250ms edge TabManager uses for content writes.
+        if (_contentSyncTimer === null) {
+          _contentSyncTimer = setTimeout(_flushContentSync, 250);
         }
       });
+      return {
+        dispose: function () {
+          if (_contentSyncTimer !== null) { clearTimeout(_contentSyncTimer); _contentSyncTimer = null; }
+          _contentListener.dispose();
+        }
+      };
     };
 
     var contentDisposable = _attachContentListener(modelObj);
@@ -1103,7 +1119,7 @@ var EditorPanel = function EditorPanel(_ref) {
       EditorStore.setState({ canUndo: false, canRedo: false });
       pendingHistorySetupRef.current = null;
       if (_phase2CleanupFn) _phase2CleanupFn();
-      if (_collabActive) CollaborationService.unbindEditor(tab.path);
+      if (_collabActive) CollaborationService.unbindEditor(tab.path, editor);
       // Detach the model before disposing the editor so the model (and its undo
       // history) survives for when the user returns to this tab.
       editor.setModel(null);
