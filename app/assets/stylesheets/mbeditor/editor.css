@@ -3034,17 +3034,25 @@ html, body, #mbeditor-root {
   margin-bottom: 0;
 }
 .ide-settings-search::placeholder { color: var(--ide-text-muted); }
-.ide-settings-modal-close {
+/* Scoped under the modal: a global `button:not(.pico-btn)` rule sets 12px
+   and would otherwise shrink the glyph to a speck. */
+.ide-settings-modal .ide-settings-modal-close {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
+  border-radius: 6px;
   color: var(--ide-text-muted);
-  font-size: 20px;
+  font-size: 16px;
   line-height: 1;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 0;
   margin-bottom: 0;
 }
-.ide-settings-modal-close:hover { color: var(--ide-text); }
+.ide-settings-modal .ide-settings-modal-close:hover { color: var(--ide-text); background: var(--ide-hover-bg); }
 
 .ide-settings-modal-body { flex: 1; display: flex; min-height: 0; }
 

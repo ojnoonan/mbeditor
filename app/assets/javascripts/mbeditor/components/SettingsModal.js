@@ -257,8 +257,8 @@ var SettingsModal = function SettingsModal(props) {
           onChange: function(e) { setQuery(e.target.value); }
         }),
         React.createElement('button', {
-          type: 'button', className: 'ide-settings-modal-close', title: 'Close', onClick: onClose
-        }, '×')
+          type: 'button', className: 'ide-settings-modal-close', title: 'Close', 'aria-label': 'Close settings', onClick: onClose
+        }, React.createElement('i', { className: 'fas fa-times', 'aria-hidden': 'true' }))
       ),
       React.createElement(
         'div', { className: 'ide-settings-modal-body' },
