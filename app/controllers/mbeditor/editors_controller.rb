@@ -78,6 +78,13 @@ module Mbeditor
 
     # GET /mbeditor — renders the IDE shell
     def index
+      # Theme and glass go on <html> before the first paint; the React effect
+      # that normally sets them runs after mount, which flashed the default
+      # theme on every load.
+      prefs = (editor_state_service.read_state["editorPrefs"] rescue nil) || {}
+      theme = prefs["theme"].to_s
+      @initial_theme = theme.match?(/\A[a-z][a-z0-9-]*\z/) ? theme : "vs-dark"
+      @initial_glass = prefs["glass"] == true
       render layout: "mbeditor/application"
     end
 

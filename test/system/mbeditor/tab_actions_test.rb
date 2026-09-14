@@ -80,7 +80,7 @@ module Mbeditor
       page.execute_script("window.prompt = function () { return 'scratch.txt'; };")
       find(".monaco-editor .view-lines").click
       page.send_keys("scratch content")
-      find("button.statusbar-btn", text: "Save", match: :first).click
+      find("button.statusbar-btn[title^='Save the active file']").click
 
       assert_selector ".tab-item", text: "scratch.txt", wait: 10
       assert_no_selector ".tab-item", text: "Untitled-1"

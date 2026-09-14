@@ -65,10 +65,19 @@ function recentRanks() {
 // in — a typo'd or transposed query hits nothing literally, so an exact match
 // can never be demoted by loosening the index search.
 var FUZZY_ONLY = 4;
+
+// CamelCase -> snake_case, so a query like "ThemeController" ranks against
+// "theme_controller.rb" the same way "theme_controller" would. A no-op
+// (beyond lowercasing) for queries with no lower-to-upper transition, so
+// non-CamelCase ranking is unchanged.
+function toSnakeCase(q) {
+  return (q || '').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+}
+
 function getMatchRelevance(result, q) {
   if (!q) return FUZZY_ONLY;
   var name = (result.name || (result.path || '').split('/').pop() || '').toLowerCase();
-  var lq = q.toLowerCase();
+  var lq = toSnakeCase(q);
   if (name === lq)            return 0;
   if (name.slice(0, lq.length) === lq) return 1;
   if (name.indexOf(lq) >= 0)  return 2;
@@ -194,7 +203,17 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     // path in the workspace ran on every keystroke, between the keypress and
     // the character appearing.
     var timer = setTimeout(function () {
-      var filtered = rankResults(SearchService.searchFiles(query), query, showFolders);
+      var hits = SearchService.searchFiles(query);
+      // CamelCase query, e.g. "ThemeController": also search its snake_case
+      // form so it finds theme_controller.rb, whose index terms are snake_case.
+      var snake = toSnakeCase(query);
+      if (snake !== query.toLowerCase()) {
+        var seen = new Set(hits.map(function (r) { return r.path; }));
+        SearchService.searchFiles(snake).forEach(function (r) {
+          if (!seen.has(r.path)) { seen.add(r.path); hits.push(r); }
+        });
+      }
+      var filtered = rankResults(hits, query, showFolders);
       setResults(filtered.slice(0, 200));
       setSelectedIndex(0);
     }, 120);
@@ -291,7 +310,7 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     return React.createElement(
       'div',
       { className: 'quick-open-section' },
-      React.createElement('div', { className: 'quick-open-section-header' },
+      React.createElement('div', { className: 'quick-open-section-header quick-open-section-header-muted' },
         React.createElement('i', { className: 'fas fa-history', style: { marginRight: '6px', fontSize: '10px' } }),
         'Recent Searches'
       ),
@@ -303,6 +322,8 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
     var recentFiles = (typeof TabManager !== 'undefined' && TabManager.getRecentFiles)
       ? TabManager.getRecentFiles() : [];
     if (recentFiles.length === 0) return null;
+    // No section header here (unlike Favourites/Recent Searches) — VS Code
+    // marks each row inline with a trailing "recently opened" label instead.
     var rows = recentFiles.map(function (entry) {
       var path = entry.path;
       var name = entry.name || (path.split('/').pop());
@@ -320,16 +341,13 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
           React.createElement('div', { className: 'quick-open-result-name' }, name),
           React.createElement('div', { className: 'quick-open-result-path' }, path)
         ),
+        React.createElement('span', { className: 'quick-open-recent-label' }, 'recently opened'),
         renderStarBtn(path)
       );
     });
     return React.createElement(
       'div',
       { className: 'quick-open-section' },
-      React.createElement('div', { className: 'quick-open-section-header' },
-        React.createElement('i', { className: 'fas fa-clock', style: { marginRight: '6px', fontSize: '10px' } }),
-        'Recently Opened'
-      ),
       rows
     );
   }
@@ -349,7 +367,7 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
           ref: inputRef,
           type: 'text',
           className: 'quick-open-input',
-          placeholder: 'Search files by name (Ctrl+P)…',
+          placeholder: 'Search files by name',
           value: query,
           onChange: function (e) { setQuery(e.target.value); },
           onKeyDown: handleKeyDown

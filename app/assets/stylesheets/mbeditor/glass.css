@@ -1,0 +1,149 @@
+/* ── Liquid Glass chrome (opt-in) ─────────────────────────────────────────────
+ *
+ * Scoped entirely under html[data-glass], set alongside data-theme by the same
+ * effect in MbeditorApp.js. It is a layer over whichever theme is active, not a
+ * theme of its own, so every colour here is derived from the --ide-* tokens
+ * with color-mix — hardcoding a palette would have made it a twelfth theme that
+ * silently replaced the user's chosen one.
+ *
+ * The functional layer (title bar, activity bar, sidebar, tabs, status bar) is
+ * glass. The content layer — Monaco — stays solid: legibility beats the effect,
+ * and a blurred backdrop under a text editor costs a re-composite per repaint.
+ * ─────────────────────────────────────────────────────────────────────────── */
+html[data-glass] {
+  --g-surface:     color-mix(in srgb, var(--ide-panel-bg) 62%, transparent);
+  --g-surface-2:   color-mix(in srgb, var(--ide-panel-bg) 44%, transparent);
+  --g-lift:        color-mix(in srgb, var(--ide-hover-bg) 82%, transparent);
+  --g-hover:       color-mix(in srgb, var(--ide-text) 12%, transparent);
+  --g-edge:        color-mix(in srgb, var(--ide-text) 14%, transparent);
+  --g-edge-strong: color-mix(in srgb, var(--ide-text) 28%, transparent);
+  --g-shadow:      0 1px 2px rgba(0,0,0,0.28), 0 8px 28px rgba(0,0,0,0.26);
+  --g-blur:        blur(20px) saturate(180%);
+
+  /* The field the glass refracts. Two accent-tinted pools over the theme's own
+     background, so every theme keeps its own hue instead of turning navy. */
+  --g-bg:
+    radial-gradient(120% 90% at 12% 0%, color-mix(in srgb, var(--ide-accent) 34%, transparent) 0%, transparent 58%),
+    radial-gradient(120% 110% at 82% 100%, color-mix(in srgb, var(--ide-accent-fg) 26%, transparent) 0%, transparent 60%),
+    var(--ide-bg);
+}
+
+html[data-glass] .ide-shell {
+  background: var(--g-bg) fixed;
+  padding: 6px;
+  gap: 6px;
+}
+
+html[data-glass] .ide-activity-bar,
+html[data-glass] .ide-sidebar,
+html[data-glass] .ide-git-right-panel,
+html[data-glass] .ide-main,
+html[data-glass] .ide-log-drawer,
+html[data-glass] .ide-problems-drawer,
+html[data-glass] .ide-statusbar {
+  backdrop-filter: var(--g-blur);
+  -webkit-backdrop-filter: var(--g-blur);
+  background: var(--g-surface);
+  border: 1px solid var(--g-edge);
+  box-shadow: var(--g-shadow);
+  border-radius: 12px;
+  /* overflow stays hidden: it is what clips the children to the rounded
+     corners. The prototype set the body to `overflow: visible` so the card
+     shadows could spill, and that silently removed the scroll container the
+     search results live in. A clipped shadow is the cheaper loss. */
+  overflow: hidden;
+}
+
+/* The centre column is only a layout box: the editor and each bottom drawer
+   are separate cards with a gutter between them, like VS Code's panel. */
+/* No flex gap: the 6px Gutter between the editor and a drawer is the gap. */
+html[data-glass] .ide-center-column { gap: 0; background: transparent; }
+html[data-glass] .ide-log-drawer,
+html[data-glass] .ide-problems-drawer { border-top: 1px solid var(--g-edge); }
+
+/* The activity bar and the sidebar are one card with a seam, not two cards
+   butting rounded corners together — there is no gutter between them to fill. */
+html[data-glass] .ide-activity-bar { border-radius: 12px 0 0 12px; border-right: 1px solid var(--g-edge); }
+html[data-glass] .ide-body:not(:has(.ide-sidebar)) .ide-activity-bar { border-radius: 12px; }
+html[data-glass] .ide-sidebar { border-radius: 0 12px 12px 0; border-left: none; }
+
+/* ── Title bar ────────────────────────────────────────────────────────────── */
+/* The title bar is not a card: it sits flat on the backdrop like VS Code's,
+   so the first card row starts under a plain strip rather than a second box. */
+html[data-glass] .ide-titlebar { background: transparent; border: none; box-shadow: none; height: 35px; margin: -6px 0 -6px; padding: 0 8px; }
+html[data-glass] .ide-titlebar-icon { color: var(--ide-accent-fg); }
+html[data-glass] .ide-titlebar-title { color: var(--ide-text); font-weight: 600; }
+html[data-glass] .ide-titlebar-search {
+  background: var(--g-surface-2);
+  border: 1px solid var(--g-edge);
+}
+html[data-glass] .ide-titlebar-search:hover { background: var(--g-hover); color: var(--ide-text); }
+
+/* ── The gutter ───────────────────────────────────────────────────────────── */
+/* Same 6px as everywhere else — a wider one reads as a gap in the layout
+   rather than a handle. The 3-dot grip comes from editor.css. */
+html[data-glass] .ide-gutter { background: transparent; border: none; }
+html[data-glass] .ide-gutter:hover,
+html[data-glass] .ide-gutter.active { background: var(--g-hover); }
+
+/* ── Tabs: same chips as Modern, on a transparent strip ───────────────────── */
+html[data-glass] .tab-bar { background: transparent; border-bottom: 1px solid var(--g-edge); }
+html[data-glass] .tab-item:hover { background: var(--g-hover); }
+html[data-glass] .tab-item.active { background: var(--g-lift); }
+
+/* ── Editor: the content layer stays solid ────────────────────────────────── */
+html[data-glass] .ide-editor-toolbar { background: transparent; border-bottom: 1px solid var(--g-edge); }
+html[data-glass] .ide-icon-btn:hover { background: var(--g-hover); }
+html[data-glass] .ide-editor-wrapper { background: var(--ide-bg); }
+html[data-glass] .ide-editor-wrapper .monaco-editor,
+html[data-glass] .ide-editor-wrapper .monaco-editor .overflow-guard,
+html[data-glass] .ide-editor-wrapper .monaco-editor-background,
+html[data-glass] .ide-editor-wrapper .monaco-editor .margin { background-color: var(--ide-bg) !important; }
+
+/* ── Status bar ───────────────────────────────────────────────────────────── */
+/* Taller than Modern's 22px so the chips have room; the 6px gutter above it
+   stays, matching the explorer gutter, and it eats 2px of shell padding below. */
+html[data-glass] .ide-statusbar { border-top: 1px solid var(--g-edge); height: 28px; margin: 0 0 -2px; }
+/* The drawer-open handle lies over the 6px gutter between the editor card and
+   the status bar rather than adding a strip of its own above it. */
+/* Sits in the shell's own 6px gap between the body and the status bar. */
+html[data-glass] .ide-gutter-drawer-open { margin: -6px 0; }
+/* .statusbar-version carries .statusbar-btn too, so one rule covers both. */
+html[data-glass] .statusbar-btn { border-radius: 999px; padding: 0 9px; }
+html[data-glass] .statusbar-btn:hover { background: var(--g-hover); }
+html[data-glass] .statusbar-sep { background: var(--g-edge); }
+
+/* ── Panels and inputs ────────────────────────────────────────────────────── */
+html[data-glass] .search-panel { background: transparent; }
+/* Sticky section headers share the sidebar's glass instead of sitting on a
+   solid panel block. */
+html[data-glass] .ide-sidebar-scrollable .collapsible-header { background: var(--g-surface); }
+html[data-glass] #mbeditor-root :is(input[type="text"], input[type="search"], input[type="number"], textarea, select),
+html[data-glass] .search-input {
+  background: var(--g-surface-2);
+  border: 1px solid var(--g-edge);
+  border-radius: 10px;
+}
+
+/* ── Quick open ───────────────────────────────────────────────────────────── */
+/* The frosted box itself is the default look now (editor.css) regardless of
+   the glass setting — only the capsule-row treatment is glass-specific. */
+html[data-glass] .quick-open-overlay { background: color-mix(in srgb, var(--ide-bg) 30%, transparent); }
+html[data-glass] .quick-open-result { border-radius: 999px; margin: 0 6px; }
+html[data-glass] .quick-open-result:hover { background: var(--g-hover); }
+
+/* Reduced transparency: the same layout with solid fills. The blur is the
+   expensive part and the part that hurts, so it goes first. */
+@media (prefers-reduced-transparency: reduce) {
+  html[data-glass] {
+    --g-surface: var(--ide-panel-bg);
+    --g-surface-2: var(--ide-input-bg);
+    --g-lift: var(--ide-hover-bg);
+    --g-hover: var(--ide-hover-bg);
+    --g-bg: var(--ide-bg);
+  }
+  html[data-glass] * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}

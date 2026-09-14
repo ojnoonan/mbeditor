@@ -103,7 +103,7 @@ module Mbeditor
       assert_selector ".tab-item.active .tab-dirty-dot", wait: 5
 
       MbeditorTestLatency.with(0.8) do
-        find("button.statusbar-btn", text: "Save", match: :first).click
+        find("button.statusbar-btn[title^='Save the active file']").click
         # Despite the slow round-trip, the save completes and the status settles
         # on "Saved" rather than hanging or erroring.
         assert_selector ".statusbar-msg", text: "Saved", wait: 25
@@ -128,7 +128,7 @@ module Mbeditor
       assert_selector ".tab-item.active .tab-dirty-dot", wait: 5
 
       MbeditorTestLatency.with(0.8) do
-        find("button.statusbar-btn", text: "Save", match: :first).click
+        find("button.statusbar-btn[title^='Save the active file']").click
         assert_selector ".statusbar-msg", text: "Saved", wait: 25
       end
 

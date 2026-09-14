@@ -155,6 +155,7 @@ var EditorPanel = function EditorPanel(_ref) {
 
   var vimStatusRef = useRef(null);
   var vimModeObjRef = useRef(null);
+  var previewScrollRef = useRef(null);
 
   var clearTestZones = function clearTestZones(editor) {
     if (!editor) return;
@@ -716,6 +717,28 @@ var EditorPanel = function EditorPanel(_ref) {
 
     monacoRef.current = editor;
     window.__mbeditorActiveEditor = editor;
+    // Publish the live editor instance so a markdown preview in another pane
+    // (a separate EditorPanel instance) can find it for scroll sync.
+    _modelEntry.editor = editor;
+
+    var scrollSyncDisposable = null;
+    if (/\.(md|markdown)$/i.test(tab.path || '')) {
+      scrollSyncDisposable = editor.onDidScrollChange(function () {
+        if (_modelEntry.scrollSyncing) return;
+        var scrollHeight = editor.getScrollHeight() - editor.getLayoutInfo().height;
+        if (scrollHeight <= 0) return;
+        var fraction = editor.getScrollTop() / scrollHeight;
+        var previews = document.querySelectorAll('[data-preview-for]');
+        for (var _p = 0; _p < previews.length; _p++) {
+          if (previews[_p].getAttribute('data-preview-for') !== tab.path) continue;
+          var max = previews[_p].scrollHeight - previews[_p].clientHeight;
+          if (max <= 0) continue;
+          _modelEntry.scrollSyncing = true;
+          previews[_p].scrollTop = fraction * max;
+          _modelEntry.scrollSyncing = false;
+        }
+      });
+    }
     // Tells the status bar's cursor readout to re-attach. An event rather than
     // a prop because the editor is published imperatively here, and a listener
     // that guessed at the timing would miss the swap on a tab switch.
@@ -1111,6 +1134,8 @@ var EditorPanel = function EditorPanel(_ref) {
         window.__mbeditorActiveEditor = null;
         window.dispatchEvent(new CustomEvent('mbeditor:active-editor'));
       }
+      if (scrollSyncDisposable) scrollSyncDisposable.dispose();
+      if (_modelEntry.editor === editor) _modelEntry.editor = null;
       if (editorPluginDisposable) editorPluginDisposable.dispose();
       if (formatActionDisposable) formatActionDisposable.dispose();
       runTestAtCursorDisposable.dispose();
@@ -2085,6 +2110,31 @@ var EditorPanel = function EditorPanel(_ref) {
     }
   }, [markdownContent, isMarkdown]);
 
+  // Preview -> source scroll sync. The source editor instance (a different
+  // EditorPanel, possibly a different pane) is published on the shared model
+  // entry by the editor-creation effect above; scrollSyncing on that same
+  // entry is the shared flag that stops the two directions ping-ponging.
+  useEffect(function () {
+    if (!tab.isPreview || !isMarkdown) return;
+    var el = previewScrollRef.current;
+    if (!el) return;
+    function onScroll() {
+      var modelEntry = window.__mbeditorModels && window.__mbeditorModels[sourcePath];
+      var editor = modelEntry && modelEntry.editor;
+      if (!editor || (modelEntry && modelEntry.scrollSyncing)) return;
+      var max = el.scrollHeight - el.clientHeight;
+      if (max <= 0) return;
+      var fraction = el.scrollTop / max;
+      var scrollHeight = editor.getScrollHeight() - editor.getLayoutInfo().height;
+      if (scrollHeight <= 0) return;
+      modelEntry.scrollSyncing = true;
+      editor.setScrollTop(fraction * scrollHeight);
+      modelEntry.scrollSyncing = false;
+    }
+    el.addEventListener('scroll', onScroll);
+    return function () { el.removeEventListener('scroll', onScroll); };
+  }, [tab.isPreview, isMarkdown, sourcePath]);
+
   // Click-outside handler to close the methods dropdown
   useEffect(function() {
     if (!methodsOpen) return;
@@ -2194,7 +2244,12 @@ var EditorPanel = function EditorPanel(_ref) {
   }
 
   if (tab.isPreview && isMarkdown) {
-    return React.createElement('div', { className: 'markdown-preview markdown-preview-full', dangerouslySetInnerHTML: { __html: markup } });
+    return React.createElement('div', {
+      className: 'markdown-preview markdown-preview-full',
+      ref: previewScrollRef,
+      'data-preview-for': sourcePath,
+      dangerouslySetInnerHTML: { __html: markup }
+    });
   }
 
   // Helper: shorten long paths by showing the last 2 segments with a leading ellipsis
@@ -2203,6 +2258,38 @@ var EditorPanel = function EditorPanel(_ref) {
     var parts = path.split('/');
     if (parts.length <= 3) return path;
     return '\u2026/' + parts.slice(-2).join('/');
+  }
+
+  // Breadcrumb: shortPath()'s segments, chevron-separated, the final one an
+  // icon + filename in the normal text colour, everything before it muted \u2014
+  // VS Code's editor breadcrumb. Look only; not a navigation control.
+  function renderBreadcrumb(path) {
+    var segments = shortPath(path).split('/');
+    var last = segments.length - 1;
+    var nodes = [];
+    segments.forEach(function (seg, i) {
+      if (i > 0) {
+        nodes.push(React.createElement('i', {
+          key: 'sep-' + i,
+          className: 'fas fa-chevron-right ide-breadcrumb-sep',
+          'aria-hidden': 'true'
+        }));
+      }
+      if (i === last) {
+        nodes.push(React.createElement(
+          'span',
+          { key: 'seg-' + i, className: 'ide-breadcrumb-file' },
+          React.createElement('i', {
+            className: (window.getFileIcon ? window.getFileIcon(path) : 'far fa-file-code') + ' ide-breadcrumb-file-icon',
+            'aria-hidden': 'true'
+          }),
+          seg
+        ));
+      } else {
+        nodes.push(React.createElement('span', { key: 'seg-' + i, className: 'ide-breadcrumb-dir' }, seg));
+      }
+    });
+    return nodes;
   }
 
   // While Monaco is still loading, show a lightweight skeleton so the UI is
@@ -2283,7 +2370,7 @@ var EditorPanel = function EditorPanel(_ref) {
       React.createElement(
         'span',
         { className: 'ide-editor-file-location', title: tab.path },
-        shortPath(tab.path)
+        renderBreadcrumb(tab.path)
       ),
       gitAvailable && tab.path && React.createElement(
         'button',
@@ -2292,8 +2379,8 @@ var EditorPanel = function EditorPanel(_ref) {
           onClick: function() { if (onShowHistory) onShowHistory(tab.path); },
           title: 'File History'
         },
-        React.createElement('i', { className: 'fas fa-history', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
-        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, 'History')
+        React.createElement('i', { className: 'fas fa-history', style: { marginRight: editorPrefs.toolbarLabels ? '5px' : 0, flexShrink: 0 } }),
+        editorPrefs.toolbarLabels && React.createElement('span', { className: 'ide-toolbar-label' }, 'History')
       ),
       hasOutline && React.createElement(
         'button',
@@ -2347,8 +2434,8 @@ var EditorPanel = function EditorPanel(_ref) {
           },
           title: isTestOutline ? 'Jump to Outline' : 'Jump to Method'
         },
-        React.createElement('i', { className: 'fas fa-list-ul', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
-        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, isTestOutline ? 'Outline' : 'Methods')
+        React.createElement('i', { className: 'fas fa-list-ul', style: { marginRight: editorPrefs.toolbarLabels ? '5px' : 0, flexShrink: 0 } }),
+        editorPrefs.toolbarLabels && React.createElement('span', { className: 'ide-toolbar-label' }, isTestOutline ? 'Outline' : 'Methods')
       ),
       gitAvailable && React.createElement(
         'button',
@@ -2357,8 +2444,8 @@ var EditorPanel = function EditorPanel(_ref) {
           onClick: function() { setIsBlameVisible(function(prev) { return !prev; }); },
           title: 'Toggle Git Blame'
         },
-        React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
-        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, isBlameLoading ? 'Loading...' : 'Blame')
+        React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: editorPrefs.toolbarLabels ? '5px' : 0, flexShrink: 0 } }),
+        editorPrefs.toolbarLabels && React.createElement('span', { className: 'ide-toolbar-label' }, isBlameLoading ? 'Loading...' : 'Blame')
       ),
     ),
     conflictCount > 0 && React.createElement(
@@ -2520,7 +2607,10 @@ var EditorPanel = function EditorPanel(_ref) {
       )
     ),
     React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } }),
-    methodsOpen && methodsDropdownPos && React.createElement(
+    // Portalled to body: under the glass chrome the centre column has a
+    // backdrop-filter, which makes it the containing block for position:fixed
+    // and shoves the menu ~130px off its button.
+    methodsOpen && methodsDropdownPos && ReactDOM.createPortal(React.createElement(
       'div',
       {
         ref: methodsDropdownRef,
@@ -2618,7 +2708,7 @@ var EditorPanel = function EditorPanel(_ref) {
               }
               return rows;
             })()
-    ),
+    ), document.body),
     React.createElement('div', { ref: vimStatusRef, className: 'vim-statusbar', style: { display: editorPrefs.vimMode ? 'flex' : 'none', height: '22px', alignItems: 'center', padding: '0 10px', fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace", fontSize: '12px', background: 'var(--ide-statusbar-bg, #1e1e2e)', color: 'var(--ide-statusbar-fg, #9cdcfe)', borderTop: '1px solid var(--ide-border, #3e3e3e)', flexShrink: 0, userSelect: 'none', letterSpacing: '0.02em' } })
   );
 };

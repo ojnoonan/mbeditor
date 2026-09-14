@@ -54,6 +54,20 @@ module Mbeditor
         end
       RUBY
       File.write(File.join(@workspace, "nested_example.rb"), "class Demo\n    def call\nend")
+      # Hover-guard fixture: a `#` comment with a word inside it, and a short
+      # def line with decoration space after it.
+      File.write(File.join(@workspace, "widget.rb"), <<~RUBY)
+        class Widget
+          # prepare_data builds the payload
+          def build
+            prepare_data
+          end
+
+          def prepare_data
+            {}
+          end
+        end
+      RUBY
       # Task 2 tokenizer fixture. Keep it outside Task 3's test/ and spec/
       # outline fixtures so each task owns its own setup data.
       File.write(File.join(@workspace, "tokenization_test.rb"), "class TokenizationTest; end\n")
@@ -441,13 +455,13 @@ module Mbeditor
 
       find(".tree-item-name", text: "nested_example.rb").click
       assert_selector ".monaco-editor", wait: 10
-      assert_selector "button[title='Jump to Method']", text: "Methods"
+      assert_selector "button[title='Jump to Method']"
 
       expand_tree_folder("test")
       expand_tree_folder("test/models")
       find(".tree-item-name", text: "user_test.rb").click
       assert_selector ".monaco-editor", wait: 10
-      assert_selector "button[title='Jump to Outline']", text: "Outline"
+      assert_selector "button[title='Jump to Outline']"
       find("button[title='Jump to Outline']").click
       assert_selector ".ide-methods-dropdown-visibility", text: "PRIVATE"
       assert_selector ".ide-methods-dropdown-item[data-outline-kind='method']", text: "helper"
@@ -637,6 +651,8 @@ module Mbeditor
       find("button[title='Editor Preferences']").click
       find(".ide-settings-label", text: "Controller route hints", wait: 10)
         .find(:xpath, "..").find("input[type=checkbox]").click
+      find(".ide-settings-modal-close").click
+      assert_no_selector ".ide-settings-modal"
 
       # Back to the controller: the hints must be gone.
       find(".tab-item", text: "orders_controller.rb").click
@@ -770,6 +786,43 @@ module Mbeditor
 
       assert_equal "goto_here.js", active_tab_path,
                    "the picker must not navigate anywhere until a choice is made"
+    end
+
+    # Both hover defects share one guard, isRealHoverPosition (editor_plugins.js):
+    # it must reject a `#` comment (real token, wrong content) and any column
+    # past the line's real text (a route-hint decoration's rendered space,
+    # which is not part of the buffer). Asserted directly against the live
+    # model, the same way isInsideErbTag is in erb_intellisense_system_test.rb
+    # — hover-popup timing is not a deterministic thing to assert on.
+    test "the hover guard rejects comments and decoration space, accepts real code" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item-name", text: "widget.rb").click
+      assert_selector ".monaco-editor", wait: 10
+      wait_for_formatted_value(matching: /prepare_data/)
+
+      probe = page.evaluate_script(<<~'JS')
+        (function () {
+          var m = window.__mbeditorActiveEditor.getModel();
+          var f = window.MbeditorEditorPlugins.isRealHoverPosition;
+          return {
+            // "  # prepare_data builds the payload" — column 6 sits inside
+            // "prepare_data" but *after* the `#`, so this is only rejected if
+            // comment membership comes from real tokenization, not "the word
+            // looks fine".
+            insideComment: f(m, { lineNumber: 2, column: 6 }),
+            // "  def build" is 11 characters; a route hint's decoration text
+            // renders past that, so a hover in that space reports a column
+            // beyond the line's real length.
+            pastLineEnd: f(m, { lineNumber: 3, column: 40 }),
+            onRealWord: f(m, { lineNumber: 3, column: 8 })
+          };
+        })()
+      JS
+
+      assert_equal false, probe["insideComment"], "a word inside a # comment must not hover"
+      assert_equal false, probe["pastLineEnd"], "a column past the real line length must not hover"
+      assert_equal true, probe["onRealWord"], "a real word on a real line must still hover"
     end
 
     test "server-online heartbeat shows no offline indicator" do
@@ -1024,7 +1077,7 @@ module Mbeditor
       all(".tree-item-name", text: "README.md", minimum: 1).first.click
       assert_selector ".monaco-editor", wait: 10
 
-      click_button "Blame"
+      find("button[title='Toggle Git Blame']").click
       assert_text "Loaded blame for", wait: 10
 
       header_count = page.evaluate_script(<<~JS)
@@ -1052,7 +1105,7 @@ module Mbeditor
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
 
-      find("button", text: "Git").click
+      find("button.statusbar-btn[title*='the git panel']").click
       assert_selector ".ide-git-right-panel", wait: 5
 
       page.execute_script(<<~'JS')
@@ -1358,7 +1411,7 @@ module Mbeditor
         window.__mbeditorActiveEditor.setValue("const A=()=>{\n  return <div   className='a'>{1}</div>;\n};\n");
       JS
 
-      click_button "Format"
+      find("button[title='Format this document']").click
 
       formatted = wait_for_formatted_value(matching: /\n\t/)
       assert_match(/\n\treturn <div className="a">/, formatted,
@@ -1382,7 +1435,7 @@ module Mbeditor
         page.evaluate_script("EditorStore.getState().panes.reduce(function(n,p){return n+p.tabs.length},0)") >= 3
       end
 
-      click_button "Format All"
+      find("button[title='Format all open documents']").click
 
       contents = wait_for_condition("all open documents to settle") do
         result = page.evaluate_script(<<~'JS')

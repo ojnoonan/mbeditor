@@ -44,6 +44,32 @@ var ProblemsPanel = (function () {
     return text.length > CODE_PREVIEW_LIMIT ? text.slice(0, CODE_PREVIEW_LIMIT) + '…' : text;
   }
 
+  // VS Code-style file group header: chevron, file-type icon, basename, then
+  // the containing directory in a dimmer colour. `path` is workspace-relative.
+  function fileGroupName(path) {
+    var slash = path.lastIndexOf('/');
+    return {
+      base: slash === -1 ? path : path.slice(slash + 1),
+      dir: slash === -1 ? '' : path.slice(0, slash)
+    };
+  }
+
+  function renderFileGroupHeader(path, count) {
+    var parts = fileGroupName(path);
+    return React.createElement(
+      'div',
+      { className: 'ide-problems-file-name' },
+      React.createElement('i', { className: 'fas fa-chevron-down', 'aria-hidden': 'true' }),
+      React.createElement('i', {
+        className: (window.getFileIcon ? window.getFileIcon(parts.base) : 'far fa-file-code'),
+        'aria-hidden': 'true'
+      }),
+      React.createElement('span', null, parts.base),
+      parts.dir && React.createElement('span', { className: 'ide-problems-dir' }, parts.dir),
+      React.createElement('span', { className: 'ide-problems-file-count' }, count)
+    );
+  }
+
   // Reading markers means walking every model, so callers that only want the
   // counts share this one pass. Exposed on the component for the status bar.
   function collect() {
@@ -111,6 +137,9 @@ var ProblemsPanel = (function () {
 
   var Panel = function ProblemsPanelComponent(_ref) {
     var onClose = _ref.onClose;
+    // Height is owned by MbeditorApp: the gutter that drags it lives between
+    // the editor card and this drawer, not inside it.
+    var height = _ref.height;
     var onOpenFile = _ref.onOpenFile;
     // Called after `-a` has rewritten files on disk, so the app can re-read
     // every open tab. Nothing else would: the write came from a subprocess,
@@ -226,34 +255,6 @@ var ProblemsPanel = (function () {
       });
     };
 
-    var MIN_HEIGHT = 120;
-    var _height = React.useState(function () {
-      var saved = parseInt(window.localStorage.getItem('mbeditorProblemsHeight'), 10);
-      return (saved && saved >= MIN_HEIGHT) ? saved : 240;
-    });
-    var height = _height[0], setHeight = _height[1];
-    var heightRef = React.useRef(height);
-    heightRef.current = height;
-
-    // Same delta-based resize as the log drawer.
-    var onResizeMouseDown = function (e) {
-      e.preventDefault();
-      var startY = e.clientY;
-      var startHeight = heightRef.current;
-      var onMove = function (ev) {
-        var vh = window.innerHeight || document.documentElement.clientHeight || 0;
-        var maxH = vh > 0 ? Math.round(vh * 0.85) : Infinity;
-        setHeight(Math.min(maxH, Math.max(MIN_HEIGHT, startHeight + (startY - ev.clientY))));
-      };
-      var onUp = function () {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-        window.localStorage.setItem('mbeditorProblemsHeight', String(heightRef.current));
-      };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    };
-
     React.useEffect(function () {
       if (!window.monaco || !window.monaco.editor) return;
       // Debounced for the same reason the status-bar tally is: markers change
@@ -314,16 +315,11 @@ var ProblemsPanel = (function () {
     return React.createElement(
       'div',
       { className: 'ide-problems-drawer', style: { height: height + 'px' } },
-      React.createElement('div', {
-        className: 'ide-problems-resize',
-        title: 'Drag to resize',
-        onMouseDown: onResizeMouseDown
-      }),
       React.createElement(
         'div',
         { className: 'ide-problems-header' },
-        React.createElement('i', { className: 'fas fa-bug' }),
         React.createElement('span', { className: 'ide-problems-title' }, 'Problems'),
+        React.createElement('span', { className: 'ide-problems-total-pill' }, total + wsCounts.error + wsCounts.warning + wsCounts.info),
         // No prose summary: the severity chips below carry the same three
         // counts, and restating them was the longest thing in the header.
         React.createElement(
@@ -340,7 +336,7 @@ var ProblemsPanel = (function () {
               {
                 key: s.kind,
                 type: 'button',
-                className: 'ide-problems-sev-chip ide-problems-sev-' + s.kind + (on ? ' is-on' : ''),
+                className: 'ide-problems-sev-chip' + (on ? ' is-on' : ''),
                 title: (on ? 'Hide' : 'Show') + ' ' + SEVERITY_LABEL[s.kind].toLowerCase() + 's',
                 'aria-pressed': on ? 'true' : 'false',
                 onClick: function () { toggleSeverity(s.kind); }
@@ -350,19 +346,25 @@ var ProblemsPanel = (function () {
             );
           })
         ),
+        React.createElement('input', {
+          className: 'ide-problems-filter',
+          type: 'text',
+          placeholder: 'Filter…',
+          value: filter,
+          onChange: function (e) { setFilter(e.target.value); }
+        }),
         React.createElement(
           'div',
           { className: 'ide-problems-actions' },
           React.createElement('button', {
-            type: 'button', className: 'ide-problems-btn',
+            type: 'button', className: 'ide-icon-btn',
             disabled: !!running,
             title: 'Run rubocop over the whole workspace',
             onClick: function () { runRubocop('check'); }
           },
-            React.createElement('i', { className: running === 'check' ? 'fas fa-spinner fa-spin' : 'fas fa-play' }),
-            React.createElement('span', null, ' RuboCop')),
+            React.createElement('i', { className: running === 'check' ? 'fas fa-spinner fa-spin' : 'fas fa-play' })),
           React.createElement('button', {
-            type: 'button', className: 'ide-problems-btn',
+            type: 'button', className: 'ide-icon-btn',
             // Nothing to correct until a run says so, and rerunning `-a` on a
             // clean tree is a slow no-op.
             disabled: !!running || !workspace || !workspace.correctable,
@@ -373,28 +375,19 @@ var ProblemsPanel = (function () {
                 : 'Run RuboCop first',
             onClick: function () { runRubocop('autocorrect'); }
           },
-            React.createElement('i', { className: running === 'autocorrect' ? 'fas fa-spinner fa-spin' : 'fas fa-magic' }),
-            React.createElement('span', null, ' Fix')),
+            React.createElement('i', { className: running === 'autocorrect' ? 'fas fa-spinner fa-spin' : 'fas fa-magic' })),
           React.createElement('button', {
-            type: 'button', className: 'ide-problems-btn',
+            type: 'button', className: 'ide-icon-btn',
             disabled: !workspace || !(workspace.files || []).length,
             title: workspace && (workspace.files || []).length
               ? 'Open all ' + workspace.files.length + ' file(s) with offenses'
               : 'Run RuboCop first',
             onClick: openAllOffending
           },
-            React.createElement('i', { className: 'fas fa-folder-open' }),
-            React.createElement('span', null, ' Open all'))
+            React.createElement('i', { className: 'fas fa-folder-open' }))
         ),
-        React.createElement('input', {
-          className: 'ide-problems-filter',
-          type: 'text',
-          placeholder: 'Filter…',
-          value: filter,
-          onChange: function (e) { setFilter(e.target.value); }
-        }),
         React.createElement('button', {
-          type: 'button', className: 'ide-problems-btn',
+          type: 'button', className: 'ide-icon-btn',
           title: 'Close', onClick: onClose
         }, React.createElement('i', { className: 'fas fa-times' }))
       ),
@@ -412,13 +405,7 @@ var ProblemsPanel = (function () {
                   return React.createElement(
                     'div',
                     { className: 'ide-problems-file', key: 'ws:' + file.path },
-                    React.createElement(
-                      'div',
-                      { className: 'ide-problems-file-name' },
-                      React.createElement('i', { className: 'fas fa-gavel', 'aria-hidden': 'true' }),
-                      ' ' + file.path,
-                      React.createElement('span', { className: 'ide-problems-file-count' }, file.offenses.length)
-                    ),
+                    renderFileGroupHeader(file.path, file.offenses.length),
                     file.offenses.map(function (o, i) {
                       var kind = COP_SEVERITY_KIND[o.severity] || 'info';
                       return React.createElement(
@@ -502,12 +489,7 @@ var ProblemsPanel = (function () {
                 return React.createElement(
                   'div',
                   { className: 'ide-problems-file', key: entry.path },
-                  React.createElement(
-                    'div',
-                    { className: 'ide-problems-file-name' },
-                    entry.path,
-                    React.createElement('span', { className: 'ide-problems-file-count' }, entry.markers.length)
-                  ),
+                  renderFileGroupHeader(entry.path, entry.markers.length),
                   entry.markers.map(function (item, index) {
                     var marker = item.marker;
                     var kind = SEVERITY_KIND[marker.severity] || 'info';

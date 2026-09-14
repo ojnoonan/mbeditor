@@ -140,7 +140,7 @@ var TabBar = function TabBar(_ref) {
         }
       } },
     tabs.map(function (tab) {
-      var isSpecial = tab.isCommitGraph || tab.isDiff || tab.isPreview || tab.isSettings;
+      var isSpecial = tab.isCommitGraph || tab.isDiff || tab.isPreview;
       return React.createElement(
         'div',
         {
@@ -214,7 +214,7 @@ var TabBar = function TabBar(_ref) {
             }
           }
         },
-        React.createElement('i', { className: 'tab-item-icon ' + (tab.isSettings ? 'fas fa-cog' : (window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code')) }),
+        React.createElement('i', { className: 'tab-item-icon ' + (window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code') }),
         React.createElement(
           'div',
           { className: 'tab-item-name' },
@@ -226,14 +226,12 @@ var TabBar = function TabBar(_ref) {
           '●'
         ),
         React.createElement(
-          'div',
+          'button',
           {
+            type: 'button',
             className: 'tab-close',
-            // No role="button" here: the host app's Pico CSS skins
-            // [role=button] with a primary background and form padding, which
-            // turns this into a blue square. It is a plain div with a tooltip,
-            // as it was — Ctrl+W is the keyboard path.
             title: 'Close ' + tab.name + (tab.dirty ? ' (unsaved changes)' : ''),
+            'aria-label': 'Close ' + tab.name + (tab.dirty ? ' (unsaved changes)' : ''),
             onClick: function (e) {
               e.stopPropagation();
               onClose(tab.id);
