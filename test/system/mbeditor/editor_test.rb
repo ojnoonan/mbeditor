@@ -1142,7 +1142,7 @@ module Mbeditor
       assert_selector ".monaco-editor", wait: 10
 
       # Wait for the background replay to swap in the history-bearing model.
-      assert_replayed_model("README.md")
+      assert_replayed_model("README.md", "# Hello\n")
 
       page.execute_script(<<~'JS')
         window.__mbeditorActiveEditor.focus();
@@ -1538,20 +1538,28 @@ module Mbeditor
       branch = `git -C #{@workspace} rev-parse --abbrev-ref HEAD`.strip
 
       # base + ops must reproduce the file's on-disk content, or the replay bails out.
+      # Current-format (v2) history: the base is the loaded file and the ops are
+      # edits that type "x" and delete it again, so the replay lands back on the
+      # on-disk content while still pushing ops (which is what makes the swap
+      # observable). The legacy v1 shape — base "" plus the whole file as an
+      # insert-at-origin op — is covered by FileHistoryServiceTest#read.
       branch_hash = Digest::SHA256.hexdigest(branch)[0, 16]
       file_hash   = Digest::SHA256.hexdigest(rel_path)[0, 16]
       hist_path   = File.join(@workspace, "tmp", "mbeditor_history", "#{branch_hash}_#{file_hash}.json")
       FileUtils.mkdir_p(File.dirname(hist_path))
       File.write(hist_path, JSON.dump(
-        "base" => "",
-        "ops"  => [[1, 1, 1, 1, content]],
+        "v"    => Mbeditor::FileHistoryService::FORMAT_VERSION,
+        "base" => content,
+        "ops"  => [[1, 1, 1, 1, "x"], [1, 1, 1, 2, ""]],
         "t"    => Time.now.utc.iso8601
       ))
     end
 
     # Blocks until the replayed model (AVI > 1 because ops were pushed onto it) is
-    # installed for `rel_path`, or fails if the replay never happens.
-    def assert_replayed_model(rel_path)
+    # installed for `rel_path`, or fails if the replay never happens. Asserts the
+    # resulting buffer matches the file on disk — the replayed initial load used to
+    # be applied a second time, doubling the content (#92).
+    def assert_replayed_model(rel_path, expected_content)
       deadline = Time.now + 10
       loop do
         avi = page.evaluate_script(<<~JS)
@@ -1564,6 +1572,8 @@ module Mbeditor
         flunk "undo-history replay never swapped in a model for #{rel_path}" if Time.now > deadline
         sleep 0.1
       end
+      assert_equal expected_content, active_editor_value,
+        "editor buffer after replay should match the file on disk, not a duplicated copy"
     end
 
     def active_editor_value

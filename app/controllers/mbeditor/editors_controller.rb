@@ -217,7 +217,7 @@ module Mbeditor
 
       new_ops_clean = new_ops.map { |op| Array(op).first(5) }
 
-      file_history_service.append(branch, rel, ops: new_ops_clean, base: params[:base], base_given: params.key?(:base))
+      file_history_service.append(branch, rel, ops: new_ops_clean, base: params[:base], base_given: params.key?(:base), version: params[:v])
       head :no_content
     rescue FileHistoryService::BaseRequiredError
       render json: { error: 'base required for initial history' }, status: :bad_request

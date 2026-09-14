@@ -29,7 +29,7 @@ module Mbeditor
     test "append accepts an explicit empty base as a legitimate first snapshot" do
       Dir.mktmpdir do |dir|
         service = FileHistoryService.new(Pathname.new(dir))
-        service.append("main", "a.rb", ops: [[1, 1, 1, 1, "x"]], base: "", base_given: true)
+        service.append("main", "a.rb", ops: [[1, 1, 1, 1, "x"]], base: "", base_given: true, version: 2)
 
         assert_equal "", service.read("main", "a.rb")["base"]
       end
@@ -69,9 +69,9 @@ module Mbeditor
     test "append keeps separate history per branch and per path" do
       Dir.mktmpdir do |dir|
         service = FileHistoryService.new(Pathname.new(dir))
-        service.append("main", "a.rb", ops: [[1, 1, 1, 1, "main-a"]], base: "", base_given: true)
-        service.append("feature", "a.rb", ops: [[1, 1, 1, 1, "feature-a"]], base: "", base_given: true)
-        service.append("main", "b.rb", ops: [[1, 1, 1, 1, "main-b"]], base: "", base_given: true)
+        service.append("main", "a.rb", ops: [[1, 1, 1, 1, "main-a"]], base: "", base_given: true, version: 2)
+        service.append("feature", "a.rb", ops: [[1, 1, 1, 1, "feature-a"]], base: "", base_given: true, version: 2)
+        service.append("main", "b.rb", ops: [[1, 1, 1, 1, "main-b"]], base: "", base_given: true, version: 2)
 
         assert_equal [[1, 1, 1, 1, "main-a"]], service.read("main", "a.rb")["ops"]
         assert_equal [[1, 1, 1, 1, "feature-a"]], service.read("feature", "a.rb")["ops"]
@@ -170,6 +170,122 @@ module Mbeditor
         holder&.flock(File::LOCK_UN)
         holder&.close
       end
+    end
+
+    # --- format v2 / legacy migration (#93) ---------------------------------
+
+    test "read folds a v1 history's leading load into the base and keeps its edits" do
+      Dir.mktmpdir do |dir|
+        root = Pathname.new(dir)
+        service = FileHistoryService.new(root)
+        write_raw_history(root, "main", "a.rb",
+          "base" => "",
+          "ops"  => [[1, 1, 1, 1, "file\n"], [1, 1, 1, 5, "edit"]],
+          "t"    => Time.now.utc.iso8601)
+
+        result = service.read("main", "a.rb")
+        assert_equal "file\n", result["base"]
+        assert_equal [[1, 1, 1, 5, "edit"]], result["ops"]
+      end
+    end
+
+    test "read drops later whole-file loads from a multi-open v1 history" do
+      Dir.mktmpdir do |dir|
+        root = Pathname.new(dir)
+        service = FileHistoryService.new(root)
+        write_raw_history(root, "main", "a.rb",
+          "base" => "",
+          "ops"  => [
+            [1, 1, 1, 1, "one\n"],      # session 1: load
+            [1, 1, 1, 5, "edit1"],      # session 1: edit
+            [1, 1, 1, 1, "one\nedit1"], # session 2: load (reproduces session 1's result)
+            [1, 6, 1, 6, "edit2"]       # session 2: edit
+          ],
+          "t"    => Time.now.utc.iso8601)
+
+        result = service.read("main", "a.rb")
+        assert_equal "one\n", result["base"]
+        assert_equal [[1, 1, 1, 5, "edit1"], [1, 6, 1, 6, "edit2"]], result["ops"],
+          "each later load must be dropped, not concatenated onto the document"
+      end
+    end
+
+    test "read rewrites a migrated history with the current format version" do
+      Dir.mktmpdir do |dir|
+        root = Pathname.new(dir)
+        service = FileHistoryService.new(root)
+        path = write_raw_history(root, "main", "a.rb",
+          "base" => "", "ops" => [[1, 1, 1, 1, "file\n"]], "t" => Time.now.utc.iso8601)
+
+        service.read("main", "a.rb")
+        data = JSON.parse(File.read(path))
+        assert_equal FileHistoryService::FORMAT_VERSION, data["v"]
+        assert_equal "file\n", data["base"]
+        assert_equal [], data["ops"]
+      end
+    end
+
+    test "read leaves a current-format history untouched" do
+      Dir.mktmpdir do |dir|
+        root = Pathname.new(dir)
+        service = FileHistoryService.new(root)
+        write_raw_history(root, "main", "a.rb",
+          "v" => FileHistoryService::FORMAT_VERSION,
+          "base" => "file\n", "ops" => [[1, 1, 1, 1, "x"]], "t" => Time.now.utc.iso8601)
+
+        result = service.read("main", "a.rb")
+        assert_equal "file\n", result["base"]
+        assert_equal [[1, 1, 1, 1, "x"]], result["ops"]
+      end
+    end
+
+    test "append folds a legacy load payload into the base and stamps v2" do
+      Dir.mktmpdir do |dir|
+        root = Pathname.new(dir)
+        service = FileHistoryService.new(root)
+        service.append("main", "a.rb",
+          ops: [[1, 1, 1, 1, "file\n"], [1, 1, 1, 5, "edit"]], base: "", base_given: true)
+
+        result = service.read("main", "a.rb")
+        assert_equal "file\n", result["base"]
+        assert_equal [[1, 1, 1, 5, "edit"]], result["ops"]
+      end
+    end
+
+    test "append does not fold an empty base sent by a current-format client" do
+      Dir.mktmpdir do |dir|
+        service = FileHistoryService.new(Pathname.new(dir))
+        service.append("main", "a.rb", ops: [[1, 1, 1, 1, "x"]], base: "", base_given: true, version: 2)
+
+        result = service.read("main", "a.rb")
+        assert_equal "", result["base"]
+        assert_equal [[1, 1, 1, 1, "x"]], result["ops"]
+      end
+    end
+
+    test "append compacts when the serialized history exceeds the byte budget" do
+      Dir.mktmpdir do |dir|
+        service = FileHistoryService.new(Pathname.new(dir), max_bytes: 50)
+        service.append("main", "a.rb", ops: [[1, 1, 1, 1, "hello world"]], base: "base", base_given: true, version: 2)
+        service.append("main", "a.rb", ops: [[1, 1, 1, 1, "again and again"]], base_given: false, version: 2)
+
+        result = service.read("main", "a.rb")
+        assert_equal [], result["ops"], "a byte overage must fold the op log into the base"
+      end
+    end
+
+    private
+
+    # Writes a history file directly in the exact hash FileHistoryService derives
+    # from branch+path, bypassing append so tests can seed legacy shapes.
+    def write_raw_history(root, branch, rel_path, data)
+      hist_dir  = root.join("tmp", "mbeditor_history")
+      FileUtils.mkdir_p(hist_dir)
+      branch_hash = Digest::SHA256.hexdigest(branch)[0, 16]
+      file_hash   = Digest::SHA256.hexdigest(rel_path)[0, 16]
+      path = hist_dir.join("#{branch_hash}_#{file_hash}.json")
+      File.write(path, JSON.dump(data))
+      path
     end
   end
 end

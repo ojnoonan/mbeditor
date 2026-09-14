@@ -13,6 +13,10 @@ var HistoryService = (function () {
   var _idleTimers = {};
 
   var IDLE_MS = 30000;
+  // Server-side history format. 2 means tracking starts after the file load, so
+  // the load is the base rather than an insert-at-origin op (see #92/#93). The
+  // server uses this to tell a legacy payload from a current one.
+  var FORMAT_VERSION = 2;
 
   function _key(branch, filePath) {
     return branch + ':' + filePath;
@@ -76,7 +80,7 @@ var HistoryService = (function () {
     clearTimeout(_idleTimers[k]);
     delete _idleTimers[k];
 
-    var body = { branch: branch, path: filePath, ops: ops };
+    var body = { branch: branch, path: filePath, ops: ops, v: FORMAT_VERSION };
     if (_bases.hasOwnProperty(k)) {
       body.base = _bases[k];
       delete _bases[k];
