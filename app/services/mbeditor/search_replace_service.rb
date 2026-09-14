@@ -229,6 +229,7 @@ module Mbeditor
       end
 
       def scan(workspace_root, query, use_regex:, match_case:, whole_word:, excluded_paths:, paths:, max:, supersede: false)
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         root = workspace_root.to_s
         tier = pick_tier(root)
         env, args = build_command(tier, root, query, use_regex: use_regex, match_case: match_case,
@@ -290,6 +291,13 @@ module Mbeditor
           complete: !timed_out && !superseded && results.length < max,
           superseded: superseded
         }
+      ensure
+        # One record per real search — cache hits never reach here. `backend` is
+        # the tier that actually ran, `hits` the number of matched lines. Never
+        # the query and never a path.
+        AuditLog.record(:search,
+                        ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round,
+                        backend: tier, hits: results&.length || 0)
       end
 
       def pick_tier(root)

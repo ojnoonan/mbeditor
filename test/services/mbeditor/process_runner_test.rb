@@ -70,5 +70,71 @@ module Mbeditor
         assert_equal "#{real_dir}\n", result[:stdout]
       end
     end
+
+    # -------------------------------------------------------------------------
+    # Audit log
+    # -------------------------------------------------------------------------
+
+    def subprocess_events
+      AuditLog.payload[:server][:events].select { |e| e[:event] == :subprocess }
+    end
+
+    def with_clean_audit_log
+      Mbeditor.configuration.audit_log = true
+      AuditLog.clear!
+      yield
+    ensure
+      AuditLog.clear!
+      Mbeditor.configuration.audit_log = true
+    end
+
+    def test_audit_records_an_unknown_executable_as_other_without_leaking_the_command
+      with_clean_audit_log do
+        ProcessRunner.call(["/bin/echo", "audit-marker-string"])
+
+        entries = subprocess_events
+        assert_equal 1, entries.length
+        assert_equal :other, entries.first[:tool]
+        assert_equal :ok, entries.first[:status]
+        assert_kind_of Numeric, entries.first[:ms]
+
+        dump = AuditLog.payload.to_s
+        refute_includes dump, "audit-marker-string"
+        refute_includes dump, "/bin/echo"
+        refute_includes dump, "echo"
+      end
+    end
+
+    def test_audit_maps_a_known_executable_to_its_symbol
+      with_clean_audit_log do
+        ProcessRunner.call(["git", "--version"])
+
+        entries = subprocess_events
+        assert_equal 1, entries.length
+        assert_equal :git, entries.first[:tool]
+        assert_equal :ok, entries.first[:status]
+      end
+    end
+
+    def test_audit_records_a_timeout_even_though_call_raises
+      with_clean_audit_log do
+        assert_raises(ProcessRunner::TimeoutError) do
+          ProcessRunner.call(["sleep", "5"], timeout: 0.05)
+        end
+
+        entries = subprocess_events
+        assert_equal 1, entries.length
+        assert_equal :timeout, entries.first[:status]
+        assert_equal :other, entries.first[:tool]
+      end
+    end
+
+    def test_audit_records_a_nonzero_exit_as_error
+      with_clean_audit_log do
+        ProcessRunner.call(["bash", "-c", "exit 3"])
+
+        assert_equal :error, subprocess_events.first[:status]
+      end
+    end
   end
 end

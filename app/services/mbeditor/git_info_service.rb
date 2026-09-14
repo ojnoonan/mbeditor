@@ -43,8 +43,14 @@ module Mbeditor
       end
 
       begin
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         compute(repo_path)
       ensure
+        # One record per git-info wave, and only for the thread that owns the
+        # computation: `ms` is the wall time of the whole concurrent fan-out.
+        # Each git subprocess inside it is recorded separately by ProcessRunner.
+        AuditLog.record(:git_wave,
+                        ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round)
         done = GIT_INFO_MUTEX.synchronize { @git_info_flights.delete(repo_path) }
         done&.close
       end

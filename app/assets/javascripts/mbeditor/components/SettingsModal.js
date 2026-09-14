@@ -103,7 +103,14 @@ var SETTINGS_ROWS = [
   { key: 'routeHints', type: 'checkbox', label: 'Controller route hints', title: 'Show the verb and path that route to each controller action after its def line, and mark public actions nothing routes to', def: true },
 
   { header: 'RuboCop' },
-  { key: 'rubocopLintEnabled', type: 'checkbox', label: 'Enable RuboCop linting', title: 'Run RuboCop in the background and show lint warnings/errors as markers in the editor gutter', def: true }
+  { key: 'rubocopLintEnabled', type: 'checkbox', label: 'Enable RuboCop linting', title: 'Run RuboCop in the background and show lint warnings/errors as markers in the editor gutter', def: true },
+
+  { header: 'Diagnostics' },
+  { key: 'auditLog', type: 'checkbox', label: 'Record audit log', title: 'Record a numbers-only trace of editor activity you can download and hand to an AI to analyse. It never contains code, file names, URLs or host paths.', def: true },
+  // Lazy references: the handlers are declared in MbeditorApp.js, which loads
+  // after this file in the shared IIFE.
+  { key: 'auditLogDownload', type: 'button', label: 'Download log', action: 'Download', title: 'Save the recorded trace as a JSON file to hand to an AI. It carries numbers only — no code, file names, URLs or host paths', onClick: function () { downloadAuditLog(); } },
+  { key: 'auditLogClear', type: 'button', label: 'Clear log', action: 'Clear', title: 'Discard everything recorded so far, so the next download is a clean trace', onClick: function () { clearAuditLog(); } }
 ];
 
 function setEditorPref(setEditorPrefs, key, value) {
@@ -138,6 +145,16 @@ function renderSettingsRow(desc, editorPrefs, setEditorPrefs) {
         onChange: function(e) { set(e.target.checked); }
       }),
       settingsRowText(desc)
+    );
+  }
+
+  if (desc.type === 'button') {
+    return React.createElement(
+      'div', { className: 'ide-settings-row', key: desc.key },
+      settingsRowText(desc),
+      React.createElement('button', {
+        type: 'button', className: 'ide-settings-reset-btn', onClick: desc.onClick
+      }, desc.action)
     );
   }
 

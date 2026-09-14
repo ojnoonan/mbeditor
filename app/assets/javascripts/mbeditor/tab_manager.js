@@ -262,6 +262,7 @@ var TabManager = (function () {
     }
 
     // Use a prefetched result if available (hover-prefetch hit), otherwise fetch normally.
+    var startedAt = Date.now();
     var prefetchPromise = FileService.getPrefetched(path);
     var filePromise = prefetchPromise || FileService.getFile(path, { allowMissing: true });
 
@@ -274,6 +275,11 @@ var TabManager = (function () {
       if (!data) { closeTab(paneId, path); return; }
       var loadedContent = typeof data.content === 'string' ? data.content : "";
       var fileNotFound = data && data.missing === true;
+      var audit = window.MbeditorAudit;
+      if (audit) {
+        audit.rec(audit.EV.OPEN, audit.code('ext', String(path).split('.').pop().toLowerCase()),
+                  loadedContent.length, Date.now() - startedAt);
+      }
       _updateTab(paneId, path, {
         content: loadedContent,
         cleanContent: loadedContent,
@@ -288,6 +294,8 @@ var TabManager = (function () {
         _syncMarkdownPreviewContent(path, typeof data.content === 'string' ? data.content : "");
       }
     }).catch(function(err) {
+      var audit = window.MbeditorAudit;
+      if (audit) audit.rec(audit.EV.ERR, audit.EV.OPEN);
       if (path.startsWith('diff://')) return; // diff tabs handle their own loading
       if (err.response && err.response.status === 413) {
         FileService.getFileChunk(path, 0, 500).then(function(data) {

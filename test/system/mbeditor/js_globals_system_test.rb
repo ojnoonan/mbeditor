@@ -170,10 +170,16 @@ module Mbeditor
               .map(function (m) { return { severity: m.severity, code: String(m.code && m.code.value || m.code || ''), message: m.message }; });
           })()
         JS
+        # Wait for the graded severities, not merely for the markers to exist.
+        # TypeScript emits all three as Error and patchSeverities downgrades two
+        # of them a beat later, so a gate that matches on presence alone can
+        # break out on the unpatched set and fail the assertions below against
+        # a severity that was about to change. Same race the globals test above
+        # documents, and it is why that one waits on settled text.
         break if markers.is_a?(Array) &&
-                 markers.any? { |m| m["code"] == "2554" } &&
-                 markers.any? { |m| m["message"].include?("bogusPropXyz") } &&
-                 markers.any? { |m| m["message"].include?("is missing in type") }
+                 markers.any? { |m| m["code"] == "2554" && m["severity"] == 4 } &&
+                 markers.any? { |m| m["message"].include?("bogusPropXyz") && m["severity"] == 4 } &&
+                 markers.any? { |m| m["message"].include?("is missing in type") && m["severity"] == 8 }
 
         flunk "call-shape markers never settled; last: #{markers.inspect}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
         sleep 0.5

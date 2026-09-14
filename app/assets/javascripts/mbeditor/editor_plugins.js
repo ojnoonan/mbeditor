@@ -442,6 +442,22 @@
   // 6s default: the server's own budget for them is 10s.
   var LSP_SLOW_METHODS = { diagnostics: 15000, formatting: 15000 };
 
+  // ruby-lsp's wire names are snake_case, the audit legend's are camelCase, and
+  // these two differ outright. code() answers 0 ("other") for anything the
+  // legend does not list, so a method added later still records.
+  function auditLspName(lspMethod) {
+    if (lspMethod === 'formatting') return 'format';
+    if (lspMethod === 'prepare_rename') return 'rename';
+    return lspMethod.replace(/_(\w)/g, function (m, c) { return c.toUpperCase(); });
+  }
+
+  function recLsp(lspMethod, startedAt, ok) {
+    var audit = window.MbeditorAudit;
+    if (!audit) return;
+    audit.rec(audit.EV.LSP, audit.code('lspMethod', auditLspName(lspMethod)),
+              Date.now() - startedAt, ok ? 1 : 0);
+  }
+
   // `token` is Monaco's CancellationToken, when the calling provider has one.
   // Every provider fires on a gesture the user can abandon — moving the cursor
   // off a word, typing another character — and Monaco cancels the outstanding
@@ -461,6 +477,7 @@
       if (model.getValueLength() === 0) return Promise.resolve(null);
       if (token && token.isCancellationRequested) return Promise.resolve(null);
 
+      var startedAt = Date.now();
       var config = LSP_SLOW_METHODS[lspMethod] ? { timeout: LSP_SLOW_METHODS[lspMethod] } : null;
       var controller = (token && typeof AbortController !== 'undefined') ? new AbortController() : null;
       var cancelSub = null;
@@ -472,6 +489,7 @@
       return FileService.rubyLspRequest(lspMethod, model._mbeditorPath, model.getValue(),
                                         position.lineNumber, position.column, config, extraBody)
         .then(function (data) {
+          recLsp(lspMethod, startedAt, (!data || data.fallback || data.error) ? 0 : 1);
           if (!data || data.fallback || data.error) {
             // A 200 can still carry lspState: 'failed' — the server answered,
             // the language server did not.
@@ -488,6 +506,9 @@
           return null;
         })
         .catch(function (err) {
+          // A cancelled request is Monaco changing its mind, not a failure —
+          // documentHighlight alone would otherwise log one per cursor move.
+          if (!(token && token.isCancellationRequested)) recLsp(lspMethod, startedAt, 0);
           noteLspFailure(err);
           return null;
         })
