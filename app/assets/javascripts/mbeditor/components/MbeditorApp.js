@@ -3696,6 +3696,15 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
+  // Paging is scroll-driven, so a list too short to scroll — few hits, or a
+  // big file group just collapsed — would show "Loading more…" and never load
+  // it. Fill the viewport whenever the list stops being scrollable.
+  useEffect(function () {
+    var el = searchResultsContainerRef.current;
+    if (!searchHasMore || !el) return;
+    if (el.scrollHeight <= el.clientHeight + 200) loadMoreSearchResults();
+  }, [searchHasMore, state.searchResults, searchCollapsedFiles]);
+
   var handleSearchChange = function handleSearchChange(e) {
     var val = e.target.value;
     if (!val) { clearSearch(); return; }

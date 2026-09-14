@@ -70,7 +70,7 @@ html[data-glass] .ide-sidebar { border-radius: 0 12px 12px 0; border-left: none;
 /* ── Title bar ────────────────────────────────────────────────────────────── */
 /* The title bar is not a card: it sits flat on the backdrop like VS Code's,
    so the first card row starts under a plain strip rather than a second box. */
-html[data-glass] .ide-titlebar { background: transparent; border: none; box-shadow: none; height: 35px; margin: -6px 0 0; padding: 0 8px; }
+html[data-glass] .ide-titlebar { background: transparent; border: none; box-shadow: none; height: 35px; margin: -6px 0 -6px; padding: 0 8px; }
 html[data-glass] .ide-titlebar-icon { color: var(--ide-accent-fg); }
 html[data-glass] .ide-titlebar-title { color: var(--ide-text); font-weight: 600; }
 html[data-glass] .ide-titlebar-search {
