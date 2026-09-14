@@ -637,6 +637,8 @@ module Mbeditor
       find("button[title='Editor Preferences']").click
       find(".ide-settings-label", text: "Controller route hints", wait: 10)
         .find(:xpath, "..").find("input[type=checkbox]").click
+      find(".ide-settings-modal-close").click
+      assert_no_selector ".ide-settings-modal"
 
       # Back to the controller: the hints must be gone.
       find(".tab-item", text: "orders_controller.rb").click

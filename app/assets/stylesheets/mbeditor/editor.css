@@ -2975,42 +2975,163 @@ html, body, #mbeditor-root {
 .ide-draft-restore-btn-primary:hover { opacity: 0.9; }
 
 /* ── Settings panel ─────────────────────────────────────────── */
-.ide-settings-panel { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
-.ide-settings-body { padding: 8px 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; align-items: start; }
-/* Full-width rows: label sits inline next to the control */
-.ide-settings-row { display: flex; flex-direction: row; align-items: center; gap: 8px; grid-column: 1/-1; }
-/* Half-width rows: label stacked above control, fits in one grid column */
-.ide-settings-row-half { display: flex; flex-direction: column; gap: 2px; grid-column: auto; align-items: flex-start; }
-/* Full-width rows with stacked label — for wide text inputs like font family */
-.ide-settings-row-full { display: flex; flex-direction: column; gap: 2px; grid-column: 1/-1; align-items: flex-start; }
-.ide-settings-row-full .ide-settings-input-wide { width: 100%; flex: none; box-sizing: border-box; }
-/* Checkbox rows: full-width, label on left, checkbox on right */
-.ide-settings-row-check { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 6px; grid-column: 1/-1; padding: 3px 0; }
-.ide-settings-label { font-size: 11px; color: var(--ide-text-muted); white-space: nowrap; }
-/* Inputs in full-width rows stay narrow */
-.ide-settings-input { background: var(--ide-input-bg); color: var(--ide-text); border: 1px solid var(--ide-border-input); border-radius: 3px; padding: 4px 6px; font-size: 12px; width: 72px; box-sizing: border-box; }
-.ide-settings-input-wide { font-family: monospace; flex: 1; width: auto; }
-/* Selects in half-width rows use Pico styling (inherit theme vars); just cap size */
-.ide-settings-row-half select { width: 100%; }
-.ide-settings-checkbox { width: auto; cursor: pointer; flex-shrink: 0; }
-.ide-settings-reset-btn { margin-top: 4px; grid-column: 1/-1; background: var(--ide-panel-bg-alt); color: var(--ide-text-muted); border: 1px solid var(--ide-border-input); border-radius: 3px; padding: 5px 10px; font-size: 11px; cursor: pointer; align-self: flex-start; }
-.ide-settings-reset-btn:hover { background: var(--ide-border-input); color: var(--ide-text-dim); }
-.ide-settings-section-header { font-size: 10px; font-weight: 700; color: var(--ide-text-muted); text-transform: uppercase; letter-spacing: 1px; padding: 8px 0 3px; border-bottom: 1px solid var(--ide-border); margin-top: 6px; grid-column: 1/-1; }
-.ide-settings-section-header:first-child { margin-top: 0; }
-.ide-settings-row-link { grid-column: 1/-1; flex-direction: row; align-items: center; justify-content: space-between; }
-.ide-settings-config-link { background: none; border: none; color: var(--ide-accent-fg); font-size: 11px; cursor: pointer; padding: 0; display: flex; align-items: center; gap: 3px; text-decoration: underline; text-underline-offset: 2px; }
-.ide-settings-config-link:hover { color: var(--ide-accent); }
-
-/* Settings tab (pane view) */
-.ide-settings-tab-content {
+/* ══ SETTINGS MODAL ═════════════════════════════════════════════════════════
+ * VS Code-style: left nav of sections, scrolling right pane of rows.
+ * ─────────────────────────────────────────────────────────────────────────── */
+.ide-settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 9100;
   display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow-y: auto;
-  background: var(--bg-panel, var(--ide-bg));
-  color: var(--text-main, var(--ide-text));
+  align-items: center;
+  justify-content: center;
 }
 
+/* Frosted like Quick Open — it floats over the editor, not inside it. */
+.ide-settings-modal {
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: color-mix(in srgb, var(--ide-panel-bg) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ide-text) 16%, transparent);
+  border-radius: 8px;
+  width: min(900px, 90vw);
+  height: min(640px, 85vh);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  overflow: hidden;
+  color: var(--ide-text);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ide-settings-modal {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--ide-panel-bg);
+  }
+}
+
+.ide-settings-modal-header {
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--ide-border);
+}
+.ide-settings-modal-title { font-size: 13px; font-weight: 600; color: var(--ide-text); flex-shrink: 0; }
+.ide-settings-search {
+  flex: 1;
+  min-width: 0;
+  background: var(--ide-input-bg);
+  color: var(--ide-text);
+  border: 1px solid var(--ide-border-input);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  margin-bottom: 0;
+}
+.ide-settings-search::placeholder { color: var(--ide-text-muted); }
+.ide-settings-modal-close {
+  background: none;
+  border: none;
+  color: var(--ide-text-muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  margin-bottom: 0;
+}
+.ide-settings-modal-close:hover { color: var(--ide-text); }
+
+.ide-settings-modal-body { flex: 1; display: flex; min-height: 0; }
+
+.ide-settings-nav {
+  width: 180px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--ide-border);
+  padding: 10px 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start; /* a shared nav rule sets space-between */
+}
+.ide-settings-nav-item {
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  color: var(--ide-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  text-align: left;
+  padding: 6px 14px;
+  cursor: pointer;
+  margin-bottom: 0;
+  width: 100%;
+}
+.ide-settings-nav-item:hover { color: var(--ide-text); }
+.ide-settings-nav-item.active { color: var(--ide-text); border-left-color: var(--ide-accent); }
+
+.ide-settings-body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 12px 20px 20px;
+}
+.ide-settings-section { padding-top: 10px; }
+.ide-settings-section-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ide-text);
+  margin: 0 0 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--ide-border);
+}
+
+.ide-settings-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  margin-bottom: 12px;
+}
+.ide-settings-row-check {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  align-items: start;
+}
+.ide-settings-row-check .ide-settings-checkbox { grid-column: 1; grid-row: 1; margin: 2px 0 0; }
+.ide-settings-row-check .ide-settings-label { grid-column: 2; grid-row: 1; }
+.ide-settings-row-check .ide-settings-desc { grid-column: 2; grid-row: 2; }
+
+.ide-settings-label { font-size: 13px; color: var(--ide-text); }
+.ide-settings-desc { font-size: 12px; color: var(--ide-text-muted); line-height: 1.4; }
+.ide-settings-input {
+  background: var(--ide-input-bg);
+  color: var(--ide-text);
+  border: 1px solid var(--ide-border-input);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  width: 260px;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin-top: 2px;
+}
+.ide-settings-input-number { width: 100px; }
+.ide-settings-input-wide { font-family: monospace; width: 100%; }
+.ide-settings-checkbox { width: auto; cursor: pointer; flex-shrink: 0; }
+
+.ide-settings-config-link { background: none; border: none; color: var(--ide-accent-fg); font-size: 12px; cursor: pointer; padding: 0; display: flex; align-items: center; gap: 3px; text-decoration: underline; text-underline-offset: 2px; margin-bottom: 0; }
+.ide-settings-config-link:hover { color: var(--ide-accent); }
+.ide-settings-empty { font-size: 12px; color: var(--ide-text-muted); padding: 20px 0; }
+.ide-settings-reset-btn { margin-top: 16px; background: var(--ide-panel-bg-alt); color: var(--ide-text-muted); border: 1px solid var(--ide-border-input); border-radius: 4px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+.ide-settings-reset-btn:hover { background: var(--ide-border-input); color: var(--ide-text-dim); }
 
 /* ══ PICO CSS COMPACT OVERRIDES ═════════════════════════════════════════════
  * Pico's classless variant inflates native elements with generous padding.

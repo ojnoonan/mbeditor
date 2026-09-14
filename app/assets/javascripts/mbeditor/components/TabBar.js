@@ -140,7 +140,7 @@ var TabBar = function TabBar(_ref) {
         }
       } },
     tabs.map(function (tab) {
-      var isSpecial = tab.isCommitGraph || tab.isDiff || tab.isPreview || tab.isSettings;
+      var isSpecial = tab.isCommitGraph || tab.isDiff || tab.isPreview;
       return React.createElement(
         'div',
         {
@@ -214,7 +214,7 @@ var TabBar = function TabBar(_ref) {
             }
           }
         },
-        React.createElement('i', { className: 'tab-item-icon ' + (tab.isSettings ? 'fas fa-cog' : (window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code')) }),
+        React.createElement('i', { className: 'tab-item-icon ' + (window.getFileIcon ? window.getFileIcon(tab.name) : 'far fa-file-code') }),
         React.createElement(
           'div',
           { className: 'tab-item-name' },
