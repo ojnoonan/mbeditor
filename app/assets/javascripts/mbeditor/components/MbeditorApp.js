@@ -782,6 +782,21 @@ var MbeditorApp = function MbeditorApp() {
   var serverOnline = _useState18b[0];
   var setServerOnline = _useState18b[1];
 
+  // Pending migrations. file_service.js owns the truth (it is what sees the
+  // response header) and publishes it as a <body> class plus an event; this
+  // only mirrors it into the status bar.
+  var _useStateMig = useState(function () {
+    return document.body.classList.contains('mbeditor-migration-pending');
+  });
+  var migrationsPending = _useStateMig[0];
+  var setMigrationsPending = _useStateMig[1];
+
+  useEffect(function () {
+    function onChange(e) { setMigrationsPending(!!e.detail); }
+    window.addEventListener('mbeditor:pending-migration', onChange);
+    return function () { window.removeEventListener('mbeditor:pending-migration', onChange); };
+  }, []);
+
   var _useState18c = useState(false);
 
 
@@ -1048,6 +1063,11 @@ var MbeditorApp = function MbeditorApp() {
   var _useStateZen = useState(false);
   var zenMode = _useStateZen[0];
   var setZenMode = _useStateZen[1];
+
+  // Transient, like zen mode — never persisted, always starts closed.
+  var _useStateMGV = useState(false);
+  var showModelGraphView = _useStateMGV[0];
+  var setShowModelGraphView = _useStateMGV[1];
 
   var _useStateSB = useState(false);
   var isSwitchingBranch = _useStateSB[0];
@@ -1449,9 +1469,6 @@ var MbeditorApp = function MbeditorApp() {
         if (t.isCombinedDiff || (t.path || '').startsWith('combined-diff://') || (t.path || '').startsWith('diff://')) {
           return Promise.resolve({ content: '' });
         }
-        if (t.isModelGraph || t.path === 'mbeditor://model-graph') {
-          return Promise.resolve({ content: '' });
-        }
         var sourcePath = t.isPreview || /::preview$/.test(t.path || '') ? t.previewFor || (t.path || '').replace(/::preview$/, '') : t.path;
         return FileService.getFile(sourcePath, { allowMissing: true }).then(function (data) {
           return {
@@ -1475,7 +1492,7 @@ var MbeditorApp = function MbeditorApp() {
           p.tabs.forEach(function (t) {
             var res = results[resIdx++];
             var isPlainFile = t.path && !t.isDiff && !t.isCombinedDiff &&
-              !t.isChangelog && !t.isPreview && !t.isModelGraph &&
+              !t.isChangelog && !t.isPreview &&
               !/^(diff|combined-diff):\/\//.test(t.path) && !/::preview$/.test(t.path);
             if (isPlainFile) {
               if (seenPaths[t.path]) return;
@@ -1485,9 +1502,6 @@ var MbeditorApp = function MbeditorApp() {
               content: res.content,
               externalContentVersion: (t.externalContentVersion || 0) + 1
             },
-            // A state saved before this tab type existed carries the path but
-            // not the flag, and would restore as a missing file.
-            t.path === 'mbeditor://model-graph' ? { isModelGraph: true } : {},
             res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {},
             typeof res.fileNotFound === 'boolean' ? { fileNotFound: res.fileNotFound, dirty: res.fileNotFound ? false : t.dirty } : {},
             res.image === true ? { isImage: true } : {}));
@@ -1599,7 +1613,7 @@ var MbeditorApp = function MbeditorApp() {
           return {
             id: p.id,
             activeTabId: p.activeTabId,
-            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff && !t.isModelGraph && !t.isUntitled; }).map(function (t) {
+            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff && !t.isUntitled; }).map(function (t) {
               return {
                 id: t.id, path: t.path, name: t.name, dirty: t.dirty, viewState: t.viewState,
                 isPreview: !!t.isPreview, previewFor: t.previewFor || null,
@@ -1685,6 +1699,7 @@ var MbeditorApp = function MbeditorApp() {
       if (e.key === 'Escape') {
         setContextMenu(null);
         setShowHelp(false);
+        setCollabOverflowOpen(false);
       }
     };
 
@@ -2318,6 +2333,10 @@ var MbeditorApp = function MbeditorApp() {
   }, [monacoReady]);
 
   var handleSelectFile = function handleSelectFile(path, name, line, col, endCol) {
+    // The one place every reachable "open a file" action funnels through while
+    // the model graph view is up (quick open is the only such surface left —
+    // explorer, search, rails and git panel are all hidden with it).
+    setShowModelGraphView(false);
     TabManager.openTab(path, name, line, null, false, col, endCol);
     handleNodeSelect({ path: path, name: name || path.split('/').pop(), type: 'file' });
     setQuickOpen(false);
@@ -2545,7 +2564,7 @@ var MbeditorApp = function MbeditorApp() {
         return {
           id: p.id,
           activeTabId: p.activeTabId,
-          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff && !t.isModelGraph && !t.isUntitled; }).map(function (t) {
+          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff && !t.isUntitled; }).map(function (t) {
             return {
               id: t.id,
               path: t.path,
@@ -2992,14 +3011,13 @@ var MbeditorApp = function MbeditorApp() {
 
   var collabPeerIds = Object.keys(collabRoster);
 
-  // A labelled peer chip costs ~110px (name + filename), and the titlebar button
-  // cluster does not shrink or wrap: past three peers it squeezes the search pill
-  // to its floor and then pushes Help / Install off the right edge. Drop to bare
-  // colour dots instead of hiding peers behind a "+N more" summary — a dot is
-  // ~20px, so ten peers still fit, every chip stays clickable to follow, and the
-  // solid/hollow ring keeps working. The name and file live in the tooltip.
-  var COLLAB_LABEL_LIMIT = 3;
-  var collabPeerLabels = !toolbarIconOnly && collabPeerIds.length <= COLLAB_LABEL_LIMIT;
+  // One button per peer stopped working past ~4 people: the titlebar cluster
+  // does not shrink or wrap, so it squeezed the search pill to its floor and
+  // pushed Help / Install off the right edge. Fixed-width stack instead: up to
+  // three overlapping avatars, the rest collapse into one "+N" with a popover.
+  var COLLAB_AVATAR_LIMIT = 3;
+  var collabAvatarIds = collabPeerIds.slice(0, COLLAB_AVATAR_LIMIT);
+  var collabOverflowIds = collabPeerIds.slice(COLLAB_AVATAR_LIMIT);
 
   // Colour is minted from a hash before any peer is known, so it has to be
   // reconciled against the roster once one exists. Runs on every roster change;
@@ -3057,6 +3075,48 @@ var MbeditorApp = function MbeditorApp() {
     if (activeTab && activeTab.path === followedFile) return;
     handleSelectFile(followedFile, followedFile.split('/').pop());
   }, [followedClientId, followedFile]);
+
+  // Shared by the avatar stack and the overflow popover so "which peer, what
+  // file, are we following them" is computed once per id instead of twice.
+  var collabPeerInfo = function (cid) {
+    var peer = collabRoster[cid];
+    var file = peer.current_file;
+    return {
+      name: peer.name || 'Anonymous',
+      colour: peer.colour || '#888888',
+      file: file,
+      following: followedClientId === cid,
+      elsewhere: file !== presenceFile
+    };
+  };
+
+  // The "+N" overflow popover. A plain onMouseLeave that closes immediately
+  // makes it uncrossable — the pointer has to travel off the button and onto
+  // the popover — so the close is delayed and cancelled by either one's
+  // onMouseEnter. Click still toggles it directly, which is what makes it
+  // reachable without a mouse at all.
+  // The anchor, not a boolean: the popover renders at the root next to the
+  // hovercard, because an absolutely-positioned child of the title bar is
+  // painted under the editor whatever its z-index.
+  var _useStateOverflow = useState(null);
+  var collabOverflowAnchor = _useStateOverflow[0];
+  var setCollabOverflowAnchor = _useStateOverflow[1];
+  var collabOverflowOpen = !!collabOverflowAnchor;
+  var anchorFrom = function (el) {
+    var r = el.getBoundingClientRect();
+    return { top: r.bottom + 4, right: window.innerWidth - r.right };
+  };
+  var collabOverflowCloseTimerRef = useRef(null);
+  var cancelOverflowClose = function () {
+    if (collabOverflowCloseTimerRef.current) {
+      clearTimeout(collabOverflowCloseTimerRef.current);
+      collabOverflowCloseTimerRef.current = null;
+    }
+  };
+  var scheduleOverflowClose = function () {
+    cancelOverflowClose();
+    collabOverflowCloseTimerRef.current = setTimeout(function () { setCollabOverflowAnchor(null); }, 250);
+  };
 
   // Phase 7: Per-file last-commit info shown in the status bar
   var _useState31 = useState(null);
@@ -4385,15 +4445,22 @@ var MbeditorApp = function MbeditorApp() {
 
   var handleActivityBarClick = function handleActivityBarClick(tab) {
     if (tab === 'settings') {
+      setShowModelGraphView(false);
       setShowSettings(!showSettings);
       return;
     }
     // The model graph is a view, not a panel: it takes over the central area
-    // and needs the width. There is no sidebar half to show.
+    // and needs the width. There is no sidebar half to show, so it toggles
+    // instead of behaving like the other sidebar tabs.
     if (tab === 'models') {
-      openModelGraphTab();
+      setShowModelGraphView(function (prev) {
+        var next = !prev;
+        if (next) loadModelGraph(false);
+        return next;
+      });
       return;
     }
+    setShowModelGraphView(false);
     if (!sidebarCollapsed && activeSidebarTab === tab) {
       setSidebarCollapsed(true);
     } else {
@@ -4843,48 +4910,6 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
-  // The diagram lives in an editor tab, not the sidebar: a layered graph is
-  // inherently wide and a ~300px panel can only ever show its first column.
-  // The sidebar tab is the entry point and the searchable model list.
-  var MODEL_GRAPH_TAB_ID = 'mbeditor://model-graph';
-  function openModelGraphTab() {
-    var st = EditorStore.getState();
-    var paneId = st.focusedPaneId;
-
-    var existing = null;
-    st.panes.forEach(function (p) {
-      if (!existing && p.tabs.some(function (t) { return t.id === MODEL_GRAPH_TAB_ID; })) {
-        existing = p.id;
-      }
-    });
-    if (existing) {
-      EditorStore.setState({
-        panes: st.panes.map(function (p) {
-          return p.id === existing ? Object.assign({}, p, { activeTabId: MODEL_GRAPH_TAB_ID }) : p;
-        }),
-        focusedPaneId: existing
-      });
-      return;
-    }
-
-    var pane = st.panes.find(function (p) { return p.id === paneId; }) || st.panes[0];
-    if (!pane) return;
-
-    var newTab = {
-      id: MODEL_GRAPH_TAB_ID, path: MODEL_GRAPH_TAB_ID, name: 'Model Graph',
-      dirty: false, content: '', isModelGraph: true
-    };
-    EditorStore.setState({
-      panes: st.panes.map(function (p) {
-        return p.id === pane.id
-          ? Object.assign({}, p, { tabs: p.tabs.concat(newTab), activeTabId: MODEL_GRAPH_TAB_ID })
-          : p;
-      }),
-      focusedPaneId: pane.id
-    });
-    loadModelGraph(false);
-  }
-
   var CHANGELOG_TAB_ID = 'mbeditor://changelog';
   function openChangelogTab() {
     var st = EditorStore.getState();
@@ -4942,10 +4967,11 @@ var MbeditorApp = function MbeditorApp() {
       { className: "ide-titlebar" },
       React.createElement("i", { className: "fas fa-layer-group ide-titlebar-icon" }),
       React.createElement(
+        // The product name, not the window title: the host and port are in the
+        // browser's own address bar, and the long form crowded the search pill.
         "div",
-        { className: "ide-titlebar-title" },
-        "Mini Browser Editor — ",
-        window.location.host
+        { className: "ide-titlebar-title", title: "Mini Browser Editor — " + window.location.host },
+        "Mbeditor"
       ),
       // The slot claims all the room between the title and the buttons; the
       // search pill then takes 75% of it, centred. Sizing the pill against a
@@ -5115,45 +5141,48 @@ var MbeditorApp = function MbeditorApp() {
           React.Fragment,
           null,
           React.createElement("div", { className: "statusbar-sep" }),
-          collabPeerIds.map(function (cid) {
-            var peer = collabRoster[cid];
-            var file = peer.current_file;
-            var name = peer.name || 'Anonymous';
-            var colour = peer.colour || '#888888';
-            var following = followedClientId === cid;
-            // Solid dot: they are in the file you are looking at, so their caret
-            // is on screen. Hollow ring: they are somewhere else and there is
-            // nothing to see — without this the chip looked identical either way
-            // and a peer's caret just vanished with no explanation.
-            var elsewhere = file !== presenceFile;
-            return React.createElement(
-              "button",
-              {
-                key: cid,
-                type: "button",
-                className: "statusbar-btn",
-                style: following
-                  ? { background: 'color-mix(in srgb, ' + colour + ' 28%, transparent)' }
-                  : undefined,
-                onMouseEnter: function (e) { openCollabHover(cid, e); },
-                onMouseLeave: function () { setCollabHover(null); },
-                onClick: function () { toggleFollow(cid); }
-              },
-              React.createElement("i", {
-                className: (following ? "fas fa-eye" : (elsewhere ? "far fa-circle" : "fas fa-circle")) +
-                  " collab-pulse",
-                style: { color: colour, fontSize: "0.7em", marginRight: "2px" }
-              }),
-              collabPeerLabels && (" " + name),
-              // Where they went, when they are not where you are. Basename only —
-              // the chip has ~110px to spend and the full path is in the tooltip.
-              collabPeerLabels && elsewhere && file && React.createElement(
-                "span",
-                { style: { opacity: 0.65, marginLeft: "4px" } },
-                file.split('/').pop()
+          React.createElement(
+            "div",
+            { className: "collab-avatar-stack" },
+            collabAvatarIds.map(function (cid) {
+              var info = collabPeerInfo(cid);
+              return React.createElement(
+                "button",
+                {
+                  key: cid,
+                  type: "button",
+                  className: "collab-avatar" +
+                    (info.following ? " collab-avatar-following" : "") +
+                    (info.elsewhere ? " collab-avatar-elsewhere" : ""),
+                  style: { background: info.colour },
+                  // The dot carries no glyph, so the name has to reach a
+                  // screen reader some other way.
+                  "aria-label": info.name,
+                  onMouseEnter: function (e) { openCollabHover(cid, e); },
+                  onMouseLeave: function () { setCollabHover(null); },
+                  onClick: function () { toggleFollow(cid); }
+                }
+              );
+            }),
+            collabOverflowIds.length > 0 && React.createElement(
+              "div",
+              { className: "collab-avatar-overflow" },
+              React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className: "collab-avatar collab-avatar-more",
+                  onMouseEnter: function (e) { cancelOverflowClose(); setCollabOverflowAnchor(anchorFrom(e.currentTarget)); },
+                  onMouseLeave: scheduleOverflowClose,
+                  onClick: function (e) {
+                    var el = e.currentTarget;
+                    setCollabOverflowAnchor(function (prev) { return prev ? null : anchorFrom(el); });
+                  }
+                },
+                "+" + collabOverflowIds.length
               )
-            );
-          })
+            )
+          )
         ),
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
@@ -5182,6 +5211,31 @@ var MbeditorApp = function MbeditorApp() {
           )
         )
       )
+    ),
+    collabOverflowOpen && React.createElement(
+      "div",
+      {
+        className: "collab-overflow-popover",
+        style: { top: collabOverflowAnchor.top + 'px', right: collabOverflowAnchor.right + 'px' },
+        onMouseEnter: cancelOverflowClose,
+        onMouseLeave: scheduleOverflowClose
+      },
+      collabOverflowIds.map(function (cid) {
+        var info = collabPeerInfo(cid);
+        return React.createElement(
+          "button",
+          {
+            key: cid,
+            type: "button",
+            className: "collab-overflow-row" + (info.following ? " is-following" : ""),
+            onClick: function () { toggleFollow(cid); }
+          },
+          React.createElement("span", { className: "collab-overflow-swatch", style: { background: info.colour } }),
+          React.createElement("span", { className: "collab-overflow-name" }, info.name),
+          React.createElement("span", { className: "collab-overflow-file" }, info.file ? info.file.split('/').pop() : 'No file open'),
+          info.following && React.createElement("i", { className: "fas fa-eye collab-overflow-eye" })
+        );
+      })
     ),
     collabHover && (function () {
       var isMe = collabHover.cid === '__me__';
@@ -5324,7 +5378,7 @@ var MbeditorApp = function MbeditorApp() {
             "button",
             {
               type: "button",
-              className: "ide-activity-btn" + (activeTab && activeTab.isModelGraph ? ' active' : ''),
+              className: "ide-activity-btn" + (showModelGraphView ? ' active' : ''),
               title: "Model graph",
               onClick: function() { handleActivityBarClick('models'); }
             },
@@ -5346,8 +5400,8 @@ var MbeditorApp = function MbeditorApp() {
           )
         )
       ),
-      /* Panel content — shown when not collapsed and not in zen mode */
-      !sidebarCollapsed && !zenMode && React.createElement(
+      /* Panel content — shown when not collapsed, not in zen mode, and not showing the model graph */
+      !sidebarCollapsed && !zenMode && !showModelGraphView && React.createElement(
         "div",
         { className: "ide-sidebar", style: { width: sidebarWidth + "px" } },
         React.createElement("div", { className: "sidebar-panel-title" },
@@ -5512,10 +5566,7 @@ var MbeditorApp = function MbeditorApp() {
               CollapsibleSection,
               {
                 title: projectSectionTitle,
-                isCollapsed: collapsedSections.projects,
-                onToggle: function (isCollapsed) {
-                  return handleToggleSection('projects', isCollapsed);
-              },
+                collapsible: false,
               actions: React.createElement(
                 SectionActionGroup,
                 { ariaLabel: "Project actions" },
@@ -5929,22 +5980,30 @@ var MbeditorApp = function MbeditorApp() {
       ),
       // Collapsed: the same gutter is a handle. Drag it right and the
       // explorer snaps open; there is no intermediate width to preview.
-      sidebarCollapsed && !zenMode && React.createElement((window.Gutter || Gutter), {
+      sidebarCollapsed && !zenMode && !showModelGraphView && React.createElement((window.Gutter || Gutter), {
         orientation: 'vertical',
         label: "Drag right to open the explorer",
         onSnap: function () { setSidebarCollapsed(false); }
       }),
       /* Sidebar resize gutter — only when panel is open */
-      !sidebarCollapsed && !zenMode && React.createElement((window.Gutter || Gutter), {
+      !sidebarCollapsed && !zenMode && !showModelGraphView && React.createElement((window.Gutter || Gutter), {
         orientation: 'vertical',
         label: "Resize explorer panel",
         active: activeResizeMode === 'sidebar',
         onDragStart: startSidebarResize
       }),
-      // Column wrapping the split panes and the bottom drawers. ide-main is a
-      // row of panes, so the drawers need a vertical parent to push against;
-      // as absolute overlays they covered the editor instead.
-      React.createElement(
+      // The graph replaces the whole column — no tab bar, no panes, no drawers —
+      // rather than living inside ide-main, so it gets the full center width.
+      showModelGraphView ? React.createElement(
+        "div",
+        { className: "ide-model-graph-view" },
+        React.createElement(ModelGraph, {
+          graph: modelGraph,
+          loading: modelGraphLoading,
+          onRefresh: function () { loadModelGraph(true); },
+          onOpenModel: function (model) { openSchemaModal(model.name); }
+        })
+      ) : React.createElement(
       "div",
       { className: "ide-center-column" },
       React.createElement(
@@ -6041,13 +6100,6 @@ var MbeditorApp = function MbeditorApp() {
                 content = React.createElement(window.CommitGraph || CommitGraph, {
                   commits: pActiveTab.commits || [],
                   onSelectCommit: handleSelectCommit
-                });
-              } else if (pActiveTab.isModelGraph) {
-                content = React.createElement(ModelGraph, {
-                  graph: modelGraph,
-                  loading: modelGraphLoading,
-                  onRefresh: function () { loadModelGraph(true); },
-                  onOpenModel: function (model) { openSchemaModal(model.name); }
                 });
               } else if (pActiveTab.isChangelog) {
                 content = React.createElement(ChangelogView, {
@@ -6297,20 +6349,20 @@ var MbeditorApp = function MbeditorApp() {
       ),
 
       // Right-side Git panel (children of ide-body, alongside sidebar and ide-main)
-      !showGitPanel && !zenMode && React.createElement((window.Gutter || Gutter), {
+      !showGitPanel && !zenMode && !showModelGraphView && React.createElement((window.Gutter || Gutter), {
         orientation: 'vertical',
         label: "Drag left to open the git panel",
         snapDirection: -1,
         onSnap: function () { setShowGitPanel(true); }
       }),
-      showGitPanel && !zenMode && React.createElement((window.Gutter || Gutter), {
+      showGitPanel && !zenMode && !showModelGraphView && React.createElement((window.Gutter || Gutter), {
         orientation: 'vertical',
         className: 'ide-gutter-gitpanel',
         label: "Resize git panel",
         active: activeResizeMode === 'gitpanel',
         onDragStart: startGitPanelResize
       }),
-      showGitPanel && !zenMode && React.createElement(
+      showGitPanel && !zenMode && !showModelGraphView && React.createElement(
         "div",
         { className: "ide-git-right-panel", style: { width: gitPanelWidth + "px" } },
         React.createElement(window.GitPanel || GitPanel, {
@@ -6327,7 +6379,7 @@ var MbeditorApp = function MbeditorApp() {
       ),
     ),
     // ponytail: opens on release, no live preview; track the drag if that grates.
-    !showProblemsPanel && !zenMode && React.createElement((window.Gutter || Gutter), {
+    !showProblemsPanel && !zenMode && !showModelGraphView && React.createElement((window.Gutter || Gutter), {
       orientation: 'horizontal',
       className: 'ide-gutter-drawer-open',
       label: "Drag up to open Problems",
@@ -6374,6 +6426,15 @@ var MbeditorApp = function MbeditorApp() {
         React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.errors),
         React.createElement("i", { className: "fas fa-exclamation-triangle statusbar-problems-warning-icon" }),
         React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.warnings)
+      ),
+      migrationsPending && React.createElement(
+        "div",
+        {
+          className: "statusbar-migration",
+          title: "Pending migrations \u2014 run `rails db:migrate`. Editing still works in the meantime."
+        },
+        React.createElement("i", { className: "fas fa-database" }),
+        " Migrations pending"
       ),
       !serverOnline && (function () {
         var dirtyCount = state.panes.reduce(function (acc, p) {

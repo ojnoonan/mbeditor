@@ -527,12 +527,8 @@ var ModelGraph = (function () {
     var searchOpen = _searchOpen[0], setSearchOpen = _searchOpen[1];
     var _highlight = React.useState(0);
     var highlight = _highlight[0], setHighlight = _highlight[1];
-    var _focused = React.useState(null);
-    var focused = _focused[0], setFocused = _focused[1];
     var _hovered = React.useState(null);
     var hovered = _hovered[0], setHovered = _hovered[1];
-    var _pointer = React.useState({ x: 0, y: 0 });
-    var pointer = _pointer[0], setPointer = _pointer[1];
     var dragRef = React.useRef(null);
     var svgRef = React.useRef(null);
 
@@ -586,17 +582,56 @@ var ModelGraph = (function () {
       if (sceneRef.current) sceneRef.current.classList.remove('mg-focus-mode');
     }, []);
 
+    // The edge <g> elements touching each model, indexed once per scene
+    // instead of a querySelectorAll('[data-from=...],[data-to=...]') on every
+    // mouseenter — that scan walked the whole scene continuously as the
+    // pointer crossed a dense diagram. sceneChildrenRef is kept current just
+    // below sceneChildren's own memo, so a stale index is rebuilt exactly
+    // when the scene actually does.
+    var sceneChildrenRef = React.useRef(null);
+    var edgeIndexRef = React.useRef({ scene: null, map: {} });
+    var edgesFor = React.useCallback(function (name) {
+      var scene = sceneRef.current;
+      if (!scene) return [];
+      if (edgeIndexRef.current.scene !== sceneChildrenRef.current) {
+        var map = {};
+        Array.prototype.forEach.call(scene.querySelectorAll('[data-from]'), function (el) {
+          var from = el.getAttribute('data-from'), to = el.getAttribute('data-to');
+          (map[from] = map[from] || []).push(el);
+          if (to !== from) (map[to] = map[to] || []).push(el);
+        });
+        edgeIndexRef.current = { scene: sceneChildrenRef.current, map: map };
+      }
+      return edgeIndexRef.current.map[name] || [];
+    }, []);
+
+    // getBoundingClientRect forces a synchronous layout, and hovering has just
+    // written classes onto a <g> holding thousands of elements, so the layout
+    // it forces is the whole scene: measured at 10 ms a tick on a 420-model
+    // graph, against 0.9 ms when the style is clean. The pane's own rect moves
+    // only when the window or the panel layout does, so read it once a frame.
+    var rectRef = React.useRef(null);
+    var paneRect = React.useCallback(function () {
+      var el = svgRef.current;
+      if (!el) return null;
+      if (!rectRef.current) {
+        rectRef.current = el.getBoundingClientRect();
+        window.requestAnimationFrame(function () { rectRef.current = null; });
+      }
+      return rectRef.current;
+    }, []);
+
     var moveHoverCard = React.useCallback(function (ev) {
       var card = hoverCardRef.current;
       var el = svgRef.current;
       if (!card || !el) return;
-      var rect = el.getBoundingClientRect();
+      var rect = paneRect();
       var x = ev.clientX - rect.left;
       var y = ev.clientY - rect.top;
       // Flip before the card would run off the pane rather than after.
       card.style.left = (x > rect.width - 300 ? x - 290 : x + 18) + 'px';
       card.style.top = Math.min(y + 18, Math.max(0, rect.height - 240)) + 'px';
-    }, []);
+    }, [paneRect]);
 
     var enterModel = React.useCallback(function (name, ev) {
       if (dragRef.current) return;   // panning, not inspecting
@@ -604,18 +639,37 @@ var ModelGraph = (function () {
       var scene = sceneRef.current;
       if (scene) {
         scene.classList.add('mg-focus-mode');
-        var sel = '[data-from="' + name + '"],[data-to="' + name + '"]';
-        litRef.current = Array.prototype.slice.call(scene.querySelectorAll(sel));
+        litRef.current = edgesFor(name);
         litRef.current.forEach(function (el) { el.classList.add('mg-lit'); });
       }
       setModelHover(name);
       moveHoverCard(ev);
-    }, [clearLit, moveHoverCard]);
+    }, [clearLit, moveHoverCard, edgesFor]);
 
     var leaveModel = React.useCallback(function () {
       clearLit();
       setModelHover(null);
     }, [clearLit]);
+
+    // Position is written straight onto the tooltip's DOM node, the way
+    // moveHoverCard does for the model card — routing every mousemove over an
+    // edge through React state re-ran the whole component body per pointer
+    // tick. edgePosRef holds the latest point for the tooltip's own initial
+    // inline style (read once on the render its `hovered` turns true), without
+    // itself triggering a render.
+    var edgeTooltipRef = React.useRef(null);
+    var edgePosRef = React.useRef({ x: 0, y: 0 });
+    var moveEdgeTooltip = React.useCallback(function (ev) {
+      var rect = paneRect();
+      if (!rect) return;
+      var x = ev.clientX - rect.left;
+      var y = ev.clientY - rect.top;
+      edgePosRef.current = { x: x, y: y };
+      var card = edgeTooltipRef.current;
+      if (!card) return;
+      card.style.left = (x > rect.width - 260 ? x - 240 : x + 14) + 'px';
+      card.style.top = (y + 14) + 'px';
+    }, [paneRect]);
 
     // Frame the whole graph on load. Without this the view starts at the
     // top-left of a canvas much larger than the pane and the diagram looks
@@ -652,6 +706,19 @@ var ModelGraph = (function () {
 
     React.useEffect(function () { fitToPane(); }, [fitToPane]);
 
+    // `focused` used to be React state read inside sceneChildren's className,
+    // but centring a model is also how a click and a search pick land, and
+    // that made every centre rebuild all ~3,500 SVG elements and their event
+    // closures. Applied to the mounted DOM instead, the same way
+    // enterModel/litRef apply the hover highlight above.
+    var focusedRef = React.useRef(null);
+    var applyFocus = React.useCallback(function (name) {
+      var scene = sceneRef.current;
+      if (focusedRef.current) focusedRef.current.classList.remove('mg-focused');
+      focusedRef.current = scene ? scene.querySelector('[data-model="' + name + '"]') : null;
+      if (focusedRef.current) focusedRef.current.classList.add('mg-focused');
+    }, []);
+
     // Bring one model to the middle of the pane at the current zoom, and mark
     // it so it's findable in a dense graph once it gets there.
     var centreOn = React.useCallback(function (name) {
@@ -660,7 +727,7 @@ var ModelGraph = (function () {
       if (!el || !pos) return;
       var rect = el.getBoundingClientRect();
       var h = nodeHeight(pos.model);
-      setFocused(name);
+      applyFocus(name);
       setView(function (v) {
         // Close half the distance to actual size, so a model found while
         // fitted (often ~0.3) lands readable. Never zooms out: if you were
@@ -672,7 +739,7 @@ var ModelGraph = (function () {
           y: rect.height / 2 - (pos.y + h / 2) * k
         };
       });
-    }, [placed]);
+    }, [placed, applyFocus]);
 
     // Same mounting problem as the wheel listener: the fit effect can run
     // before the SVG exists and not again afterwards. Kept current so the
@@ -707,22 +774,6 @@ var ModelGraph = (function () {
       svgRef.current = el;
       if (!el) return;
 
-      // getBoundingClientRect forces a synchronous layout, and we had just
-      // written a new transform onto a <g> holding thousands of elements — so
-      // reading it per wheel tick made the browser re-lay-out the entire scene
-      // before the handler could continue. Measured at 27 ms a tick on a
-      // 300-model graph. The pane's own rect only changes when the window or
-      // the panel layout does, so cache it and refresh once per frame.
-      var rectRef = { current: null };
-      var invalidateRect = function () { rectRef.current = null; };
-      var paneRect = function () {
-        if (!rectRef.current) {
-          rectRef.current = el.getBoundingClientRect();
-          window.requestAnimationFrame(invalidateRect);
-        }
-        return rectRef.current;
-      };
-
       var onWheel = function (e) {
         e.preventDefault();
         var rect = paneRect();
@@ -739,7 +790,7 @@ var ModelGraph = (function () {
 
       // After layout, so the pane has a measurable size to fit into.
       window.requestAnimationFrame(function () { fitRef.current(); });
-    }, []);
+    }, [paneRect]);
 
     // Memoised so hovering a model does not rebuild every box and edge.
     // The highlight itself is applied by toggling DOM classes; only the
@@ -790,10 +841,7 @@ var ModelGraph = (function () {
                   if (line) line.classList.add('mg-edge-hovered');
                   setHovered({ index: i, edge: e });
                 },
-                onMouseMove: function (ev) {
-                  var rect = svgRef.current.getBoundingClientRect();
-                  setPointer({ x: ev.clientX - rect.left, y: ev.clientY - rect.top });
-                },
+                onMouseMove: moveEdgeTooltip,
                 onMouseLeave: function (ev) {
                   var line = ev.currentTarget.nextElementSibling;
                   if (line) line.classList.remove('mg-edge-hovered');
@@ -818,7 +866,8 @@ var ModelGraph = (function () {
               'g',
               {
                 key: m.name,
-                className: 'mg-node' + (focused === m.name ? ' mg-focused' : ''),
+                'data-model': m.name,
+                className: 'mg-node',
                 transform: 'translate(' + pos.x + ',' + pos.y + ')',
                 onMouseEnter: function (ev) { enterModel(m.name, ev); },
                 onMouseMove: function (ev) { moveHoverCard(ev); },
@@ -887,7 +936,12 @@ var ModelGraph = (function () {
             );
           })
       ];
-    }, [placed, graph, focused]);
+    }, [placed, graph]);
+    // Kept current so edgesFor (declared earlier, used from enterModel) can
+    // detect a scene rebuild without itself listing sceneChildren as a
+    // dependency — that would rebuild enterModel, and everything closing
+    // over it, on every scene rebuild too.
+    sceneChildrenRef.current = sceneChildren;
 
     if (loading) {
       return React.createElement('div', { className: 'ide-model-graph-empty' }, 'Building the model graph…');
@@ -1058,12 +1112,15 @@ var ModelGraph = (function () {
       hovered && React.createElement(
         'div',
         {
+          ref: edgeTooltipRef,
           className: 'mg-tooltip',
           // Offset from the cursor, and flipped left near the right edge so
-          // the tooltip never runs off the pane.
+          // the tooltip never runs off the pane. Only the initial placement is
+          // computed here — moveEdgeTooltip writes the DOM node directly as
+          // the pointer moves, so this style is live for one frame at most.
           style: {
-            left: pointer.x + (svgRef.current && pointer.x > svgRef.current.clientWidth - 260 ? -240 : 14) + 'px',
-            top: (pointer.y + 14) + 'px'
+            left: edgePosRef.current.x + (svgRef.current && edgePosRef.current.x > svgRef.current.clientWidth - 260 ? -240 : 14) + 'px',
+            top: (edgePosRef.current.y + 14) + 'px'
           }
         },
         React.createElement('div', { className: 'mg-tooltip-title' },

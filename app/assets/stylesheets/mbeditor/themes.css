@@ -22,6 +22,11 @@
   /* Chrome foreground: the title bar and status bar are panel-coloured in
      Dark Modern, not accent-filled, so this is a text colour, not "on blue". */
   --ide-accent-text:    #cccccc;
+  /* Status bar while migrations are pending. Both halves are per-theme:
+   * --ide-warning is authored as a foreground colour, so several themes
+   * pick a dark ochre that is unreadable as a bar background. */
+  --ide-statusbar-warn-bg:   #cca700;
+  --ide-statusbar-warn-text: #1e1e1e;
 
   /* Backgrounds */
   --ide-bg:             #1f1f1f;
@@ -63,6 +68,8 @@
   color-scheme: light;
   --ide-accent-text:    #3b3b3b;
   --status-hover-bg:    rgba(0,0,0,0.08);
+  --ide-statusbar-warn-bg:   #e9a700;
+  --ide-statusbar-warn-text: #1f1f1f;
   --ide-bg:             #ffffff;
   --ide-panel-bg:       #f8f8f8;
   --ide-panel-bg-alt:   #f0f0f0;
@@ -92,6 +99,8 @@
 [data-theme="hc-black"] {
   color-scheme: dark;
   --ide-accent-text:    #000000;
+  --ide-statusbar-warn-bg:   #ffd700;
+  --ide-statusbar-warn-text: #000000;
   --status-hover-bg:    rgba(255,255,255,0.12);
   --ide-bg:             #000000;
   --ide-panel-bg:       #0a0a0a;
@@ -122,6 +131,8 @@
 [data-theme="hc-light"] {
   color-scheme: light;
   --ide-accent-text:    #ffffff;
+  --ide-statusbar-warn-bg:   #7d4f01;
+  --ide-statusbar-warn-text: #ffffff;
   --status-hover-bg:    rgba(0,0,0,0.06);
   --ide-bg:             #ffffff;
   --ide-panel-bg:       #f8f8f8;
@@ -152,6 +163,8 @@
 [data-theme="dracula"] {
   color-scheme: dark;
   --ide-accent-text:    #ffffff;
+  --ide-statusbar-warn-bg:   #ffb86c;
+  --ide-statusbar-warn-text: #282a36;
   --status-hover-bg:    rgba(255,255,255,0.08);
   --ide-bg:             #282a36;
   --ide-panel-bg:       #21222c;
@@ -182,6 +195,8 @@
 [data-theme="night-owl"] {
   color-scheme: dark;
   --ide-accent-text:    #ffffff;
+  --ide-statusbar-warn-bg:   #ffcb8b;
+  --ide-statusbar-warn-text: #011627;
   --status-hover-bg:    rgba(255,255,255,0.08);
   --ide-bg:             #011627;
   --ide-panel-bg:       #01111d;
@@ -212,6 +227,8 @@
 [data-theme="monokai"] {
   color-scheme: dark;
   --ide-accent-text:    #000000;
+  --ide-statusbar-warn-bg:   #fd971f;
+  --ide-statusbar-warn-text: #272822;
   --status-hover-bg:    rgba(255,255,255,0.08);
   --ide-bg:             #272822;
   --ide-panel-bg:       #1e1f1c;
@@ -242,6 +259,8 @@
 [data-theme="nord"] {
   color-scheme: dark;
   --ide-accent-text:    #000000;
+  --ide-statusbar-warn-bg:   #ebcb8b;
+  --ide-statusbar-warn-text: #2e3440;
   --status-hover-bg:    rgba(255,255,255,0.08);
   --ide-bg:             #2e3440;
   --ide-panel-bg:       #252a34;
@@ -272,6 +291,8 @@
 [data-theme="github-dark"] {
   color-scheme: dark;
   --ide-accent-text:    #ffffff;
+  --ide-statusbar-warn-bg:   #d29922;
+  --ide-statusbar-warn-text: #0d1117;
   --status-hover-bg:    rgba(255,255,255,0.08);
   --ide-bg:             #0d1117;
   --ide-panel-bg:       #161b22;
@@ -302,6 +323,8 @@
 [data-theme="tomorrow-night"] {
   color-scheme: dark;
   --ide-accent-text:    #ffffff;
+  --ide-statusbar-warn-bg:   #de935f;
+  --ide-statusbar-warn-text: #1d1f21;
   --status-hover-bg:    rgba(255,255,255,0.08);
   --ide-bg:             #1d1f21;
   --ide-panel-bg:       #161719;
@@ -332,6 +355,8 @@
 [data-theme="github-light"] {
   color-scheme: light;
   --ide-accent-text:    #ffffff;
+  --ide-statusbar-warn-bg:   #9a6700;
+  --ide-statusbar-warn-text: #ffffff;
   --status-hover-bg:    rgba(0,0,0,0.06);
   --ide-bg:             #ffffff;
   --ide-panel-bg:       #f6f8fa;

@@ -140,56 +140,47 @@ axios.interceptors.response.use(function (response) {
 //
 // The editor keeps working while migrations are pending — the server-side
 // bypass (Mbeditor::Rack::PendingMigrationBypass) is what makes that true — so
-// this is purely informational now. It is driven by a response *header* rather
-// than by a failed request, for two reasons: after the bypass there is no
-// failed request left to hang it on, and a header rides every response, so a
-// migration created mid-session raises the banner too, and running the
-// migration clears it without a reload.
+// this is purely informational. It is driven by a response *header* rather than
+// by a failed request, for two reasons: after the bypass there is no failed
+// request left to hang it on, and a header rides every response, so a migration
+// created mid-session raises the warning too, and running the migration clears
+// it without a reload.
 //
-// The old failed-response trigger is kept alongside: a PendingMigrationError
-// raised somewhere the bypass does not cover still shows the banner.
-var MIGRATION_BANNER_ID = 'mbeditor-migration-banner';
+// Only an explicit "1"/"0" counts. A response with no header at all is no
+// evidence either way: an error page rendered by ActionDispatch::DebugExceptions
+// never carries one (that middleware sits above the bypass), and treating its
+// absence as "cleared" made the warning flicker off and back on.
+//
+// The state lives as a class on <body> so the CSS can recolour the status bar
+// without React; the event is what the status bar's warning listens to.
+var MIGRATION_PENDING_CLASS = 'mbeditor-migration-pending';
+var MIGRATION_PENDING_EVENT = 'mbeditor:pending-migration';
 
-function _showMigrationBanner() {
-  if (!document.body || document.getElementById(MIGRATION_BANNER_ID)) return;
-  var banner = document.createElement('div');
-  banner.id = MIGRATION_BANNER_ID;
-  banner.style.cssText = [
-    'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:99999',
-    'background:#f1c40f', 'color:#1e1e1e', 'font-family:system-ui,sans-serif',
-    'font-size:13px', 'padding:8px 16px', 'display:flex',
-    'align-items:center', 'gap:12px'
-  ].join(';');
-  banner.innerHTML =
-        '<strong>Pending migrations detected.</strong>' +
-        ' Run <code style="background:rgba(0,0,0,.15);padding:1px 5px;border-radius:3px">rails db:migrate</code>' +
-        ' then reload — editing still works in the meantime.' +
-        '<button onclick="this.parentNode.remove()" style="margin-left:auto;background:none;border:none;' +
-        'cursor:pointer;font-size:16px;line-height:1;padding:0 4px" aria-label="Dismiss">\u00d7</button>';
-  document.body.prepend(banner);
+function _setPendingMigration(pending) {
+  if (!document.body) return;
+  if (document.body.classList.contains(MIGRATION_PENDING_CLASS) === pending) return;
+  document.body.classList.toggle(MIGRATION_PENDING_CLASS, pending);
+  window.dispatchEvent(new CustomEvent(MIGRATION_PENDING_EVENT, { detail: pending }));
 }
 
-function _hideMigrationBanner() {
-  var existing = document.getElementById(MIGRATION_BANNER_ID);
-  if (existing) existing.remove();
-}
-
-// Mirrors Mbeditor::Rack::PendingMigrationBypass::PENDING_HEADER. Absent means
-// the check passed, so the banner is cleared as soon as the migration is run —
-// no reload needed.
+// Mirrors Mbeditor::Rack::PendingMigrationBypass::PENDING_HEADER.
 function _notePendingMigrationHeader(response) {
   if (!response || !response.headers) return;
-  if (response.headers['x-mbeditor-pending-migration']) _showMigrationBanner();
-  else _hideMigrationBanner();
+  var value = response.headers['x-mbeditor-pending-migration'];
+  if (value === undefined || value === null || value === '') return;
+  _setPendingMigration(value !== '0');
 }
 
 axios.interceptors.response.use(function (response) {
   _notePendingMigrationHeader(response);
   return response;
 }, function (error) {
+  // A PendingMigrationError raised somewhere the bypass does not cover.
   if (error && error.response && error.response.data &&
       error.response.data.pending_migration_error) {
-    _showMigrationBanner();
+    _setPendingMigration(true);
+  } else if (error && error.response) {
+    _notePendingMigrationHeader(error.response);
   }
   return Promise.reject(error);
 });

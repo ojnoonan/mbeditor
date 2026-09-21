@@ -16,6 +16,10 @@ var CollapsibleSection = function CollapsibleSection(_ref) {
   var icon = _ref$icon === undefined ? null : _ref$icon;
   var _ref$actions = _ref.actions;
   var actions = _ref$actions === undefined ? null : _ref$actions;
+  // A section with nowhere to collapse to. The file tree fills the sidebar and
+  // collapsing it leaves an empty panel, so it gets no chevron and no click.
+  var _ref$collapsible = _ref.collapsible;
+  var collapsible = _ref$collapsible === undefined ? true : _ref$collapsible;
 
   var _useState = useState(isCollapsed);
 
@@ -42,8 +46,11 @@ var CollapsibleSection = function CollapsibleSection(_ref) {
     { className: "collapsible-section" },
     React.createElement(
       "div",
-      { className: "collapsible-header", onClick: toggleCollapsed },
-      React.createElement("i", { className: "collapsible-toggle fas fa-chevron-" + (localCollapsed ? 'right' : 'down') }),
+      {
+        className: "collapsible-header" + (collapsible ? "" : " collapsible-header-static"),
+        onClick: collapsible ? toggleCollapsed : undefined
+      },
+      collapsible && React.createElement("i", { className: "collapsible-toggle fas fa-chevron-" + (localCollapsed ? 'right' : 'down') }),
       icon && React.createElement("i", { className: "collapsible-icon " + icon }),
       React.createElement(
         "span",
@@ -60,7 +67,7 @@ var CollapsibleSection = function CollapsibleSection(_ref) {
         actions
       )
     ),
-    !localCollapsed && React.createElement(
+    (!collapsible || !localCollapsed) && React.createElement(
       "div",
       { className: "collapsible-content" },
       children
