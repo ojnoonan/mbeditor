@@ -2289,6 +2289,10 @@ body.mbeditor-migration-pending .ide-statusbar {
   background: var(--ide-hover-bg);
 }
 
+/* Nothing to click, so nothing that looks clickable. */
+.collapsible-header-static { cursor: default; }
+.collapsible-header-static:hover { background: none; }
+
 
 .collapsible-toggle {
   font-size: 8px;

@@ -5495,10 +5495,7 @@ var MbeditorApp = function MbeditorApp() {
               CollapsibleSection,
               {
                 title: projectSectionTitle,
-                isCollapsed: collapsedSections.projects,
-                onToggle: function (isCollapsed) {
-                  return handleToggleSection('projects', isCollapsed);
-              },
+                collapsible: false,
               actions: React.createElement(
                 SectionActionGroup,
                 { ariaLabel: "Project actions" },
