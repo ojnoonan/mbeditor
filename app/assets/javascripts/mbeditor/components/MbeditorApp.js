@@ -1699,6 +1699,7 @@ var MbeditorApp = function MbeditorApp() {
       if (e.key === 'Escape') {
         setContextMenu(null);
         setShowHelp(false);
+        setCollabOverflowOpen(false);
       }
     };
 
@@ -3010,14 +3011,13 @@ var MbeditorApp = function MbeditorApp() {
 
   var collabPeerIds = Object.keys(collabRoster);
 
-  // A labelled peer chip costs ~110px (name + filename), and the titlebar button
-  // cluster does not shrink or wrap: past three peers it squeezes the search pill
-  // to its floor and then pushes Help / Install off the right edge. Drop to bare
-  // colour dots instead of hiding peers behind a "+N more" summary — a dot is
-  // ~20px, so ten peers still fit, every chip stays clickable to follow, and the
-  // solid/hollow ring keeps working. The name and file live in the tooltip.
-  var COLLAB_LABEL_LIMIT = 3;
-  var collabPeerLabels = !toolbarIconOnly && collabPeerIds.length <= COLLAB_LABEL_LIMIT;
+  // One button per peer stopped working past ~4 people: the titlebar cluster
+  // does not shrink or wrap, so it squeezed the search pill to its floor and
+  // pushed Help / Install off the right edge. Fixed-width stack instead: up to
+  // three overlapping avatars, the rest collapse into one "+N" with a popover.
+  var COLLAB_AVATAR_LIMIT = 3;
+  var collabAvatarIds = collabPeerIds.slice(0, COLLAB_AVATAR_LIMIT);
+  var collabOverflowIds = collabPeerIds.slice(COLLAB_AVATAR_LIMIT);
 
   // Colour is minted from a hash before any peer is known, so it has to be
   // reconciled against the roster once one exists. Runs on every roster change;
@@ -3075,6 +3075,48 @@ var MbeditorApp = function MbeditorApp() {
     if (activeTab && activeTab.path === followedFile) return;
     handleSelectFile(followedFile, followedFile.split('/').pop());
   }, [followedClientId, followedFile]);
+
+  // Shared by the avatar stack and the overflow popover so "which peer, what
+  // file, are we following them" is computed once per id instead of twice.
+  var collabPeerInfo = function (cid) {
+    var peer = collabRoster[cid];
+    var file = peer.current_file;
+    return {
+      name: peer.name || 'Anonymous',
+      colour: peer.colour || '#888888',
+      file: file,
+      following: followedClientId === cid,
+      elsewhere: file !== presenceFile
+    };
+  };
+
+  // The "+N" overflow popover. A plain onMouseLeave that closes immediately
+  // makes it uncrossable — the pointer has to travel off the button and onto
+  // the popover — so the close is delayed and cancelled by either one's
+  // onMouseEnter. Click still toggles it directly, which is what makes it
+  // reachable without a mouse at all.
+  // The anchor, not a boolean: the popover renders at the root next to the
+  // hovercard, because an absolutely-positioned child of the title bar is
+  // painted under the editor whatever its z-index.
+  var _useStateOverflow = useState(null);
+  var collabOverflowAnchor = _useStateOverflow[0];
+  var setCollabOverflowAnchor = _useStateOverflow[1];
+  var collabOverflowOpen = !!collabOverflowAnchor;
+  var anchorFrom = function (el) {
+    var r = el.getBoundingClientRect();
+    return { top: r.bottom + 4, right: window.innerWidth - r.right };
+  };
+  var collabOverflowCloseTimerRef = useRef(null);
+  var cancelOverflowClose = function () {
+    if (collabOverflowCloseTimerRef.current) {
+      clearTimeout(collabOverflowCloseTimerRef.current);
+      collabOverflowCloseTimerRef.current = null;
+    }
+  };
+  var scheduleOverflowClose = function () {
+    cancelOverflowClose();
+    collabOverflowCloseTimerRef.current = setTimeout(function () { setCollabOverflowAnchor(null); }, 250);
+  };
 
   // Phase 7: Per-file last-commit info shown in the status bar
   var _useState31 = useState(null);
@@ -5098,45 +5140,46 @@ var MbeditorApp = function MbeditorApp() {
           React.Fragment,
           null,
           React.createElement("div", { className: "statusbar-sep" }),
-          collabPeerIds.map(function (cid) {
-            var peer = collabRoster[cid];
-            var file = peer.current_file;
-            var name = peer.name || 'Anonymous';
-            var colour = peer.colour || '#888888';
-            var following = followedClientId === cid;
-            // Solid dot: they are in the file you are looking at, so their caret
-            // is on screen. Hollow ring: they are somewhere else and there is
-            // nothing to see — without this the chip looked identical either way
-            // and a peer's caret just vanished with no explanation.
-            var elsewhere = file !== presenceFile;
-            return React.createElement(
-              "button",
-              {
-                key: cid,
-                type: "button",
-                className: "statusbar-btn",
-                style: following
-                  ? { background: 'color-mix(in srgb, ' + colour + ' 28%, transparent)' }
-                  : undefined,
-                onMouseEnter: function (e) { openCollabHover(cid, e); },
-                onMouseLeave: function () { setCollabHover(null); },
-                onClick: function () { toggleFollow(cid); }
-              },
-              React.createElement("i", {
-                className: (following ? "fas fa-eye" : (elsewhere ? "far fa-circle" : "fas fa-circle")) +
-                  " collab-pulse",
-                style: { color: colour, fontSize: "0.7em", marginRight: "2px" }
-              }),
-              collabPeerLabels && (" " + name),
-              // Where they went, when they are not where you are. Basename only —
-              // the chip has ~110px to spend and the full path is in the tooltip.
-              collabPeerLabels && elsewhere && file && React.createElement(
-                "span",
-                { style: { opacity: 0.65, marginLeft: "4px" } },
-                file.split('/').pop()
+          React.createElement(
+            "div",
+            { className: "collab-avatar-stack" },
+            collabAvatarIds.map(function (cid) {
+              var info = collabPeerInfo(cid);
+              return React.createElement(
+                "button",
+                {
+                  key: cid,
+                  type: "button",
+                  className: "collab-avatar" +
+                    (info.following ? " collab-avatar-following" : "") +
+                    (info.elsewhere ? " collab-avatar-elsewhere" : ""),
+                  style: { background: info.colour },
+                  onMouseEnter: function (e) { openCollabHover(cid, e); },
+                  onMouseLeave: function () { setCollabHover(null); },
+                  onClick: function () { toggleFollow(cid); }
+                },
+                info.name.charAt(0).toUpperCase()
+              );
+            }),
+            collabOverflowIds.length > 0 && React.createElement(
+              "div",
+              { className: "collab-avatar-overflow" },
+              React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className: "collab-avatar collab-avatar-more",
+                  onMouseEnter: function (e) { cancelOverflowClose(); setCollabOverflowAnchor(anchorFrom(e.currentTarget)); },
+                  onMouseLeave: scheduleOverflowClose,
+                  onClick: function (e) {
+                    var el = e.currentTarget;
+                    setCollabOverflowAnchor(function (prev) { return prev ? null : anchorFrom(el); });
+                  }
+                },
+                "+" + collabOverflowIds.length
               )
-            );
-          })
+            )
+          )
         ),
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
@@ -5165,6 +5208,31 @@ var MbeditorApp = function MbeditorApp() {
           )
         )
       )
+    ),
+    collabOverflowOpen && React.createElement(
+      "div",
+      {
+        className: "collab-overflow-popover",
+        style: { top: collabOverflowAnchor.top + 'px', right: collabOverflowAnchor.right + 'px' },
+        onMouseEnter: cancelOverflowClose,
+        onMouseLeave: scheduleOverflowClose
+      },
+      collabOverflowIds.map(function (cid) {
+        var info = collabPeerInfo(cid);
+        return React.createElement(
+          "button",
+          {
+            key: cid,
+            type: "button",
+            className: "collab-overflow-row" + (info.following ? " is-following" : ""),
+            onClick: function () { toggleFollow(cid); }
+          },
+          React.createElement("span", { className: "collab-overflow-swatch", style: { background: info.colour } }),
+          React.createElement("span", { className: "collab-overflow-name" }, info.name),
+          React.createElement("span", { className: "collab-overflow-file" }, info.file ? info.file.split('/').pop() : 'No file open'),
+          info.following && React.createElement("i", { className: "fas fa-eye collab-overflow-eye" })
+        );
+      })
     ),
     collabHover && (function () {
       var isMe = collabHover.cid === '__me__';
