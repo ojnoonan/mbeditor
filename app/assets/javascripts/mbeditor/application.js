@@ -18,6 +18,8 @@
 //= require mbeditor/ruby_outline
 //= require mbeditor/js_outline
 //= require mbeditor/components/CollapsibleSection
+//= require mbeditor/components/SettingsModal
+//= require mbeditor/components/Gutter
 //= require mbeditor/components/ShortcutHelp
 //= require mbeditor/components/DiffViewer
 //= require mbeditor/components/CombinedDiffViewer

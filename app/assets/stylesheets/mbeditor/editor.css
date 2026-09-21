@@ -1,11 +1,22 @@
 /* ── Mini Browser Editor Global Styles ──────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
-/* Suppress all focus outlines / coloured glows inside the IDE shell */
+/* Suppress all focus outlines / coloured glows inside the IDE shell, except
+   a keyboard-only ring on interactive elements (not Monaco's own DOM, which
+   draws its own focus treatment). */
 #mbeditor-root *:focus,
 #mbeditor-root *:focus-visible {
   outline: none !important;
   box-shadow: none !important;
+}
+
+#mbeditor-root :is(button, [role="button"], [tabindex], input, select, textarea, a, .tab-item, .ide-activity-btn, .tree-item):focus-visible {
+  outline: 1px solid var(--ide-accent-fg) !important;
+  outline-offset: -1px;
+}
+
+#mbeditor-root .monaco-editor *:focus-visible {
+  outline: none !important;
 }
 
 /* ── Pico containment ──────────────────────────────────────────────────────
@@ -121,23 +132,23 @@ html, body, #mbeditor-root {
   align-items: center;
   background: var(--ide-panel-bg);
   border-bottom: 1px solid var(--ide-border);
-  height: 32px;
-  padding: 0 12px;
+  height: 35px;
+  padding: 0 8px;
   flex-shrink: 0;
   user-select: none;
 }
 
 .ide-titlebar-icon {
-  color: var(--ide-accent-fg);
+  color: var(--ide-text-muted);
   margin-right: 8px;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .ide-titlebar-title {
-  font-size: 13px;
-  color: var(--ide-text);
-  font-weight: 500;
-  /* Never wrap: the titlebar is a fixed 32px row, so a second line pushed the
+  font-size: 12px;
+  color: var(--ide-text-muted);
+  font-weight: 400;
+  /* Never wrap: the titlebar is a fixed 35px row, so a second line pushed the
      toolbar buttons out of it. */
   white-space: nowrap;
 }
@@ -157,30 +168,30 @@ html, body, #mbeditor-root {
   flex: 1 1 auto;
   justify-content: center;
   min-width: 0;
-  margin: 0 12px;
+  margin: 0 24px;
 }
 
 .ide-titlebar-search {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 75% of the slot, i.e. of the space between the title and the buttons.
-     The floor keeps the placeholder readable once 75% of a shrinking gap
-     stops being enough, and caps at 100% so it can never outgrow its slot
-     and shove the buttons off the edge. */
-  width: 75%;
-  min-width: min(220px, 100%);
-  padding: 3px 12px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px; /* pill */
-  color: #aaa;
+  /* The command centre. Capped so it stays a centred pill rather than a
+     stretched field, floored so the placeholder survives a narrow window. */
+  width: 100%;
+  max-width: 720px;
+  min-width: min(180px, 100%);
+  height: 24px;
+  padding: 0 10px;
+  background: color-mix(in srgb, var(--ide-text) 6%, transparent);
+  border: 1px solid var(--ide-border);
+  border-radius: 6px;
+  color: var(--ide-text-muted);
   font-size: 12px;
   cursor: pointer;
 }
-.ide-titlebar-search:hover { background: rgba(255, 255, 255, 0.10); }
+.ide-titlebar-search:hover { background: color-mix(in srgb, var(--ide-text) 11%, transparent); }
 .ide-titlebar-search-text {
-  opacity: 0.8;
+  opacity: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -205,8 +216,8 @@ html, body, #mbeditor-root {
 
 /* ── Activity Bar (VSCode-style, always visible) ───────── */
 .ide-activity-bar {
-  width: 40px;
-  min-width: 40px;
+  width: 48px;
+  min-width: 48px;
   flex-shrink: 0;
   background: var(--ide-panel-bg);
   border-right: 1px solid var(--ide-border);
@@ -240,68 +251,104 @@ html, body, #mbeditor-root {
    than a bare class and was silently winning. */
 .ide-activity-bar .ide-activity-btn {
   width: 100%;
-  height: 40px;
+  height: 48px;
   background: transparent;
   border: none;
   /* Always reserve the indicator's width so the glyph does not shift sideways
      by a pixel the moment a panel is opened. */
   border-left: 2px solid transparent;
   border-radius: 0;
-  color: var(--ide-text-muted);
+  /* One glyph colour throughout; opacity carries the state, which is what
+     stops the icons reading as three different palettes at once. */
+  color: var(--ide-text);
+  opacity: 0.6;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 17px;
-  transition: color 0.12s ease;
+  font-size: 16px;
+  transition: opacity 0.1s ease, border-color 0.1s ease;
 }
 
 /* The glyph carries the state, not a filled box behind it. */
 .ide-activity-bar .ide-activity-btn:hover {
   background: transparent;
-  color: var(--ide-text);
+  opacity: 1;
 }
 
 .ide-activity-bar .ide-activity-btn.active {
+  opacity: 1;
+  background: transparent;
   color: var(--ide-accent-fg);
-  border-left-color: var(--ide-accent-fg);
+  border-left-color: var(--ide-accent);
 }
 
 .sidebar-panel-title {
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ide-fg-muted, var(--ide-text-muted, #888));
-  padding: 10px 12px 6px;
+  letter-spacing: 0.06em;
+  color: var(--ide-text);
+  padding: 9px 20px 7px;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--ide-border);
 }
 
 
-.panel-divider {
-  flex-shrink: 0;
-  cursor: col-resize;
+/* ── The gutter ──────────────────────────────────────────────
+   One draggable strip, always in the gap between two cards, never inside
+   either of them. 6px in its thin dimension and transparent: wider reads as a
+   gap in the layout rather than a handle.
+
+   The three dots are a ::before on the gutter itself. A flat strip gives no
+   sign it can be dragged, and the cursor only says so once you are already on
+   it. One tiled radial gradient rather than three elements: the gutter has no
+   children and adding some would put a hit-testable node inside the drag
+   target. */
+.ide-gutter {
+  flex: 0 0 auto;
+  position: relative;
+  background: transparent;
   transition: background 0.12s ease;
 }
 
-.sidebar-divider {
-  width: 6px;
-  background: var(--ide-panel-bg-alt);
-  border-right: 1px solid var(--ide-border);
+.ide-gutter-v { width: 6px; cursor: col-resize; align-self: stretch; }
+.ide-gutter-h { height: 6px; cursor: row-resize; align-self: stretch; width: 100%; }
+
+.ide-gutter::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0.55;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
 }
 
-
-.pane-divider {
-  width: 4px;
-  background: var(--ide-panel-bg-alt);
-  z-index: 10;
+/* Dots run top-to-bottom on a vertical gutter, left-to-right on a horizontal
+   one — the same tile, rotated. */
+.ide-gutter-v::before {
+  width: 3px;
+  height: 15px;
+  background: radial-gradient(circle 1.5px at 1.5px 1.5px, var(--ide-text-muted) 99%, transparent) 0 0 / 3px 6px repeat-y;
 }
 
-.panel-divider:hover,
-.panel-divider.active {
-  background: var(--ide-accent);
+.ide-gutter-h::before {
+  width: 15px;
+  height: 3px;
+  background: radial-gradient(circle 1.5px at 1.5px 1.5px, var(--ide-text-muted) 99%, transparent) 0 0 / 6px 3px repeat-x;
 }
+
+.ide-gutter:hover { background: var(--ide-hover-bg); }
+.ide-gutter:hover::before,
+.ide-gutter.active::before { opacity: 1; }
+
+/* The split-pane gutter sits over the pane drop overlays. */
+.ide-gutter-pane { z-index: 10; }
+
+/* Modern: the seam beside the git panel card is drawn on the gutter, so the
+   panel itself carries no left border and there is only ever one line. */
+.ide-gutter-gitpanel { border-left: 1px solid var(--ide-border); }
 
 .ide-sidebar-header {
   padding: 6px 12px;
@@ -359,8 +406,8 @@ html, body, #mbeditor-root {
 
 .tree-item:hover { background: var(--ide-hover-bg); }
 .tree-item.active { background: var(--ide-active-bg); }
-.tree-item.selected { box-shadow: inset 0 0 0 1px rgba(120, 180, 224, 0.5); background: rgba(120, 180, 224, 0.08); }
-.tree-item.active.selected { box-shadow: inset 0 0 0 1px rgba(140, 210, 255, 0.8); }
+.tree-item.selected { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ide-accent) 35%, transparent); background: color-mix(in srgb, var(--ide-accent) 8%, transparent); }
+.tree-item.active.selected { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ide-accent) 55%, transparent); }
 .tree-item.drag-over { background: rgba(100, 160, 220, 0.25); box-shadow: inset 0 0 0 1px rgba(100, 160, 220, 0.7); }
 /* External file drop (import) — green, to read as "add" rather than "move" */
 .tree-item.drag-over-external { background: rgba(120, 200, 140, 0.22); box-shadow: inset 0 0 0 1px rgba(120, 200, 140, 0.75); }
@@ -463,6 +510,7 @@ html, body, #mbeditor-root {
 .tab-bar {
   display: flex;
   align-items: center;
+  padding-left: 4px;
   background: var(--ide-panel-bg);
   border-bottom: 1px solid var(--ide-border);
   height: 35px;
@@ -504,15 +552,15 @@ html, body, #mbeditor-root {
 .tab-item {
   display: flex;
   align-items: center;
-  padding: 0 12px;
-  height: 35px;
-  min-width: 100px;
-  max-width: 200px;
+  padding: 0 8px 0 10px;
+  height: 27px;
+  margin: 4px 0 4px 4px;
+  max-width: 220px;
   cursor: pointer;
-  border-right: 1px solid var(--ide-border);
-  background: var(--ide-input-bg);
+  border-radius: 6px;
+  background: transparent;
   color: var(--ide-text-muted);
-  font-size: 12px;
+  font-size: 13px;
   transition: background 0.1s, color 0.1s;
   white-space: nowrap;
   overflow: hidden;
@@ -528,30 +576,22 @@ html, body, #mbeditor-root {
   opacity: 0.55;
 }
 
-.tab-item:hover { background: var(--ide-panel-bg-alt); color: var(--ide-text); }
-.tab-item.active { background: var(--ide-bg); color: var(--ide-text); border-top: 1px solid var(--ide-accent-fg); }
+.tab-item:hover { background: var(--ide-hover-bg); color: var(--ide-text); }
+/* The active tab is a lifted rounded chip on the tab strip, not a seamless
+   join with the editor: the strip keeps its own bottom border. */
+.tab-item.active {
+  background: var(--ide-hover-bg);
+  color: var(--ide-text);
+}
 .tab-item.tab-soft .tab-item-name { font-style: italic; }
 
-.tab-has-error {
-  border-bottom: 2px solid var(--ide-danger) !important;
-}
-.tab-item.active.tab-has-error {
-  border-top: 2px solid var(--ide-danger) !important;
-  border-bottom: none !important;
-}
-
-.tab-has-warning {
-  border-bottom: 2px solid var(--ide-warning) !important;
-}
-
-.tab-item.active.tab-has-warning {
-  border-top: 2px solid var(--ide-warning) !important;
-  border-bottom: none !important;
-}
+/* Diagnostics colour the label, as VS Code does; a border would break the chip. */
+.tab-has-error .tab-item-name   { color: var(--ide-danger); }
+.tab-has-warning .tab-item-name { color: var(--ide-warning); }
 
 .tab-item-icon {
   width: 14px;
-  margin-right: 8px;
+  margin-right: 6px;
   font-size: 12px;
   text-align: center;
   flex-shrink: 0;
@@ -572,8 +612,8 @@ html, body, #mbeditor-root {
 
 .tab-close {
   margin-left: 6px;
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -582,8 +622,14 @@ html, body, #mbeditor-root {
   color: var(--ide-text-muted);
   flex-shrink: 0;
   transition: background 0.1s, color 0.1s;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.6;
 }
 
+.tab-item:hover .tab-close { opacity: 1; }
 .tab-close:hover { background: var(--ide-hover-bg); color: var(--ide-text); }
 
 .tab-welcome {
@@ -884,20 +930,21 @@ html, body, #mbeditor-root {
 .ide-statusbar {
   display: flex;
   align-items: center;
-  background: var(--ide-accent);
+  background: var(--ide-statusbar-bg);
+  border-top: 1px solid var(--ide-border);
   height: 22px;
   padding: 0;
   gap: 0;
   flex-shrink: 0;
-  font-size: 11px;
-  line-height: 1;
+  font-size: 12px;
+  line-height: 20px; /* glyphs centre in the row; line-height 1 sat them high */
   color: var(--ide-accent-text);
 }
 
 /* One cell rhythm for every item, button or not. The branch, the message and
  * the chips each carried their own padding on top of the bar's, so the gaps
  * between them were all different widths. */
-.ide-statusbar > * { padding: 0 8px; }
+.ide-statusbar > * { padding: 0 6px; }
 
 .statusbar-branch {
   display: flex;
@@ -933,13 +980,14 @@ html, body, #mbeditor-root {
  * that sat above everything and shoved the editor down the page every time it
  * appeared.
  *
- * The two accent variables are redefined rather than background and color,
+ * The bar's own variables are redefined rather than background and color,
  * because the bar and every child — buttons, separators, the hover mix — are
- * already painted from them. Setting the background alone left white-on-amber
- * text. */
+ * already painted from them. Setting the background alone left unreadable
+ * text on amber. */
 body.mbeditor-migration-pending .ide-statusbar {
-  --ide-accent:      var(--ide-statusbar-warn-bg);
-  --ide-accent-text: var(--ide-statusbar-warn-text);
+  --ide-statusbar-bg: var(--ide-statusbar-warn-bg);
+  --ide-accent-text:  var(--ide-statusbar-warn-text);
+  --ide-text-muted:   var(--ide-statusbar-warn-text);
 }
 
 .statusbar-migration {
@@ -970,15 +1018,16 @@ body.mbeditor-migration-pending .ide-statusbar {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 8px;
-  height: 22px;
+  padding: 0 6px;
+  height: 20px;
+  margin: 0 1px;
   flex-shrink: 0;
   background: transparent;
   border: none;
   color: var(--ide-accent-text);
   cursor: pointer;
-  font-size: 11px;
-  border-radius: 2px;
+  font-size: 12px;
+  border-radius: 5px;
   transition: background 0.1s;
   white-space: nowrap;
 }
@@ -988,8 +1037,8 @@ body.mbeditor-migration-pending .ide-statusbar {
 .statusbar-cursor {
   display: flex;
   align-items: center;
-  padding: 0 8px;
-  height: 22px;
+  padding: 0 6px;
+  height: 20px;
   flex-shrink: 0;
   color: var(--ide-accent-text);
   font-variant-numeric: tabular-nums;
@@ -1066,7 +1115,7 @@ body.mbeditor-migration-pending .ide-statusbar {
 .statusbar-msg.success { color: var(--ide-success); }
 
 .statusbar-version {
-  color: color-mix(in srgb, var(--ide-accent-text) 45%, transparent);
+  color: color-mix(in srgb, var(--ide-accent-text) 80%, transparent);
   font-size: 10px;
   white-space: nowrap;
   cursor: pointer;
@@ -1214,13 +1263,20 @@ body.mbeditor-migration-pending .ide-statusbar {
   background: var(--ide-input-bg);
   color: var(--ide-text);
   border: 1px solid var(--ide-border-input);
-  border-radius: 4px;
+  border-radius: 8px;
   font-size: 12px;
   outline: none;
   box-sizing: border-box;
 }
 .search-input::placeholder { color: var(--ide-text-muted); }
-.search-input:focus { border-color: var(--ide-border-input); }
+.search-input:focus { border-color: var(--ide-accent); }
+
+/* 8px on every text field, so the search box, the rename box and the import
+   destination box are one shape rather than three. Pico's own 0.25rem applies
+   to bare elements, hence the element selectors rather than a class list. */
+#mbeditor-root :is(input[type="text"], input[type="search"], input[type="number"], textarea, select) {
+  border-radius: 8px;
+}
 
 /* ── Results area wrapper (positions the loading overlay) ── */
 .search-results-area {
@@ -1925,8 +1981,9 @@ body.mbeditor-migration-pending .ide-statusbar {
 
 /* ── Right-side Git Panel ───────────────────────────────── */
 .ide-git-right-panel {
-  background: var(--ide-panel-bg-alt);
-  border-left: 1px solid var(--ide-border);
+  /* A card like the sidebar: the seam on its left is drawn by the gutter, not
+     by a border here, so the two never double up. */
+  background: var(--ide-panel-bg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1935,16 +1992,10 @@ body.mbeditor-migration-pending .ide-statusbar {
   max-width: 600px;
 }
 
-.gitpanel-divider {
-  width: 5px;
-  background: var(--ide-panel-bg-alt);
-  border-left: 1px solid var(--ide-border);
-}
-
 .ide-git-panel {
   width: 100%;
   height: 100%;
-  background: var(--ide-panel-bg-alt);
+  background: var(--ide-panel-bg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2326,7 +2377,7 @@ body.mbeditor-migration-pending .ide-statusbar {
 
 /* Open-editors panel: height is controlled by the --open-editors-height CSS variable
    set inline from React state (default 140px ≈ 5-6 items), drag-resizable via the
-   .open-editors-resize-handle strip below. */
+   gutter below it. */
 .ide-sidebar-fixed .collapsible-content {
   max-height: var(--open-editors-height, 140px);
   overflow-y: auto;
@@ -2335,17 +2386,6 @@ body.mbeditor-migration-pending .ide-statusbar {
 .ide-sidebar-fixed .collapsible-content::-webkit-scrollbar { width: 6px; }
 .ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-track { background: transparent; }
 .ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 3px; }
-
-.open-editors-resize-handle {
-  height: 4px;
-  flex-shrink: 0;
-  cursor: row-resize;
-  background: transparent;
-  transition: background 0.15s;
-}
-.open-editors-resize-handle:hover {
-  background: var(--ide-border);
-}
 
 .open-editors-group-header {
   font-size: 10px;
@@ -2363,12 +2403,45 @@ body.mbeditor-migration-pending .ide-statusbar {
   transition: opacity 0.12s ease;
 }
 
+/* VS Code-style Open Editors row: 22px, filename dims when the tab isn't the
+   active one, the directory trails it in muted small text, and the
+   move-to-group / close controls stay invisible until the row is hovered. */
+.open-editors-item { height: 22px; padding: 0 8px; }
+.open-editors-name { color: var(--ide-text-muted); }
+.open-editors-item.active .open-editors-name { color: var(--ide-text); }
+.open-editors-dir {
+  margin-left: 6px;
+  color: var(--ide-text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.open-editors-item .tab-split { opacity: 0; }
+.open-editors-item:hover .tab-split { opacity: 0.6; }
+
+/* Dot and close button share one cell: the dot shows at rest for a dirty
+   tab, the close button takes over on hover — same slot, same as VS Code's
+   tab UI, so a hover never shifts the row's width. */
+.open-editors-close-slot {
+  display: grid;
+  width: 20px;
+  height: 16px;
+}
+.open-editors-close-slot > * { grid-area: 1 / 1; place-self: center; }
+.open-editors-dirty-dot { font-size: 5px; color: #e3d286; opacity: 1; }
+.open-editors-item .tab-close { opacity: 0; }
+.open-editors-item:hover .open-editors-dirty-dot { opacity: 0; }
+.open-editors-item:hover .tab-close { opacity: 1; }
+
 .ide-icon-btn {
   min-width: 24px;
   height: 24px;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: 5px;
   color: var(--ide-text-muted);
   display: inline-flex;
   align-items: center;
@@ -2392,8 +2465,10 @@ body.mbeditor-migration-pending .ide-statusbar {
   display: flex;
   justify-content: flex-start;
   align-items: center;
-  padding: 4px 8px;
-  background: var(--ide-panel-bg);
+  padding: 0 12px;
+  height: 22px;
+  min-height: 22px;
+  background: var(--ide-bg);
   border-bottom: 1px solid var(--ide-border);
   gap: 4px;
   overflow: hidden;
@@ -2407,13 +2482,17 @@ body.mbeditor-migration-pending .ide-statusbar {
   white-space: nowrap;
   text-overflow: ellipsis;
   text-align: left;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--ide-text-muted);
   padding: 0 4px;
   cursor: default;
   user-select: text;
-  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
 }
+
+.ide-breadcrumb-dir { color: var(--ide-text-muted); }
+.ide-breadcrumb-file { color: var(--ide-text); }
+.ide-breadcrumb-file-icon { margin-right: 5px; font-size: 12px; }
+.ide-breadcrumb-sep { font-size: 9px; color: var(--ide-text-muted); margin: 0 4px; }
 
 .ide-editor-toolbar .ide-icon-btn {
   flex-shrink: 1;
@@ -2442,10 +2521,12 @@ body.mbeditor-migration-pending .ide-statusbar {
 }
 
 .ide-methods-dropdown {
-  background: #252526;
-  border: 1px solid #454545;
-  border-radius: 4px;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.55);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: color-mix(in srgb, var(--ide-panel-bg) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ide-text) 16%, transparent);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
   min-width: 200px;
   max-width: 340px;
   max-height: 320px;
@@ -2474,13 +2555,8 @@ body.mbeditor-migration-pending .ide-statusbar {
 
 .ide-methods-dropdown-item:hover,
 .ide-methods-dropdown-item:focus {
-  background: #094771;
-  color: #fff;
-}
-
-.ide-methods-dropdown-item:focus {
-  outline: 1px solid #75beff;
-  outline-offset: -1px;
+  background: var(--ide-active-bg);
+  color: var(--ide-text);
 }
 
 .ide-methods-dropdown-line {
@@ -2670,42 +2746,59 @@ body.mbeditor-migration-pending .ide-statusbar {
   }
 }
 
-/* ── Quick Open Dialog ─────────────────────────────────────── */
+/* ── Quick Open Dialog ───────────────────────────────────────
+   VS Code's command palette: a 600px sheet anchored near the top of the
+   window, not a centred modal. The rows are 22px and single-line — the path
+   sits beside the name rather than under it, which is what lets a full
+   viewport of results be scanned without scrolling. */
 .quick-open-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0,0,0,0.35);
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 12vh;
+  padding-top: 6px;
   z-index: 9999;
 }
 
+/* Always a frosted panel — VS Code's Quick Open floats over the editor, not
+   inside it, so it stays readable whether or not the glass theme is on. */
 .quick-open-box {
-  background: var(--ide-panel-bg);
-  border: 1px solid var(--ide-border-input);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: color-mix(in srgb, var(--ide-panel-bg) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ide-text) 16%, transparent);
   border-radius: 8px;
-  /* vw/vh caps keep the larger dialog inside a phone-sized viewport */
-  width: min(760px, 94vw);
-  max-height: min(620px, 72vh);
+  width: min(600px, 94vw);
+  max-height: min(440px, 72vh);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
   overflow: hidden;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .quick-open-box,
+  .ide-methods-dropdown {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--ide-panel-bg);
+  }
 }
 
 .quick-open-input-wrap {
   position: relative;
+  padding: 6px;
+  flex-shrink: 0;
 }
 
 .quick-open-input {
   background: transparent;
   border: none;
-  border-bottom: 1px solid var(--ide-border);
   color: var(--ide-text);
-  padding: 14px 40px 14px 18px;
-  font-size: 16px;
+  padding: 4px 30px 4px 8px;
+  font-size: 13px;
   outline: none;
   width: 100%;
   box-sizing: border-box;
@@ -2714,13 +2807,13 @@ body.mbeditor-migration-pending .ide-statusbar {
 
 .quick-open-clear-btn {
   position: absolute;
-  right: 8px;
+  right: 10px;
   top: 50%;
   transform: translateY(-50%);
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   border: none;
-  border-radius: 4px;
+  border-radius: 5px;
   background: transparent;
   color: var(--ide-text-muted);
   cursor: pointer;
@@ -2731,53 +2824,64 @@ body.mbeditor-migration-pending .ide-statusbar {
 
 .quick-open-clear-btn:hover {
   background: var(--ide-hover-bg);
-  color: var(--ide-text-dim);
+  color: var(--ide-text);
 }
 
 .quick-open-results {
   overflow-y: auto;
   flex: 1;
+  padding-bottom: 4px;
 }
 
 .quick-open-result {
-  padding: 8px 18px;
+  padding: 0 10px;
+  height: 22px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 14px;
-  transition: background 0.1s;
+  gap: 8px;
+  font-size: 13px;
 }
 
 .quick-open-result-icon {
   flex-shrink: 0;
-  width: 18px;
+  width: 16px;
+  font-size: 12px;
   text-align: center;
   color: #78b4e0;
 }
 
+/* Name and path on one line: the name at its natural width, the path taking
+   the slack and ellipsing. Two stacked lines would double the row height. */
 .quick-open-result-body {
   min-width: 0;
   flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
 }
 
-.quick-open-result:hover,
-.quick-open-result.selected { background: var(--ide-active-bg); }
+.quick-open-result:hover { background: var(--ide-hover-bg); }
+.quick-open-result.selected { background: var(--ide-active-bg); color: var(--ide-text); }
 
-.quick-open-result-name { color: var(--ide-text); }
+.quick-open-result-name { color: var(--ide-text); flex-shrink: 0; white-space: nowrap; }
 .quick-open-result-path { color: var(--ide-text-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .quick-open-section { margin-bottom: 4px; }
-.quick-open-section-header { padding: 8px 18px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ide-text-muted); font-weight: 600; }
+.quick-open-section-header { padding: 8px 10px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ide-text); font-weight: 700; }
+.quick-open-section-header-muted { color: var(--ide-text-muted); font-weight: 600; letter-spacing: 0.08em; }
+
+.quick-open-recent-label { font-size: 12px; color: var(--ide-text-muted); flex-shrink: 0; }
 
 .quick-open-star-btn {
   flex-shrink: 0;
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px 6px;
+  padding: 0 4px;
   color: var(--ide-text-muted);
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1;
   opacity: 0;
   transition: opacity 0.1s, color 0.1s;
@@ -2888,48 +2992,177 @@ body.mbeditor-migration-pending .ide-statusbar {
 .ide-draft-restore-btn:hover { background: var(--ide-hover-bg); }
 .ide-draft-restore-btn-primary {
   background: var(--ide-accent);
-  color: var(--ide-accent-text);
+  color: var(--ide-on-accent);
   border-color: var(--ide-accent);
 }
 .ide-draft-restore-btn-primary:hover { opacity: 0.9; }
 
 /* ── Settings panel ─────────────────────────────────────────── */
-.ide-settings-panel { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
-.ide-settings-body { padding: 8px 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; align-items: start; }
-/* Full-width rows: label sits inline next to the control */
-.ide-settings-row { display: flex; flex-direction: row; align-items: center; gap: 8px; grid-column: 1/-1; }
-/* Half-width rows: label stacked above control, fits in one grid column */
-.ide-settings-row-half { display: flex; flex-direction: column; gap: 2px; grid-column: auto; align-items: flex-start; }
-/* Full-width rows with stacked label — for wide text inputs like font family */
-.ide-settings-row-full { display: flex; flex-direction: column; gap: 2px; grid-column: 1/-1; align-items: flex-start; }
-.ide-settings-row-full .ide-settings-input-wide { width: 100%; flex: none; box-sizing: border-box; }
-/* Checkbox rows: full-width, label on left, checkbox on right */
-.ide-settings-row-check { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 6px; grid-column: 1/-1; padding: 3px 0; }
-.ide-settings-label { font-size: 11px; color: var(--ide-text-muted); white-space: nowrap; }
-/* Inputs in full-width rows stay narrow */
-.ide-settings-input { background: var(--ide-input-bg); color: var(--ide-text); border: 1px solid var(--ide-border-input); border-radius: 3px; padding: 4px 6px; font-size: 12px; width: 72px; box-sizing: border-box; }
-.ide-settings-input-wide { font-family: monospace; flex: 1; width: auto; }
-/* Selects in half-width rows use Pico styling (inherit theme vars); just cap size */
-.ide-settings-row-half select { width: 100%; }
-.ide-settings-checkbox { width: auto; cursor: pointer; flex-shrink: 0; }
-.ide-settings-reset-btn { margin-top: 4px; grid-column: 1/-1; background: var(--ide-panel-bg-alt); color: var(--ide-text-muted); border: 1px solid var(--ide-border-input); border-radius: 3px; padding: 5px 10px; font-size: 11px; cursor: pointer; align-self: flex-start; }
-.ide-settings-reset-btn:hover { background: var(--ide-border-input); color: var(--ide-text-dim); }
-.ide-settings-section-header { font-size: 10px; font-weight: 700; color: var(--ide-text-muted); text-transform: uppercase; letter-spacing: 1px; padding: 8px 0 3px; border-bottom: 1px solid var(--ide-border); margin-top: 6px; grid-column: 1/-1; }
-.ide-settings-section-header:first-child { margin-top: 0; }
-.ide-settings-row-link { grid-column: 1/-1; flex-direction: row; align-items: center; justify-content: space-between; }
-.ide-settings-config-link { background: none; border: none; color: var(--ide-accent-fg); font-size: 11px; cursor: pointer; padding: 0; display: flex; align-items: center; gap: 3px; text-decoration: underline; text-underline-offset: 2px; }
-.ide-settings-config-link:hover { color: var(--ide-accent); }
-
-/* Settings tab (pane view) */
-.ide-settings-tab-content {
+/* ══ SETTINGS MODAL ═════════════════════════════════════════════════════════
+ * VS Code-style: left nav of sections, scrolling right pane of rows.
+ * ─────────────────────────────────────────────────────────────────────────── */
+.ide-settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 9100;
   display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow-y: auto;
-  background: var(--bg-panel, var(--ide-bg));
-  color: var(--text-main, var(--ide-text));
+  align-items: center;
+  justify-content: center;
 }
 
+/* Frosted like Quick Open — it floats over the editor, not inside it. */
+.ide-settings-modal {
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: color-mix(in srgb, var(--ide-panel-bg) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ide-text) 16%, transparent);
+  border-radius: 8px;
+  width: min(900px, 90vw);
+  height: min(640px, 85vh);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  overflow: hidden;
+  color: var(--ide-text);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ide-settings-modal {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--ide-panel-bg);
+  }
+}
+
+.ide-settings-modal-header {
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--ide-border);
+}
+.ide-settings-modal-title { font-size: 13px; font-weight: 600; color: var(--ide-text); flex-shrink: 0; }
+.ide-settings-search {
+  flex: 1;
+  min-width: 0;
+  background: var(--ide-input-bg);
+  color: var(--ide-text);
+  border: 1px solid var(--ide-border-input);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  margin-bottom: 0;
+}
+.ide-settings-search::placeholder { color: var(--ide-text-muted); }
+/* Scoped under the modal: a global `button:not(.pico-btn)` rule sets 12px
+   and would otherwise shrink the glyph to a speck. */
+.ide-settings-modal .ide-settings-modal-close {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--ide-text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 0;
+}
+.ide-settings-modal .ide-settings-modal-close:hover { color: var(--ide-text); background: var(--ide-hover-bg); }
+
+.ide-settings-modal-body { flex: 1; display: flex; min-height: 0; }
+
+.ide-settings-nav {
+  width: 180px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--ide-border);
+  padding: 10px 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start; /* a shared nav rule sets space-between */
+}
+.ide-settings-nav-item {
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  color: var(--ide-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  text-align: left;
+  padding: 6px 14px;
+  cursor: pointer;
+  margin-bottom: 0;
+  width: 100%;
+}
+.ide-settings-nav-item:hover { color: var(--ide-text); }
+.ide-settings-nav-item.active { color: var(--ide-text); border-left-color: var(--ide-accent); }
+
+.ide-settings-body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 12px 20px 20px;
+}
+.ide-settings-section { padding-top: 10px; }
+.ide-settings-section-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ide-text);
+  margin: 0 0 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--ide-border);
+}
+
+.ide-settings-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  margin-bottom: 12px;
+}
+.ide-settings-row-check {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  align-items: start;
+}
+.ide-settings-row-check .ide-settings-checkbox { grid-column: 1; grid-row: 1; margin: 2px 0 0; }
+.ide-settings-row-check .ide-settings-label { grid-column: 2; grid-row: 1; }
+.ide-settings-row-check .ide-settings-desc { grid-column: 2; grid-row: 2; }
+
+.ide-settings-label { font-size: 13px; color: var(--ide-text); }
+.ide-settings-desc { font-size: 12px; color: var(--ide-text-muted); line-height: 1.4; }
+.ide-settings-input {
+  background: var(--ide-input-bg);
+  color: var(--ide-text);
+  border: 1px solid var(--ide-border-input);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  width: 260px;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin-top: 2px;
+}
+.ide-settings-input-number { width: 100px; }
+.ide-settings-input-wide { font-family: monospace; width: 100%; }
+.ide-settings-checkbox { width: auto; cursor: pointer; flex-shrink: 0; }
+
+.ide-settings-config-link { background: none; border: none; color: var(--ide-accent-fg); font-size: 12px; cursor: pointer; padding: 0; display: flex; align-items: center; gap: 3px; text-decoration: underline; text-underline-offset: 2px; margin-bottom: 0; }
+.ide-settings-config-link:hover { color: var(--ide-accent); }
+.ide-settings-empty { font-size: 12px; color: var(--ide-text-muted); padding: 20px 0; }
+.ide-settings-reset-btn { margin-top: 16px; background: var(--ide-panel-bg-alt); color: var(--ide-text-muted); border: 1px solid var(--ide-border-input); border-radius: 4px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+.ide-settings-reset-btn:hover { background: var(--ide-border-input); color: var(--ide-text-dim); }
 
 /* ══ PICO CSS COMPACT OVERRIDES ═════════════════════════════════════════════
  * Pico's classless variant inflates native elements with generous padding.
@@ -3034,12 +3267,12 @@ textarea {
 .ide-statusbar button,
 .statusbar-btn {
   --pico-form-element-spacing-vertical: 0;
-  --pico-form-element-spacing-horizontal: 8px;
-  height: 22px;
-  padding: 0 8px;
-  font-size: 11px;
+  --pico-form-element-spacing-horizontal: 6px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 12px;
   line-height: 1;
-  border-radius: 2px;
+  border-radius: 5px;
   border: none;
   background: transparent;
   color: var(--ide-accent-text);
@@ -3136,7 +3369,7 @@ button:not(.pico-btn) { margin-bottom: 0; }
   border-radius: 0;
 }
 /* Re-apply border-radius for buttons that intentionally need it */
-.ide-shell .ide-titlebar-search { border-radius: 999px; } /* pill */
+.ide-shell .ide-titlebar-search { border-radius: 6px; }
 .ide-shell .project-action-btn,
 .ide-shell .git-header-btn,
 .ide-shell .git-section-action-btn,
@@ -3252,15 +3485,6 @@ button:not(.pico-btn) { margin-bottom: 0; }
   background: var(--ide-panel-bg, #1e1e1e);
   border-top: 1px solid var(--ide-border, #333);
 }
-.ide-log-resize {
-  flex: 0 0 auto;
-  height: 6px;
-  cursor: ns-resize;
-  background: transparent;
-}
-.ide-log-resize:hover {
-  background: var(--ide-accent, #569cd6);
-}
 .ide-log-header {
   display: flex;
   align-items: center;
@@ -3328,25 +3552,35 @@ button:not(.pico-btn) { margin-bottom: 0; }
   background: var(--ide-panel-bg, #1e1e1e);
   border-top: 1px solid var(--ide-border, #333);
 }
-.ide-problems-resize {
-  flex: 0 0 auto;
-  height: 6px;
-  cursor: ns-resize;
-  background: transparent;
-}
-.ide-problems-resize:hover { background: var(--ide-accent, #569cd6); }
 .ide-problems-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 10px;
+  height: 35px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--ide-border, #333);
   font-size: 12px;
-  color: var(--ide-fg-muted, #ccc);
+  color: var(--ide-text, #ccc);
 }
-.ide-problems-title { font-weight: 600; }
-/* Severity toggles. Pushed to the right of the summary; the text filter that
-   follows keeps its own left margin off `auto` so the two sit together. */
+.ide-problems-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ide-problems-total-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--ide-hover-bg, #2a2a2a);
+  color: var(--ide-text, #ccc);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+/* Severity toggles. Pushed to the right of the title/count; the text filter
+   that follows keeps its own left margin off `auto` so the two sit together. */
 .ide-problems-severity-filter {
   margin-left: auto;
   display: flex;
@@ -3357,50 +3591,42 @@ button:not(.pico-btn) { margin-bottom: 0; }
   align-items: center;
   gap: 4px;
   background: transparent;
-  border: 1px solid transparent;
+  border: none;
   border-radius: 3px;
   padding: 1px 6px;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
-  /* Off is legible but clearly recessive — a disabled-looking chip reads as
-     "broken" rather than "toggled off". */
   color: var(--ide-text-muted, #858585);
-  opacity: 0.55;
 }
-.ide-problems-sev-chip:hover { opacity: 0.85; }
-.ide-problems-sev-chip.is-on {
-  opacity: 1;
-  border-color: var(--ide-border, #333);
-  background: var(--ide-input-bg, #2d2d2d);
-}
-.ide-problems-sev-chip.is-on.ide-problems-sev-error { color: var(--ide-error, #f14c4c); }
-.ide-problems-sev-chip.is-on.ide-problems-sev-warning { color: var(--ide-warning, #cca700); }
-.ide-problems-sev-chip.is-on.ide-problems-sev-info { color: var(--ide-info, #3794ff); }
+.ide-problems-sev-chip:hover,
+.ide-problems-sev-chip.is-on { color: var(--ide-text, #ccc); }
 
 .ide-problems-filter {
   margin-left: 8px;
   background: var(--ide-input-bg, #2d2d2d);
-  color: var(--ide-fg, #eee);
-  border: 1px solid var(--ide-border, #333);
-  border-radius: 3px;
-  padding: 2px 6px;
+  color: var(--ide-text, #eee);
+  border: 1px solid var(--ide-border-input, #333);
+  border-radius: 4px;
+  padding: 0 6px;
+  height: 22px;
   font-size: 12px;
-  width: 180px;
+  width: 140px;
 }
 .ide-problems-btn {
   background: transparent;
   border: none;
-  color: var(--ide-fg-muted, #ccc);
+  color: var(--ide-text-muted, #ccc);
   cursor: pointer;
   padding: 2px 6px;
 }
-.ide-problems-btn:hover { color: var(--ide-fg, #fff); }
+.ide-problems-btn:hover { color: var(--ide-text, #fff); }
 .ide-problems-btn:disabled { opacity: 0.4; cursor: default; }
-.ide-problems-btn:disabled:hover { color: var(--ide-fg-muted, #ccc); }
+.ide-problems-btn:disabled:hover { color: var(--ide-text-muted, #ccc); }
 .ide-problems-actions { display: flex; gap: 2px; }
-.ide-problems-actions .ide-problems-btn { white-space: nowrap; }
-.ide-problems-btn.is-on { color: var(--ide-accent, #0a84ff); }
+.ide-problems-actions .ide-icon-btn,
+.ide-problems-header > .ide-icon-btn { min-width: 22px; width: 22px; height: 22px; font-size: 13px; }
+.ide-problems-actions .ide-icon-btn:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
 .ide-problems-body { flex: 1; overflow: auto; padding: 4px 0; font-size: 12px; }
 .ide-problems-empty {
   padding: 10px 14px;
@@ -3411,9 +3637,18 @@ button:not(.pico-btn) { margin-bottom: 0; }
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px 3px;
-  color: var(--ide-fg-muted, #ccc);
-  font-weight: 600;
+  height: 22px;
+  padding: 0 12px;
+  color: var(--ide-text, #ccc);
+}
+.ide-problems-file-name .fa-chevron-down {
+  color: var(--ide-text-muted, #858585);
+  font-size: 10px;
+  width: 10px;
+}
+.ide-problems-file-name .ide-problems-dir {
+  color: var(--ide-text-muted, #858585);
+  font-size: 12px;
 }
 .ide-problems-file-count {
   background: var(--ide-hover-bg, #2a2a2a);
@@ -3428,22 +3663,23 @@ button:not(.pico-btn) { margin-bottom: 0; }
   align-items: baseline;
   gap: 8px;
   width: 100%;
-  padding: 3px 12px 3px 28px;
+  height: 22px;
+  padding: 0 12px 0 28px;
   background: transparent;
   border: none;
-  color: var(--ide-fg, #d4d4d4);
+  color: var(--ide-text, #d4d4d4);
   font-size: 12px;
   font-family: inherit;
   text-align: left;
   cursor: pointer;
 }
-.ide-problems-item:hover,
-.ide-problems-item:focus-visible { background: var(--ide-hover-bg, #2a2a2a); }
+.ide-problems-item:hover { background: var(--ide-hover-bg, #2a2a2a); }
+.ide-problems-item:focus-visible { background: var(--ide-active-bg, #2a2a2a); }
 .ide-problems-icon { flex-shrink: 0; }
 .ide-problems-item-error .ide-problems-icon { color: var(--ide-danger); }
 .ide-problems-item-warning .ide-problems-icon { color: var(--ide-warning); }
 .ide-problems-item-info .ide-problems-icon { color: var(--ide-accent, #3794ff); }
-.ide-problems-msg { flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ide-problems-msg { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ide-text, #d4d4d4); }
 /* The offending source line, dimmed so it reads as context rather than as part
    of the message. It is the one part of the row allowed to shrink, so a long
    line gives way to the message and location instead of pushing them out. */
@@ -3453,7 +3689,6 @@ button:not(.pico-btn) { margin-bottom: 0; }
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ide-text-muted, #858585);
-  opacity: 0.8;
   font-family: var(--ide-mono, monospace);
   font-size: 11px;
 }
@@ -3482,6 +3717,7 @@ button:not(.pico-btn) { margin-bottom: 0; }
   margin-left: auto;
   color: var(--ide-text-muted, #858585);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Model graph ──────────────────────────────────────────────────────────
@@ -3648,8 +3884,7 @@ button:not(.pico-btn) { margin-bottom: 0; }
    The gap is the icon-to-its-own-number spacing; the warning icon opens the
    second pair, so it gets the wider separator. */
 .statusbar-problems { gap: 4px; }
-.statusbar-problems-error-icon { color: var(--ide-danger); }
-.statusbar-problems-warning-icon { color: var(--ide-warning); margin-left: 8px; }
+.statusbar-problems-warning-icon { margin-left: 8px; }
 .statusbar-problems-count { font-variant-numeric: tabular-nums; }
 
 /* Search decorations off across engines — Chrome/Safari draw their own

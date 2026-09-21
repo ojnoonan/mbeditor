@@ -78,6 +78,13 @@ module Mbeditor
 
     # GET /mbeditor — renders the IDE shell
     def index
+      # Theme and glass go on <html> before the first paint; the React effect
+      # that normally sets them runs after mount, which flashed the default
+      # theme on every load.
+      prefs = (editor_state_service.read_state["editorPrefs"] rescue nil) || {}
+      theme = prefs["theme"].to_s
+      @initial_theme = theme.match?(/\A[a-z][a-z0-9-]*\z/) ? theme : "vs-dark"
+      @initial_glass = prefs["glass"] == true
       render layout: "mbeditor/application"
     end
 
@@ -217,7 +224,7 @@ module Mbeditor
 
       new_ops_clean = new_ops.map { |op| Array(op).first(5) }
 
-      file_history_service.append(branch, rel, ops: new_ops_clean, base: params[:base], base_given: params.key?(:base))
+      file_history_service.append(branch, rel, ops: new_ops_clean, base: params[:base], base_given: params.key?(:base), version: params[:v])
       head :no_content
     rescue FileHistoryService::BaseRequiredError
       render json: { error: 'base required for initial history' }, status: :bad_request

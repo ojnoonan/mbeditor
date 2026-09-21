@@ -51,7 +51,7 @@ window.MbeditorAudit = (function () {
     lspMethod: ['other', 'definition', 'hover', 'completion', 'diagnostics', 'references', 'rename',
                 'format', 'signatureHelp', 'documentSymbol', 'foldingRange', 'documentHighlight',
                 'selectionRange', 'codeAction'],
-    collabPhase: ['other', 'join', 'seed', 'attach', 'defer', 'update', 'reconnect', 'leave']
+    collabPhase: ['other', 'join', 'seed', 'attach', 'defer', 'update', 'reconnect', 'leave', 'degrade']
   };
   Object.keys(EV).forEach(function (name) { LEGEND.ev[EV[name]] = name; });
 

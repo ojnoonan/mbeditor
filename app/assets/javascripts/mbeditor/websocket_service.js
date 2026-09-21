@@ -75,6 +75,17 @@ var WebSocketService = (function () {
     return window.ActionCable.createConsumer(_cableUrl());
   }
 
+  // Single consumer for both the EditorChannel and every CollaborationChannel.
+  // subscribeCollaboration used to mint its own consumer whenever _consumer was
+  // null (the state after a drop), and _attemptConnect then created a second one
+  // — the first socket was never disconnected, so every outage during which a
+  // file was opened leaked a WebSocket. Whoever asks first creates it; everyone
+  // else reuses it.
+  function _ensureConsumer() {
+    if (!_consumer) _consumer = _getConsumer();
+    return _consumer;
+  }
+
   function _cleanupConsumer() {
     if (_subscription) {
       try { _subscription.unsubscribe(); } catch (e) { /* ignore */ }
@@ -146,7 +157,7 @@ var WebSocketService = (function () {
     if (_status !== 'rejected') _status = 'connecting';
 
     try {
-      _consumer = _getConsumer();
+      _consumer = _ensureConsumer();
       _subscription = _consumer.subscriptions.create(
         { channel: 'Mbeditor::EditorChannel' },
         {
@@ -344,10 +355,7 @@ var WebSocketService = (function () {
     if (!isCableAvailable()) return null;
     handlers = handlers || {};
     try {
-      if (!_consumer) {
-        _consumer = _getConsumer();
-      }
-      return _consumer.subscriptions.create(
+      return _ensureConsumer().subscriptions.create(
         { channel: 'Mbeditor::CollaborationChannel', path: path },
         {
           connected: function () { if (handlers.connected) handlers.connected(); },

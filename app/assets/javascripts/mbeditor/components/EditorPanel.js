@@ -38,6 +38,11 @@ var EditorPanel = function EditorPanel(_ref) {
   var monacoRef = useRef(null);
   var latestContentRef = useRef('');
   var lastAppliedExternalVersionRef = useRef(0);
+  // Set by the editor-creation effect when the tab mounts before its file content
+  // has arrived. The external-content effect calls it once the load lands, so
+  // persistent-undo tracking starts with the loaded file as its base instead of
+  // recording the load itself as an undo op.
+  var pendingHistorySetupRef = useRef(null);
   var conflictDecorationsRef = React.useRef([]);
   var conflictBlocksRef = React.useRef([]);
   var aviBaseRef = useRef(0);
@@ -150,6 +155,7 @@ var EditorPanel = function EditorPanel(_ref) {
 
   var vimStatusRef = useRef(null);
   var vimModeObjRef = useRef(null);
+  var previewScrollRef = useRef(null);
 
   var clearTestZones = function clearTestZones(editor) {
     if (!editor) return;
@@ -595,16 +601,26 @@ var EditorPanel = function EditorPanel(_ref) {
     // untitled://, mbeditor:// and friends have no file to persist history
     // against — tracking them just produces doomed /file_history requests.
     var _virtualPath = (tab.path || '').indexOf('://') >= 0;
+    var _historyEnabled = !_collabActive && !_virtualPath && typeof HistoryService !== 'undefined';
+    // A freshly opened tab mounts empty and receives its content asynchronously.
+    // Tracking must wait for that load (and start with the loaded file as its
+    // base) or the load is recorded as an insert-at-origin op — the root cause of
+    // both the doubled buffer (#92) and histories that grow by a file per open (#93).
+    var _contentLoaded = (tab.externalContentVersion || 0) > 0 ||
+                         (_reusingModel && modelObj.getValue().length > 0);
 
-    if (!_collabActive && !_virtualPath && typeof HistoryService !== 'undefined') {
+    if (_historyEnabled && _reusingModel && _contentLoaded) {
       var _histBranch = EditorStore.getState().gitBranch || '';
       if (_histBranch) {
-        if (_reusingModel) {
-          HistoryService.resumeTracking(_histBranch, tab.path, modelObj.getValue());
-        } else {
-          HistoryService.beginTracking(_histBranch, tab.path, tab.content || '');
-        }
+        HistoryService.resumeTracking(_histBranch, tab.path, modelObj.getValue());
       }
+    } else if (_historyEnabled && _reusingModel) {
+      // A cached model that is still empty (the tab was switched away before the
+      // load landed). Defer like the new-model path so the load isn't recorded.
+      pendingHistorySetupRef.current = function () {
+        var _branch = EditorStore.getState().gitBranch || '';
+        if (_branch) HistoryService.resumeTracking(_branch, tab.path, modelObj.getValue());
+      };
     }
 
     // Sync latestContentRef from the actual model content so the onDidChangeContent
@@ -701,6 +717,28 @@ var EditorPanel = function EditorPanel(_ref) {
 
     monacoRef.current = editor;
     window.__mbeditorActiveEditor = editor;
+    // Publish the live editor instance so a markdown preview in another pane
+    // (a separate EditorPanel instance) can find it for scroll sync.
+    _modelEntry.editor = editor;
+
+    var scrollSyncDisposable = null;
+    if (/\.(md|markdown)$/i.test(tab.path || '')) {
+      scrollSyncDisposable = editor.onDidScrollChange(function () {
+        if (_modelEntry.scrollSyncing) return;
+        var scrollHeight = editor.getScrollHeight() - editor.getLayoutInfo().height;
+        if (scrollHeight <= 0) return;
+        var fraction = editor.getScrollTop() / scrollHeight;
+        var previews = document.querySelectorAll('[data-preview-for]');
+        for (var _p = 0; _p < previews.length; _p++) {
+          if (previews[_p].getAttribute('data-preview-for') !== tab.path) continue;
+          var max = previews[_p].scrollHeight - previews[_p].clientHeight;
+          if (max <= 0) continue;
+          _modelEntry.scrollSyncing = true;
+          previews[_p].scrollTop = fraction * max;
+          _modelEntry.scrollSyncing = false;
+        }
+      });
+    }
     // Tells the status bar's cursor readout to re-attach. An event rather than
     // a prop because the editor is published imperatively here, and a listener
     // that guessed at the timing would miss the swap on a tab switch.
@@ -842,7 +880,25 @@ var EditorPanel = function EditorPanel(_ref) {
     // below can swap the model, so this must be re-attached to the replacement —
     // a listener left on the old model would silently stop tracking edits.
     var _attachContentListener = function (model) {
-      return model.onDidChangeContent(function (e) {
+      // onDidChangeContent fires per keystroke, and the full-buffer work it used
+      // to do — one getValue() plus two whole-file CRLF normalisations — costs
+      // ~12ms per keystroke on a large file, on the main thread, ahead of
+      // Monaco's own processing. The AVI bookkeeping below stays per-event and
+      // O(1); the buffer is materialised once on a trailing edge (and once more
+      // by TabManager's own 250ms flush, via the provider passed to markDirty).
+      var _contentSyncTimer = null;
+      var _contentProvider = function () {
+        return model.isDisposed() ? null : model.getValue();
+      };
+      var _flushContentSync = function () {
+        _contentSyncTimer = null;
+        var val = _contentProvider();
+        if (val === null) return;
+        latestContentRef.current = val;
+        onContentChange(val);
+      };
+
+      var _contentListener = model.onDidChangeContent(function (e) {
         if (!_collabActive && typeof HistoryService !== 'undefined') {
           HistoryService.recordOps(tab.path, e.changes);
         }
@@ -860,8 +916,6 @@ var EditorPanel = function EditorPanel(_ref) {
           EditorStore.setState({ canUndo: newCanUndo, canRedo: newCanRedo });
         }
 
-        var val = model.getValue();
-
         // Dirty-state tracking via alternativeVersionId — O(1), no string comparison.
         // AVI decrements on undo so it returns to cleanVersionId after a full undo.
         // Skip entirely when cleanVersionId is null — file is mid-load, not yet settled.
@@ -869,155 +923,179 @@ var EditorPanel = function EditorPanel(_ref) {
         var _cleanAvi = _entry && _entry.cleanVersionId;
         if (_cleanAvi !== null && _cleanAvi !== undefined) {
           if (currentAvi !== _cleanAvi) {
-            TabManager.markDirty(paneId, tab.id, val);
+            TabManager.markDirty(paneId, tab.id, _contentProvider);
           } else {
-            TabManager.markClean(paneId, tab.id, val);
+            TabManager.markClean(paneId, tab.id, _contentProvider);
           }
         }
 
-        var currentContent = latestContentRef.current;
-
-        // Normalize before comparing to prevent false positive dirty edits
-        var vNorm = val.replace(/\r\n/g, '\n');
-        var cNorm = currentContent.replace(/\r\n/g, '\n');
-        if (vNorm !== cNorm) {
-          // Update the ref immediately so rapid undo/redo events compare against the
-          // latest content rather than a stale snapshot from a previous React render.
-          latestContentRef.current = val;
-          onContentChange(val);
+        // Draft persistence is the only remaining consumer of the full text.
+        // Coalesce it onto the same 250ms edge TabManager uses for content writes.
+        if (_contentSyncTimer === null) {
+          _contentSyncTimer = setTimeout(_flushContentSync, 250);
         }
       });
+      return {
+        dispose: function () {
+          if (_contentSyncTimer !== null) { clearTimeout(_contentSyncTimer); _contentSyncTimer = null; }
+          _contentListener.dispose();
+        }
+      };
     };
 
     var contentDisposable = _attachContentListener(modelObj);
 
     // Phase 2: background undo-history replay.
-    // Only run for newly-created models (reused models already have their undo stack).
+    // Only run for newly-created models (reused models already have their undo
+    // stack). Tracking and replay both wait for the file load: the base is the
+    // loaded content, so the load is neither recorded nor buffered.
     var _phase2CleanupFn = null;
-    if (!_collabActive && !_virtualPath && !_reusingModel && typeof HistoryService !== 'undefined') {
-      var _phase2Branch  = EditorStore.getState().gitBranch || '';
-      var _phase2Path    = tab.path;
-      var _phase2Content = tab.content || '';
-      var _phase2Buf     = [];
-      var _phase2Active  = true;
+    if (_historyEnabled && !_reusingModel) {
+      var _phase2Path   = tab.path;
+      var _phase2Buf    = [];
+      var _phase2Active = true;
+      var _phase2ModelA = modelObj;
+      var _phase2Listener = null;
+      var _historyStarted = false;
+      var _startHistory = null;
 
-      var _phase2ModelA    = modelObj;
-      var _phase2Listener  = _phase2ModelA.onDidChangeContent(function (ev) {
-        if (!_phase2Active) return;
-        for (var _ci = 0; _ci < ev.changes.length; _ci++) {
-          var _c = ev.changes[_ci];
-          _phase2Buf.push([
-            _c.range.startLineNumber, _c.range.startColumn,
-            _c.range.endLineNumber,   _c.range.endColumn,
-            _c.text
-          ]);
-        }
-      });
+      _phase2CleanupFn = function () {
+        _phase2Active = false;
+        if (_phase2Listener) _phase2Listener.dispose();
+      };
 
-      var _runPhase2 = function () {
-        if (!_phase2Active || !_phase2Branch) return;
-        HistoryService.fetchHistory(_phase2Branch, _phase2Path).then(function (hist) {
+      _startHistory = function () {
+        if (_historyStarted || !_phase2Active) return;
+        var _phase2Branch = EditorStore.getState().gitBranch || '';
+        if (!_phase2Branch) return;
+        _historyStarted = true;
+
+        HistoryService.beginTracking(_phase2Branch, _phase2Path, _phase2ModelA.getValue());
+
+        // Buffer edits made on model A between the load and the replay swap so
+        // they can be re-applied to the replayed model B.
+        _phase2Listener = _phase2ModelA.onDidChangeContent(function (ev) {
           if (!_phase2Active) return;
-          if (!hist || !hist.ops || hist.ops.length === 0) {
-            _phase2Listener.dispose();
-            return;
+          for (var _ci = 0; _ci < ev.changes.length; _ci++) {
+            var _c = ev.changes[_ci];
+            _phase2Buf.push([
+              _c.range.startLineNumber, _c.range.startColumn,
+              _c.range.endLineNumber,   _c.range.endColumn,
+              _c.text
+            ]);
           }
+        });
 
-          var _lang = modelObj.getLanguageId();
-          var modelB = window.monaco.editor.createModel(hist.base, _lang);
-
-          HistoryService.setReplayInProgress(_phase2Path, true);
-          try {
-            for (var _oi = 0; _oi < hist.ops.length; _oi++) {
-              var _op = hist.ops[_oi];
-              modelB.pushEditOperations([], [{
-                range: new window.monaco.Range(_op[0], _op[1], _op[2], _op[3]),
-                text:  _op[4] || ''
-              }], function () { return null; });
+        var _runPhase2 = function () {
+          if (!_phase2Active) return;
+          HistoryService.fetchHistory(_phase2Branch, _phase2Path).then(function (hist) {
+            if (!_phase2Active) return;
+            if (!hist || !hist.ops || hist.ops.length === 0) {
+              if (_phase2Listener) _phase2Listener.dispose();
+              return;
             }
-          } catch (e) {
-            HistoryService.setReplayInProgress(_phase2Path, false);
-            _phase2Listener.dispose();
-            modelB.dispose();
-            return;
-          }
-          HistoryService.setReplayInProgress(_phase2Path, false);
 
-          var _expectedContent = _phase2ModelA.getValue();
-          if (modelB.getValue() !== _expectedContent) {
-            _phase2Listener.dispose();
-            modelB.dispose();
-            return;
-          }
+            var _lang = modelObj.getLanguageId();
+            var modelB = window.monaco.editor.createModel(hist.base, _lang);
 
-          if (_phase2Buf.length > 0) {
+            HistoryService.setReplayInProgress(_phase2Path, true);
             try {
-              for (var _bi = 0; _bi < _phase2Buf.length; _bi++) {
-                var _bop = _phase2Buf[_bi];
+              for (var _oi = 0; _oi < hist.ops.length; _oi++) {
+                var _op = hist.ops[_oi];
                 modelB.pushEditOperations([], [{
-                  range: new window.monaco.Range(_bop[0], _bop[1], _bop[2], _bop[3]),
-                  text:  _bop[4] || ''
+                  range: new window.monaco.Range(_op[0], _op[1], _op[2], _op[3]),
+                  text:  _op[4] || ''
                 }], function () { return null; });
               }
             } catch (e) {
-              _phase2Listener.dispose();
+              HistoryService.setReplayInProgress(_phase2Path, false);
+              if (_phase2Listener) _phase2Listener.dispose();
               modelB.dispose();
               return;
             }
-          }
+            HistoryService.setReplayInProgress(_phase2Path, false);
 
-          _phase2Listener.dispose();
-          if (!_phase2Active) { modelB.dispose(); return; }
+            // Fold in the edits made on model A while the replay was in flight,
+            // THEN validate. Applying them after the check is what let a buffered
+            // initial load slip through and duplicate the file (#92).
+            if (_phase2Buf.length > 0) {
+              try {
+                for (var _bi = 0; _bi < _phase2Buf.length; _bi++) {
+                  var _bop = _phase2Buf[_bi];
+                  modelB.pushEditOperations([], [{
+                    range: new window.monaco.Range(_bop[0], _bop[1], _bop[2], _bop[3]),
+                    text:  _bop[4] || ''
+                  }], function () { return null; });
+                }
+              } catch (e) {
+                if (_phase2Listener) _phase2Listener.dispose();
+                modelB.dispose();
+                return;
+              }
+            }
 
-          if (modelB.getLanguageId() !== _lang) {
-            window.monaco.editor.setModelLanguage(modelB, _lang);
-          }
-          modelB._mbeditorPath = _phase2Path;
+            if (modelB.getValue() !== _phase2ModelA.getValue()) {
+              if (_phase2Listener) _phase2Listener.dispose();
+              modelB.dispose();
+              return;
+            }
 
-          var _vs = editor.saveViewState();
-          editor.setModel(modelB);
-          if (_vs) editor.restoreViewState(_vs);
+            if (_phase2Listener) _phase2Listener.dispose();
+            if (!_phase2Active) { modelB.dispose(); return; }
 
-          var _oldEntry = window.__mbeditorModels[_phase2Path];
-          if (_oldEntry && _oldEntry.model !== modelB) {
-            var _oldModel = _oldEntry.model;
-            // modelB holds the same text as modelA but its own version-id sequence,
-            // so re-anchor the clean baseline. Carry the dirty state across: when the
-            // tab was already dirty, -1 can never match a real AVI, so it stays dirty.
-            var _oldClean = _oldEntry.cleanVersionId;
-            var _wasDirty = _oldClean !== null && _oldClean !== undefined &&
-                            _oldModel.getAlternativeVersionId() !== _oldClean;
-            var _newAvi = modelB.getAlternativeVersionId();
-            window.__mbeditorModels[_phase2Path] = {
-              model:          modelB,
-              aviBase:        aviBaseRef.current,
-              aviMax:         _newAvi,
-              lastAccessed:   Date.now(),
-              cleanVersionId: _wasDirty ? -1 : _newAvi
-            };
-            aviMaxRef.current = _newAvi;
-            setTimeout(function () {
-              if (_oldModel && !_oldModel.isDisposed()) _oldModel.dispose();
-            }, 0);
-          }
+            if (modelB.getLanguageId() !== _lang) {
+              window.monaco.editor.setModelLanguage(modelB, _lang);
+            }
+            modelB._mbeditorPath = _phase2Path;
 
-          // Move the content listener onto modelB. It carries dirty tracking, content
-          // sync and history recording — leaving it on modelA strands all three.
-          contentDisposable.dispose();
-          contentDisposable = _attachContentListener(modelB);
-          _phase2CleanupFn = function () { _phase2Active = false; };
-        }).catch(function () {
-          _phase2Listener.dispose();
-        });
+            var _vs = editor.saveViewState();
+            editor.setModel(modelB);
+            if (_vs) editor.restoreViewState(_vs);
+
+            var _oldEntry = window.__mbeditorModels[_phase2Path];
+            if (_oldEntry && _oldEntry.model !== modelB) {
+              var _oldModel = _oldEntry.model;
+              // modelB holds the same text as modelA but its own version-id sequence,
+              // so re-anchor the clean baseline. Carry the dirty state across: when the
+              // tab was already dirty, -1 can never match a real AVI, so it stays dirty.
+              var _oldClean = _oldEntry.cleanVersionId;
+              var _wasDirty = _oldClean !== null && _oldClean !== undefined &&
+                              _oldModel.getAlternativeVersionId() !== _oldClean;
+              var _newAvi = modelB.getAlternativeVersionId();
+              window.__mbeditorModels[_phase2Path] = {
+                model:          modelB,
+                aviBase:        aviBaseRef.current,
+                aviMax:         _newAvi,
+                lastAccessed:   Date.now(),
+                cleanVersionId: _wasDirty ? -1 : _newAvi
+              };
+              aviMaxRef.current = _newAvi;
+              setTimeout(function () {
+                if (_oldModel && !_oldModel.isDisposed()) _oldModel.dispose();
+              }, 0);
+            }
+
+            // Move the content listener onto modelB. It carries dirty tracking, content
+            // sync and history recording — leaving it on modelA strands all three.
+            contentDisposable.dispose();
+            contentDisposable = _attachContentListener(modelB);
+          }).catch(function () {
+            if (_phase2Listener) _phase2Listener.dispose();
+          });
+        };
+
+        if (typeof requestIdleCallback !== 'undefined') {
+          requestIdleCallback(_runPhase2, { timeout: 2000 });
+        } else {
+          setTimeout(_runPhase2, 200);
+        }
       };
 
-      if (typeof requestIdleCallback !== 'undefined') {
-        requestIdleCallback(_runPhase2, { timeout: 2000 });
+      if (_contentLoaded) {
+        _startHistory();
       } else {
-        setTimeout(_runPhase2, 200);
+        pendingHistorySetupRef.current = _startHistory;
       }
-
-      _phase2CleanupFn = function () { _phase2Active = false; _phase2Listener.dispose(); };
     }
 
     return function () {
@@ -1056,14 +1134,17 @@ var EditorPanel = function EditorPanel(_ref) {
         window.__mbeditorActiveEditor = null;
         window.dispatchEvent(new CustomEvent('mbeditor:active-editor'));
       }
+      if (scrollSyncDisposable) scrollSyncDisposable.dispose();
+      if (_modelEntry.editor === editor) _modelEntry.editor = null;
       if (editorPluginDisposable) editorPluginDisposable.dispose();
       if (formatActionDisposable) formatActionDisposable.dispose();
       runTestAtCursorDisposable.dispose();
       columnSelectDisposable.dispose();
       contentDisposable.dispose();
       EditorStore.setState({ canUndo: false, canRedo: false });
+      pendingHistorySetupRef.current = null;
       if (_phase2CleanupFn) _phase2CleanupFn();
-      if (_collabActive) CollaborationService.unbindEditor(tab.path);
+      if (_collabActive) CollaborationService.unbindEditor(tab.path, editor);
       // Detach the model before disposing the editor so the model (and its undo
       // history) survives for when the user returns to this tab.
       editor.setModel(null);
@@ -1078,14 +1159,29 @@ var EditorPanel = function EditorPanel(_ref) {
     var editor = monacoRef.current;
     if (!editor || typeof tab.content !== 'string') return;
 
+    // The editor effect defers persistent-undo tracking until the file load
+    // lands (see pendingHistorySetupRef). Start it here, after the content has
+    // been applied, so the loaded file is the history base rather than an op.
+    var _runPendingHistory = function () {
+      var pending = pendingHistorySetupRef.current;
+      if (pending) {
+        pendingHistorySetupRef.current = null;
+        pending();
+      }
+    };
+
     var extVersion = tab.externalContentVersion || 0;
-    if (extVersion <= lastAppliedExternalVersionRef.current) return;
+    if (extVersion <= lastAppliedExternalVersionRef.current) {
+      _runPendingHistory();
+      return;
+    }
 
     // For a collaboration late-join the shared document is authoritative; applying
     // the disk content would clobber it. Mark this version consumed and skip.
     if (collabActiveRef.current && typeof CollaborationService !== 'undefined' &&
         CollaborationService.consumesDiskLoad(tab.path)) {
       lastAppliedExternalVersionRef.current = extVersion;
+      _runPendingHistory();
       return;
     }
 
@@ -1098,40 +1194,43 @@ var EditorPanel = function EditorPanel(_ref) {
     // Normalize before comparing to prevent false positive dirty edits
     var vNorm = editor.getValue().replace(/\r\n/g, '\n');
     var cNorm = tab.content.replace(/\r\n/g, '\n');
-    if (vNorm === cNorm) return;
+    if (vNorm !== cNorm) {
+      if (!vNorm) {
+        // If the editor is currently completely empty, treat it as an initial load.
+        // setValue clears the undo stack which is correct for initial load.
+        // Null cleanVersionId before setValue so the synchronous onDidChangeContent
+        // fires during setValue and skips the dirty check (cleanVersionId is null).
+        var _initEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+        if (_initEntry) _initEntry.cleanVersionId = null;
 
-    if (!vNorm) {
-      // If the editor is currently completely empty, treat it as an initial load.
-      // setValue clears the undo stack which is correct for initial load.
-      // Null cleanVersionId before setValue so the synchronous onDidChangeContent
-      // fires during setValue and skips the dirty check (cleanVersionId is null).
-      var _initEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
-      if (_initEntry) _initEntry.cleanVersionId = null;
-
-      editor.setValue(tab.content);
-      // Reset the AVI baseline: setValue clears the undo stack so anything before
-      // this point is no longer reachable. Also clear the canUndo/canRedo display.
-      var newBase = model.getAlternativeVersionId();
-      aviBaseRef.current = newBase;
-      aviMaxRef.current = newBase;
-      if (_initEntry) _initEntry.cleanVersionId = newBase;
-      EditorStore.setState({ canUndo: false, canRedo: false });
-    } else {
-      // Keep undo stack for formats or replaces by using executeEdits
-      var _extEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
-      if (_extEntry) _extEntry.cleanVersionId = null;
-      editor.pushUndoStop();
-      editor.executeEdits("external", [{
-        range: model.getFullModelRange(),
-        text: tab.content
-      }]);
-      editor.pushUndoStop();
-      // Re-anchor the clean baseline so onDidChangeContent doesn't mark this
-      // externally-applied content as a dirty edit.
-      var _newExtAvi = model.getAlternativeVersionId();
-      if (_extEntry) _extEntry.cleanVersionId = _newExtAvi;
-      aviBaseRef.current = _newExtAvi;
+        editor.setValue(tab.content);
+        // Reset the AVI baseline: setValue clears the undo stack so anything before
+        // this point is no longer reachable. Also clear the canUndo/canRedo display.
+        var newBase = model.getAlternativeVersionId();
+        aviBaseRef.current = newBase;
+        aviMaxRef.current = newBase;
+        if (_initEntry) _initEntry.cleanVersionId = newBase;
+        EditorStore.setState({ canUndo: false, canRedo: false });
+      } else {
+        // Keep undo stack for formats or replaces by using executeEdits
+        var _extEntry = window.__mbeditorModels && window.__mbeditorModels[tab.path];
+        if (_extEntry) _extEntry.cleanVersionId = null;
+        editor.pushUndoStop();
+        editor.executeEdits("external", [{
+          range: model.getFullModelRange(),
+          text: tab.content
+        }]);
+        editor.pushUndoStop();
+        // Re-anchor the clean baseline so onDidChangeContent doesn't mark this
+        // externally-applied content as a dirty edit.
+        var _newExtAvi = model.getAlternativeVersionId();
+        if (_extEntry) _extEntry.cleanVersionId = _newExtAvi;
+        aviBaseRef.current = _newExtAvi;
+      }
     }
+
+    // Empty file: content already matches, but tracking still has to start.
+    _runPendingHistory();
 
     // The model now holds the disk content. A room that deferred attaching while
     // this fetch was in flight can seed the shared doc from it.
@@ -2011,6 +2110,31 @@ var EditorPanel = function EditorPanel(_ref) {
     }
   }, [markdownContent, isMarkdown]);
 
+  // Preview -> source scroll sync. The source editor instance (a different
+  // EditorPanel, possibly a different pane) is published on the shared model
+  // entry by the editor-creation effect above; scrollSyncing on that same
+  // entry is the shared flag that stops the two directions ping-ponging.
+  useEffect(function () {
+    if (!tab.isPreview || !isMarkdown) return;
+    var el = previewScrollRef.current;
+    if (!el) return;
+    function onScroll() {
+      var modelEntry = window.__mbeditorModels && window.__mbeditorModels[sourcePath];
+      var editor = modelEntry && modelEntry.editor;
+      if (!editor || (modelEntry && modelEntry.scrollSyncing)) return;
+      var max = el.scrollHeight - el.clientHeight;
+      if (max <= 0) return;
+      var fraction = el.scrollTop / max;
+      var scrollHeight = editor.getScrollHeight() - editor.getLayoutInfo().height;
+      if (scrollHeight <= 0) return;
+      modelEntry.scrollSyncing = true;
+      editor.setScrollTop(fraction * scrollHeight);
+      modelEntry.scrollSyncing = false;
+    }
+    el.addEventListener('scroll', onScroll);
+    return function () { el.removeEventListener('scroll', onScroll); };
+  }, [tab.isPreview, isMarkdown, sourcePath]);
+
   // Click-outside handler to close the methods dropdown
   useEffect(function() {
     if (!methodsOpen) return;
@@ -2120,7 +2244,12 @@ var EditorPanel = function EditorPanel(_ref) {
   }
 
   if (tab.isPreview && isMarkdown) {
-    return React.createElement('div', { className: 'markdown-preview markdown-preview-full', dangerouslySetInnerHTML: { __html: markup } });
+    return React.createElement('div', {
+      className: 'markdown-preview markdown-preview-full',
+      ref: previewScrollRef,
+      'data-preview-for': sourcePath,
+      dangerouslySetInnerHTML: { __html: markup }
+    });
   }
 
   // Helper: shorten long paths by showing the last 2 segments with a leading ellipsis
@@ -2129,6 +2258,38 @@ var EditorPanel = function EditorPanel(_ref) {
     var parts = path.split('/');
     if (parts.length <= 3) return path;
     return '\u2026/' + parts.slice(-2).join('/');
+  }
+
+  // Breadcrumb: shortPath()'s segments, chevron-separated, the final one an
+  // icon + filename in the normal text colour, everything before it muted \u2014
+  // VS Code's editor breadcrumb. Look only; not a navigation control.
+  function renderBreadcrumb(path) {
+    var segments = shortPath(path).split('/');
+    var last = segments.length - 1;
+    var nodes = [];
+    segments.forEach(function (seg, i) {
+      if (i > 0) {
+        nodes.push(React.createElement('i', {
+          key: 'sep-' + i,
+          className: 'fas fa-chevron-right ide-breadcrumb-sep',
+          'aria-hidden': 'true'
+        }));
+      }
+      if (i === last) {
+        nodes.push(React.createElement(
+          'span',
+          { key: 'seg-' + i, className: 'ide-breadcrumb-file' },
+          React.createElement('i', {
+            className: (window.getFileIcon ? window.getFileIcon(path) : 'far fa-file-code') + ' ide-breadcrumb-file-icon',
+            'aria-hidden': 'true'
+          }),
+          seg
+        ));
+      } else {
+        nodes.push(React.createElement('span', { key: 'seg-' + i, className: 'ide-breadcrumb-dir' }, seg));
+      }
+    });
+    return nodes;
   }
 
   // While Monaco is still loading, show a lightweight skeleton so the UI is
@@ -2209,7 +2370,7 @@ var EditorPanel = function EditorPanel(_ref) {
       React.createElement(
         'span',
         { className: 'ide-editor-file-location', title: tab.path },
-        shortPath(tab.path)
+        renderBreadcrumb(tab.path)
       ),
       gitAvailable && tab.path && React.createElement(
         'button',
@@ -2218,8 +2379,8 @@ var EditorPanel = function EditorPanel(_ref) {
           onClick: function() { if (onShowHistory) onShowHistory(tab.path); },
           title: 'File History'
         },
-        React.createElement('i', { className: 'fas fa-history', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
-        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, 'History')
+        React.createElement('i', { className: 'fas fa-history', style: { marginRight: editorPrefs.toolbarLabels ? '5px' : 0, flexShrink: 0 } }),
+        editorPrefs.toolbarLabels && React.createElement('span', { className: 'ide-toolbar-label' }, 'History')
       ),
       hasOutline && React.createElement(
         'button',
@@ -2273,8 +2434,8 @@ var EditorPanel = function EditorPanel(_ref) {
           },
           title: isTestOutline ? 'Jump to Outline' : 'Jump to Method'
         },
-        React.createElement('i', { className: 'fas fa-list-ul', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
-        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, isTestOutline ? 'Outline' : 'Methods')
+        React.createElement('i', { className: 'fas fa-list-ul', style: { marginRight: editorPrefs.toolbarLabels ? '5px' : 0, flexShrink: 0 } }),
+        editorPrefs.toolbarLabels && React.createElement('span', { className: 'ide-toolbar-label' }, isTestOutline ? 'Outline' : 'Methods')
       ),
       gitAvailable && React.createElement(
         'button',
@@ -2283,8 +2444,8 @@ var EditorPanel = function EditorPanel(_ref) {
           onClick: function() { setIsBlameVisible(function(prev) { return !prev; }); },
           title: 'Toggle Git Blame'
         },
-        React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: editorPrefs.toolbarIconOnly ? 0 : '5px', flexShrink: 0 } }),
-        !editorPrefs.toolbarIconOnly && React.createElement('span', { className: 'ide-toolbar-label' }, isBlameLoading ? 'Loading...' : 'Blame')
+        React.createElement('i', { className: 'fas fa-shoe-prints', style: { marginRight: editorPrefs.toolbarLabels ? '5px' : 0, flexShrink: 0 } }),
+        editorPrefs.toolbarLabels && React.createElement('span', { className: 'ide-toolbar-label' }, isBlameLoading ? 'Loading...' : 'Blame')
       ),
     ),
     conflictCount > 0 && React.createElement(
@@ -2446,7 +2607,10 @@ var EditorPanel = function EditorPanel(_ref) {
       )
     ),
     React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } }),
-    methodsOpen && methodsDropdownPos && React.createElement(
+    // Portalled to body: under the glass chrome the centre column has a
+    // backdrop-filter, which makes it the containing block for position:fixed
+    // and shoves the menu ~130px off its button.
+    methodsOpen && methodsDropdownPos && ReactDOM.createPortal(React.createElement(
       'div',
       {
         ref: methodsDropdownRef,
@@ -2544,7 +2708,7 @@ var EditorPanel = function EditorPanel(_ref) {
               }
               return rows;
             })()
-    ),
+    ), document.body),
     React.createElement('div', { ref: vimStatusRef, className: 'vim-statusbar', style: { display: editorPrefs.vimMode ? 'flex' : 'none', height: '22px', alignItems: 'center', padding: '0 10px', fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace", fontSize: '12px', background: 'var(--ide-statusbar-bg, #1e1e2e)', color: 'var(--ide-statusbar-fg, #9cdcfe)', borderTop: '1px solid var(--ide-border, #3e3e3e)', flexShrink: 0, userSelect: 'none', letterSpacing: '0.02em' } })
   );
 };

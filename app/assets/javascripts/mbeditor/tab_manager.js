@@ -461,23 +461,32 @@ var TabManager = (function () {
     }
     _removeMru(paneId, path);
     var state = EditorStore.getState();
+    // Closing a markdown source also closes its preview tab, wherever it lives.
+    // Guard against recursion: a preview tab has no preview of its own.
+    var closingPane = state.panes.find(function(p) { return p.id === paneId; });
+    var closingTab = closingPane && closingPane.tabs.find(function(t) { return t.id === path; });
+    var closePreviewsFor = (closingTab && !closingTab.isPreview) ? path : null;
+
     var newPanes = state.panes.map(function(pane) {
-      if (pane.id === paneId) {
-        // Match by t.id so diff tabs (id = 'diff://...') are closed correctly
-        var newTabs = pane.tabs.filter(function(t) { return t.id !== path; });
-        var newActive = pane.activeTabId;
-        if (pane.activeTabId === path) {
-          // Reactivate the tab the user was actually last in, not just the rightmost one.
-          var mruList = _mru[paneId] || [];
-          var mruPick = null;
-          for (var i = 0; i < mruList.length; i++) {
-            if (newTabs.some(function(t) { return t.id === mruList[i]; })) { mruPick = mruList[i]; break; }
-          }
-          newActive = mruPick || (newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null);
+      // Match by t.id so diff tabs (id = 'diff://...') are closed correctly
+      var newTabs = pane.tabs.filter(function(t) {
+        if (pane.id === paneId && t.id === path) return false;
+        if (closePreviewsFor && t.isPreview && t.previewFor === closePreviewsFor) return false;
+        return true;
+      });
+      if (newTabs.length === pane.tabs.length) return pane;
+
+      var newActive = pane.activeTabId;
+      if (!newTabs.some(function(t) { return t.id === newActive; })) {
+        // Reactivate the tab the user was actually last in, not just the rightmost one.
+        var mruList = _mru[pane.id] || [];
+        var mruPick = null;
+        for (var i = 0; i < mruList.length; i++) {
+          if (newTabs.some(function(t) { return t.id === mruList[i]; })) { mruPick = mruList[i]; break; }
         }
-        return Object.assign({}, pane, { tabs: newTabs, activeTabId: newActive });
+        newActive = mruPick || (newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null);
       }
-      return pane;
+      return Object.assign({}, pane, { tabs: newTabs, activeTabId: newActive });
     });
 
     var nextFocusedPaneId = state.focusedPaneId;
@@ -537,7 +546,7 @@ var TabManager = (function () {
     if (!pane || pane.tabs.length === 0) return;
 
     pane.tabs.slice().forEach(function(tab) {
-      closeTab(paneId, tab.path);
+      closeTab(paneId, tab.id);
     });
   }
 
@@ -634,17 +643,24 @@ var TabManager = (function () {
   function _queueContent(paneId, path, content, updates, markdown) {
     var key = paneId + ' ' + path;
     if (updates) {
-      // A state transition has to land now, and it takes the content with it.
-      delete _pendingContent[key];
-      updates.content = content;
+      // A clean<->dirty transition must land now, but the full buffer is still
+      // materialized only on the trailing edge below. Callers pass a provider
+      // (a function) from the per-keystroke content listener so getValue() runs
+      // once per flush instead of once per keypress; everything else passes the
+      // string it already holds.
       _updateTab(paneId, path, updates);
-      if (markdown) _syncMarkdownPreviewContent(path, content);
-      return;
     }
     _pendingContent[key] = { paneId: paneId, path: path, content: content, markdown: markdown };
     if (_contentTimer === null) {
       _contentTimer = setTimeout(flushContent, CONTENT_WRITE_MS);
     }
+  }
+
+  // A pending content slot holds either a string or a provider invoked at flush
+  // time. A provider whose model has gone away returns nothing and is skipped.
+  function _resolveContent(content) {
+    if (typeof content !== 'function') return content;
+    try { return content(); } catch (e) { return null; }
   }
 
   function flushContent() {
@@ -656,8 +672,10 @@ var TabManager = (function () {
     _pendingContent = {};
     Object.keys(pending).forEach(function (k) {
       var p = pending[k];
-      _updateTab(p.paneId, p.path, { content: p.content });
-      if (p.markdown) _syncMarkdownPreviewContent(p.path, p.content);
+      var content = _resolveContent(p.content);
+      if (typeof content !== 'string') return;
+      _updateTab(p.paneId, p.path, { content: content });
+      if (p.markdown) _syncMarkdownPreviewContent(p.path, content);
     });
   }
 

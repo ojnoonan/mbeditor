@@ -4,6 +4,10 @@ require "test_helper"
 
 module Mbeditor
   class CollaborationDocStoreTest < Minitest::Test
+    def setup
+      CollaborationDocStore.reset!
+    end
+
     def teardown
       CollaborationDocStore.reset!
     end
@@ -40,6 +44,40 @@ module Mbeditor
       state = CollaborationDocStore.state_for("file.rb")
       assert_equal "snap", state[:snapshot]
       assert_equal [], state[:deltas]
+    end
+
+    # A snapshot only folds in the deltas the snapshotting client had applied.
+    # Deltas recorded after that point crossed the snapshot in flight and must be
+    # kept, or the next late-joiner replays an incomplete document (#97).
+
+    def test_replace_snapshot_keeps_deltas_recorded_after_applied_seq
+      s1 = CollaborationDocStore.record_update("file.rb", "d1")
+      s2 = CollaborationDocStore.record_update("file.rb", "d2")
+      s3 = CollaborationDocStore.record_update("file.rb", "d3")
+
+      CollaborationDocStore.replace_snapshot("file.rb", "snap", applied_seq: s2)
+
+      state = CollaborationDocStore.state_for("file.rb")
+      assert_equal "snap", state[:snapshot]
+      assert_equal ["d3"], state[:deltas]
+      assert_equal [s3], state[:delta_seqs]
+      assert_equal s2, state[:snapshot_seq]
+      assert_operator s1, :<, s2
+      assert_operator s2, :<, s3
+    end
+
+    # state_for reports the per-delta sequence numbers so a client can track how
+    # far its replay reaches and tell the server on its next snapshot.
+
+    def test_state_for_reports_delta_sequences
+      s1 = CollaborationDocStore.record_update("file.rb", "d1")
+      s2 = CollaborationDocStore.record_update("file.rb", "d2")
+
+      state = CollaborationDocStore.state_for("file.rb")
+
+      assert_equal ["d1", "d2"], state[:deltas]
+      assert_equal [s1, s2], state[:delta_seqs]
+      assert_equal 2, state[:seq]
     end
 
     def test_record_update_after_snapshot_appends_on_top_of_snapshot
@@ -244,6 +282,31 @@ module Mbeditor
       CollaborationDocStore.leave("file.rb")
 
       refute CollaborationDocStore.claim_seed("file.rb")
+    end
+
+    # The claim is serialized across processes through a lock file under tmp/, so
+    # a second process (empty in-memory room) must refuse a claim another process
+    # already holds (#95).
+
+    def test_claim_seed_refused_when_another_process_holds_the_claim_file
+      assert CollaborationDocStore.claim_seed("file.rb")
+      # Simulate a second process: its own in-memory room is empty, but the
+      # shared claim file is present.
+      CollaborationDocStore.send(:rooms).delete("file.rb")
+
+      refute CollaborationDocStore.claim_seed("file.rb")
+    end
+
+    # A claim abandoned by a crashed process must not wedge the room forever.
+
+    def test_claim_seed_takes_over_an_expired_claim_file
+      assert CollaborationDocStore.claim_seed("file.rb")
+      file = CollaborationDocStore.send(:claim_path, "file.rb")
+      old = Time.now - CollaborationDocStore::CLAIM_TTL - 10
+      File.utime(old, old, file)
+      CollaborationDocStore.send(:rooms).delete("file.rb")
+
+      assert CollaborationDocStore.claim_seed("file.rb")
     end
 
     # an idle sweep must not empty a room clients are still bound to: the next

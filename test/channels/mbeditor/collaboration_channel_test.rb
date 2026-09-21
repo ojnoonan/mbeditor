@@ -63,7 +63,7 @@ module Mbeditor
       path = "lib/foo.rb"
       subscribe path: path
 
-      assert_broadcast_on(stream_name_for(path), "type" => "doc_update", "update" => "DELTA") do
+      assert_broadcast_on(stream_name_for(path), "type" => "doc_update", "update" => "DELTA", "seq" => 1) do
         perform :doc_update, "update" => "DELTA"
       end
 
@@ -89,12 +89,45 @@ module Mbeditor
       CollaborationDocStore.record_update(room_key_for(path), "OLD_DELTA")
       subscribe path: path
 
-      assert_broadcast_on(stream_name_for(path), "type" => "snapshot", "snapshot" => "NEWSNAP") do
+      assert_broadcast_on(stream_name_for(path),
+                          "type" => "snapshot", "snapshot" => "NEWSNAP", "applied_seq" => nil) do
         perform :snapshot, "snapshot" => "NEWSNAP"
       end
 
       state = CollaborationDocStore.state_for(room_key_for(path))
       assert_equal "NEWSNAP", state[:snapshot]
+      assert_empty state[:deltas]
+    end
+
+    # A snapshot carries the sequence it reaches, so the server keeps the deltas
+    # recorded after it rather than dropping a concurrent update (#97).
+
+    test "snapshot keeps deltas recorded after its applied_seq" do
+      path = "lib/foo.rb"
+      CollaborationDocStore.record_update(room_key_for(path), "D1")
+      CollaborationDocStore.record_update(room_key_for(path), "D2")
+      subscribe path: path
+
+      perform :snapshot, "snapshot" => "NEWSNAP", "applied_seq" => 1
+
+      state = CollaborationDocStore.state_for(room_key_for(path))
+      assert_equal "NEWSNAP", state[:snapshot]
+      assert_equal ["D2"], state[:deltas]
+    end
+
+    # A client with an incomplete replay asks the room for a full snapshot; the
+    # request is relayed so a bound peer can answer with its own state (#97).
+
+    test "request_snapshot relays a snapshot request without persisting anything" do
+      path = "lib/foo.rb"
+      subscribe path: path
+
+      assert_broadcast_on(stream_name_for(path), "type" => "request_snapshot") do
+        perform :request_snapshot
+      end
+
+      state = CollaborationDocStore.state_for(room_key_for(path))
+      assert_nil state[:snapshot]
       assert_empty state[:deltas]
     end
 

@@ -35,16 +35,26 @@ module Mbeditor
       bytes = data["update"]
       return if bytes.nil?
 
-      CollaborationDocStore.record_update(room_key, bytes)
-      relay("type" => "doc_update", "update" => bytes)
+      seq = CollaborationDocStore.record_update(room_key, bytes)
+      relay("type" => "doc_update", "update" => bytes, "seq" => seq)
     end
 
     def snapshot(data)
       bytes = data["snapshot"]
       return if bytes.nil?
 
-      CollaborationDocStore.replace_snapshot(room_key, bytes)
-      relay("type" => "snapshot", "snapshot" => bytes)
+      applied_seq = data["applied_seq"]
+      CollaborationDocStore.replace_snapshot(room_key, bytes, applied_seq: applied_seq)
+      relay("type" => "snapshot", "snapshot" => bytes, "applied_seq" => applied_seq)
+    end
+
+    # A client whose delta replay was incomplete (missing dependencies after the
+    # buffer overflowed, or a room restarted from scratch) asks the room for a
+    # full snapshot. It is relayed to the other subscribers; any bound peer
+    # answers with its own state via #snapshot. The requester attaches once that
+    # lands (see CollaborationService).
+    def request_snapshot(_data = nil)
+      relay("type" => "request_snapshot")
     end
 
     def awareness(data)
@@ -71,7 +81,10 @@ module Mbeditor
       state = CollaborationDocStore.state_for(room_key)
       # Exactly one client per empty room is told to seed it from disk; see
       # CollaborationDocStore.claim_seed. Everyone else waits for that content.
+      # delta_seqs lets the joiner track how far the replay reaches, so its own
+      # later snapshot can tell the server which deltas to keep.
       transmit({ "type" => "sync", "snapshot" => state[:snapshot], "deltas" => state[:deltas],
+                 "delta_seqs" => state[:delta_seqs], "snapshot_seq" => state[:snapshot_seq],
                  "seed" => CollaborationDocStore.claim_seed(room_key) })
     end
 

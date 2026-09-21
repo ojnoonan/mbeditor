@@ -1049,10 +1049,11 @@ module Mbeditor
       assert_equal [[1,1,1,1,"hello"]], json["ops"]
     end
 
-    # The client begins tracking when the editor mounts, before the content has
-    # arrived, so the load itself is the first op against an empty document.
-    # Rejecting that base made the initial POST for every file fail.
-    test "file_history accepts an empty base and replays the content from ops" do
+    # A legacy client (no "v") begins tracking when the editor mounts, before the
+    # content has arrived, so it sends base "" plus the load as an insert-at-origin
+    # op. That shape used to grow by a full file copy per open; the server folds
+    # the leading load into the base so it never reaches disk (#93).
+    test "file_history folds a legacy empty-base load op into the base" do
       post "/mbeditor/file_history", params: {
         branch: "main",
         path: "app/models/user.rb",
@@ -1063,8 +1064,24 @@ module Mbeditor
 
       get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }
       assert_response :ok
+      assert_equal "class User; end\n", json["base"]
+      assert_equal [], json["ops"]
+    end
+
+    test "file_history keeps an empty base from a current-format client" do
+      post "/mbeditor/file_history", params: {
+        branch: "main",
+        path: "app/models/user.rb",
+        ops: [[1,1,1,1,"x"]],
+        base: "",
+        v: 2
+      }, as: :json
+      assert_response :no_content
+
+      get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }
+      assert_response :ok
       assert_equal "", json["base"]
-      assert_equal [[1,1,1,1,"class User; end\n"]], json["ops"]
+      assert_equal [[1,1,1,1,"x"]], json["ops"]
     end
 
     test "file_history still rejects an absent base for initial history" do
