@@ -980,6 +980,21 @@ var MbeditorApp = function MbeditorApp() {
   var serverOnline = _useState18b[0];
   var setServerOnline = _useState18b[1];
 
+  // Pending migrations. file_service.js owns the truth (it is what sees the
+  // response header) and publishes it as a <body> class plus an event; this
+  // only mirrors it into the status bar.
+  var _useStateMig = useState(function () {
+    return document.body.classList.contains('mbeditor-migration-pending');
+  });
+  var migrationsPending = _useStateMig[0];
+  var setMigrationsPending = _useStateMig[1];
+
+  useEffect(function () {
+    function onChange(e) { setMigrationsPending(!!e.detail); }
+    window.addEventListener('mbeditor:pending-migration', onChange);
+    return function () { window.removeEventListener('mbeditor:pending-migration', onChange); };
+  }, []);
+
   var _useState18c = useState(false);
 
 
@@ -1218,6 +1233,11 @@ var MbeditorApp = function MbeditorApp() {
   var _useStateZen = useState(false);
   var zenMode = _useStateZen[0];
   var setZenMode = _useStateZen[1];
+
+  // Transient, like zen mode — never persisted, always starts closed.
+  var _useStateMGV = useState(false);
+  var showModelGraphView = _useStateMGV[0];
+  var setShowModelGraphView = _useStateMGV[1];
 
   var _useStateSB = useState(false);
   var isSwitchingBranch = _useStateSB[0];
@@ -1615,9 +1635,6 @@ var MbeditorApp = function MbeditorApp() {
         if (t.isCombinedDiff || (t.path || '').startsWith('combined-diff://') || (t.path || '').startsWith('diff://')) {
           return Promise.resolve({ content: '' });
         }
-        if (t.isModelGraph || t.path === 'mbeditor://model-graph') {
-          return Promise.resolve({ content: '' });
-        }
         var sourcePath = t.isPreview || /::preview$/.test(t.path || '') ? t.previewFor || (t.path || '').replace(/::preview$/, '') : t.path;
         return FileService.getFile(sourcePath, { allowMissing: true }).then(function (data) {
           return {
@@ -1641,7 +1658,7 @@ var MbeditorApp = function MbeditorApp() {
           p.tabs.forEach(function (t) {
             var res = results[resIdx++];
             var isPlainFile = t.path && !t.isDiff && !t.isCombinedDiff && !t.isSettings &&
-              !t.isChangelog && !t.isPreview && !t.isModelGraph &&
+              !t.isChangelog && !t.isPreview &&
               !/^(diff|combined-diff):\/\//.test(t.path) && !/::preview$/.test(t.path);
             if (isPlainFile) {
               if (seenPaths[t.path]) return;
@@ -1651,9 +1668,6 @@ var MbeditorApp = function MbeditorApp() {
               content: res.content,
               externalContentVersion: (t.externalContentVersion || 0) + 1
             },
-            // A state saved before this tab type existed carries the path but
-            // not the flag, and would restore as a missing file.
-            t.path === 'mbeditor://model-graph' ? { isModelGraph: true } : {},
             res._isDiffResult ? { diffOriginal: res.diffOriginal, diffModified: res.diffModified } : {},
             typeof res.fileNotFound === 'boolean' ? { fileNotFound: res.fileNotFound, dirty: res.fileNotFound ? false : t.dirty } : {},
             res.image === true ? { isImage: true } : {}));
@@ -1765,7 +1779,7 @@ var MbeditorApp = function MbeditorApp() {
           return {
             id: p.id,
             activeTabId: p.activeTabId,
-            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff && !t.isModelGraph && !t.isUntitled; }).map(function (t) {
+            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff && !t.isUntitled; }).map(function (t) {
               return {
                 id: t.id, path: t.path, name: t.name, dirty: t.dirty, viewState: t.viewState,
                 isSettings: !!t.isSettings, isPreview: !!t.isPreview, previewFor: t.previewFor || null,
@@ -2464,6 +2478,10 @@ var MbeditorApp = function MbeditorApp() {
   }, [monacoReady]);
 
   var handleSelectFile = function handleSelectFile(path, name, line, col, endCol) {
+    // The one place every reachable "open a file" action funnels through while
+    // the model graph view is up (quick open is the only such surface left —
+    // explorer, search, rails and git panel are all hidden with it).
+    setShowModelGraphView(false);
     TabManager.openTab(path, name, line, null, false, col, endCol);
     handleNodeSelect({ path: path, name: name || path.split('/').pop(), type: 'file' });
     setQuickOpen(false);
@@ -2691,7 +2709,7 @@ var MbeditorApp = function MbeditorApp() {
         return {
           id: p.id,
           activeTabId: p.activeTabId,
-          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff && !t.isModelGraph && !t.isUntitled; }).map(function (t) {
+          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff && !t.isUntitled; }).map(function (t) {
             return {
               id: t.id,
               path: t.path,
@@ -4505,15 +4523,22 @@ var MbeditorApp = function MbeditorApp() {
 
   var handleActivityBarClick = function handleActivityBarClick(tab) {
     if (tab === 'settings') {
+      setShowModelGraphView(false);
       openSettingsTab();
       return;
     }
     // The model graph is a view, not a panel: it takes over the central area
-    // and needs the width. There is no sidebar half to show.
+    // and needs the width. There is no sidebar half to show, so it toggles
+    // instead of behaving like the other sidebar tabs.
     if (tab === 'models') {
-      openModelGraphTab();
+      setShowModelGraphView(function (prev) {
+        var next = !prev;
+        if (next) loadModelGraph(false);
+        return next;
+      });
       return;
     }
+    setShowModelGraphView(false);
     if (!sidebarCollapsed && activeSidebarTab === tab) {
       setSidebarCollapsed(true);
     } else {
@@ -4993,48 +5018,6 @@ var MbeditorApp = function MbeditorApp() {
     EditorStore.setState({ panes: newPanes2, focusedPaneId: paneId, activeTabId: '__settings__' });
   }
 
-  // The diagram lives in an editor tab, not the sidebar: a layered graph is
-  // inherently wide and a ~300px panel can only ever show its first column.
-  // The sidebar tab is the entry point and the searchable model list.
-  var MODEL_GRAPH_TAB_ID = 'mbeditor://model-graph';
-  function openModelGraphTab() {
-    var st = EditorStore.getState();
-    var paneId = st.focusedPaneId;
-
-    var existing = null;
-    st.panes.forEach(function (p) {
-      if (!existing && p.tabs.some(function (t) { return t.id === MODEL_GRAPH_TAB_ID; })) {
-        existing = p.id;
-      }
-    });
-    if (existing) {
-      EditorStore.setState({
-        panes: st.panes.map(function (p) {
-          return p.id === existing ? Object.assign({}, p, { activeTabId: MODEL_GRAPH_TAB_ID }) : p;
-        }),
-        focusedPaneId: existing
-      });
-      return;
-    }
-
-    var pane = st.panes.find(function (p) { return p.id === paneId; }) || st.panes[0];
-    if (!pane) return;
-
-    var newTab = {
-      id: MODEL_GRAPH_TAB_ID, path: MODEL_GRAPH_TAB_ID, name: 'Model Graph',
-      dirty: false, content: '', isModelGraph: true
-    };
-    EditorStore.setState({
-      panes: st.panes.map(function (p) {
-        return p.id === pane.id
-          ? Object.assign({}, p, { tabs: p.tabs.concat(newTab), activeTabId: MODEL_GRAPH_TAB_ID })
-          : p;
-      }),
-      focusedPaneId: pane.id
-    });
-    loadModelGraph(false);
-  }
-
   var CHANGELOG_TAB_ID = 'mbeditor://changelog';
   function openChangelogTab() {
     var st = EditorStore.getState();
@@ -5465,7 +5448,7 @@ var MbeditorApp = function MbeditorApp() {
             "button",
             {
               type: "button",
-              className: "ide-activity-btn" + (activeTab && activeTab.isModelGraph ? ' active' : ''),
+              className: "ide-activity-btn" + (showModelGraphView ? ' active' : ''),
               title: "Model graph",
               onClick: function() { handleActivityBarClick('models'); }
             },
@@ -5481,14 +5464,14 @@ var MbeditorApp = function MbeditorApp() {
               type: "button",
               className: "ide-activity-btn" + (activeTab && activeTab.isSettings ? ' active' : ''),
               title: "Editor Preferences",
-              onClick: openSettingsTab
+              onClick: function() { handleActivityBarClick('settings'); }
             },
             React.createElement("i", { className: "fas fa-cog" })
           )
         )
       ),
-      /* Panel content — shown when not collapsed and not in zen mode */
-      !sidebarCollapsed && !zenMode && React.createElement(
+      /* Panel content — shown when not collapsed, not in zen mode, and not showing the model graph */
+      !sidebarCollapsed && !zenMode && !showModelGraphView && React.createElement(
         "div",
         { className: "ide-sidebar", style: { width: sidebarWidth + "px" } },
         React.createElement("div", { className: "sidebar-panel-title" },
@@ -6051,17 +6034,25 @@ var MbeditorApp = function MbeditorApp() {
         )
       ),
       /* Sidebar resize divider — only when panel is open */
-      !sidebarCollapsed && !zenMode && React.createElement("div", {
+      !sidebarCollapsed && !zenMode && !showModelGraphView && React.createElement("div", {
         className: "panel-divider sidebar-divider " + (activeResizeMode === 'sidebar' ? 'active' : ''),
         onMouseDown: startSidebarResize,
         role: "separator",
         "aria-orientation": "vertical",
         "aria-label": "Resize explorer panel"
       }),
-      // Column wrapping the split panes and the bottom drawers. ide-main is a
-      // row of panes, so the drawers need a vertical parent to push against;
-      // as absolute overlays they covered the editor instead.
-      React.createElement(
+      // The graph replaces the whole column — no tab bar, no panes, no drawers —
+      // rather than living inside ide-main, so it gets the full center width.
+      showModelGraphView ? React.createElement(
+        "div",
+        { className: "ide-model-graph-view" },
+        React.createElement(ModelGraph, {
+          graph: modelGraph,
+          loading: modelGraphLoading,
+          onRefresh: function () { loadModelGraph(true); },
+          onOpenModel: function (model) { openSchemaModal(model.name); }
+        })
+      ) : React.createElement(
       "div",
       { className: "ide-center-column" },
       React.createElement(
@@ -6158,13 +6149,6 @@ var MbeditorApp = function MbeditorApp() {
                 content = React.createElement(window.CommitGraph || CommitGraph, {
                   commits: pActiveTab.commits || [],
                   onSelectCommit: handleSelectCommit
-                });
-              } else if (pActiveTab.isModelGraph) {
-                content = React.createElement(ModelGraph, {
-                  graph: modelGraph,
-                  loading: modelGraphLoading,
-                  onRefresh: function () { loadModelGraph(true); },
-                  onOpenModel: function (model) { openSchemaModal(model.name); }
                 });
               } else if (pActiveTab.isChangelog) {
                 content = React.createElement(ChangelogView, {
@@ -6436,14 +6420,14 @@ var MbeditorApp = function MbeditorApp() {
       ),
 
       // Right-side Git panel (children of ide-body, alongside sidebar and ide-main)
-      showGitPanel && !zenMode && React.createElement("div", {
+      showGitPanel && !zenMode && !showModelGraphView && React.createElement("div", {
         className: "panel-divider gitpanel-divider " + (activeResizeMode === 'gitpanel' ? 'active' : ''),
         onMouseDown: startGitPanelResize,
         role: "separator",
         "aria-orientation": "vertical",
         "aria-label": "Resize git panel"
       }),
-      showGitPanel && !zenMode && React.createElement(
+      showGitPanel && !zenMode && !showModelGraphView && React.createElement(
         "div",
         { className: "ide-git-right-panel", style: { width: gitPanelWidth + "px" } },
         React.createElement(window.GitPanel || GitPanel, {
@@ -6494,6 +6478,15 @@ var MbeditorApp = function MbeditorApp() {
         React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.errors),
         React.createElement("i", { className: "fas fa-exclamation-triangle statusbar-problems-warning-icon" }),
         React.createElement("span", { className: "statusbar-problems-count" }, problemCounts.warnings)
+      ),
+      migrationsPending && React.createElement(
+        "div",
+        {
+          className: "statusbar-migration",
+          title: "Pending migrations \u2014 run `rails db:migrate`. Editing still works in the meantime."
+        },
+        React.createElement("i", { className: "fas fa-database" }),
+        " Migrations pending"
       ),
       !serverOnline && (function () {
         var dirtyCount = state.panes.reduce(function (acc, p) {

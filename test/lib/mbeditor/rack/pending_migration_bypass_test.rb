@@ -69,8 +69,8 @@ module Mbeditor
         assert_equal 200, status
         assert_equal ["ok"], body
         assert_equal ["/mbeditor/files"], reached
-        assert headers[Mbeditor::Rack::PendingMigrationBypass::PENDING_HEADER],
-               "the response should still announce the pending migration"
+        assert_equal "1", headers[Mbeditor::Rack::PendingMigrationBypass::PENDING_HEADER],
+                     "the response should still announce the pending migration"
       end
 
       test "the assets the editor page loads are not blocked either" do
@@ -110,7 +110,7 @@ module Mbeditor
         _status, headers, = middleware.call(env_for("/mbeditor/files"))
 
         refute Mbeditor::PendingMigrations.pending?
-        assert_nil headers[Mbeditor::Rack::PendingMigrationBypass::PENDING_HEADER]
+        assert_equal "0", headers[Mbeditor::Rack::PendingMigrationBypass::PENDING_HEADER]
       end
 
       test "the request is dispatched once, not twice" do
@@ -132,7 +132,20 @@ module Mbeditor
         assert_raises(ArgumentError) { middleware.call(env_for("/mbeditor/files")) }
       end
 
-      test "the header carries no newlines" do
+      test "the header is present on a passing check too, not merely omitted" do
+        # Absence is not the same as "cleared": these responses are cacheable,
+        # and a 304 leaves a header it does not mention untouched in the
+        # browser's stored copy. An omitted header replayed "pending" long after
+        # the migration had run, and flickered as cached and fresh responses
+        # disagreed.
+        middleware, = build(raising: false)
+
+        _status, headers, = middleware.call(env_for("/mbeditor/files"))
+
+        assert_equal "0", headers[Mbeditor::Rack::PendingMigrationBypass::PENDING_HEADER]
+      end
+
+      test "the header value carries no message, and so no newlines" do
         # PendingMigrationError's message is multi-line; a raw header value
         # would be an invalid response.
         middleware, = build(raising: true)

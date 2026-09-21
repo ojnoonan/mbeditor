@@ -929,6 +929,28 @@ html, body, #mbeditor-root {
   cursor: default;
 }
 
+/* Pending migrations: the whole status bar turns amber, rather than a banner
+ * that sat above everything and shoved the editor down the page every time it
+ * appeared.
+ *
+ * The two accent variables are redefined rather than background and color,
+ * because the bar and every child — buttons, separators, the hover mix — are
+ * already painted from them. Setting the background alone left white-on-amber
+ * text. */
+body.mbeditor-migration-pending .ide-statusbar {
+  --ide-accent:      var(--ide-statusbar-warn-bg);
+  --ide-accent-text: var(--ide-statusbar-warn-text);
+}
+
+.statusbar-migration {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .statusbar-offline {
   display: flex;
   align-items: center;
@@ -3466,6 +3488,17 @@ button:not(.pico-btn) { margin-bottom: 0; }
    An SVG ER diagram of the app's ActiveRecord models. The panel is narrow, so
    the SVG scrolls in both directions rather than being scaled down to
    illegibility. */
+/* The graph replaces the whole centre column when its view is open, so it
+   takes the same box the panes and drawers would have. */
+.ide-model-graph-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .ide-model-graph { display: flex; flex-direction: column; height: 100%; min-height: 0; position: relative; }
 .ide-model-graph-empty {
   padding: 16px;

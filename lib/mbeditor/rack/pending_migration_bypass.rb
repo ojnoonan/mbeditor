@@ -46,33 +46,39 @@ module Mbeditor
 
       # Announced on every bypassed response so the editor can warn about a
       # migration created mid-session, not only one that existed at page load.
+      #
+      # It is always present, "1" or "0" — an omitted header is NOT the same as
+      # "no longer pending". These responses are conditional-GET cacheable, and
+      # a 304 only *updates* the stored headers of the cached 200: a header the
+      # 304 leaves out stays in the cache verbatim. Omitting it when the check
+      # passed therefore replayed a stale "pending" to the browser for as long
+      # as the cache entry lived — which is exactly what made the warning stick
+      # after `rails db:migrate`, and flicker as cached and fresh responses
+      # disagreed. A value that is always sent is overwritten on every
+      # revalidation. The message itself does not travel; the editor's warning
+      # supplies the instructions.
       PENDING_HEADER = "X-Mbeditor-Pending-Migration"
 
       def call(env)
         return @checked.call(env) unless editor_traffic?(env)
 
         begin
-          result = @checked.call(env)
+          status, headers, body = @checked.call(env)
           # The check passed, so anything recorded earlier is stale.
           Mbeditor::PendingMigrations.clear
-          result
+          headers[PENDING_HEADER] = "0"
+          [status, headers, body]
         rescue StandardError => e
           raise unless pending_migration_error?(e)
 
           Mbeditor::PendingMigrations.note(e.message)
           status, headers, body = @app.call(env)
-          headers[PENDING_HEADER] = header_safe(e.message)
+          headers[PENDING_HEADER] = "1"
           [status, headers, body]
         end
       end
 
       private
-
-      # A header cannot carry the newlines the error message has, and it does
-      # not need the whole thing — the banner supplies the instructions.
-      def header_safe(message)
-        message.to_s.gsub(/\s+/, " ").strip[0, 200]
-      end
 
       def pending_migration_error?(error)
         defined?(ActiveRecord::PendingMigrationError) &&
