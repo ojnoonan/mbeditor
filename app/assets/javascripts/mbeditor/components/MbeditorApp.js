@@ -5154,11 +5154,13 @@ var MbeditorApp = function MbeditorApp() {
                     (info.following ? " collab-avatar-following" : "") +
                     (info.elsewhere ? " collab-avatar-elsewhere" : ""),
                   style: { background: info.colour },
+                  // The dot carries no glyph, so the name has to reach a
+                  // screen reader some other way.
+                  "aria-label": info.name,
                   onMouseEnter: function (e) { openCollabHover(cid, e); },
                   onMouseLeave: function () { setCollabHover(null); },
                   onClick: function () { toggleFollow(cid); }
-                },
-                info.name.charAt(0).toUpperCase()
+                }
               );
             }),
             collabOverflowIds.length > 0 && React.createElement(

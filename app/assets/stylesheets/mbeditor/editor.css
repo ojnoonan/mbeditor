@@ -1110,35 +1110,29 @@ body.mbeditor-migration-pending .ide-statusbar {
    tints that same token instead of replacing it. */
 .collab-avatar-stack { display: flex; align-items: center; }
 .collab-avatar {
-  width: 20px;
-  height: 20px;
+  width: 9px;
+  height: 9px;
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   border: none;
   border-radius: 50%;
   padding: 0;
-  font-size: 10px;
-  font-weight: 600;
-  color: #fff;
   cursor: pointer;
-  box-shadow: 0 0 0 2px var(--ide-panel-bg);
+  box-shadow: 0 0 0 1.5px var(--ide-panel-bg);
 }
-.collab-avatar:not(:first-child) { margin-left: -10px; }
+.collab-avatar:not(:first-child) { margin-left: -4.5px; }
 /* Dimmed rather than re-shaped: a peer in another file still reads as "here"
-   at a glance, just fainter, instead of needing a second glyph on a 20px dot. */
+   at a glance, just fainter, instead of needing a second glyph on a 9px dot. */
 .collab-avatar-elsewhere { opacity: 0.55; }
-.collab-avatar-following { outline: 2px solid var(--ide-accent-fg); outline-offset: 1px; }
+.collab-avatar-following { outline: 1.5px solid var(--ide-accent-fg); outline-offset: 1px; }
 .collab-avatar-more {
-  border-radius: 10px;
   width: auto;
-  min-width: 20px;
-  padding: 0 5px;
-  margin-left: 4px;
-  font-size: 9px;
+  height: auto;
+  margin-left: 6px;
+  padding: 0;
+  font-size: 10px;
   color: var(--ide-text-muted);
-  background: color-mix(in srgb, var(--ide-text) 15%, transparent);
+  background: none;
+  border-radius: 0;
   box-shadow: none;
 }
 .collab-avatar-overflow { position: relative; }
@@ -3451,8 +3445,18 @@ button:not(.pico-btn) { margin-bottom: 0; }
 }
 /* Re-apply border-radius for buttons that intentionally need it */
 .ide-shell .ide-titlebar-search { border-radius: 6px; }
-.ide-shell .collab-avatar { border-radius: 50%; }
-.ide-shell .collab-avatar-more { border-radius: 10px; }
+.ide-shell .collab-avatar {
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border-radius: 50%;
+}
+.ide-shell .collab-avatar-more {
+  width: auto;
+  height: auto;
+  padding: 0;
+  border-radius: 0;
+}
 .ide-shell .project-action-btn,
 .ide-shell .git-header-btn,
 .ide-shell .git-section-action-btn,
