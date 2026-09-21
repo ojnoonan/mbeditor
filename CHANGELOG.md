@@ -5,6 +5,97 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-09-21
+
+### Added
+- **Liquid Glass chrome, opt-in** (Settings → Appearance). Translucent, blurred
+  panels layered over whichever theme is active — it is a layer, not a twelfth
+  theme, so every colour is derived from the existing `--ide-*` tokens. Monaco
+  itself stays solid: legibility beats the effect, and a blurred backdrop under
+  a text editor costs a re-composite per repaint. The default chrome is the new
+  Modern one, matching VS Code's Dark Modern.
+- **Drag-to-open gutters.** One `Gutter` component owns every draggable gap.
+  Drag the strip above the status bar to open Problems, the right edge to open
+  the git panel, and the collapsed sidebar's gutter rightwards to snap the
+  explorer back open.
+- **Settings is a searchable modal**, not an editor tab, so it no longer takes a
+  pane or persists into your tab list.
+- **The model graph opens as its own view**, not a tab: the activity-bar icon
+  toggles it, it takes the whole centre column, and both side panels hide with
+  it. A layered graph is inherently wide and the tab gave it whatever was left
+  beside the explorer.
+- **A downloadable audit log** (Settings → Diagnostics) that structurally cannot
+  carry a file name, path or URL — every field is a number, boolean or authored
+  Symbol.
+- **Quick Open as a frosted palette** over the title bar, with a chevron
+  breadcrumb and VS Code-style Open Editors rows.
+- Auto-close tags in ERB and multi-line JSX, linked tag pairs, and `props.x`
+  completion.
+- Multi-select download in the explorer.
+- A `toolbarLabels` preference: toolbar button labels are now opt-in.
+- Accessibility: a focus-visible ring throughout, a real tab-close button, a
+  higher-contrast version chip, and the offline pulse respects reduced-motion.
+
+### Changed
+- **The pending-migration warning is no longer a banner.** It sat above
+  everything and pushed the editor down the page every time it appeared. The
+  status bar turns amber instead and carries a "Migrations pending" item. Both
+  halves of that colour are per-theme, because `--ide-warning` is authored as a
+  foreground colour and several themes pick an ochre that is unreadable as a
+  background; measured contrast is 4.87:1 to 14.97:1 across the eleven themes.
+- **Peer presence is an avatar stack**, not one chip per peer. Eight people used
+  to mean eight buttons across the title bar; it is now three overlapping dots
+  and a `+N`, fixed width whatever the roster size. Hovering a dot opens the
+  usual card, clicking follows or unfollows, and the `+N` opens a list of
+  everyone else with a follow toggle per row.
+- The title bar says "Mbeditor" rather than the full window title; the host and
+  port are in the browser's own address bar.
+- The file-tree section header has no chevron. Collapsing it left an empty
+  sidebar, so there was nothing to collapse to.
+- Tabs are rounded chips on the strip, the Problems panel wears VS Code chrome,
+  and problem counts are neutral rather than alarming.
+- `.scss` files open as scss and `.less` files as less, instead of css and
+  plaintext.
+- Audit recording moved off the subprocess critical path.
+
+### Fixed
+- **The pending-migration warning stuck after `rails db:migrate`**, and
+  flickered before that. The header announcing it was only *set* when a
+  migration was pending, and those responses are conditional-GET cacheable: a
+  304 updates the stored headers of the cached 200 but never removes one it
+  omits, so the browser replayed "pending" for as long as the cache entry
+  lived. It is now always sent, `1` or `0`, and an absent header counts as no
+  evidence either way.
+- **The model graph was unusable on a large app.** The cost was in click and
+  hover, not pan and zoom: `focused` was a dependency of the scene memo, so
+  every click-to-centre rebuilt every SVG element inside the click handler;
+  node hover scanned the whole scene per mouseenter; and the hover card and
+  edge tooltip each read `getBoundingClientRect` per pointer move, right after
+  hover had dirtied the style, forcing a full-scene layout. Measured on a
+  420-model, 1,249-association app: click-to-centre 20.4 ms → 7.9 ms median,
+  hover 45.7 ms → 33.2 ms.
+- Collaboration data-loss paths, and the per-keystroke buffer work that went
+  with them.
+- Undo tracking starts after the file load, not before, so the first undo no
+  longer empties a freshly opened file.
+- Ruby hover skips comments and the route-hint decoration space, and
+  go-to-definition starts the Ripper fallback alongside ruby-lsp rather than
+  after it.
+- Closing a markdown file closes its preview, and source and preview scroll in
+  sync.
+- Markdown anchor links, upload UX, the conflict chip and the cursor readout.
+- `RubyLspClient` performs its handshake outside the state lock, bounds the
+  document-lock wait, and keeps an LRU of documents.
+- `JsSyntaxCheckService` remembers a broken babel bundle instead of retrying it,
+  and bounds its lock wait.
+- The test-result `localStorage` cache is capped, and failed draft backups are
+  surfaced rather than silently dropped.
+- `json` is pinned below 3 so the suite runs.
+
+### Removed
+- Stale agent docs, the dead `build_js` rake task and a set of duplicated
+  helpers — about 1,100 lines.
+
 ## [0.13.1] - 2026-08-26
 
 ### Removed
