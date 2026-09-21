@@ -4967,10 +4967,11 @@ var MbeditorApp = function MbeditorApp() {
       { className: "ide-titlebar" },
       React.createElement("i", { className: "fas fa-layer-group ide-titlebar-icon" }),
       React.createElement(
+        // The product name, not the window title: the host and port are in the
+        // browser's own address bar, and the long form crowded the search pill.
         "div",
-        { className: "ide-titlebar-title" },
-        "Mini Browser Editor — ",
-        window.location.host
+        { className: "ide-titlebar-title", title: "Mini Browser Editor — " + window.location.host },
+        "Mbeditor"
       ),
       // The slot claims all the room between the title and the buttons; the
       // search pill then takes 75% of it, centred. Sizing the pill against a
