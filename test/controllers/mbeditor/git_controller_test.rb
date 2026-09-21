@@ -144,6 +144,14 @@ module Mbeditor
     # ─── git_info ───────────────────────────────────────────────────────────
 
     test "git_info branch history uses the current branch log" do
+      # Flush any pending code reload before stubbing. This test env keeps
+      # reloading on (the resilient router needs ActionDispatch::Reloader in the
+      # stack), so a reload left dirty by an earlier test fires inside the
+      # request below, swaps GitService for a fresh class, and the real
+      # current_branch answers with the checkout's own branch. Reloading up
+      # front resolves the constant to its final class so the stub sticks —
+      # same remedy as with_raising_mbeditor_action in resilient_routing_test.
+      Rails.application.reloader.reload!
       git_service_singleton = class << GitService; self; end
 
       git_service_singleton.alias_method :__original_current_branch_for_test, :current_branch
