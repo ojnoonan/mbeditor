@@ -30,7 +30,7 @@ html[data-glass] {
 
 html[data-glass] .ide-shell {
   background: var(--g-bg) fixed;
-  padding: 6px;
+  padding: 6px 3px;
   gap: 6px;
 }
 
@@ -70,12 +70,12 @@ html[data-glass] .ide-sidebar { border-radius: 0 12px 12px 0; border-left: none;
 /* ── Title bar ────────────────────────────────────────────────────────────── */
 /* The title bar is not a card: it sits flat on the backdrop like VS Code's,
    so the first card row starts under a plain strip rather than a second box.
-   Flat, but not transparent: its icons and the theme swatches sat straight on
-   the accent-tinted gradient, where a dim glyph and a bright pool of colour met
-   at no contrast at all. It gets its own near-solid strip, which is still
-   flatter than the cards below it. */
+   It carries no fill at all: a filled strip stops short of the window edges
+   where the cards below it are inset, and reads as a floating box. The blur
+   stays, and is what keeps the icons and the theme swatches off the raw
+   accent-tinted gradient without painting a surface. */
 html[data-glass] .ide-titlebar {
-  background: color-mix(in srgb, var(--ide-panel-bg) 90%, transparent);
+  background: transparent;
   backdrop-filter: var(--g-blur);
   -webkit-backdrop-filter: var(--g-blur);
   border: none;
