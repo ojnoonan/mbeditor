@@ -605,17 +605,33 @@ var ModelGraph = (function () {
       return edgeIndexRef.current.map[name] || [];
     }, []);
 
+    // getBoundingClientRect forces a synchronous layout, and hovering has just
+    // written classes onto a <g> holding thousands of elements, so the layout
+    // it forces is the whole scene: measured at 10 ms a tick on a 420-model
+    // graph, against 0.9 ms when the style is clean. The pane's own rect moves
+    // only when the window or the panel layout does, so read it once a frame.
+    var rectRef = React.useRef(null);
+    var paneRect = React.useCallback(function () {
+      var el = svgRef.current;
+      if (!el) return null;
+      if (!rectRef.current) {
+        rectRef.current = el.getBoundingClientRect();
+        window.requestAnimationFrame(function () { rectRef.current = null; });
+      }
+      return rectRef.current;
+    }, []);
+
     var moveHoverCard = React.useCallback(function (ev) {
       var card = hoverCardRef.current;
       var el = svgRef.current;
       if (!card || !el) return;
-      var rect = el.getBoundingClientRect();
+      var rect = paneRect();
       var x = ev.clientX - rect.left;
       var y = ev.clientY - rect.top;
       // Flip before the card would run off the pane rather than after.
       card.style.left = (x > rect.width - 300 ? x - 290 : x + 18) + 'px';
       card.style.top = Math.min(y + 18, Math.max(0, rect.height - 240)) + 'px';
-    }, []);
+    }, [paneRect]);
 
     var enterModel = React.useCallback(function (name, ev) {
       if (dragRef.current) return;   // panning, not inspecting
@@ -644,17 +660,16 @@ var ModelGraph = (function () {
     var edgeTooltipRef = React.useRef(null);
     var edgePosRef = React.useRef({ x: 0, y: 0 });
     var moveEdgeTooltip = React.useCallback(function (ev) {
-      var el = svgRef.current;
-      if (!el) return;
-      var rect = el.getBoundingClientRect();
+      var rect = paneRect();
+      if (!rect) return;
       var x = ev.clientX - rect.left;
       var y = ev.clientY - rect.top;
       edgePosRef.current = { x: x, y: y };
       var card = edgeTooltipRef.current;
       if (!card) return;
-      card.style.left = (x > el.clientWidth - 260 ? x - 240 : x + 14) + 'px';
+      card.style.left = (x > rect.width - 260 ? x - 240 : x + 14) + 'px';
       card.style.top = (y + 14) + 'px';
-    }, []);
+    }, [paneRect]);
 
     // Frame the whole graph on load. Without this the view starts at the
     // top-left of a canvas much larger than the pane and the diagram looks
@@ -759,22 +774,6 @@ var ModelGraph = (function () {
       svgRef.current = el;
       if (!el) return;
 
-      // getBoundingClientRect forces a synchronous layout, and we had just
-      // written a new transform onto a <g> holding thousands of elements — so
-      // reading it per wheel tick made the browser re-lay-out the entire scene
-      // before the handler could continue. Measured at 27 ms a tick on a
-      // 300-model graph. The pane's own rect only changes when the window or
-      // the panel layout does, so cache it and refresh once per frame.
-      var rectRef = { current: null };
-      var invalidateRect = function () { rectRef.current = null; };
-      var paneRect = function () {
-        if (!rectRef.current) {
-          rectRef.current = el.getBoundingClientRect();
-          window.requestAnimationFrame(invalidateRect);
-        }
-        return rectRef.current;
-      };
-
       var onWheel = function (e) {
         e.preventDefault();
         var rect = paneRect();
@@ -791,7 +790,7 @@ var ModelGraph = (function () {
 
       // After layout, so the pane has a measurable size to fit into.
       window.requestAnimationFrame(function () { fitRef.current(); });
-    }, []);
+    }, [paneRect]);
 
     // Memoised so hovering a model does not rebuild every box and edge.
     // The highlight itself is applied by toggling DOM classes; only the
