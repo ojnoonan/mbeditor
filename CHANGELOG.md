@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-10-19
+
+### Added
+- **Combined View.** Ctrl/Cmd-select files or folders in the explorer, right-click,
+  "Open in Combined View": every file on one scrolling page under its path, with
+  Copy and Download per file. Folders expand recursively; capped at 200 files with
+  a visible note. The tab is virtual and is not restored on reload.
+- **Method picking and Markdown export.** In Combined View, Ruby files get a
+  method checklist; "Download .md" / "Copy .md" bundle the view into one file,
+  method-limited files keeping their `class`/`module` skeleton with `# ...`
+  between pieces. Built for chat assistants that take only a few attachments.
+- **Paste & Place** (editor context menu or F1, Ruby). Paste methods from a
+  chat reply and mbeditor finds where each goes: the active file, then a repo
+  search for `def name` narrowed by class. New methods go into the file that
+  holds the class, before `private`. Diff preview first; Apply is one undoable
+  edit in the buffer and nothing is saved.
+- **Compare on upload conflicts.** When an upload or drop would overwrite a
+  file, each text file gets a "Compare" diff of disk vs incoming.
+- `POST /ruby_methods`: Ripper-based method ranges (owner, singleton, doc
+  comment start) behind the two features above.
+- A help-panel section describing all of the above.
+
+### Fixed
+- **Unreadable status bar and buttons.** The Liquid Glass status bar and the
+  title-bar buttons painted "text on the accent fill" onto panel-coloured
+  surfaces; glass also hid the amber pending-migration background; Dracula,
+  Night Owl and Tomorrow Night had white text on light accents. 44 combinations
+  (11 themes × glass × pending) now all clear 4.5:1 on the status bar.
+- **Flicker while migrations are pending.** `/cable` was not covered by the
+  pending-migration bypass, so every reconnect raised and the live channel
+  (presence, collaboration, file-change push) stayed dead.
+- Paste & Place searches use POSIX classes, because the `git grep` search tier
+  is ERE and silently matches nothing for `\s`.
+
+### Changed
+- **Monaco 0.57.0** (from 0.55.1). Its TypeScript API moved from
+  `monaco.languages.typescript` to `monaco.typescript`; every call site is
+  migrated. DOMPurify inside Monaco is still 3.4.15 (advisory rated low) until a
+  Monaco release ships 3.4.16+.
+- **axios 1.20.0** (from 1.17.0 vendored), for new high-severity advisories.
+
 ## [0.14.0] - 2026-09-21
 
 ### Added
