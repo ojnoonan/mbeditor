@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.2] - 2026-10-20
+
+### Added
+- **Combined View picker.** One "Copy .md" / "Download .md" at the top
+  replaces the per-file buttons, above a scrollable picker with a checkbox per
+  file and, for `.rb` files, per method. Unticked files are left out; ticked
+  methods limit a file to those methods.
+- The Markdown export now opens with a `# Files` index of the included paths.
+- **Open all editors in Combined View**: a stacked-layers action on the OPEN
+  EDITORS header.
+
+### Fixed
+- **Checkboxes inside editor panes did not respond to clicks.** The pane's
+  click-capture focus handler set store state on every click, and under the
+  legacy React root that re-render reset the controlled checkbox before React
+  saw it change. Focusing is now a no-op when nothing changes, and happens on
+  mousedown.
+- **The editor right-click menu was dim and unreadable** (since Monaco 0.57):
+  it rendered in a shadow root the theme's `--vscode-*` variables cannot reach.
+  Editors now use `useShadowDOM: false`.
+- **The explorer's workspace header went transparent on hover** with Liquid
+  Glass off, letting the scrolled tree show through.
+
 ## [0.14.1] - 2026-10-19
 
 ### Added
