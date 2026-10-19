@@ -39,7 +39,8 @@ var DiffViewer = function DiffViewer(_ref) {
       scrollBeyondLastLine: false,
       fontFamily: editorPrefs.fontFamily || "'JetBrains Mono', 'Fira Code', 'Menlo', 'Consolas', monospace",
       fontSize: editorPrefs.fontSize || 13,
-      wordWrap: editorPrefs.wordWrap || 'off'
+      wordWrap: editorPrefs.wordWrap || 'off',
+      useShadowDOM: false // same unthemed-context-menu reason as EditorPanel
     });
 
     diffEditor.setModel({
