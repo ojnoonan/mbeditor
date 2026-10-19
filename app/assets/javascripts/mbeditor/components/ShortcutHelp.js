@@ -191,7 +191,7 @@ var ShortcutHelp = function ShortcutHelp(_ref) {
                 Tips,
                 {
                   items: [
-                    'Combined View: Ctrl/Cmd-click several files or folders, right-click, "Open in Combined View" — every file on one page with Copy and Download',
+                    'Combined View: Ctrl/Cmd-click several files or folders, right-click, "Open in Combined View" — every file on one page with Copy and Download. The stacked-layers icon on OPEN EDITORS does the same for all open files',
                     'Pick methods: in Combined View, tick methods under a Ruby file to send only those; "Download .md" / "Copy .md" bundles everything into one attachment',
                     'Paste & Place: right-click inside a Ruby file (or F1) → "Paste & Place Ruby Method...", paste the reply, "Find placement", check the diff, "Apply to editor" — then save; Ctrl+Z undoes',
                     'Upload compare: drop or upload a file over an existing one and click "Compare" to see the diff before choosing Skip / Keep both / Overwrite'

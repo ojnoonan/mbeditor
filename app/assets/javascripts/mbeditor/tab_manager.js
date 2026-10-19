@@ -620,6 +620,9 @@ var TabManager = (function () {
     var state = EditorStore.getState();
     var pane = state.panes.find(function(p) { return p.id === paneId; });
     var newActive = pane ? pane.activeTabId : null;
+    // Every click in a pane lands here; a no-op setState still re-renders the
+    // app, which mid-click resets controlled inputs (checkboxes) to their old value.
+    if (state.focusedPaneId === paneId && state.activeTabId === newActive) return;
     EditorStore.setState({ focusedPaneId: paneId, activeTabId: newActive });
   }
 
