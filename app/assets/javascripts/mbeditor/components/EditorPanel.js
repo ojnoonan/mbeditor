@@ -792,6 +792,17 @@ var EditorPanel = function EditorPanel(_ref) {
       }
     });
 
+    // Paste & Place: Ruby only. An editor action gets the context-menu entry and
+    // the F1 command palette listing without another toolbar button.
+    var pastePlaceDisposable = editor.addAction({
+      id: 'mbeditor.pastePlace',
+      label: 'Paste & Place Ruby Method...',
+      precondition: 'editorLangId == ruby',
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1.7,
+      run: function() { EditorStore.setState({ isPastePlaceVisible: true }); }
+    });
+
     // No custom "Format Document" action: Ruby now has a real formatting
     // provider, so Monaco contributes that context-menu entry itself, and a
     // second one of our own showed up as a duplicate. Languages with no
@@ -1139,6 +1150,7 @@ var EditorPanel = function EditorPanel(_ref) {
       if (editorPluginDisposable) editorPluginDisposable.dispose();
       if (formatActionDisposable) formatActionDisposable.dispose();
       runTestAtCursorDisposable.dispose();
+      pastePlaceDisposable.dispose();
       columnSelectDisposable.dispose();
       contentDisposable.dispose();
       EditorStore.setState({ canUndo: false, canRedo: false });

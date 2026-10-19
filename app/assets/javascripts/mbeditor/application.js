@@ -26,6 +26,7 @@
 //= require mbeditor/components/CommitGraph
 //= require mbeditor/components/ModelGraph
 //= require mbeditor/components/ChangelogView
+//= require mbeditor/components/CombinedFileView
 //= require mbeditor/components/FileHistoryPanel
 //= require mbeditor/components/TestResultsPanel
 //= require mbeditor/components/LogPanel
@@ -42,5 +43,6 @@
 // whole app down the first time it renders.
 //= require mbeditor/components/ImportConflictModal
 //= require mbeditor/components/ImportDialog
+//= require mbeditor/components/PastePlaceModal
 //= require mbeditor/components/MbeditorApp
 //= require mbeditor/application_iife_tail

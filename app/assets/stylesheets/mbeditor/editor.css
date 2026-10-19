@@ -128,6 +128,10 @@ html, body, #mbeditor-root {
 }
 
 .ide-titlebar {
+  /* .statusbar-btn paints from --ide-accent-text, which is "text on the accent
+     fill" in the legacy themes. The title bar is panel-coloured in every theme,
+     so its buttons read the ordinary text colour instead. */
+  --ide-accent-text: var(--ide-text);
   display: flex;
   align-items: center;
   background: var(--ide-panel-bg);
@@ -1961,7 +1965,7 @@ body.mbeditor-migration-pending .ide-statusbar {
 .changelog-version-badge {
   font-size: 15px;
   font-weight: 700;
-  color: var(--ide-accent-text, #4fc1ff);
+  color: var(--ide-accent-fg);
   letter-spacing: -0.01em;
 }
 .changelog-version-date {
@@ -4135,3 +4139,28 @@ input.ide-model-graph-search[type="search"] {
 .mbeditor-collab-diag-label { font-weight: 500; }
 .mbeditor-collab-diag-detail { color: var(--ide-text-muted, #858585); margin-top: 3px; line-height: 1.5; }
 .mbeditor-collab-diag-foot { color: var(--ide-text-muted, #858585); margin-bottom: 12px; }
+
+.combined-view { height: 100%; overflow-y: auto; background: var(--ide-bg, #1e1e1e); color: var(--ide-text, #d4d4d4); }
+.combined-note { padding: 8px 16px; font-size: 12px; color: var(--ide-text-muted, #888); }
+.combined-file-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 6px 16px; background: var(--ide-bg-elevated, var(--ide-bg, #252526)); border-bottom: 1px solid var(--ide-border, #333); font-size: 12px; }
+.combined-file-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.combined-file-btn { font-size: 11px; padding: 2px 8px; cursor: pointer; color: inherit; background: transparent; border: 1px solid var(--ide-border, #444); border-radius: 3px; }
+.combined-file-btn:disabled { opacity: 0.4; cursor: default; }
+.combined-file-body { margin: 0; padding: 8px 16px 24px; overflow-x: auto; font: 12px/1.5 Menlo, Consolas, monospace; tab-size: 2; }
+
+/* Combined view: method picking + Markdown export; import Compare; Paste & Place */
+.combined-toolbar { display: flex; gap: 8px; padding: 6px 16px; border-bottom: 1px solid var(--ide-border, #333); }
+.combined-methods { display: flex; flex-wrap: wrap; gap: 2px 12px; max-height: 96px; overflow-y: auto; padding: 4px 16px; font-size: 11px; border-bottom: 1px solid var(--ide-border, #333); }
+.combined-method { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; cursor: pointer; }
+.import-conflict-compare { margin-left: 8px; padding: 0; background: none; border: 0; color: var(--ide-accent, #0e639c); font-size: 11px; cursor: pointer; }
+.import-conflict-compare:hover { text-decoration: underline; }
+.import-conflict-modal.import-conflict-wide { min-width: min(900px, 94vw); max-width: 94vw; }
+.import-conflict-diff { height: 360px; margin-top: 8px; }
+.paste-place-modal { min-width: min(900px, 94vw); max-width: 94vw; }
+.paste-place-body { padding: 8px 16px; }
+.paste-place-input { width: 100%; box-sizing: border-box; font: 12px/1.5 var(--ide-mono-font, monospace); color: var(--ide-text, #d4d4d4); background: var(--ide-input-bg, #3c3c3c); border: 1px solid var(--ide-border, #3c3c3c); border-radius: 3px; padding: 8px; resize: vertical; }
+.paste-place-error { color: var(--ide-error, #f48771); font-size: 12px; padding: 6px 0; }
+.paste-place-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
+.paste-place-name { font-family: var(--ide-mono-font, monospace); min-width: 160px; }
+.paste-place-row select { flex: 1; min-width: 0; color: var(--ide-text, #d4d4d4); background: var(--ide-input-bg, #3c3c3c); border: 1px solid var(--ide-border, #3c3c3c); }
+.paste-place-diff { height: 260px; margin-top: 8px; border: 1px solid var(--ide-border, #3c3c3c); }

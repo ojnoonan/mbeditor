@@ -37,6 +37,7 @@ module Mbeditor
     get    'js_program',      to: 'editors#js_program'
     post   'ruby_lsp',        to: 'editors#ruby_lsp'
   post   'ruby_rename',     to: 'editors#ruby_rename'
+  post   'ruby_methods',    to: 'editors#ruby_methods'
   get    'model_graph',     to: 'editors#model_graph'
   get    'exceptions',      to: 'editors#exceptions'
   delete 'exceptions',      to: 'editors#clear_exceptions'

@@ -33,6 +33,7 @@ module Mbeditor
     # is still told to migrate — they are just no longer prevented from working.
     class PendingMigrationBypass
       DEFAULT_ASSET_PREFIX = "/assets"
+      DEFAULT_CABLE_PATH = "/cable"
 
       def initialize(app, file_watcher: nil)
         @app = app
@@ -94,7 +95,21 @@ module Mbeditor
         prefix = Mbeditor::MountPath.resolve
         return true if path == prefix || path.start_with?("#{prefix}/")
 
-        path.start_with?("#{asset_prefix}/")
+        return true if path.start_with?("#{asset_prefix}/")
+
+        # The cable carries presence, collaboration and file-change push. Left
+        # blocked it 500s on every reconnect, and the client's status chips
+        # flicker for as long as the migration stays pending.
+        path == cable_path || path.start_with?("#{cable_path}/")
+      end
+
+      def cable_path
+        @cable_path ||= begin
+          configured = Rails.application.config.action_cable.mount_path if Rails.application.config.respond_to?(:action_cable)
+          (configured.presence || DEFAULT_CABLE_PATH).to_s.chomp("/")
+        rescue StandardError
+          DEFAULT_CABLE_PATH
+        end
       end
 
       def asset_prefix
