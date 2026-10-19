@@ -2367,6 +2367,8 @@ body.mbeditor-migration-pending .ide-statusbar {
 /* Nothing to click, so nothing that looks clickable. */
 .collapsible-header-static { cursor: default; }
 .collapsible-header-static:hover { background: none; }
+/* A sticky header still needs its own fill, or scrolled rows show through it. */
+.ide-sidebar-scrollable .collapsible-header-static:hover { background: var(--ide-panel-bg); }
 
 
 .collapsible-toggle {
