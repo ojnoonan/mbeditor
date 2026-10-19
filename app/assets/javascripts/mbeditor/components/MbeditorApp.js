@@ -1453,7 +1453,7 @@ var MbeditorApp = function MbeditorApp() {
       // restore one.
       panesToLoad = panesToLoad.map(function (p) {
         return _extends({}, p, {
-          tabs: p.tabs.filter(function (t) { return !t.isSettings && t.path !== '__settings__'; })
+          tabs: p.tabs.filter(function (t) { return !t.isSettings && t.path !== '__settings__' && !t.isCombinedView; })
         });
       });
       var allTabs = panesToLoad.flatMap(function (p) { return p.tabs; });
@@ -1492,7 +1492,7 @@ var MbeditorApp = function MbeditorApp() {
           p.tabs.forEach(function (t) {
             var res = results[resIdx++];
             var isPlainFile = t.path && !t.isDiff && !t.isCombinedDiff &&
-              !t.isChangelog && !t.isPreview &&
+              !t.isChangelog && !t.isCombinedView && !t.isPreview &&
               !/^(diff|combined-diff):\/\//.test(t.path) && !/::preview$/.test(t.path);
             if (isPlainFile) {
               if (seenPaths[t.path]) return;
@@ -1613,7 +1613,7 @@ var MbeditorApp = function MbeditorApp() {
           return {
             id: p.id,
             activeTabId: p.activeTabId,
-            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff && !t.isUntitled; }).map(function (t) {
+            tabs: p.tabs.filter(function (t) { return !t.isCombinedDiff && !t.isCombinedView && !t.isUntitled; }).map(function (t) {
               return {
                 id: t.id, path: t.path, name: t.name, dirty: t.dirty, viewState: t.viewState,
                 isPreview: !!t.isPreview, previewFor: t.previewFor || null,
@@ -2149,6 +2149,7 @@ var MbeditorApp = function MbeditorApp() {
         !path.startsWith('combined-diff://') &&
         !path.startsWith('untitled://') &&
         !pt.tab.isCombinedDiff &&
+        !pt.tab.isCombinedView &&
         !pt.tab.isImage &&
         !pt.tab.isDiff &&
         typeof pt.tab.content === 'string';
@@ -2564,7 +2565,7 @@ var MbeditorApp = function MbeditorApp() {
         return {
           id: p.id,
           activeTabId: p.activeTabId,
-          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff && !t.isUntitled; }).map(function (t) {
+          tabs: p.tabs.filter(function(t) { return !t.isCombinedDiff && !t.isCombinedView && !t.isUntitled; }).map(function (t) {
             return {
               id: t.id,
               path: t.path,
@@ -2803,7 +2804,7 @@ var MbeditorApp = function MbeditorApp() {
   var _presenceFileFor = function (tab) {
     if (!tab || !tab.path) return null;
     var p = tab.path;
-    if (tab.isDiff || tab.isCombinedDiff || tab.isCommitGraph || tab.isPreview || tab.isChangelog) return null;
+    if (tab.isDiff || tab.isCombinedDiff || tab.isCommitGraph || tab.isPreview || tab.isChangelog || tab.isCombinedView) return null;
     if (p.indexOf('diff://') === 0 || p.indexOf('combined-diff://') === 0 || p.indexOf('mbeditor://') === 0) return null;
     if (p.indexOf('::preview') !== -1) return null;
     return p;
@@ -3129,7 +3130,7 @@ var MbeditorApp = function MbeditorApp() {
   var setActiveEOL = _useState31e[1];
 
   useEffect(function () {
-    if (!gitAvailable || !activeTab || activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCommitGraph || !activeTab.path || activeTab.path.indexOf('://') >= 0) {
+    if (!gitAvailable || !activeTab || activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCombinedView || activeTab.isCommitGraph || !activeTab.path || activeTab.path.indexOf('://') >= 0) {
       setActiveFileCommit(null);
       return;
     }
@@ -3151,7 +3152,7 @@ var MbeditorApp = function MbeditorApp() {
   // buffer for '\r' there was pure waste — typing cannot change the line ending.
   useEffect(function () {
     if (!activeTab || typeof activeTab.content !== 'string' ||
-        activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCommitGraph || activeTab.isPreview) {
+        activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCombinedView || activeTab.isCommitGraph || activeTab.isPreview) {
       setActiveEOL(null);
       return;
     }
@@ -3166,7 +3167,7 @@ var MbeditorApp = function MbeditorApp() {
 
   useEffect(function () {
     if (!activeTab || typeof activeTab.content !== 'string') return;
-    if (activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCommitGraph) return;
+    if (activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCombinedView || activeTab.isCommitGraph) return;
     if (isRubyPath(activeTab.path) && !rubocopAvailable) return;
     if (activeTab.path.endsWith('.haml') && !hamlLintAvailable) return;
 
@@ -4289,6 +4290,37 @@ var MbeditorApp = function MbeditorApp() {
     return !!(node && selectedPaths && selectedPaths.size > 1 && selectedPaths.has(node.path));
   };
 
+  var MAX_COMBINED_FILES = 200;
+  var handleOpenCombinedView = function handleOpenCombinedView(node) {
+    if (!node) return;
+    var byPath = {};
+    (function index(items) {
+      (items || []).forEach(function (n) { byPath[n.path] = n; index(n.children); });
+    })(treeData);
+    var files = [];
+    var seen = {};
+    var walk = function walk(n) {
+      if (!n) return;
+      if (n.type === 'file') {
+        if (!seen[n.path]) { seen[n.path] = true; files.push(n.path); }
+        return;
+      }
+      (n.children || []).forEach(walk);
+    };
+    (actsOnSelection(node) ? Array.from(selectedPaths) : [node.path]).forEach(function (p) { walk(byPath[p]); });
+    if (!files.length) { EditorStore.setStatus('No files to show', 'info'); return; }
+    var total = files.length;
+    var id = 'mbeditor://combined/' + Date.now();
+    var st = EditorStore.getState();
+    var pane = st.panes.find(function (p) { return p.id === st.focusedPaneId; }) || st.panes[0];
+    if (!pane) return;
+    var tab = { id: id, path: id, name: 'Combined (' + Math.min(total, MAX_COMBINED_FILES) + ' files)', dirty: false, content: '', isCombinedView: true, combinedPaths: files.slice(0, MAX_COMBINED_FILES), combinedTotal: total };
+    EditorStore.setState({
+      panes: st.panes.map(function (p) { return p.id === pane.id ? Object.assign({}, p, { tabs: p.tabs.concat(tab), activeTabId: id }) : p; }),
+      focusedPaneId: pane.id
+    });
+  };
+
   var handleDownloadFile = function handleDownloadFile(node) {
     if (!node) return;
     var isMultiSelect = actsOnSelection(node);
@@ -4392,6 +4424,9 @@ var MbeditorApp = function MbeditorApp() {
     }
     if (action === 'delete') {
       handleDeletePath(node);return;
+    }
+    if (action === 'combinedView' && node) {
+      handleOpenCombinedView(node);return;
     }
     if (action === 'download' && node) {
       handleDownloadFile(node);return;
@@ -6113,6 +6148,12 @@ var MbeditorApp = function MbeditorApp() {
                     }
                   }
                 });
+              } else if (pActiveTab.isCombinedView) {
+                content = React.createElement(CombinedFileView, {
+                  key: pActiveTab.id,
+                  paths: pActiveTab.combinedPaths || [],
+                  total: pActiveTab.combinedTotal || 0
+                });
               } else if (pActiveTab.isDiff) {
                 var _t = editorPrefs.theme || 'vs-dark';
                 var isDiffDark = _t !== 'vs' && _t !== 'hc-light' && _t !== 'github-light';
@@ -6756,6 +6797,14 @@ var MbeditorApp = function MbeditorApp() {
           " " + deleteMenuLabel(contextMenu.node)
         ),
         React.createElement("div", { className: "context-menu-divider" }),
+        contextMenu.node && (actsOnSelection(contextMenu.node) || contextMenu.node.type === 'folder') && React.createElement(
+          "div",
+          { className: "context-menu-item", onClick: function () {
+              return handleContextMenuAction('combinedView');
+            } },
+          React.createElement("i", { className: "fas fa-layer-group context-menu-icon" }),
+          " Open in Combined View"
+        ),
         contextMenu.node && React.createElement(
           "div",
           { className: "context-menu-item", onClick: function () {

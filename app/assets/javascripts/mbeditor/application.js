@@ -26,6 +26,7 @@
 //= require mbeditor/components/CommitGraph
 //= require mbeditor/components/ModelGraph
 //= require mbeditor/components/ChangelogView
+//= require mbeditor/components/CombinedFileView
 //= require mbeditor/components/FileHistoryPanel
 //= require mbeditor/components/TestResultsPanel
 //= require mbeditor/components/LogPanel

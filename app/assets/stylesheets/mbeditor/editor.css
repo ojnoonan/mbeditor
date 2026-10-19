@@ -4135,3 +4135,11 @@ input.ide-model-graph-search[type="search"] {
 .mbeditor-collab-diag-label { font-weight: 500; }
 .mbeditor-collab-diag-detail { color: var(--ide-text-muted, #858585); margin-top: 3px; line-height: 1.5; }
 .mbeditor-collab-diag-foot { color: var(--ide-text-muted, #858585); margin-bottom: 12px; }
+
+.combined-view { height: 100%; overflow-y: auto; background: var(--ide-bg, #1e1e1e); color: var(--ide-text, #d4d4d4); }
+.combined-note { padding: 8px 16px; font-size: 12px; color: var(--ide-text-muted, #888); }
+.combined-file-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 6px 16px; background: var(--ide-bg-elevated, var(--ide-bg, #252526)); border-bottom: 1px solid var(--ide-border, #333); font-size: 12px; }
+.combined-file-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.combined-file-btn { font-size: 11px; padding: 2px 8px; cursor: pointer; color: inherit; background: transparent; border: 1px solid var(--ide-border, #444); border-radius: 3px; }
+.combined-file-btn:disabled { opacity: 0.4; cursor: default; }
+.combined-file-body { margin: 0; padding: 8px 16px 24px; overflow-x: auto; font: 12px/1.5 Menlo, Consolas, monospace; tab-size: 2; }
