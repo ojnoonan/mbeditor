@@ -1016,7 +1016,7 @@ module Mbeditor
         (function () {
           var editor = window.__mbeditorActiveEditor;
           var monaco = window.monaco;
-          monaco.languages.typescript.javascriptDefaults.addExtraLib(
+          monaco.typescript.javascriptDefaults.addExtraLib(
             "function Badge(props) { return props.label + props.tone; }\n",
             "file:///badge.js"
           );

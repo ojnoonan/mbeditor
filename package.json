@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "esbuild": "0.28.0",
-    "monaco-editor": "0.55.1",
+    "monaco-editor": "0.57.0",
     "monaco-vim": "0.4.4"
   }
 }

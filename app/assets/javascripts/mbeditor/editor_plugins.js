@@ -145,7 +145,7 @@
   var _discoveredFlushTimer = null;
   function flushDiscoveredGlobals() {
     _discoveredFlushTimer = null;
-    var mts = window.monaco && window.monaco.languages && window.monaco.languages.typescript;
+    var mts = window.monaco && window.monaco.typescript;
     if (!mts || !mts.javascriptDefaults) return;
     var decls = Object.keys(discoveredJsGlobals)
       .map(function(k) { return 'declare var ' + k + ': any;'; }).join('\n');
@@ -263,7 +263,7 @@
       entry.lib.dispose();
       entry.lib = null;
     } else if (!open && !entry.lib) {
-      entry.lib = monaco.languages.typescript.javascriptDefaults
+      entry.lib = monaco.typescript.javascriptDefaults
         .addExtraLib(entry.content, programUri(path));
     }
   }
@@ -278,7 +278,7 @@
 
   function loadWorkspaceProgram(monaco) {
     if (typeof FileService === 'undefined') return;
-    var mts = monaco && monaco.languages && monaco.languages.typescript;
+    var mts = monaco && monaco.typescript;
     if (!mts || !mts.javascriptDefaults) return;
 
     var programLoaded = FileService.getJsProgram
@@ -301,7 +301,7 @@
 
   function loadWorkspaceGlobals(monaco) {
     if (typeof FileService === 'undefined' || !FileService.getJsGlobals) return;
-    var mts = monaco && monaco.languages && monaco.languages.typescript;
+    var mts = monaco && monaco.typescript;
     if (!mts || !mts.javascriptDefaults) return;
     FileService.getJsGlobals().then(function (data) {
       if (!data || !data.ok || !data.symbols) return;
@@ -335,7 +335,7 @@
   // tree. A workspace can be tens of MB, so re-fetching it on every save would
   // cost more than the feature is worth.
   function refreshProgramPaths(monaco, paths) {
-    var mts = monaco && monaco.languages && monaco.languages.typescript;
+    var mts = monaco && monaco.typescript;
     if (!mts || !mts.javascriptDefaults) return;
     if (typeof FileService === 'undefined' || !FileService.getJsProgramFile) return;
     var wanted = (paths || []).filter(function (path) {
@@ -1253,8 +1253,8 @@
   function registerJsProviders(monaco) {
     // JavaScript: enable semantic checking (off by default in Monaco) and JSX support.
     // checkJs catches undefined variables, noUnusedLocals catches dead assignments.
-    if (monaco.languages.typescript && monaco.languages.typescript.javascriptDefaults) {
-      monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+    if (monaco.typescript && monaco.typescript.javascriptDefaults) {
+      monaco.typescript.javascriptDefaults.setDiagnosticsOptions({
         noSemanticValidation: false,
         noSyntaxValidation: false,
         // Suggestion diagnostics are TypeScript's advice to a TypeScript
@@ -1271,12 +1271,12 @@
         // which is a closed rule rather than a list that grows by one code
         // every time a new false positive turns up.
       });
-      monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
-        target: monaco.languages.typescript.ScriptTarget.ES2020,
+      monaco.typescript.javascriptDefaults.setCompilerOptions({
+        target: monaco.typescript.ScriptTarget.ES2020,
         allowNonTsExtensions: true,
         allowJs: true,
         checkJs: true,
-        jsx: monaco.languages.typescript.JsxEmit.React,
+        jsx: monaco.typescript.JsxEmit.React,
         noUnusedLocals: true
       });
       // Hand JS formatting to Prettier alone.
@@ -1289,8 +1289,8 @@
       // two spaces and never adds semicolons, ignoring every preference. Only
       // formatting is switched off — completions, hovers, diagnostics, rename
       // and the rest of the JS intelligence still come from the worker.
-      monaco.languages.typescript.javascriptDefaults.setModeConfiguration(
-        Object.assign({}, monaco.languages.typescript.javascriptDefaults.modeConfiguration, {
+      monaco.typescript.javascriptDefaults.setModeConfiguration(
+        Object.assign({}, monaco.typescript.javascriptDefaults.modeConfiguration, {
           documentRangeFormattingEdits: false,
           onTypeFormattingEdits: false
         })
@@ -1401,15 +1401,15 @@
     // window globals from the host application. Common Sprockets globals
     // (React, ReactDOM, etc.) are declared explicitly. For additional globals
     // not auto-detected, add `/* global MyComponent */` at the top of the file.
-    if (monaco.languages.typescript && monaco.languages.typescript.javascriptDefaults) {
-      monaco.languages.typescript.javascriptDefaults.addExtraLib(
+    if (monaco.typescript && monaco.typescript.javascriptDefaults) {
+      monaco.typescript.javascriptDefaults.addExtraLib(
         REACT_MINI_UMD_DTS,
         'inmemory://mbeditor/react-mini-umd.d.ts'
       );
 
       var dynamicShim = buildWindowGlobalsShim();
       if (dynamicShim) {
-        monaco.languages.typescript.javascriptDefaults.addExtraLib(
+        monaco.typescript.javascriptDefaults.addExtraLib(
           dynamicShim,
           'inmemory://mbeditor/window-globals.d.ts'
         );
@@ -1725,11 +1725,11 @@
     }
 
     // TypeScript: enable JSX for .tsx files.
-    if (monaco.languages.typescript && monaco.languages.typescript.typescriptDefaults) {
-      monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
-        target: monaco.languages.typescript.ScriptTarget.ES2020,
+    if (monaco.typescript && monaco.typescript.typescriptDefaults) {
+      monaco.typescript.typescriptDefaults.setCompilerOptions({
+        target: monaco.typescript.ScriptTarget.ES2020,
         allowNonTsExtensions: true,
-        jsx: monaco.languages.typescript.JsxEmit.React,
+        jsx: monaco.typescript.JsxEmit.React,
         noUnusedLocals: true
       });
     }
@@ -1932,7 +1932,7 @@
   function collectComponentProps(monaco, model, name) {
     var sources = [model.getValue()];
     try {
-      var libs = monaco.languages.typescript.javascriptDefaults.getExtraLibs();
+      var libs = monaco.typescript.javascriptDefaults.getExtraLibs();
       Object.keys(libs).forEach(function(uri) {
         if (libs[uri] && libs[uri].content) sources.push(libs[uri].content);
       });
