@@ -304,6 +304,15 @@ var FileService = (function () {
       .then(function (res) { return res.data; });
   }
 
+  // Method line ranges of Ruby source (code).
+  // Resolves { methods, owners } or { error } — a syntax error is data, not a throw.
+  function getRubyMethods(code) {
+    return axios.post(window.mbeditorBasePath() + '/ruby_methods', { code: code }).then(function (res) { return res.data; }, function (err) {
+      if (err && err.response && err.response.data && err.response.data.error && err.response.status === 422) return { error: err.response.data.error };
+      throw err;
+    });
+  }
+
   function getState() {
     return axios.get(window.mbeditorBasePath() + '/state').then(function(res) { return res.data; });
   }
@@ -550,6 +559,7 @@ var FileService = (function () {
     runTests: runTests,
     ping: ping,
     getRoutes: getRoutes,
+    getRubyMethods: getRubyMethods,
     isServerReachable: ServerReachability.isOnline,
     onReachabilityChange: ServerReachability.onChange,
     getState: getState,

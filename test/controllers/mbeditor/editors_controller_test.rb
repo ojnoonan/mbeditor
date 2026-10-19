@@ -292,6 +292,22 @@ module Mbeditor
 
     # ── exceptions ───────────────────────────────────────────────────────────
 
+    test "ruby_methods parses a posted snippet and reports syntax errors as 422" do
+      post "/mbeditor/ruby_methods", params: { code: "def a; end\n" }
+      assert_response :success
+      assert_equal ["a"], JSON.parse(response.body)["methods"].map { |x| x["name"] }
+      post "/mbeditor/ruby_methods", params: { code: "def a\n  if\n" }
+      assert_response :unprocessable_content
+      assert JSON.parse(response.body)["error"]
+    end
+
+    test "ruby_methods POST requires the client header" do
+      ActionDispatch::Integration::Session.new(Rails.application).tap do |sess|
+        sess.post "/mbeditor/ruby_methods", params: { code: "def a; end" }
+        assert_equal 403, sess.response.status
+      end
+    end
+
     test "exceptions returns recorded host-app failures newest first" do
       Mbeditor::ExceptionLog.clear!
       error = RuntimeError.new("kaboom")

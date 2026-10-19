@@ -6909,7 +6909,18 @@ var MbeditorApp = function MbeditorApp() {
     importConflict && React.createElement(ImportConflictModal, {
       conflicts: importConflict.result.conflicts,
       errors: importConflict.result.errors,
+      entries: importConflict.entries,
+      targetFolderPath: importConflict.targetFolderPath,
+      isDark: !['vs', 'hc-light', 'github-light'].includes(editorPrefs.theme || 'vs-dark'),
+      editorPrefs: editorPrefs,
       onResolve: resolveImportConflict
+    }),
+
+    /* ── Paste & Place ─────────────────────────────────────────────────── */
+    state.isPastePlaceVisible && React.createElement(PastePlaceModal, {
+      isDark: !['vs', 'hc-light', 'github-light'].includes(editorPrefs.theme || 'vs-dark'),
+      editorPrefs: editorPrefs,
+      onClose: function () { EditorStore.setState({ isPastePlaceVisible: false }); }
     }),
 
     /* ── Schema modal ──────────────────────────────────────────────────── */

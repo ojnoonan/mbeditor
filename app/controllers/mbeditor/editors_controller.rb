@@ -758,6 +758,13 @@ module Mbeditor
              status: :unprocessable_content
     end
 
+    # POST /mbeditor/ruby_methods {code:} — method line ranges of Ruby source.
+    # A syntax error is a 422 with {error:}, never a raise.
+    def ruby_methods
+      result = RubyMethodRangesService.call(params[:code].to_s)
+      render json: result, status: result[:error] ? :unprocessable_content : :ok
+    end
+
     # GET /mbeditor/exceptions — recorded host-app exceptions, newest first.
     #
     # The cable push is the live path; this seeds the panel on load and covers
