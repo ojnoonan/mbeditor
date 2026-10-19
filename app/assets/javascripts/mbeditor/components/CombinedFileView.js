@@ -18,17 +18,6 @@
     return lang ? lang.id : null;
   }
 
-  function download(path) {
-    var link = document.createElement('a');
-    link.href = window.mbeditorBasePath() + '/raw?download=1&path=' + encodeURIComponent(path);
-    link.download = path.split('/').pop();
-    link.rel = 'noopener';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    EditorStore.setStatus('Downloading ' + link.download + '...', 'info');
-  }
-
   function copyText(text, okMsg, failMsg) {
     if (!navigator.clipboard) return;
     navigator.clipboard.writeText(text).then(
@@ -76,23 +65,28 @@
   }
 
   // paths: ordered file paths; files: path -> loaded entry; info: path -> {methods, owners};
-  // picked: path -> {methodIndex: true}. A file with any picked method exports only those.
-  function buildMarkdown(paths, files, info, picked) {
+  // picked: path -> {methodIndex: true}; excluded: path -> true. A file with any picked
+  // method exports only those. Returns '' when no loaded file is included.
+  function buildMarkdown(paths, files, info, picked, excluded) {
+    var index = [];
     var parts = [];
     paths.forEach(function (path) {
       var e = files[path];
-      if (!e || e.content == null) return;
+      if (excluded[path] || !e || e.content == null) return;
       var sel = picked[path] || {};
       var body = e.content;
+      var line = '- ' + path;
       if (info[path] && info[path].methods && Object.keys(sel).some(function (k) { return sel[k]; })) {
         body = methodSlice(e.content, info[path], sel);
+        line += ' (methods: ' + info[path].methods.filter(function (m, i) { return sel[i]; }).map(function (m) { return m.name; }).join(', ') + ')';
       }
+      index.push(line);
       var fence = fenceFor(body);
       var ext = (/\.([^./]+)$/.exec(path) || [])[1] || '';
       var lang = { rb: 'ruby', js: 'javascript', jsx: 'jsx', ts: 'typescript', tsx: 'tsx', yml: 'yaml', md: 'markdown', sh: 'bash' }[ext] || ext;
       parts.push('## ' + path + '\n\n' + fence + lang + '\n' + body.replace(/\n$/, '') + '\n' + fence + '\n');
     });
-    return parts.join('\n');
+    return index.length ? '# Files\n' + index.join('\n') + '\n\n' + parts.join('\n') : '';
   }
 
   function bundleName() {
@@ -143,6 +137,10 @@
       });
     }, [paths, files]);
 
+    var _x = useState({});
+    var excluded = _x[0];
+    var setExcluded = _x[1];
+
     var toggle = function (path, i) {
       setPicked(function (prev) {
         var o = Object.assign({}, prev);
@@ -151,8 +149,18 @@
         o[path] = sel;
         return o;
       });
+      setExcluded(function (prev) { var o = Object.assign({}, prev); delete o[path]; return o; });
     };
 
+    var toggleFile = function (path) {
+      setExcluded(function (prev) { var o = Object.assign({}, prev); if (o[path]) delete o[path]; else o[path] = true; return o; });
+    };
+
+    var exportMd = function (action) {
+      var md = buildMarkdown(paths, files, info, picked, excluded);
+      if (!md) { EditorStore.setStatus('No files selected', 'info'); return; }
+      action(md);
+    };
 
     useEffect(function () {
       var cancelled = false;
@@ -180,8 +188,24 @@
 
     return React.createElement('div', { className: 'combined-view' },
       React.createElement('div', { className: 'combined-toolbar' },
-        React.createElement('button', { type: 'button', className: 'combined-file-btn', onClick: function () { downloadText(buildMarkdown(paths, files, info, picked), bundleName()); } }, 'Download .md'),
-        React.createElement('button', { type: 'button', className: 'combined-file-btn', onClick: function () { copyText(buildMarkdown(paths, files, info, picked), 'Copied Markdown bundle', 'Could not copy Markdown bundle'); } }, 'Copy .md')
+        React.createElement('button', { type: 'button', className: 'combined-file-btn', onClick: function () { exportMd(function (md) { copyText(md, 'Copied Markdown bundle', 'Could not copy Markdown bundle'); }); } }, 'Copy .md'),
+        React.createElement('button', { type: 'button', className: 'combined-file-btn', onClick: function () { exportMd(function (md) { downloadText(md, bundleName()); }); } }, 'Download .md')
+      ),
+      React.createElement('div', { className: 'combined-picker' },
+        paths.map(function (path) {
+          var methods = info[path] && info[path].methods;
+          return React.createElement('div', { key: path },
+            React.createElement('label', { className: 'combined-pick-file' },
+              React.createElement('input', { type: 'checkbox', checked: !excluded[path], onChange: function () { toggleFile(path); } }),
+              path),
+            methods && methods.map(function (m, i) {
+              var label = (m.owner ? m.owner + (m.singleton ? '.' : '#') : (m.singleton ? '.' : '#')) + m.name;
+              return React.createElement('label', { key: i, className: 'combined-pick-method', title: 'lines ' + m.start_line + '-' + m.end_line },
+                React.createElement('input', { type: 'checkbox', checked: !!(picked[path] && picked[path][i]), onChange: function () { toggle(path, i); } }),
+                label);
+            })
+          );
+        })
       ),
       props.total > paths.length && React.createElement('div', { className: 'combined-note' },
         'Showing the first ' + paths.length + ' of ' + props.total + ' files.'),
@@ -189,17 +213,7 @@
         var e = files[path];
         return React.createElement('section', { key: path, className: 'combined-file' },
           React.createElement('div', { className: 'combined-file-header' },
-            React.createElement('span', { className: 'combined-file-path' }, path),
-            React.createElement('button', { type: 'button', className: 'combined-file-btn', disabled: !e || e.content == null, onClick: function () { copyText(e.content, 'Copied ' + path, 'Could not copy ' + path); } }, 'Copy'),
-            React.createElement('button', { type: 'button', className: 'combined-file-btn', onClick: function () { download(path); } }, 'Download')
-          ),
-          info[path] && info[path].methods && info[path].methods.length > 0 && React.createElement('div', { className: 'combined-methods' },
-            info[path].methods.map(function (m, i) {
-              var label = (m.owner ? m.owner + (m.singleton ? '.' : '#') : (m.singleton ? '.' : '#')) + m.name;
-              return React.createElement('label', { key: i, className: 'combined-method', title: 'lines ' + m.start_line + '-' + m.end_line },
-                React.createElement('input', { type: 'checkbox', checked: !!(picked[path] && picked[path][i]), onChange: function () { toggle(path, i); } }),
-                label);
-            })
+            React.createElement('span', { className: 'combined-file-path' }, path)
           ),
           !e ? React.createElement('div', { className: 'combined-note' }, 'Loading...') :
             e.note ? React.createElement('div', { className: 'combined-note' }, e.note) :

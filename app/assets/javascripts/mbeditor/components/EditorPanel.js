@@ -661,6 +661,11 @@ var EditorPanel = function EditorPanel(_ref) {
       acceptSuggestionOnEnter: editorPrefs.acceptSuggestionOnEnter || 'on',
       linkedEditing: true,
       fixedOverflowWidgets: true,
+      // The context menu otherwise renders in a shadow root hung off our
+      // container, out of reach of the theme's --vscode-* variables (they live
+      // on .monaco-editor/.monaco-component), so it drew transparent with black
+      // text. Light DOM puts it in .context-view.monaco-component, which is themed.
+      useShadowDOM: false,
       hover: { above: false }
     });
 

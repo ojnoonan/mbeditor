@@ -4308,6 +4308,10 @@ var MbeditorApp = function MbeditorApp() {
       (n.children || []).forEach(walk);
     };
     (actsOnSelection(node) ? Array.from(selectedPaths) : [node.path]).forEach(function (p) { walk(byPath[p]); });
+    openCombinedTab(files);
+  };
+
+  var openCombinedTab = function openCombinedTab(files) {
     if (!files.length) { EditorStore.setStatus('No files to show', 'info'); return; }
     var total = files.length;
     var id = 'mbeditor://combined/' + Date.now();
@@ -4319,6 +4323,22 @@ var MbeditorApp = function MbeditorApp() {
       panes: st.panes.map(function (p) { return p.id === pane.id ? Object.assign({}, p, { tabs: p.tabs.concat(tab), activeTabId: id }) : p; }),
       focusedPaneId: pane.id
     });
+  };
+
+  // Every plain file tab across both panes, in tab order. Virtual tabs (diffs,
+  // previews, settings, other combined views) carry a scheme or a flag.
+  var handleOpenEditorsCombined = function handleOpenEditorsCombined() {
+    var seen = {};
+    var files = [];
+    EditorStore.getState().panes.forEach(function (p) {
+      p.tabs.forEach(function (t) {
+        if (!t.path || t.isSettings || t.isUntitled || t.isImage || t.isDiff || t.isCombinedDiff || t.isCombinedView || t.isChangelog || t.isPreview || t.isCommitGraph) return;
+        if (t.path.indexOf('://') !== -1 || /::preview$/.test(t.path) || seen[t.path]) return;
+        seen[t.path] = true;
+        files.push(t.path);
+      });
+    });
+    openCombinedTab(files);
   };
 
   var handleDownloadFile = function handleDownloadFile(node) {
@@ -5464,6 +5484,12 @@ var MbeditorApp = function MbeditorApp() {
                 SectionActionGroup,
                 { ariaLabel: "Open editor actions" },
                 React.createElement(SidebarActionButton, {
+                  title: "Open all in Combined View",
+                  ariaLabel: "Open all open editors in Combined View",
+                  iconClass: "fas fa-layer-group",
+                  onClick: handleOpenEditorsCombined
+                }),
+                React.createElement(SidebarActionButton, {
                   title: "Close all editors",
                   ariaLabel: "Close all open editors",
                   iconClass: "far fa-window-close",
@@ -6214,7 +6240,10 @@ var MbeditorApp = function MbeditorApp() {
               {
                 className: "ide-pane " + (isFocused ? 'focused' : '') + " " + (isDropTarget ? 'drop-target' : ''),
                 style: { flexBasis: flexBasis, flexShrink: 0, flexGrow: 0, display: 'flex', flexDirection: 'column', minWidth: 0 },
-                onClickCapture: function (e) {
+                // Mousedown, not click: focusing re-renders the app, and doing that
+                // during a click's capture phase reverts a checkbox before React
+                // sees it change, so its onChange never fires.
+                onMouseDownCapture: function (e) {
                   return TabManager.focusPane(pane.id);
                 },
                 onDragOver: function (e) {
