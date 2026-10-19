@@ -2195,7 +2195,7 @@ var EditorPanel = function EditorPanel(_ref) {
   // our own, which makes it async — the worker is where the parse already
   // lives, and it tracks the live buffer, so unsaved edits are included.
   function loadJsOutline(model) {
-    var ts = window.monaco && window.monaco.languages && window.monaco.languages.typescript;
+    var ts = window.monaco && window.monaco.typescript;
     if (!ts || !window.JsOutline) return Promise.reject(new Error('outline unavailable'));
 
     var workerFor = model.getLanguageId() === 'typescript' ? ts.getTypeScriptWorker : ts.getJavaScriptWorker;
