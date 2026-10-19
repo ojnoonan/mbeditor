@@ -1467,7 +1467,9 @@ module Mbeditor
       # alone, which flattened JSX nesting and continuation lines; preserving
       # what was copied is the only behaviour that cannot destroy structure.
       # The two-space indentation below therefore survives verbatim, as do the
-      # missing semicolons and the tight comma.
+      # missing semicolons and the tight comma. The paste goes to whatever
+      # ed.focus() focused: Monaco's input element changes between versions
+      # (an IME textarea before 0.57, a native EditContext div since).
       page.execute_script(<<~'JS')
         (function () {
           var ed = window.__mbeditorActiveEditor;
@@ -1476,7 +1478,7 @@ module Mbeditor
           ed.focus();
           var dt = new DataTransfer();
           dt.setData('text/plain', "function greet(name){\n  if(name){\n    console.log('hi',name)\n  }\n}\n");
-          document.querySelector('.monaco-editor textarea')
+          document.activeElement
             .dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
         })()
       JS
@@ -1502,7 +1504,7 @@ module Mbeditor
           ed.focus();
           var dt = new DataTransfer();
           dt.setData('text/plain', "<Row>\n\t<Cell a={1} />\n\t<Cell b={2} />\n</Row>\n");
-          document.querySelector('.monaco-editor textarea')
+          document.activeElement
             .dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
         })()
       JS
