@@ -84,6 +84,15 @@ module Mbeditor
         assert_equal ["/assets/mbeditor/application.js"], reached
       end
 
+      test "the action cable endpoint is not blocked" do
+        middleware, reached = build(raising: true)
+
+        status, = middleware.call(env_for("/cable"))
+
+        assert_equal 200, status
+        assert_equal ["/cable"], reached
+      end
+
       test "host application traffic is still blocked exactly as Rails intends" do
         middleware, reached = build(raising: true)
 
