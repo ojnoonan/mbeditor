@@ -162,7 +162,7 @@
 /* ══ DRACULA ════════════════════════════════════════════════════════════════ */
 [data-theme="dracula"] {
   color-scheme: dark;
-  --ide-accent-text:    #ffffff;
+  --ide-accent-text:    #282a36;
   --ide-statusbar-warn-bg:   #ffb86c;
   --ide-statusbar-warn-text: #282a36;
   --status-hover-bg:    rgba(255,255,255,0.08);
@@ -194,7 +194,7 @@
 /* ══ NIGHT OWL ══════════════════════════════════════════════════════════════ */
 [data-theme="night-owl"] {
   color-scheme: dark;
-  --ide-accent-text:    #ffffff;
+  --ide-accent-text:    #011627;
   --ide-statusbar-warn-bg:   #ffcb8b;
   --ide-statusbar-warn-text: #011627;
   --status-hover-bg:    rgba(255,255,255,0.08);
@@ -322,7 +322,7 @@
 /* ══ TOMORROW NIGHT ════════════════════════════════════════════════════════ */
 [data-theme="tomorrow-night"] {
   color-scheme: dark;
-  --ide-accent-text:    #ffffff;
+  --ide-accent-text:    #1d1f21;
   --ide-statusbar-warn-bg:   #de935f;
   --ide-statusbar-warn-text: #1d1f21;
   --status-hover-bg:    rgba(255,255,255,0.08);

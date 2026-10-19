@@ -128,6 +128,10 @@ html, body, #mbeditor-root {
 }
 
 .ide-titlebar {
+  /* .statusbar-btn paints from --ide-accent-text, which is "text on the accent
+     fill" in the legacy themes. The title bar is panel-coloured in every theme,
+     so its buttons read the ordinary text colour instead. */
+  --ide-accent-text: var(--ide-text);
   display: flex;
   align-items: center;
   background: var(--ide-panel-bg);
@@ -1961,7 +1965,7 @@ body.mbeditor-migration-pending .ide-statusbar {
 .changelog-version-badge {
   font-size: 15px;
   font-weight: 700;
-  color: var(--ide-accent-text, #4fc1ff);
+  color: var(--ide-accent-fg);
   letter-spacing: -0.01em;
 }
 .changelog-version-date {
