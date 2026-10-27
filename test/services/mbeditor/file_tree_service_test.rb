@@ -41,29 +41,28 @@ module Mbeditor
 
     # --- .build: exclusions ---
 
-    def test_excluded_file_has_excluded_flag_and_no_size
+    def test_excluded_file_is_absent
       File.write(File.join(@workspace, "secret.log"), "x" * 100)
+      File.write(File.join(@workspace, "keep.rb"), "x")
       Mbeditor.configure { |c| c.excluded_paths = ["secret.log"] }
 
       tree = FileTreeService.build(@workspace)
 
-      node = tree.find { |n| n[:name] == "secret.log" }
-      assert node
-      assert_equal true, node[:excluded]
-      refute node.key?(:size)
+      assert_equal ["keep.rb"], tree.map { |n| n[:name] }
     end
 
-    def test_excluded_directory_has_no_children_traversed
+    def test_excluded_directory_is_absent
       FileUtils.mkdir_p(File.join(@workspace, "node_modules", "lodash"))
       File.write(File.join(@workspace, "node_modules", "lodash", "index.js"), "module.exports = {}")
-      Mbeditor.configure { |c| c.excluded_paths = ["node_modules"] }
+      FileUtils.mkdir_p(File.join(@workspace, "app", "tmp"))
+      Mbeditor.configure { |c| c.excluded_paths = ["node_modules", "tmp"] }
 
       tree = FileTreeService.build(@workspace)
 
-      nm = tree.find { |n| n[:name] == "node_modules" }
-      assert nm
-      assert_equal true, nm[:excluded]
-      assert_empty nm[:children]
+      assert_nil tree.find { |n| n[:name] == "node_modules" }
+      app = tree.find { |n| n[:name] == "app" }
+      assert app
+      assert_empty app[:children]
     end
 
     # --- caching ---
