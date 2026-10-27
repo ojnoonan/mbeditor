@@ -34,6 +34,16 @@ const shared = {
   // relative url() keeps resolving.
   loader: { '.ttf': 'file' },
   assetNames: '[name]',
+  // Monaco vendors its own DOMPurify copy, so the package.json override alone
+  // never reaches the bundle. Point its import at the npm package instead.
+  plugins: [{
+    name: 'dompurify',
+    setup(build) {
+      build.onResolve({ filter: /\/dompurify\/dompurify\.js$/ }, () => ({
+        path: resolve(root, 'node_modules/dompurify/dist/purify.es.mjs'),
+      }));
+    },
+  }],
 };
 
 // 1. Main editor bundle -> window.monaco (+ extracted monaco.css + codicon.ttf)
