@@ -61,7 +61,6 @@ var SearchService = (function () {
 
       function traverse(nodes) {
         nodes.forEach(function(n) {
-          if (n.excluded) return; // skip excluded paths and their descendants
           if (n.type === 'file') {
             docs.push({ id: idCounter++, path: n.path, name: n.name, type: 'file' });
           } else if (n.type === 'folder') {

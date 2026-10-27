@@ -931,11 +931,12 @@ module Mbeditor
       assert_not_equal etag, response.headers["ETag"]
     end
 
-    test "files shows excluded_paths in the explorer (only search excludes them)" do
+    test "files hides excluded_paths from the explorer" do
       get "/mbeditor/files"
       assert_response :ok
       names = json.map { |n| n["name"] }
-      assert_includes names, "tmp"
+      assert_not_includes names, "tmp"
+      assert_includes names, "app"
     end
 
     # ---------------------------------------------------------------------------

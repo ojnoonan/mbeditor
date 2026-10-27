@@ -891,6 +891,13 @@ html, body, #mbeditor-root {
   z-index: 2000 !important;
 }
 
+/* Button tooltips (find widget etc.) are plain text; they open beside the
+ * button and must never intercept the click meant for it or its neighbours. */
+.context-view:has(> .workbench-hover-container),
+.workbench-hover-container {
+  pointer-events: none;
+}
+
 .markdown-preview {
   width: 100%;
   height: 100%;
