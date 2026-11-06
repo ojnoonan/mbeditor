@@ -64,8 +64,6 @@ var PRETTIER_PARSERS = {
   html: 'html', vue: 'vue',
   md: 'markdown', markdown: 'markdown'
 };
-var SUPPORTED_PRETTIER_EXTS = Object.keys(PRETTIER_PARSERS);
-
 function prettierParserFor(path) {
   return PRETTIER_PARSERS[String(path || '').split('.').pop().toLowerCase()] || null;
 }
@@ -437,14 +435,6 @@ var MbeditorApp = function MbeditorApp() {
   var _useState21 = useState(null);
   var historyPanelPath = _useState21[0];
   var setHistoryPanelPath = _useState21[1];
-
-  var _useState23 = useState(false);
-  var isNavigating = _useState23[0];
-  var setIsNavigating = _useState23[1];
-
-  var _useState25 = useState(false);
-  var isReviewOpen = _useState25[0];
-  var setIsReviewOpen = _useState25[1];
 
   var _useState27 = useState(null);
   var selectedCommit = _useState27[0];
@@ -3988,11 +3978,6 @@ var MbeditorApp = function MbeditorApp() {
     EditorStore.setState({ searchResults: [], searchHasMore: false });
   };
 
-  var execSearch = function execSearch(e) {
-    e.preventDefault();
-    _debouncedSearch(searchQuery);
-  };
-
   var handleReplaceAll = function handleReplaceAll() {
     if (!searchQuery.trim()) {
       EditorStore.setStatus("Enter a search query first", "error");
@@ -4880,10 +4865,6 @@ var MbeditorApp = function MbeditorApp() {
 
   var projectSectionTitle = deriveProjectRootName().toUpperCase();
   var selectedTreePath = selectedTreeNode ? selectedTreeNode.path : null;
-  var isRuby = activeTab && isRubyPath(activeTab.path);
-  var isHaml = activeTab && activeTab.path.endsWith('.haml');
-  var isPrettierable = activeTab && SUPPORTED_PRETTIER_EXTS.includes(activeTab.path.split('.').pop().toLowerCase());
-  var rubocopLintOn = editorPrefs.rubocopLintEnabled !== false;
   var canLintAndFormat = !!activeTab;
   var hasGitBranch = !!(state.gitBranch && state.gitBranch.trim());
 

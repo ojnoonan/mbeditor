@@ -45,18 +45,6 @@ module Mbeditor
       ref.match?(SAFE_GIT_REF) ? ref : nil
     end
 
-    # Returns [ahead_count, behind_count] relative to upstream, or [0,0].
-    def ahead_behind(repo_path, upstream)
-      return [0, 0] if upstream.blank?
-      return [0, 0] unless upstream.match?(SAFE_GIT_REF)
-
-      out, status = run_git(repo_path, "rev-list", "--left-right", "--count", "HEAD...#{upstream}")
-      return [0, 0] unless status.success?
-
-      parts = out.strip.split("\t", 2)
-      [parts[0].to_i, parts[1].to_i]
-    end
-
     # Returns [merge_base_sha, ref_name] of the first candidate base branch that
     # exists, or [nil, nil] when none does.
     #

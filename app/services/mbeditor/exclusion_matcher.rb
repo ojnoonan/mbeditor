@@ -46,10 +46,6 @@ module Mbeditor
         end
       end
 
-      def reset_filesystem_probe!
-        MUTEX.synchronize { @probe_cache = {} }
-      end
-
       private
 
       # Asks the filesystem directly: look up a real directory under its own

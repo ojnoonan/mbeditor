@@ -69,28 +69,6 @@ module Mbeditor
     end
 
     # -------------------------------------------------------------------------
-    # ahead_behind
-    # -------------------------------------------------------------------------
-
-    def test_ahead_behind_returns_non_negative_integers
-      upstream = GitService.upstream_branch(REPO_PATH)
-      skip 'No upstream branch configured' if upstream.nil?
-
-      ahead, behind = GitService.ahead_behind(REPO_PATH, upstream)
-
-      assert_kind_of Integer, ahead
-      assert_kind_of Integer, behind
-      assert_operator ahead, :>=, 0
-      assert_operator behind, :>=, 0
-    end
-
-    def test_ahead_behind_returns_zeros_for_blank_upstream
-      ahead, behind = GitService.ahead_behind(REPO_PATH, '')
-      assert_equal 0, ahead
-      assert_equal 0, behind
-    end
-
-    # -------------------------------------------------------------------------
     # SAFE_GIT_REF
     # -------------------------------------------------------------------------
 
@@ -167,13 +145,6 @@ module Mbeditor
 
         result = GitService.upstream_branch(repo)
         assert_nil result
-      end
-    end
-
-    def test_ahead_behind_returns_zeros_in_non_git_directory
-      Dir.mktmpdir('mbeditor_nongit_') do |dir|
-        ahead, behind = GitService.ahead_behind(dir, 'origin/main')
-        assert_equal [0, 0], [ahead, behind]
       end
     end
 

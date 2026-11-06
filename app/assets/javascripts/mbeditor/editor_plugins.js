@@ -738,17 +738,6 @@
     return new Array(tabSize + 1).join(' ');
   }
 
-  function rubyClosingIndent(model, cursorLineNumber, openerLine) {
-    var cursorIndent = leadingWhitespace(model.getLineContent(cursorLineNumber));
-    var indentUnit = rubyIndentUnit(model, cursorIndent);
-
-    if (cursorIndent.length >= indentUnit.length) {
-      return cursorIndent.slice(0, cursorIndent.length - indentUnit.length);
-    }
-
-    return leadingWhitespace(openerLine);
-  }
-
   function isRubyBlockStart(line) {
     var trimmed = line.trim();
     if (!trimmed || trimmed[0] === '#') return false;
