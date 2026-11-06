@@ -69,7 +69,10 @@ module Mbeditor
         full = File.join(dir, name)
         rel  = full.delete_prefix(workspace_root + "/")
         rel  = "" if rel == workspace_root
-        is_excl = matcher.excluded?(rel)
+        # Excluded paths are hidden outright (README: "hidden from the tree and
+        # path operations"). An emitted stub read as an empty folder, and every
+        # write into it is a 403.
+        next if matcher.excluded?(rel)
 
         # One lstat instead of directory?/symlink?/size — three stats per entry
         # over a whole tree. lstat does not follow, so a symlink is never a
@@ -78,14 +81,11 @@ module Mbeditor
         st = (File.lstat(full) rescue nil)
 
         if st&.directory?
-          children = is_excl ? [] : traverse(full, workspace_root, matcher, max_depth: max_depth, depth: depth + 1)
-          node = { name: name, type: "folder", path: rel, children: children }
-          node[:excluded] = true if is_excl
-          node
+          children = traverse(full, workspace_root, matcher, max_depth: max_depth, depth: depth + 1)
+          { name: name, type: "folder", path: rel, children: children }
         else
           node = { name: name, type: "file", path: rel }
-          node[:size] = ((st&.symlink? ? File.size(full) : st&.size) rescue nil) unless is_excl
-          node[:excluded] = true if is_excl
+          node[:size] = ((st&.symlink? ? File.size(full) : st&.size) rescue nil)
           node
         end
       end
