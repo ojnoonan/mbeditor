@@ -12,7 +12,9 @@ gem 'cuprite',            require: false
 gem 'haml_lint',          require: false
 gem 'minitest-reporters', require: false
 gem 'puma'
-gem 'rubocop',            require: false
+# Pinned to a minor: .rubocop.yml enables new Lint cops, so an unpinned upgrade
+# could fail CI with no code change. Bump deliberately.
+gem 'rubocop', '~> 1.86.0', require: false
 gem 'rubocop-rails',      require: false
 gem 'webmock',            require: false
 

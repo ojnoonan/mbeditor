@@ -118,9 +118,7 @@ module Mbeditor
       render json: result
     rescue RedmineDisabledError => e
       render json: { error: e.message }, status: :service_unavailable
-    rescue RedmineConfigError => e
-      render json: { error: e.message }, status: :unprocessable_content
-    rescue StandardError => e
+    rescue StandardError => e # includes RedmineConfigError
       render json: { error: e.message }, status: :unprocessable_content
     end
 

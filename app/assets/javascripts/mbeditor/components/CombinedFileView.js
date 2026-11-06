@@ -40,7 +40,7 @@
     function close(n) {
       while (open.length > n) { var o = open.pop(); out.push(indentOf(lines[o.start_line - 1]) + 'end'); }
     }
-    info.methods.filter(function (m, i) { return picked[i]; })
+    info.methods.filter(function (_m, i) { return picked[i]; })
       .sort(function (a, b) { return a.start_line - b.start_line; })
       .forEach(function (m) {
         var chain = info.owners.filter(function (o) { return contains(o, m); });
@@ -78,7 +78,7 @@
       var line = '- ' + path;
       if (info[path] && info[path].methods && Object.keys(sel).some(function (k) { return sel[k]; })) {
         body = methodSlice(e.content, info[path], sel);
-        line += ' (methods: ' + info[path].methods.filter(function (m, i) { return sel[i]; }).map(function (m) { return m.name; }).join(', ') + ')';
+        line += ' (methods: ' + info[path].methods.filter(function (_m, i) { return sel[i]; }).map(function (m) { return m.name; }).join(', ') + ')';
       }
       index.push(line);
       var fence = fenceFor(body);

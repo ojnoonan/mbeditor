@@ -535,7 +535,7 @@ module Mbeditor
       # its own 4MB body limit that would 400 before reaching the action.
       with_ruby_lsp_available(true) do
         post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "app/models/user.rb",
-                                             content: "x" * (5 * 1024 * 1024 + 1), line: 1, character: 1 },
+                                             content: "x" * ((5 * 1024 * 1024) + 1), line: 1, character: 1 },
              as: :json
         assert_response :content_too_large
       end
@@ -1117,7 +1117,7 @@ module Mbeditor
       hist_file   = File.join(hist_dir, "#{branch_hash}_#{file_hash}.json")
       File.write(hist_file, {
         branch: "main", path: "app/models/user.rb",
-        base: "x", ops: [], t: (Time.now.utc - 8 * 24 * 3600).iso8601
+        base: "x", ops: [], t: (Time.now.utc - (8 * 24 * 3600)).iso8601
       }.to_json)
 
       get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }

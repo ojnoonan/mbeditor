@@ -448,7 +448,7 @@
   function auditLspName(lspMethod) {
     if (lspMethod === 'formatting') return 'format';
     if (lspMethod === 'prepare_rename') return 'rename';
-    return lspMethod.replace(/_(\w)/g, function (m, c) { return c.toUpperCase(); });
+    return lspMethod.replace(/_(\w)/g, function (_m, c) { return c.toUpperCase(); });
   }
 
   function recLsp(lspMethod, startedAt, ok) {
@@ -2778,7 +2778,7 @@
     });
     });
 
-    function legacyRubyHover(model, position, token, wordInfo) {
+    function legacyRubyHover(model, _position, token, wordInfo) {
       var word = wordInfo.word;
       {
         // Uppercase first letter → likely a module/class name.

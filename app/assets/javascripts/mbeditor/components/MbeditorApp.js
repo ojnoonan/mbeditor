@@ -3413,7 +3413,7 @@ var MbeditorApp = function MbeditorApp() {
       });
     });
     Promise.allSettled(promises).then(function (results) {
-      var saved = dirtyTabs.filter(function (tab, i) { return results[i].status === "fulfilled"; });
+      var saved = dirtyTabs.filter(function (_tab, i) { return results[i].status === "fulfilled"; });
       // Object.create(null): these keys are file paths, and a file called
       // "constructor" would otherwise test as present against Object.prototype
       // and have its tab marked clean without ever being written.

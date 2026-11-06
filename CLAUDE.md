@@ -6,7 +6,9 @@ Mbeditor (Mini Browser Editor) is a **mountable Rails engine** gem providing a b
 
 ```bash
 bundle install
-bundle exec rake test          # ~1050 tests; browser suite via `rake system_test`
+bundle exec rake test          # ~1180 tests; browser suite via `rake system_test`
+bundle exec rubocop            # Lint department only (.rubocop.yml) — correctness, not style
+npm run lint:js                # app JS as the Sprockets bundle: syntax, unused, unreachable, unloaded files
 cd test/dummy && rails server  # http://localhost:3000/mbeditor
 ```
 

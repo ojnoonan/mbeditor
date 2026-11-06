@@ -61,7 +61,9 @@ module Mbeditor
     post   'quick_fix',       to: 'editors#quick_fix'
     post   'format',          to: 'editors#format_file'
     post   'rubocop',         to: 'editors#rubocop_run'
-    post   'test',            to: 'editors#run_test'
+    # Named explicitly: the default name `test` generates test_path/test_url,
+    # which Minitest runs as tests in any test that mixes in the url_helpers.
+    post   'test',            to: 'editors#run_test', as: :run_test
     get    'logs/tail',       to: 'logs#tail'
 
     # ── Git & Code Review ──────────────────────────────────────────────────────
