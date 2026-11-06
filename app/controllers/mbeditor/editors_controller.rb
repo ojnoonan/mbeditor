@@ -570,9 +570,7 @@ module Mbeditor
       "formatting"       => "textDocument/formatting",
       "signature_help"   => "textDocument/signatureHelp",
       "selection_range"  => "textDocument/selectionRange",
-      "prepare_rename"   => "textDocument/prepareRename",
-      "health"           => :health,
-      "restart"          => :restart
+      "prepare_rename"   => "textDocument/prepareRename"
     }.freeze
 
     # Symbol counterpart of RUBY_LSP_METHODS' keys, for the audit log. Every
@@ -622,9 +620,6 @@ module Mbeditor
     def ruby_lsp
       lsp_method = RUBY_LSP_METHODS[params[:lsp_method].to_s]
       return render json: { error: "Invalid lsp_method" }, status: :bad_request unless lsp_method
-
-      # Before resolve_path: health and restart carry no document.
-      return render json: ruby_lsp_health(restart: lsp_method == :restart) if lsp_method.is_a?(Symbol)
 
       path = resolve_path(params[:path])
       return render json: { error: "Invalid path" }, status: :bad_request unless path
@@ -1527,34 +1522,6 @@ module Mbeditor
       return "Disabled by configuration (config.mbeditor.ruby_lsp = false)" if Mbeditor.configuration.ruby_lsp == false
 
       "ruby-lsp is not installed in this workspace"
-    end
-
-    # Status for the editor's ruby-lsp indicator, and the recovery path behind
-    # clicking it. Never returns the resolved command — that would leak absolute
-    # host paths to the browser.
-    def ruby_lsp_health(restart: false)
-      if restart
-        # ponytail: reset! clears every probe, not just ruby-lsp. Harmless (they
-        # all re-probe on next use) and the alternative is a per-key API nothing
-        # else wants.
-        AvailabilityProbe.reset!
-        RubyLspClient.for(workspace_root.to_s).reset!
-      end
-
-      available = AvailabilityProbe.ruby_lsp(workspace_root)
-      health = available ? RubyLspClient.for(workspace_root.to_s).health : {}
-
-      payload = {
-        available: available,
-        disabled: Mbeditor.configuration.ruby_lsp == false,
-        state: health[:state] || :stopped,
-        restarts: health[:restarts] || 0,
-        error: health[:error]
-      }
-      payload[:reason] = ruby_lsp_unavailable_reason unless available
-      payload
-    rescue StandardError => e
-      { available: false, disabled: false, state: :failed, restarts: 0, error: e.message }
     end
 
     # Dispatches to RubyLspResultTranslator (definition/hover/completion/raw —

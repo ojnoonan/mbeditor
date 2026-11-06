@@ -157,8 +157,6 @@ single place a new capability is added. Two conventions live side by side:
   the wire**, converted by `lspRange()` at the Monaco provider. Eight more
   hand-written translators would be ~200 lines restating shapes Monaco already
   understands.
-- Symbol-valued entries (`:health`, `:restart`) are answered locally, before
-  `resolve_path` — they carry no document.
 
 `sanitize_lsp_uris` is the one boundary every raw method crosses: in-workspace
 `file://` URIs become relative paths, anything else is **dropped**. It also
@@ -212,10 +210,16 @@ nothing appears greyed out. Hover markdown escapes a leading `#` outside code
 fences: ruby-lsp strips one `# ` per comment line, so a `##`-opened doc block
 would render as an `<h1>`.
 
-**Health.** A failure sets a 60 s backoff (`MBEDITOR_RUBY_LSP_DISABLED_UNTIL`),
-not the old permanent flag flip; `noteLspFailure` in `editor_plugins.js` is the
-only writer. `RubyLspClient#reset!` clears the crash budget — it must clear
-`@crash_times` or `restart_allowed?` re-latches `:failed` immediately.
+**Health.** A failure sets a 60 s client-side backoff
+(`MBEDITOR_RUBY_LSP_DISABLED_UNTIL`), not the old permanent flag flip;
+`noteLspFailure` in `editor_plugins.js` is the only writer. Server-side,
+`MAX_RESTARTS` crashes inside `RESTART_WINDOW` latch the client at `:failed`,
+and **the window is the only way out** — there is no restart endpoint (the
+status-bar chip and its `health`/`restart` lsp methods went in 760a756). So
+`ensure_started` must not short-circuit on `:failed`: it has to reach
+`restart_allowed?`, which prunes aged-out crashes and lets the next request
+start the server. Short-circuiting made `:failed` permanent until a Rails
+restart.
 
 **ruby-lsp-rails needs no code here.** It is a ruby-lsp *addon*: if the host has
 it, ruby-lsp loads it and its Rails-aware hover/definition/codeLens flow through
@@ -310,12 +314,12 @@ hard way:
   compared only top-level entry names, so it re-rendered anyway *and* never
   rebuilt the quick-open index for files added inside a directory.
 - The same applies to any handler that builds a fresh object literal per tick.
-  The ruby-lsp health chip called `setLspHealth(readLspHealth())` on a 10 s
-  interval; React bails on `Object.is`, and two object literals never are, so
-  it re-rendered the app every 10 s regardless of health. Compare the fields.
+  React bails on `Object.is`, and two object literals never are: a status
+  chip (since removed) that called `setX(readX())` on a 10 s interval
+  re-rendered the app every 10 s whatever the value. Compare the fields.
 
 Verified by counting `React.createElement` calls over an idle minute: 5 tree
-polls and 5 health ticks now produce zero re-renders.
+polls produce zero re-renders.
 
 ## Collaboration: only one client may seed a room
 

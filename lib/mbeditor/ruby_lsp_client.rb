@@ -98,31 +98,6 @@ module Mbeditor
       @state == :ready
     end
 
-    # A snapshot for the editor's status indicator. Deliberately does not start
-    # the process — asking "how are you?" must not be what boots the server.
-    #
-    # Deliberately lock-free: @state_mutex is held for the whole of a start
-    # (up to INIT_TIMEOUT) and a restart, and a status chip polled every 10s
-    # must not queue behind a handshake. Each field is one reference read, so
-    # the worst case is a snapshot that is one transition out of date.
-    def health
-      { state: @state, restarts: @crash_times.length, error: @last_error }
-    end
-
-    # Clears the crash budget so a client latched at :failed can be revived
-    # without restarting the whole Rails process. Clearing @crash_times is the
-    # load-bearing part: restart_allowed? re-latches :failed immediately if the
-    # window still holds MAX_RESTARTS entries.
-    def reset!
-      stop
-      @state_mutex.synchronize do
-        @crash_times.clear
-        @last_error = nil
-        @state = :stopped
-      end
-      ready?
-    end
-
     # Syncs the document (didOpen / full-text didChange) and issues a request
     # against it, so concurrent Puma threads can't interleave a positional
     # request with a stale document.
@@ -279,7 +254,11 @@ module Mbeditor
     # a caller is told "not ready" and falls back to the grep/Ripper path.
     def ensure_started
       @state_mutex.synchronize do
-        return if %i[ready failed starting].include?(@state)
+        # :failed is not short-circuited here: restart_allowed? keeps it latched
+        # while RESTART_WINDOW still holds MAX_RESTARTS crashes, and lets the
+        # next request start the server once they have aged out. Nothing else
+        # can revive it — there is no manual reset.
+        return if %i[ready starting].include?(@state)
         return unless restart_allowed?
 
         @state = :starting
@@ -292,6 +271,8 @@ module Mbeditor
 
       now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       @crash_times.reject! { |t| now - t > RESTART_WINDOW }
+      # Every crash has aged out: a clean slate, and no .last to back off from.
+      return true if @crash_times.empty?
       if @crash_times.length >= MAX_RESTARTS
         @state = :failed
         return false

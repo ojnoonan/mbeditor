@@ -402,11 +402,6 @@
     if (status !== 422 && data.lspState !== 'failed') return;
 
     window.MBEDITOR_RUBY_LSP_DISABLED_UNTIL = Date.now() + LSP_BACKOFF_MS;
-    window.MBEDITOR_RUBY_LSP_REASON = data.reason || data.error ||
-      (data.lspState === 'failed' ? 'ruby-lsp crashed repeatedly' : 'ruby-lsp is unavailable');
-    try {
-      window.dispatchEvent(new CustomEvent('mbeditor:lsp-health'));
-    } catch (e) { /* CustomEvent unavailable — the guard still works */ }
   }
 
   function lspBackedOff() {
