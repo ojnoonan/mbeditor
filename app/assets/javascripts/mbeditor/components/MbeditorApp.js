@@ -1251,9 +1251,7 @@ var MbeditorApp = function MbeditorApp() {
     });
   };
 
-  var runRubyLint = function runRubyLint(tab, paneId) {
-    var options = arguments.length <= 2 || arguments[2] === undefined ? {} : arguments[2];
-
+  var runRubyLint = function runRubyLint(tab) {
     if (!tab || (!isRubyPath(tab.path) && !tab.path.endsWith('.haml'))) return Promise.resolve(null);
 
     // An empty buffer has no offenses, and answering that here rather than over
@@ -1266,17 +1264,7 @@ var MbeditorApp = function MbeditorApp() {
     // its squiggles.
     if (!String(tab.content || '').trim()) {
       applyMarkersForTab(tab.id, []);
-      if (options.showStatus) EditorStore.setStatus('No RuboCop offenses!', 'success');
       return Promise.resolve({ markers: [] });
-    }
-
-    if (options.showLoading) {
-      setLoading(function (prev) {
-        return _extends({}, prev, { lint: true });
-      });
-    }
-    if (options.showStatus) {
-      EditorStore.setStatus('Linting...', 'info');
     }
 
     var startedAt = Date.now();
@@ -1307,35 +1295,21 @@ var MbeditorApp = function MbeditorApp() {
       if (audit) audit.rec(audit.EV.LINT, _auditExt(tab.path), Date.now() - startedAt, nextMarkers.length);
       applyMarkersForTab(tab.id, nextMarkers);
 
-      if (options.showStatus) {
-        var count = res.summary && res.summary.offense_count || 0;
-        EditorStore.setStatus(count === 0 ? 'No RuboCop offenses!' : "Found " + count + " offenses", count === 0 ? 'success' : 'warning');
-      }
-
       return res;
-    })["catch"](function (err) {
+    })["catch"](function () {
       _recErr('LINT');
-      if (options.showStatus) {
-        EditorStore.setStatus('Lint failed: ' + err.message, 'error');
-      }
       return null;
-    })["finally"](function () {
-      if (options.showLoading) {
-        setLoading(function (prev) {
-          return _extends({}, prev, { lint: false });
-        });
-      }
     });
   };
 
-  var _debouncedAutoLint = useRef(window._.debounce(function (tab, paneId) {
+  var _debouncedAutoLint = useRef(window._.debounce(function (tab) {
     if (!tab) return;
     if (isRubyPath(tab.path)) {
-      runRubyLint(tab, paneId);
+      runRubyLint(tab);
       return;
     }
     if (tab.path.endsWith('.haml')) {
-      runRubyLint(tab, paneId);
+      runRubyLint(tab);
       return;
     }
 
@@ -3159,7 +3133,7 @@ var MbeditorApp = function MbeditorApp() {
       return;
     }
 
-    _debouncedAutoLint(activeTab, focusedPane ? focusedPane.id : null);
+    _debouncedAutoLint(activeTab);
 
     return function () {
       _debouncedAutoLint.cancel();
@@ -3539,7 +3513,7 @@ var MbeditorApp = function MbeditorApp() {
       setTreeData(_treeUpdater(data || []));
       checkOpenTabsForExternalChanges();
       EditorStore.setStatus("Workspace refreshed", "success");
-    })["catch"](function (err) {
+    })["catch"](function () {
       EditorStore.setStatus("Failed to refresh workspace", "error");
     })["finally"](function () {
       setLoading(function (prev) {
@@ -6107,7 +6081,6 @@ var MbeditorApp = function MbeditorApp() {
                   paneId: pane.id,
                   markers: markers[pActiveTab.id] || [],
                   gitAvailable: gitAvailable,
-                  treeData: treeData,
                   testResult: testResult,
                   testPanelFile: testPanelFile,
                   testInlineVisible: testInlineVisible,
@@ -6151,7 +6124,7 @@ var MbeditorApp = function MbeditorApp() {
                 // Mousedown, not click: focusing re-renders the app, and doing that
                 // during a click's capture phase reverts a checkbox before React
                 // sees it change, so its onChange never fires.
-                onMouseDownCapture: function (e) {
+                onMouseDownCapture: function () {
                   return TabManager.focusPane(pane.id);
                 },
                 onDragOver: function (e) {

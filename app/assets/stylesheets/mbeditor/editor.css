@@ -297,7 +297,6 @@ html, body, #mbeditor-root {
   flex-shrink: 0;
 }
 
-
 /* ── The gutter ──────────────────────────────────────────────
    One draggable strip, always in the gap between two cards, never inside
    either of them. 6px in its thin dimension and transparent: wider reads as a
@@ -367,7 +366,6 @@ html, body, #mbeditor-root {
   align-items: center;
   gap: 6px;
 }
-
 
 .ide-sidebar-content {
   flex: 1;
@@ -708,7 +706,6 @@ html, body, #mbeditor-root {
   border-bottom: 1px solid var(--ide-panel-bg-alt);
   user-select: none;
 }
-.search-results-empty { padding: 12px 8px; font-size: 12px; color: var(--ide-text-muted); }
 .search-loading-more {
   padding: 10px;
   font-size: 11px;
@@ -1051,13 +1048,6 @@ body.mbeditor-migration-pending .ide-statusbar {
 .statusbar-btn:hover { background: color-mix(in srgb, var(--ide-accent-text) 15%, transparent); }
 .statusbar-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.titlebar-git-btn {
-  min-width: 62px;
-  justify-content: center;
-  position: relative;
-  z-index: 1;
-}
-
 .statusbar-sep { width: 1px; height: 14px; background: color-mix(in srgb, var(--ide-accent-text) 20%, transparent); margin: 0 2px; }
 
 /* ── Collaboration presence ────────────────────────────────────────────────
@@ -1223,13 +1213,6 @@ body.mbeditor-migration-pending .ide-statusbar {
   min-height: 0;
 }
 
-.search-input-wrap {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 4px;
-}
-
 .search-input-shell {
   width: 100%;
   position: relative;
@@ -1302,34 +1285,6 @@ body.mbeditor-migration-pending .ide-statusbar {
 }
 
 /* ── old .search-options-row / .search-option-btn removed ── */
-
-/* Use .search-panel ancestor for higher specificity than button:not(.pico-btn) */
-.search-panel .search-btn {
-  flex-shrink: 0;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  margin: 0;
-  border: 1px solid var(--ide-border-input);
-  border-radius: 4px;
-  background: var(--ide-input-bg);
-  color: var(--ide-text-muted);
-  font-size: 12px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.search-panel .search-btn:hover {
-  color: var(--ide-text);
-  border-color: var(--ide-accent-fg);
-}
-
-.search-panel .search-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
 .search-input {
   width: 100%;
@@ -1528,15 +1483,6 @@ body.mbeditor-migration-pending .ide-statusbar {
   border-radius: 2px;
 }
 
-.search-results-loading-more {
-  padding: 8px 10px;
-  font-size: 11px;
-  color: var(--ide-text-muted);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 /* ── Rails Panel ─────────────────────────────────────────── */
 .rails-panel {
   display: flex;
@@ -1551,20 +1497,6 @@ body.mbeditor-migration-pending .ide-statusbar {
   padding: 12px 16px;
   color: var(--ide-text-muted);
   font-size: 12px;
-}
-
-.rails-group {
-  margin-bottom: 4px;
-}
-
-.rails-group-title {
-  padding: 4px 12px 2px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ide-text-muted);
-  user-select: none;
 }
 
 .rails-group-item {
@@ -2370,7 +2302,6 @@ body.mbeditor-migration-pending .ide-statusbar {
 /* A sticky header still needs its own fill, or scrolled rows show through it. */
 .ide-sidebar-scrollable .collapsible-header-static:hover { background: var(--ide-panel-bg); }
 
-
 .collapsible-toggle {
   font-size: 8px;
   width: 16px;
@@ -2711,8 +2642,6 @@ body.mbeditor-migration-pending .ide-statusbar {
   font-style: italic;
 }
 
-
-
 .project-action-btn {
   width: 24px;
   height: 24px;
@@ -2993,27 +2922,6 @@ body.mbeditor-migration-pending .ide-statusbar {
 ::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--ide-hover-bg); }
 
-/* ── Notification toast ─────────────────────────────────────── */
-.ide-toast {
-  position: fixed;
-  bottom: 32px;
-  right: 16px;
-  background: var(--ide-panel-bg-alt);
-  border: 1px solid var(--ide-border-input);
-  border-radius: 6px;
-  padding: 8px 14px;
-  font-size: 12px;
-  color: var(--ide-text);
-  z-index: 10000;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-  animation: toast-in 0.15s ease;
-}
-
-@keyframes toast-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
 /* ── Draft restore dialog ───────────────────────────────────── */
 .ide-draft-restore-overlay {
   position: fixed;
@@ -3264,8 +3172,7 @@ main { padding: unset; }
 
 /* Compact spinner size for non-button IDE loading states */
 .ide-loading-state[aria-busy="true"]::before,
-.git-empty[aria-busy="true"]::before,
-.search-results-loading-more[aria-busy="true"]::before {
+.git-empty[aria-busy="true"]::before {
   --pico-loading-spinner-opacity: 0.7;
   width: 14px;
   height: 14px;
@@ -3364,7 +3271,6 @@ textarea {
 .git-header-btn,
 .git-action-btn,
 .project-action-btn,
-.search-clear-btn,
 .quick-open-clear-btn,
 .shelp-close {
   padding: 0;
@@ -3469,7 +3375,6 @@ button:not(.pico-btn) { margin-bottom: 0; }
 .ide-shell .git-action-btn { border-radius: 4px; } /* matched to explorer buttons */
 .ide-shell .ide-icon-btn,
 .ide-shell .tab-close,
-.ide-shell .search-clear-btn,
 .ide-shell .quick-open-clear-btn,
 .ide-shell .shelp-close { border-radius: 3px; }
 .ide-shell .statusbar-btn { border-radius: 2px; }

@@ -370,7 +370,7 @@ var FileService = (function () {
     }).then(function(data) {
       entry.resolvedAt = Date.now();
       return data;
-    }).catch(function(err) {
+    }).catch(function() {
       // Remove from cache on failure/abort so a real open falls back to a fresh fetch
       prefetchCache.delete(path);
       return null;

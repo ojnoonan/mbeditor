@@ -26,7 +26,6 @@ var EditorPanel = function EditorPanel(_ref) {
   var onSave = _ref.onSave;
   var onRunTestAtCursor = _ref.onRunTestAtCursor;
   var onShowHistory = _ref.onShowHistory;
-  var treeData = _ref.treeData || [];
   var testResult = _ref.testResult;
   var testPanelFile = _ref.testPanelFile;
   var testInlineVisible = _ref.testInlineVisible;
@@ -1879,7 +1878,7 @@ var EditorPanel = function EditorPanel(_ref) {
 
       var zoneIds = [];
       editor.changeViewZones(function(accessor) {
-        blocks.forEach(function(block, idx) {
+        blocks.forEach(function(block) {
           var header = document.createElement('div');
           header.className = block.isUncommitted
             ? 'ide-blame-block-header ide-blame-block-header-uncommitted'
@@ -2729,7 +2728,7 @@ var EditorPanel = function EditorPanel(_ref) {
   );
 };
 
-// treeData and all function props (onSave, onFormat, etc.) are intentionally
+// All function props (onSave, onFormat, etc.) are intentionally
 // excluded — their references change every parent render but don't affect editor output.
 window.EditorPanel = React.memo(EditorPanel, function(prev, next) {
   return prev.tab === next.tab &&

@@ -1081,12 +1081,8 @@
           }
 
           // Place the first tab stop ($1 or ${1}) at cursor; strip remaining markers
-          var withTabStop = expanded.replace(/\$\{[0-9]+:[^}]*\}|\$\{[0-9]+\}|\$[0-9]+/g, function(m, offset, str) {
-            // Keep first occurrence as cursor position marker (replaced below), remove rest
-            return m;
-          });
           var firstTabStop = null;
-          var expandedClean = withTabStop.replace(/\$\{1:[^}]*\}|\$\{1\}|\$1/g, function(m) {
+          var expandedClean = expanded.replace(/\$\{1:[^}]*\}|\$\{1\}|\$1/g, function() {
             if (firstTabStop === null) { firstTabStop = true; return '\x00'; }
             return '';
           }).replace(/\$\{[0-9]+:[^}]*\}|\$\{[0-9]+\}|\$[0-9]+/g, '');

@@ -53,7 +53,7 @@
       return '<h1 class="changelog-h1">' + text + '</h1>\n';
     };
 
-    renderer.list = function(body, ordered, start) {
+    renderer.list = function(body, ordered) {
       var tag = ordered ? 'ol' : 'ul';
       var cls = ordered ? '' : ' class="changelog-list"';
       return '<' + tag + cls + '>\n' + body + '</' + tag + '>\n';

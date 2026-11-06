@@ -8,16 +8,6 @@
 /* ── Git & Code Review Styles ───────────────────────────────────────── */
 
 /* Status Bar Git Sync */
-.status-bar-git {
-  cursor: pointer;
-}
-.status-bar-git:hover {
-  background-color: var(--status-hover-bg);
-}
-.status-bar-git .branch-name {
-  margin-left: 6px;
-  font-weight: 500;
-}
 .git-sync-status {
   margin-left: 6px;
   display: flex;
@@ -89,12 +79,6 @@
 .ide-diff-btn:hover {
   background-color: var(--ide-hover-bg);
   color: var(--ide-text);
-}
-.ide-diff-toggle-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
 }
 .ide-diff-editor-container {
   flex: 1;
@@ -277,7 +261,6 @@
   transition: background 0.1s;
 }
 .git-commit-row:hover { background: var(--bg-hover); }
-.git-commit-row.commit-local .commit-dot-small { background: var(--ide-success); border-color: var(--ide-success); }
 
 .git-commit-expand-icon {
   font-size: 9px;
@@ -285,14 +268,6 @@
   flex-shrink: 0;
   width: 10px;
   text-align: center;
-}
-.commit-dot-small {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: var(--ide-bg);
-  border: 2px solid var(--ide-accent);
 }
 .git-commit-info {
   flex: 1;
@@ -416,10 +391,7 @@
   background: rgba(241, 76, 76, 0.08);
 }
 
-/* File History Panel — legacy name kept for header/content child classes */
-.ide-file-history {
-  /* kept for .ide-file-history-header / .ide-file-history-content children */
-}
+/* File History Panel */
 .ide-file-history-header {
   display: flex;
   justify-content: space-between;
@@ -441,28 +413,7 @@
   padding: 10px;
 }
 
-/* Git Blame Inline Annotations */
-.ide-blame-annotation {
-  color: var(--ide-text-muted);
-  font-size: 11px;
-  font-style: italic;
-  font-family: var(--font-mono);
-  user-select: none;
-  opacity: 0.6;
-}
-.ide-blame-annotation-uncommitted {
-  color: var(--ide-success);
-  font-size: 11px;
-  font-style: italic;
-  font-family: var(--font-mono);
-  user-select: none;
-  opacity: 0.7;
-}
-.ide-blame-widget {
-  pointer-events: none;
-  white-space: pre;
-  margin-left: 10px;
-}
+/* Git Blame block headers */
 .ide-blame-block-header {
   font-size: 11px;
   font-style: italic;
