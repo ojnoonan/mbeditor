@@ -24,8 +24,34 @@ const esm = resolve(root, 'node_modules/monaco-editor/esm/vs');
 rmSync(outdir, { recursive: true, force: true });
 mkdirSync(outdir, { recursive: true });
 
+// Monaco vendors its own copy of DOMPurify (esm/vs/base/browser/dompurify/) and
+// never imports the npm package it lists as a dependency. Pointing that import
+// at the npm `dompurify` lets a security fix ship through package.json
+// `overrides` without waiting for a Monaco release; without this plugin the
+// override only quiets `npm audit` while the vendored copy is what ships. Both
+// modules have the same shape: one default export, the purify instance. The
+// build fails if Monaco moves the file, so a silent fallback is impossible.
+const vendoredDompurify = resolve(esm, 'base/browser/dompurify/dompurify.js');
+const dompurifyFromNpm = {
+  name: 'dompurify-from-npm',
+  setup(build) {
+    let redirected = false;
+    build.onResolve({ filter: /\/dompurify\/dompurify\.js$/ }, async (args) => {
+      if (resolve(args.resolveDir, args.path) !== vendoredDompurify) return undefined;
+      redirected = true;
+      return build.resolve('dompurify', { kind: args.kind, resolveDir: root });
+    });
+    build.onEnd((result) => {
+      if (result.errors.length === 0 && build.initialOptions.globalName === 'monaco' && !redirected) {
+        throw new Error(`Monaco no longer imports ${vendoredDompurify}; update the dompurify-from-npm plugin`);
+      }
+    });
+  },
+};
+
 const shared = {
   bundle: true,
+  plugins: [dompurifyFromNpm],
   format: 'iife',
   minify: true,
   legalComments: 'none',
@@ -75,7 +101,7 @@ copyFileSync(
 
 // 4. VERSIONS stamp — records exactly which package versions produced the
 // committed artifacts, so they can be audited against package.json.
-const versions = ['monaco-editor', 'monaco-vim', 'esbuild']
+const versions = ['monaco-editor', 'monaco-vim', 'esbuild', 'dompurify']
   .map((pkg) => {
     const { version } = JSON.parse(
       readFileSync(resolve(root, 'node_modules', pkg, 'package.json'), 'utf8'),
