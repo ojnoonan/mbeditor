@@ -320,6 +320,7 @@ module Mbeditor
       'polygon' => 'string',
       'circle' => 'string'
     }.freeze
+    private_constant :SQL_TYPE_TO_RAILS
 
     def sql_type_to_rails(sql_type)
       SQL_TYPE_TO_RAILS[sql_type.downcase] || sql_type

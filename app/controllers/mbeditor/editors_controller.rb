@@ -1309,6 +1309,7 @@ module Mbeditor
     # Everything either JS cache indexes: JsProgramService::SOURCE_EXT plus the
     # .erb-templated variants CodeSearchService::JS_GLOBS feeds JsGlobalsService.
     JS_SOURCE_NAME = /\.(js|jsx|mjs|cjs|ts|tsx)(\.erb)?\z/i
+    private_constant :JS_SOURCE_NAME
 
     # Rebuilding the JS program costs ~93ms/MB, so saving a .rb file must not
     # throw it away. A path with no extension at all — a directory, a rename

@@ -295,6 +295,7 @@ module Mbeditor
     # Throttled: stat()ing every cached path on every definition lookup grows
     # with workspace size, so run at most once per EVICT_INTERVAL.
     EVICT_INTERVAL = 30 # seconds
+    private_constant :EVICT_INTERVAL
 
     def evict_deleted_cache_entries
       now = Process.clock_gettime(Process::CLOCK_MONOTONIC)

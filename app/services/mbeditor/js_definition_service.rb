@@ -57,6 +57,7 @@ module Mbeditor
     # whitespace, and `(^|[^A-Za-z0-9_$])` / `([^A-Za-z0-9_$]|$)` for word
     # boundaries.
     NOT_IDENT = "[^A-Za-z0-9_$]"
+    private_constant :NOT_IDENT
 
     # Stage 1: explicit member assignment anywhere in the workspace — the
     # parent name on the line makes the pattern precise enough for a global
