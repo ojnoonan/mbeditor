@@ -436,14 +436,6 @@ var MbeditorApp = function MbeditorApp() {
   var historyPanelPath = _useState21[0];
   var setHistoryPanelPath = _useState21[1];
 
-  var _useState27 = useState(null);
-  var selectedCommit = _useState27[0];
-  var setSelectedCommit = _useState27[1];
-
-  var _useState29 = useState(null);
-  var commitDetailFiles = _useState29[0];
-  var setCommitDetailFiles = _useState29[1];
-
   var _useStateCFI = useState(0);
   var conflictFileIndex = _useStateCFI[0];
   var setConflictFileIndex = _useStateCFI[1];
@@ -2794,7 +2786,7 @@ var MbeditorApp = function MbeditorApp() {
   var _presenceFileFor = function (tab) {
     if (!tab || !tab.path) return null;
     var p = tab.path;
-    if (tab.isDiff || tab.isCombinedDiff || tab.isCommitGraph || tab.isPreview || tab.isChangelog || tab.isCombinedView) return null;
+    if (tab.isDiff || tab.isCombinedDiff || tab.isPreview || tab.isChangelog || tab.isCombinedView) return null;
     if (p.indexOf('diff://') === 0 || p.indexOf('combined-diff://') === 0 || p.indexOf('mbeditor://') === 0) return null;
     if (p.indexOf('::preview') !== -1) return null;
     return p;
@@ -3120,7 +3112,7 @@ var MbeditorApp = function MbeditorApp() {
   var setActiveEOL = _useState31e[1];
 
   useEffect(function () {
-    if (!gitAvailable || !activeTab || activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCombinedView || activeTab.isCommitGraph || !activeTab.path || activeTab.path.indexOf('://') >= 0) {
+    if (!gitAvailable || !activeTab || activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCombinedView || !activeTab.path || activeTab.path.indexOf('://') >= 0) {
       setActiveFileCommit(null);
       return;
     }
@@ -3142,7 +3134,7 @@ var MbeditorApp = function MbeditorApp() {
   // buffer for '\r' there was pure waste — typing cannot change the line ending.
   useEffect(function () {
     if (!activeTab || typeof activeTab.content !== 'string' ||
-        activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCombinedView || activeTab.isCommitGraph || activeTab.isPreview) {
+        activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCombinedView || activeTab.isPreview) {
       setActiveEOL(null);
       return;
     }
@@ -3157,7 +3149,7 @@ var MbeditorApp = function MbeditorApp() {
 
   useEffect(function () {
     if (!activeTab || typeof activeTab.content !== 'string') return;
-    if (activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCombinedView || activeTab.isCommitGraph) return;
+    if (activeTab.isDiff || activeTab.isCombinedDiff || activeTab.isCombinedView) return;
     if (isRubyPath(activeTab.path) && !rubocopAvailable) return;
     if (activeTab.path.endsWith('.haml') && !hamlLintAvailable) return;
 
@@ -3173,56 +3165,6 @@ var MbeditorApp = function MbeditorApp() {
       _debouncedAutoLint.cancel();
     };
   }, [focusedPane ? focusedPane.id : null, activeTab ? activeTab.id : null, activeTab ? activeTab.content : null, rubocopAvailable, hamlLintAvailable, editorPrefs.rubocopLintEnabled]);
-
-  var handleOpenCommitGraph = function handleOpenCommitGraph() {
-    var paneId = state.focusedPaneId || 1;
-    var tabId = 'mbeditor://commit-graph';
-    
-    var pane = state.panes.find(function(p) { return p.id === paneId; });
-    var existing = pane && pane.tabs.find(function(t) { return t.id === tabId; });
-    if (existing) {
-      TabManager.switchTab(paneId, tabId);
-      return;
-    }
-
-    var newTab = {
-      id: tabId,
-      path: tabId,
-      name: 'Commit Graph',
-      dirty: false,
-      content: '', // not used
-      isCommitGraph: true
-    };
-
-    var newPanes = state.panes.map(function(p) {
-      if (p.id === paneId) {
-        return Object.assign({}, p, { tabs: p.tabs.concat(newTab), activeTabId: tabId });
-      }
-      return p;
-    });
-
-    EditorStore.setState({ panes: newPanes, focusedPaneId: paneId, activeTabId: tabId });
-    
-    // Fetch data asynchronously
-    GitService.fetchCommitGraph().then(function(data) {
-      var s = EditorStore.getState();
-      var p = s.panes.find(function(p) { return p.id === paneId; });
-      if (!p) return;
-      var t = p.tabs.find(function(t) { return t.id === tabId; });
-      if (t) {
-        var newPanes2 = s.panes.map(function(p2) {
-          if (p2.id === paneId) {
-            var newTabs = p2.tabs.map(function(t2) {
-              return t2.id === tabId ? Object.assign({}, t2, { commits: data.commits }) : t2;
-            });
-            return Object.assign({}, p2, { tabs: newTabs });
-          }
-          return p2;
-        });
-        EditorStore.setState({ panes: newPanes2 });
-      }
-    });
-  };
 
   // Format-on-save helper: returns a Promise resolving to the formatted
   // content, or null when no formatter applies / formatting fails (the save
@@ -4090,16 +4032,6 @@ var MbeditorApp = function MbeditorApp() {
     document.body.style.userSelect = 'none';
   };
 
-  var handleSelectCommit = function handleSelectCommit(commit) {
-    setSelectedCommit(commit);
-    setCommitDetailFiles(null);
-    GitService.fetchCommitDetail(commit.hash).then(function (data) {
-      setCommitDetailFiles(data.files || []);
-    }).catch(function () {
-      setCommitDetailFiles([]);
-    });
-  };
-
   var handleToggleSection = function handleToggleSection(sectionKey, isCollapsed) {
     setCollapsedSections(function (prev) {
       return _extends({}, prev, _defineProperty({}, sectionKey, isCollapsed));
@@ -4317,7 +4249,7 @@ var MbeditorApp = function MbeditorApp() {
     var files = [];
     EditorStore.getState().panes.forEach(function (p) {
       p.tabs.forEach(function (t) {
-        if (!t.path || t.isSettings || t.isUntitled || t.isImage || t.isDiff || t.isCombinedDiff || t.isCombinedView || t.isChangelog || t.isPreview || t.isCommitGraph) return;
+        if (!t.path || t.isSettings || t.isUntitled || t.isImage || t.isDiff || t.isCombinedDiff || t.isCombinedView || t.isChangelog || t.isPreview) return;
         if (t.path.indexOf('://') !== -1 || /::preview$/.test(t.path) || seen[t.path]) return;
         seen[t.path] = true;
         files.push(t.path);
@@ -6138,12 +6070,7 @@ var MbeditorApp = function MbeditorApp() {
               )
             );
           } else if (pActiveTab) {
-              if (pActiveTab.isCommitGraph) {
-                content = React.createElement(window.CommitGraph || CommitGraph, {
-                  commits: pActiveTab.commits || [],
-                  onSelectCommit: handleSelectCommit
-                });
-              } else if (pActiveTab.isChangelog) {
+              if (pActiveTab.isChangelog) {
                 content = React.createElement(ChangelogView, {
                   changelogState: changelogState,
                   onLoad: function() {
@@ -6424,8 +6351,7 @@ var MbeditorApp = function MbeditorApp() {
           onClose: function () { return setShowGitPanel(false); },
           onOpenFile: openFileFromGitPanel,
           onOpenDiff: TabManager.openDiffTab,
-          onOpenAllChanges: function(scope, label) { TabManager.openCombinedDiffTab(scope, label); },
-          onSelectCommit: handleSelectCommit
+          onOpenAllChanges: function(scope, label) { TabManager.openCombinedDiffTab(scope, label); }
         })
       ),
     ),
@@ -6606,80 +6532,6 @@ var MbeditorApp = function MbeditorApp() {
         setTestPanelOpen(false);
       } : null
     }),
-
-    // Commit Detail overlay (shown when a commit row is clicked in CommitGraph)
-    selectedCommit && React.createElement(
-      React.Fragment,
-      null,
-      React.createElement("div", {
-        style: { position: 'fixed', inset: 0, zIndex: 9000, background: 'rgba(0,0,0,0.45)' },
-        onClick: function() { setSelectedCommit(null); setCommitDetailFiles(null); }
-      }),
-      React.createElement(
-        "div",
-        { className: "ide-commit-detail-panel" },
-        React.createElement(
-          "div",
-          { className: "ide-commit-detail-header" },
-          React.createElement(
-            "div",
-            null,
-            React.createElement("div", { className: "ide-commit-detail-title" }, selectedCommit.title),
-            React.createElement(
-              "div",
-              { className: "ide-commit-detail-meta" },
-              React.createElement("span", { className: "commit-hash" }, selectedCommit.hash.slice(0, 7)),
-              " \xB7 ",
-              selectedCommit.author,
-              " \xB7 ",
-              selectedCommit.date ? new Date(selectedCommit.date).toLocaleString() : ""
-            )
-          ),
-          React.createElement(
-            "button",
-            { className: "git-header-btn", onClick: function() { setSelectedCommit(null); setCommitDetailFiles(null); }, title: "Close" },
-            React.createElement("i", { className: "fas fa-times" })
-          )
-        ),
-        commitDetailFiles === null
-          ? React.createElement("div", { className: "git-empty", 'aria-busy': 'true' }, "Loading…")
-          : commitDetailFiles.length === 0
-            ? React.createElement("div", { className: "git-empty" }, "No file changes found.")
-            : React.createElement(
-                "div",
-                { className: "git-list" },
-                commitDetailFiles.map(function(f, i) {
-                  var name = (f.path || '').split('/').pop() || f.path;
-                  return React.createElement(
-                    "div",
-                    { key: i, className: "git-file-item" },
-                    React.createElement(
-                      "div",
-                      { className: "git-file-info", onClick: function() { openFileFromGitPanel(f.path, name); } },
-                      React.createElement("span", { className: "git-status-badge git-" + (f.status || 'M'), title: f.status }, f.status),
-                      React.createElement("span", { className: "git-file-path", title: f.path }, f.path)
-                    ),
-                    React.createElement(
-                      "div",
-                      { className: "git-file-actions" },
-                      React.createElement(
-                        "button",
-                        {
-                          className: "git-action-btn",
-                          title: "View Diff",
-                          onClick: function(e) {
-                            e.stopPropagation();
-                            TabManager.openDiffTab(f.path, name, selectedCommit.hash + '^', selectedCommit.hash, null);
-                          }
-                        },
-                        React.createElement("i", { className: "fas fa-exchange-alt" })
-                      )
-                    )
-                  );
-                })
-              )
-      )
-    ),
 
     // Modals & Panels
     state.isQuickOpenVisible && React.createElement(window.QuickOpenDialog || QuickOpenDialog, {

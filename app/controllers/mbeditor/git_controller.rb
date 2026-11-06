@@ -10,7 +10,6 @@ module Mbeditor
   # GET  /mbeditor/git/blame         ?file=<path>
   # GET  /mbeditor/git/line_diff     ?file=<path>
   # GET  /mbeditor/git/file_history  ?file=<path>
-  # GET  /mbeditor/git/commit_graph
   # GET  /mbeditor/redmine/issue/:id
   class GitController < ApplicationController
     skip_before_action :verify_authenticity_token
@@ -72,14 +71,6 @@ module Mbeditor
       return unless file
 
       commits = GitFileHistoryService.new(repo_path: workspace_root, file_path: file).call
-      render json: { commits: commits }
-    rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_content
-    end
-
-    # GET /mbeditor/git/commit_graph
-    def commit_graph
-      commits = GitCommitGraphService.new(repo_path: workspace_root).call
       render json: { commits: commits }
     rescue StandardError => e
       render json: { error: e.message }, status: :unprocessable_content

@@ -31,7 +31,7 @@ module Mbeditor
 
     test "authenticate_with proc that halts blocks git requests" do
       Mbeditor.configure { |c| c.authenticate_with = proc { render plain: "Unauthorized", status: :unauthorized } }
-      get "/mbeditor/git/commit_graph"
+      get "/mbeditor/git/combined_diff", params: { scope: "local" }
       assert_response :unauthorized
     end
 
@@ -237,24 +237,6 @@ module Mbeditor
     test "file_history returns 403 for path traversal" do
       get "/mbeditor/git/file_history", params: { file: "../../etc/passwd" }
       assert_response :forbidden
-    end
-
-    # ─── git/commit_graph ──────────────────────────────────────────────────────
-
-    test "commit_graph returns commits array with expected keys" do
-      get "/mbeditor/git/commit_graph"
-      assert_response :ok
-      assert json.key?("commits"), "commit_graph should return commits key"
-      assert_kind_of Array, json["commits"]
-
-      commit = json["commits"].first
-      assert commit.key?("hash"),    "commit should have 'hash'"
-      assert commit.key?("parents"), "commit should have 'parents'"
-      assert commit.key?("title"),   "commit should have 'title'"
-      assert commit.key?("author"),  "commit should have 'author'"
-      assert commit.key?("date"),    "commit should have 'date'"
-      assert commit.key?("isLocal"), "commit should have 'isLocal'"
-      assert_kind_of Array, commit["parents"]
     end
 
     # ─── git/combined_diff ─────────────────────────────────────────────────────

@@ -178,16 +178,20 @@ module Mbeditor
       map
     end
 
-    # Parse compact `git log --pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%aI%x1e` output.
-    # Returns Array of hashes with string keys.
-    def self.parse_git_log_with_parents(raw_output)
-      parse_log_entries(raw_output, with_parents: true)
-    end
-
     # Parse compact `git log --pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e` output.
     # Returns Array of hashes with string keys.
     def self.parse_git_log(raw_output)
-      parse_log_entries(raw_output, with_parents: false)
+      raw_output.split("\x1e").filter_map do |entry|
+        fields = entry.strip.split("\x1f", 4)
+        next unless fields.length == 4
+
+        {
+          "hash"   => fields[0],
+          "title"  => fields[1],
+          "author" => fields[2],
+          "date"   => fields[3]
+        }
+      end
     end
 
     # Resolve a file path safely within repo_path.  Returns full path string or
@@ -214,31 +218,5 @@ module Mbeditor
     rescue Errno::EACCES
       nil
     end
-
-    def self.parse_log_entries(raw_output, with_parents:)
-      field_count = with_parents ? 5 : 4
-      raw_output.split("\x1e").filter_map do |entry|
-        fields = entry.strip.split("\x1f", field_count)
-        next unless fields.length == field_count
-
-        if with_parents
-          {
-            "hash"    => fields[0],
-            "parents" => fields[1].split.reject(&:blank?),
-            "title"   => fields[2],
-            "author"  => fields[3],
-            "date"    => fields[4]
-          }
-        else
-          {
-            "hash"   => fields[0],
-            "title"  => fields[1],
-            "author" => fields[2],
-            "date"   => fields[3]
-          }
-        end
-      end
-    end
-    private_class_method :parse_log_entries
   end
 end

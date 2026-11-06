@@ -140,7 +140,7 @@ var TabBar = function TabBar(_ref) {
         }
       } },
     tabs.map(function (tab) {
-      var isSpecial = tab.isCommitGraph || tab.isDiff || tab.isPreview;
+      var isSpecial = tab.isDiff || tab.isPreview;
       return React.createElement(
         'div',
         {

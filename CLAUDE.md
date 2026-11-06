@@ -25,7 +25,7 @@ cd test/dummy && rails server  # http://localhost:3000/mbeditor
 - `RubyDefinitionService` — AST-based definition search with self-warming disk cache
 - `JsProgramService` — the workspace's own JS source, fed to Monaco's TypeScript program (see below)
 
-Git features in `git_controller.rb`. Git primitive wrappers in `GitService`. Dedicated services for each git operation (`GitDiffService`, `GitBlameService`, `GitFileHistoryService`, `GitCommitGraphService`, `GitCommitDetailService`, `GitCombinedDiffService`).
+Git features in `git_controller.rb`. Git primitive wrappers in `GitService`. Dedicated services for each git operation (`GitDiffService`, `GitBlameService`, `GitFileHistoryService`, `GitCommitDetailService`, `GitCombinedDiffService`).
 
 **Frontend:** Plain JS + React + Monaco in `app/assets/javascripts/mbeditor/`. **No build step for app code or vendored libs** — edit files directly. Vendored libs in `vendor/assets/`.
 

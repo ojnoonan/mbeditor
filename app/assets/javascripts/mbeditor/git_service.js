@@ -265,12 +265,6 @@ var GitService = (function () {
     _fileHistoryCache = {};
   }
 
-  function fetchCommitGraph() {
-    return axios.get(window.mbeditorBasePath() + '/git/commit_graph').then(function(res) {
-      return res.data;
-    });
-  }
-
   function fetchCommitDetail(sha) {
     return axios.get(window.mbeditorBasePath() + '/git/commit_detail?sha=' + encodeURIComponent(sha)).then(function(res) {
       return res.data;
@@ -286,7 +280,6 @@ var GitService = (function () {
     fetchLineDiff: fetchLineDiff,
     invalidateLineDiff: invalidateLineDiff,
     fetchFileHistory: fetchFileHistory,
-    fetchCommitGraph: fetchCommitGraph,
     fetchCommitDetail: fetchCommitDetail
   };
 })();

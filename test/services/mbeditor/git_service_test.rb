@@ -40,25 +40,6 @@ module Mbeditor
     end
 
     # -------------------------------------------------------------------------
-    # parse_git_log_with_parents
-    # -------------------------------------------------------------------------
-
-    def test_parse_git_log_with_parents_valid_input_multiple_parents
-      sha1 = 'a' * 40
-      sha2 = 'b' * 40
-      sha3 = 'c' * 40
-      raw = "#{sha1}\x1f#{sha2} #{sha3}\x1fMerge branch\x1fAlice\x1f2026-01-01T00:00:00Z\x1e"
-
-      result = GitService.parse_git_log_with_parents(raw)
-
-      assert_equal 1, result.length
-      assert_kind_of Array, result[0]['parents']
-      assert_equal 2, result[0]['parents'].length
-      assert_includes result[0]['parents'], sha2
-      assert_includes result[0]['parents'], sha3
-    end
-
-    # -------------------------------------------------------------------------
     # upstream_branch
     # -------------------------------------------------------------------------
 
