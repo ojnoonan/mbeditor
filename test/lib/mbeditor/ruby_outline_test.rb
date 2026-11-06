@@ -255,7 +255,7 @@ module Mbeditor
     test "keeps interpolation-looking text literal in single-quoted descriptions" do
       assert_equal(
         [
-          { "line" => 1, "name" => 'literal #{name}', "kind" => "test", "depth" => 0, "visibility" => nil }
+          { "line" => 1, "name" => 'literal #{name}', "kind" => "test", "depth" => 0, "visibility" => nil } # rubocop:disable Lint/InterpolationCheck -- the literal text is the point
         ],
         entries(<<~'RUBY')
           test 'literal #{name}' do; end

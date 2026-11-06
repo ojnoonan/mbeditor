@@ -91,7 +91,7 @@ module Mbeditor
         # The compacted-away ops must still be reflected in base: COMPACT_TARGET
         # insertions of "x" at (1,1)-(1,1) each prepend, so base ends up
         # "x"*COMPACT_TARGET followed by the original content.
-        assert_equal "x" * FileHistoryService::COMPACT_TARGET + "line\n", result["base"]
+        assert_equal(("x" * FileHistoryService::COMPACT_TARGET) + "line\n", result["base"])
       end
     end
 

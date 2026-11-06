@@ -23,7 +23,6 @@
 //= require mbeditor/components/ShortcutHelp
 //= require mbeditor/components/DiffViewer
 //= require mbeditor/components/CombinedDiffViewer
-//= require mbeditor/components/CommitGraph
 //= require mbeditor/components/ModelGraph
 //= require mbeditor/components/ChangelogView
 //= require mbeditor/components/CombinedFileView

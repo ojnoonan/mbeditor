@@ -16,20 +16,20 @@ module Mbeditor
 
       def call(env)
         path = normalized_request_path(env)
-        if root_request?(env, path)
-          @app.call(env)
-        elsif mbeditor_request?(path) || cable_request?(path) || editor_asset_request?(env, path)
-          # Silence to WARN, not the default ERROR. The point is to hide Rails'
-          # own request lines ("Started GET ...", "Completed 200 ..."), which are
-          # INFO — but the default swallows everything below ERROR, including
-          # anything a host app logs from inside authenticate_with or
-          # user_name_callback. Those procs run within this request, so a
-          # developer debugging their own hook with Rails.logger.warn saw
-          # nothing at all and had no way to know why.
-          Rails.logger.silence(::Logger::WARN) { @app.call(env) }
-        else
-          @app.call(env)
-        end
+        # The engine root stays loud (see the class comment); only the rest of
+        # mbeditor's own traffic is quieted.
+        quiet = !root_request?(env, path) &&
+                (mbeditor_request?(path) || cable_request?(path) || editor_asset_request?(env, path))
+        return @app.call(env) unless quiet
+
+        # Silence to WARN, not the default ERROR. The point is to hide Rails'
+        # own request lines ("Started GET ...", "Completed 200 ..."), which are
+        # INFO — but the default swallows everything below ERROR, including
+        # anything a host app logs from inside authenticate_with or
+        # user_name_callback. Those procs run within this request, so a
+        # developer debugging their own hook with Rails.logger.warn saw
+        # nothing at all and had no way to know why.
+        Rails.logger.silence(::Logger::WARN) { @app.call(env) }
       end
 
       private

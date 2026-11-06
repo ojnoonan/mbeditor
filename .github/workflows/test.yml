@@ -66,6 +66,37 @@ jobs:
         if: ${{ !env.ACT }}
         run: bundle exec rake system_test
 
+  lint:
+    runs-on: ubuntu-latest
+    env:
+      BUNDLE_GEMFILE: Gemfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+
+      # Correctness cops only — see .rubocop.yml.
+      - name: RuboCop (Lint)
+        run: bundle exec rubocop
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Install JS dev tooling
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # Syntax, unused declarations, unreachable code, unloaded files — see
+      # script/check-js.mjs.
+      - name: JS static check
+        run: npm run lint:js
+
   security:
     runs-on: ubuntu-latest
     env:

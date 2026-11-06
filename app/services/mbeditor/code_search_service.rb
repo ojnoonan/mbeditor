@@ -50,9 +50,7 @@ module Mbeditor
         out = result[:stdout].force_encoding(Encoding::UTF_8)
         out = out.scrub("�") unless out.valid_encoding?
         out.lines
-      rescue ProcessRunner::TimeoutError
-        []
-      rescue StandardError
+      rescue StandardError # includes ProcessRunner::TimeoutError
         []
       end
 

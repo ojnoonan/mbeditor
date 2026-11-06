@@ -132,7 +132,7 @@ module Mbeditor
       captured = nil
       singleton = class << ProcessRunner; self; end
       singleton.alias_method :__orig_call, :call
-      ProcessRunner.define_singleton_method(:call) do |cmd, **opts|
+      ProcessRunner.define_singleton_method(:call) do |cmd, **_opts|
         captured = cmd if cmd.first == "rg"
         { stdout: "", stderr: "", exit_status: nil }
       end

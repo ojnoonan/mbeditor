@@ -8,16 +8,6 @@
 /* ── Git & Code Review Styles ───────────────────────────────────────── */
 
 /* Status Bar Git Sync */
-.status-bar-git {
-  cursor: pointer;
-}
-.status-bar-git:hover {
-  background-color: var(--status-hover-bg);
-}
-.status-bar-git .branch-name {
-  margin-left: 6px;
-  font-weight: 500;
-}
 .git-sync-status {
   margin-left: 6px;
   display: flex;
@@ -90,27 +80,12 @@
   background-color: var(--ide-hover-bg);
   color: var(--ide-text);
 }
-.ide-diff-toggle-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-}
 .ide-diff-editor-container {
   flex: 1;
   min-height: 0;
 }
 
-/* Commit Graph */
-.ide-commit-graph {
-  padding: 8px 4px;
-  color: var(--text-main);
-  overflow-y: auto;
-  overflow-x: hidden;  /* prevent long commit messages from widening the panel */
-  height: 100%;
-  background-color: var(--bg-base);
-  font-size: 12px;
-}
+/* Commit history rows (Git panel) */
 /* Each commit is wrapped in a flex-column group. Spacing between groups
    is via margin-bottom so expanding a commit never creates a pixel gap. */
 .commit-group {
@@ -286,7 +261,6 @@
   transition: background 0.1s;
 }
 .git-commit-row:hover { background: var(--bg-hover); }
-.git-commit-row.commit-local .commit-dot-small { background: var(--ide-success); border-color: var(--ide-success); }
 
 .git-commit-expand-icon {
   font-size: 9px;
@@ -294,14 +268,6 @@
   flex-shrink: 0;
   width: 10px;
   text-align: center;
-}
-.commit-dot-small {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: var(--ide-bg);
-  border: 2px solid var(--ide-accent);
 }
 .git-commit-info {
   flex: 1;
@@ -425,10 +391,7 @@
   background: rgba(241, 76, 76, 0.08);
 }
 
-/* File History Panel — legacy name kept for header/content child classes */
-.ide-file-history {
-  /* kept for .ide-file-history-header / .ide-file-history-content children */
-}
+/* File History Panel */
 .ide-file-history-header {
   display: flex;
   justify-content: space-between;
@@ -450,65 +413,7 @@
   padding: 10px;
 }
 
-.ide-commit-detail-panel {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 560px;
-  max-width: calc(100vw - 40px);
-  max-height: 70vh;
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
-  border-radius: 6px;
-  z-index: 9001;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.ide-commit-detail-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  padding: 12px 14px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.ide-commit-detail-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-main);
-  margin-bottom: 4px;
-}
-.ide-commit-detail-meta {
-  font-size: 11px;
-  color: var(--ide-text-muted);
-}
-
-/* Git Blame Inline Annotations */
-.ide-blame-annotation {
-  color: var(--ide-text-muted);
-  font-size: 11px;
-  font-style: italic;
-  font-family: var(--font-mono);
-  user-select: none;
-  opacity: 0.6;
-}
-.ide-blame-annotation-uncommitted {
-  color: var(--ide-success);
-  font-size: 11px;
-  font-style: italic;
-  font-family: var(--font-mono);
-  user-select: none;
-  opacity: 0.7;
-}
-.ide-blame-widget {
-  pointer-events: none;
-  white-space: pre;
-  margin-left: 10px;
-}
+/* Git Blame block headers */
 .ide-blame-block-header {
   font-size: 11px;
   font-style: italic;

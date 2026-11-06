@@ -1734,7 +1734,7 @@ module Mbeditor
     # Formatting is asynchronous (Prettier is lazy-loaded on first use), so poll
     # the buffer until it matches rather than guessing at a sleep.
     def wait_for_formatted_value(matching:, timeout: 20)
-      wait_for_condition("editor content to match #{matching.inspect}") do
+      wait_for_condition("editor content to match #{matching.inspect}", timeout: timeout) do
         value = active_editor_value
         value if value =~ matching
       end

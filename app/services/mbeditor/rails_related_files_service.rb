@@ -189,7 +189,7 @@ module Mbeditor
           # All path segments between "views" and the view filename form the resource path.
           # e.g. app/views/admin/users/index.html.erb → view_resource = ["admin","users"]
           # e.g. app/views/users/index.html.erb       → view_resource = ["users"]
-          view_resource = parts[2..parts.length - 2]
+          view_resource = parts[2..(parts.length - 2)]
           plural   = view_resource.join("/")
           singular = (view_resource[0..-2] + [singularize(view_resource.last)]).join("/")
           [plural, singular]

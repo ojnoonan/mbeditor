@@ -1,0 +1,47 @@
+# Correctness only. This config enables RuboCop's Lint department — cops that
+# flag likely bugs (shadowed rescues, unused arguments, ambiguous ranges,
+# constants that look private but aren't) — and nothing else. Style and
+# layout are deliberately out of scope; CI runs this as `bundle exec rubocop`.
+#
+# The workspace the dummy app edits in system tests
+# (test/dummy/tmp/sample_workspace) has its own .rubocop.yml, and RuboCop uses
+# the nearest config only, so this file does not change what the editor's
+# own lint reports there.
+
+AllCops:
+  TargetRubyVersion: 3.0
+  NewCops: enable
+  SuggestExtensions: false
+  DisabledByDefault: true
+  Exclude:
+    - "node_modules/**/*"
+    - "vendor/**/*"
+    - "tmp/**/*"
+    - "test/dummy/tmp/**/*"
+    - "test/dummy/log/**/*"
+    - "gemfiles/vendor/**/*"
+
+Lint:
+  Enabled: true
+
+# Directives for cops outside Lint (e.g. Metrics) are meaningful to anyone who
+# runs the full default set, so don't report them as redundant here.
+Lint/RedundantCopDisableDirective:
+  Enabled: false
+
+# `assert_equal expected, list.map { ... }` is the normal Minitest shape, and
+# braces bind to the nearest call (`map`), which is what those lines mean. The
+# cop's AllowedPatterns match that inner method, not `assert_*`, so tests are
+# excluded instead.
+Lint/AmbiguousBlockAssociation:
+  Exclude:
+    - "test/**/*"
+
+# Test-only idioms: empty stub bodies (`define_singleton_method(:x) { |_| }`)
+# and `File.delete(f) if File.exist?(f)` teardown, which has no race to lose.
+Lint/EmptyBlock:
+  Exclude:
+    - "test/**/*"
+Lint/NonAtomicFileOperation:
+  Exclude:
+    - "test/**/*"

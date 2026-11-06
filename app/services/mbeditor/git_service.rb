@@ -45,18 +45,6 @@ module Mbeditor
       ref.match?(SAFE_GIT_REF) ? ref : nil
     end
 
-    # Returns [ahead_count, behind_count] relative to upstream, or [0,0].
-    def ahead_behind(repo_path, upstream)
-      return [0, 0] if upstream.blank?
-      return [0, 0] unless upstream.match?(SAFE_GIT_REF)
-
-      out, status = run_git(repo_path, "rev-list", "--left-right", "--count", "HEAD...#{upstream}")
-      return [0, 0] unless status.success?
-
-      parts = out.strip.split("\t", 2)
-      [parts[0].to_i, parts[1].to_i]
-    end
-
     # Returns [merge_base_sha, ref_name] of the first candidate base branch that
     # exists, or [nil, nil] when none does.
     #
@@ -190,16 +178,20 @@ module Mbeditor
       map
     end
 
-    # Parse compact `git log --pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%aI%x1e` output.
-    # Returns Array of hashes with string keys.
-    def self.parse_git_log_with_parents(raw_output)
-      parse_log_entries(raw_output, with_parents: true)
-    end
-
     # Parse compact `git log --pretty=format:%H%x1f%s%x1f%an%x1f%aI%x1e` output.
     # Returns Array of hashes with string keys.
     def self.parse_git_log(raw_output)
-      parse_log_entries(raw_output, with_parents: false)
+      raw_output.split("\x1e").filter_map do |entry|
+        fields = entry.strip.split("\x1f", 4)
+        next unless fields.length == 4
+
+        {
+          "hash"   => fields[0],
+          "title"  => fields[1],
+          "author" => fields[2],
+          "date"   => fields[3]
+        }
+      end
     end
 
     # Resolve a file path safely within repo_path.  Returns full path string or
@@ -226,31 +218,5 @@ module Mbeditor
     rescue Errno::EACCES
       nil
     end
-
-    def self.parse_log_entries(raw_output, with_parents:)
-      field_count = with_parents ? 5 : 4
-      raw_output.split("\x1e").filter_map do |entry|
-        fields = entry.strip.split("\x1f", field_count)
-        next unless fields.length == field_count
-
-        if with_parents
-          {
-            "hash"    => fields[0],
-            "parents" => fields[1].split.reject(&:blank?),
-            "title"   => fields[2],
-            "author"  => fields[3],
-            "date"    => fields[4]
-          }
-        else
-          {
-            "hash"   => fields[0],
-            "title"  => fields[1],
-            "author" => fields[2],
-            "date"   => fields[3]
-          }
-        end
-      end
-    end
-    private_class_method :parse_log_entries
   end
 end

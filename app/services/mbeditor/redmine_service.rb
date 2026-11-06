@@ -6,14 +6,6 @@ require "uri"
 require "json"
 
 module Mbeditor
-  class RedmineDisabledError < StandardError
-    def initialize
-      super("Redmine integration is not enabled. Set config.mbeditor.redmine_enabled = true.")
-    end
-  end
-
-  class RedmineConfigError < StandardError; end
-
   # Fetches a Redmine issue via the REST API.
   #
   # Only usable when Mbeditor.configuration.redmine_enabled is true.

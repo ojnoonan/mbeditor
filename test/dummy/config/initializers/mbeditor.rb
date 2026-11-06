@@ -4,8 +4,8 @@ require "fileutils"
 
 # Ensure the sample workspace directory exists before anything else so that
 # config.workspace_root passes the engine's directory-existence validation.
-_sample_workspace_path = Rails.root.join("tmp", "sample_workspace")
-FileUtils.mkdir_p(_sample_workspace_path)
+sample_workspace_path = Rails.root.join("tmp", "sample_workspace")
+FileUtils.mkdir_p(sample_workspace_path)
 
 Mbeditor.configure do |config|
   # Allow developers to provide a custom RuboCop command for the dummy app.
@@ -21,7 +21,7 @@ Mbeditor.configure do |config|
   # Point the editor at the sample workspace so the file tree shows sample
   # files (with git history, tests, and feature demos) rather than the bare
   # Rails dummy-app skeleton.  The directory is guaranteed to exist above.
-  config.workspace_root = _sample_workspace_path.to_s
+  config.workspace_root = sample_workspace_path.to_s
 
   # Test runner — uses Minitest.  The sample workspace test files require only
   # the standard library and minitest, so `bundle exec ruby -Itest` resolves
@@ -849,7 +849,9 @@ Rails.application.config.after_initialize do
 
   # ── Fake RedmineService ──────────────────────────────────────────────────────
   Mbeditor::RedmineService.prepend(Module.new do
-    FAKE_ISSUES = {
+    # A block is not a constant scope, so this is top-level ::FAKE_ISSUES — which
+    # is what the `def` below resolves it against. Dummy app only.
+    FAKE_ISSUES = { # rubocop:disable Lint/ConstantDefinitionInBlock
       "42"  => {
         "id"          => 42,
         "title"       => "Implement dark-mode toggle for main navigation",

@@ -35,11 +35,6 @@ module Mbeditor
       assert_selector ".tab-item", text: name, wait: 10
     end
 
-    # Expand a folder row (collapsed by default) so its children become visible.
-    def expand_folder(name)
-      all(".tree-item-name", text: name, minimum: 1).first.click
-    end
-
     test "close others leaves only the clicked tab" do
       visit "/mbeditor"
       open_file("a.rb")

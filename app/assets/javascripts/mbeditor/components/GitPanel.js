@@ -440,7 +440,7 @@ var GitPanel = function GitPanel(_ref) {
         { className: 'git-list' },
         workingTree.length === 0
           ? React.createElement('div', { className: 'git-empty' }, 'No local changes.')
-          : workingTree.map(function (item, idx) { return renderFileRow(item, 'HEAD', null, false); })
+          : workingTree.map(function (item) { return renderFileRow(item, 'HEAD', null, false); })
       )
     ),
 

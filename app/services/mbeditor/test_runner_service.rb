@@ -280,7 +280,7 @@ module Mbeditor
         line_num = name_line[/:(\d+)\]/, 1]&.to_i
         file = relativize(name_line[/\[([^\]]+):\d+\]/, 1], repo_path)
         msg_lines = []
-        (idx + 2...lines.length).each do |j|
+        ((idx + 2)...lines.length).each do |j|
           break if lines[j].strip.empty? || lines[j].match?(/^\s+\d+\)\s+/)
           msg_lines << lines[j].strip
         end

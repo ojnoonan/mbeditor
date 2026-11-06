@@ -402,11 +402,6 @@
     if (status !== 422 && data.lspState !== 'failed') return;
 
     window.MBEDITOR_RUBY_LSP_DISABLED_UNTIL = Date.now() + LSP_BACKOFF_MS;
-    window.MBEDITOR_RUBY_LSP_REASON = data.reason || data.error ||
-      (data.lspState === 'failed' ? 'ruby-lsp crashed repeatedly' : 'ruby-lsp is unavailable');
-    try {
-      window.dispatchEvent(new CustomEvent('mbeditor:lsp-health'));
-    } catch (e) { /* CustomEvent unavailable — the guard still works */ }
   }
 
   function lspBackedOff() {
@@ -448,7 +443,7 @@
   function auditLspName(lspMethod) {
     if (lspMethod === 'formatting') return 'format';
     if (lspMethod === 'prepare_rename') return 'rename';
-    return lspMethod.replace(/_(\w)/g, function (m, c) { return c.toUpperCase(); });
+    return lspMethod.replace(/_(\w)/g, function (_m, c) { return c.toUpperCase(); });
   }
 
   function recLsp(lspMethod, startedAt, ok) {
@@ -736,17 +731,6 @@
     }
     var tabSize = options && options.tabSize ? options.tabSize : 4;
     return new Array(tabSize + 1).join(' ');
-  }
-
-  function rubyClosingIndent(model, cursorLineNumber, openerLine) {
-    var cursorIndent = leadingWhitespace(model.getLineContent(cursorLineNumber));
-    var indentUnit = rubyIndentUnit(model, cursorIndent);
-
-    if (cursorIndent.length >= indentUnit.length) {
-      return cursorIndent.slice(0, cursorIndent.length - indentUnit.length);
-    }
-
-    return leadingWhitespace(openerLine);
   }
 
   function isRubyBlockStart(line) {
@@ -1092,12 +1076,8 @@
           }
 
           // Place the first tab stop ($1 or ${1}) at cursor; strip remaining markers
-          var withTabStop = expanded.replace(/\$\{[0-9]+:[^}]*\}|\$\{[0-9]+\}|\$[0-9]+/g, function(m, offset, str) {
-            // Keep first occurrence as cursor position marker (replaced below), remove rest
-            return m;
-          });
           var firstTabStop = null;
-          var expandedClean = withTabStop.replace(/\$\{1:[^}]*\}|\$\{1\}|\$1/g, function(m) {
+          var expandedClean = expanded.replace(/\$\{1:[^}]*\}|\$\{1\}|\$1/g, function() {
             if (firstTabStop === null) { firstTabStop = true; return '\x00'; }
             return '';
           }).replace(/\$\{[0-9]+:[^}]*\}|\$\{[0-9]+\}|\$[0-9]+/g, '');
@@ -2793,7 +2773,7 @@
     });
     });
 
-    function legacyRubyHover(model, position, token, wordInfo) {
+    function legacyRubyHover(model, _position, token, wordInfo) {
       var word = wordInfo.word;
       {
         // Uppercase first letter → likely a module/class name.

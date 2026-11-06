@@ -78,7 +78,7 @@ module Mbeditor
       nil
     end
 
-    def leave(path, now: monotonic)
+    def leave(path)
       MUTEX.synchronize do
         room = rooms[path]
         next unless room

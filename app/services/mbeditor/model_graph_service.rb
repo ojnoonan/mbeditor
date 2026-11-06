@@ -221,6 +221,7 @@ module Mbeditor
         "has_many" => "||--o{",
         "has_and_belongs_to_many" => "}o--o{"
       }.freeze
+      private_constant :MERMAID_CARDINALITY
 
       def to_mermaid(payload)
         lines = ["erDiagram"]

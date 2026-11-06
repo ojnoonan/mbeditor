@@ -535,7 +535,7 @@ module Mbeditor
       # its own 4MB body limit that would 400 before reaching the action.
       with_ruby_lsp_available(true) do
         post "/mbeditor/ruby_lsp", params: { lsp_method: "definition", path: "app/models/user.rb",
-                                             content: "x" * (5 * 1024 * 1024 + 1), line: 1, character: 1 },
+                                             content: "x" * ((5 * 1024 * 1024) + 1), line: 1, character: 1 },
              as: :json
         assert_response :content_too_large
       end
@@ -551,57 +551,12 @@ module Mbeditor
       end
     end
 
-    test "ruby_lsp health needs no path and does not start the server" do
-      original_cmd = Mbeditor.configuration.ruby_lsp_command
-      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
-      Mbeditor::RubyLspClient.reset!
-
-      with_ruby_lsp_available(true) do
-        post "/mbeditor/ruby_lsp", params: { lsp_method: "health" }
-        assert_response :ok
-        assert_equal true, json["available"]
-        assert_equal false, json["disabled"]
-        assert_equal "stopped", json["state"], "health must not boot the process"
-        assert_equal 0, json["restarts"]
-      end
-    ensure
-      Mbeditor::RubyLspClient.reset!
-      Mbeditor.configuration.ruby_lsp_command = original_cmd
-    end
-
-    test "ruby_lsp health reports unavailability with a reason instead of 422" do
-      with_ruby_lsp_available(false) do
-        post "/mbeditor/ruby_lsp", params: { lsp_method: "health" }
-        assert_response :ok, "the indicator must be able to ask even when ruby-lsp is gone"
-        assert_equal false, json["available"]
-        assert_predicate json["reason"].to_s, :present?
-      end
-    end
-
-    test "ruby_lsp restart brings the client back to ready" do
-      original_cmd = Mbeditor.configuration.ruby_lsp_command
-      Mbeditor.configuration.ruby_lsp_command = [RbConfig.ruby, FAKE_LSP_SERVER]
-      Mbeditor::RubyLspClient.reset!
-
-      with_ruby_lsp_available(true) do
-        post "/mbeditor/ruby_lsp", params: { lsp_method: "restart" }
-        assert_response :ok
-        assert_equal true, json["available"]
-        assert_equal "ready", json["state"]
-        assert_nil json["error"]
-      end
-    ensure
-      Mbeditor::RubyLspClient.reset!
-      Mbeditor.configuration.ruby_lsp_command = original_cmd
-      Mbeditor::AvailabilityProbe.reset!
-    end
-
-    test "ruby_lsp health never leaks the resolved command" do
-      with_ruby_lsp_available(false) do
-        post "/mbeditor/ruby_lsp", params: { lsp_method: "health" }
-        assert_response :ok
-        refute_includes json.keys, "command"
-        refute_includes response.body, Rails.root.to_s
+    # The status-bar chip that asked for these went in 760a756; the server no
+    # longer answers them, so an old client gets a 400 rather than a stale shape.
+    test "ruby_lsp rejects the retired health and restart methods" do
+      %w[health restart].each do |m|
+        post "/mbeditor/ruby_lsp", params: { lsp_method: m }
+        assert_response :bad_request, "#{m} should no longer be an lsp_method"
       end
     end
 
@@ -1117,7 +1072,7 @@ module Mbeditor
       hist_file   = File.join(hist_dir, "#{branch_hash}_#{file_hash}.json")
       File.write(hist_file, {
         branch: "main", path: "app/models/user.rb",
-        base: "x", ops: [], t: (Time.now.utc - 8 * 24 * 3600).iso8601
+        base: "x", ops: [], t: (Time.now.utc - (8 * 24 * 3600)).iso8601
       }.to_json)
 
       get "/mbeditor/file_history", params: { branch: "main", path: "app/models/user.rb" }

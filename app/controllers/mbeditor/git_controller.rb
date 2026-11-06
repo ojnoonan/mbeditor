@@ -10,7 +10,6 @@ module Mbeditor
   # GET  /mbeditor/git/blame         ?file=<path>
   # GET  /mbeditor/git/line_diff     ?file=<path>
   # GET  /mbeditor/git/file_history  ?file=<path>
-  # GET  /mbeditor/git/commit_graph
   # GET  /mbeditor/redmine/issue/:id
   class GitController < ApplicationController
     skip_before_action :verify_authenticity_token
@@ -77,14 +76,6 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
-    # GET /mbeditor/git/commit_graph
-    def commit_graph
-      commits = GitCommitGraphService.new(repo_path: workspace_root).call
-      render json: { commits: commits }
-    rescue StandardError => e
-      render json: { error: e.message }, status: :unprocessable_content
-    end
-
     # GET /mbeditor/git/commit_detail?sha=<hash>
     def commit_detail
       sha = params[:sha].to_s.strip
@@ -127,9 +118,7 @@ module Mbeditor
       render json: result
     rescue RedmineDisabledError => e
       render json: { error: e.message }, status: :service_unavailable
-    rescue RedmineConfigError => e
-      render json: { error: e.message }, status: :unprocessable_content
-    rescue StandardError => e
+    rescue StandardError => e # includes RedmineConfigError
       render json: { error: e.message }, status: :unprocessable_content
     end
 

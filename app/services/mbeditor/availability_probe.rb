@@ -29,7 +29,7 @@ module Mbeditor
 
       begin
         [Gem.bin_path("haml_lint", "haml-lint")]
-      rescue Gem::Exception, Gem::GemNotFoundException
+      rescue Gem::Exception # includes GemNotFoundException; Bundler raises the base class
         ["haml-lint"]
       end
     end
@@ -88,7 +88,7 @@ module Mbeditor
 
       begin
         [Gem.bin_path("ruby-lsp", "ruby-lsp")]
-      rescue Gem::Exception, Gem::GemNotFoundException
+      rescue Gem::Exception # includes GemNotFoundException; Bundler raises the base class
         ["bundle", "exec", "ruby-lsp"]
       end
     end

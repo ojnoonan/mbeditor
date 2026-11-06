@@ -6,13 +6,14 @@ gem 'brakeman',           require: false
 gem 'bundler-audit',      require: false
 gem 'json',               '< 3',        require: false  # json 3 removed JSON.parse's options arg and generate's quirks_mode; ActiveSupport's JSON adapter still passes both
 gem 'loofah',             '>= 2.25.1',  require: false  # CVE: GHSA-46fp-8f5p-pf2m
-gem 'mcp',                '>= 0.9.2',   require: false  # CVE: CVE-2026-33946
 gem 'capybara',           require: false
 gem 'cuprite',            require: false
 gem 'haml_lint',          require: false
 gem 'minitest-reporters', require: false
 gem 'puma'
-gem 'rubocop',            require: false
+# Pinned to a minor: .rubocop.yml enables new Lint cops, so an unpinned upgrade
+# could fail CI with no code change. Bump deliberately.
+gem 'rubocop', '~> 1.86.0', require: false
 gem 'rubocop-rails',      require: false
 gem 'webmock',            require: false
 

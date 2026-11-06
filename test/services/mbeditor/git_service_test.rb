@@ -40,25 +40,6 @@ module Mbeditor
     end
 
     # -------------------------------------------------------------------------
-    # parse_git_log_with_parents
-    # -------------------------------------------------------------------------
-
-    def test_parse_git_log_with_parents_valid_input_multiple_parents
-      sha1 = 'a' * 40
-      sha2 = 'b' * 40
-      sha3 = 'c' * 40
-      raw = "#{sha1}\x1f#{sha2} #{sha3}\x1fMerge branch\x1fAlice\x1f2026-01-01T00:00:00Z\x1e"
-
-      result = GitService.parse_git_log_with_parents(raw)
-
-      assert_equal 1, result.length
-      assert_kind_of Array, result[0]['parents']
-      assert_equal 2, result[0]['parents'].length
-      assert_includes result[0]['parents'], sha2
-      assert_includes result[0]['parents'], sha3
-    end
-
-    # -------------------------------------------------------------------------
     # upstream_branch
     # -------------------------------------------------------------------------
 
@@ -66,28 +47,6 @@ module Mbeditor
       result = GitService.upstream_branch(REPO_PATH)
       assert(result.nil? || result.is_a?(String),
              'upstream_branch should return nil or a String')
-    end
-
-    # -------------------------------------------------------------------------
-    # ahead_behind
-    # -------------------------------------------------------------------------
-
-    def test_ahead_behind_returns_non_negative_integers
-      upstream = GitService.upstream_branch(REPO_PATH)
-      skip 'No upstream branch configured' if upstream.nil?
-
-      ahead, behind = GitService.ahead_behind(REPO_PATH, upstream)
-
-      assert_kind_of Integer, ahead
-      assert_kind_of Integer, behind
-      assert_operator ahead, :>=, 0
-      assert_operator behind, :>=, 0
-    end
-
-    def test_ahead_behind_returns_zeros_for_blank_upstream
-      ahead, behind = GitService.ahead_behind(REPO_PATH, '')
-      assert_equal 0, ahead
-      assert_equal 0, behind
     end
 
     # -------------------------------------------------------------------------
@@ -167,13 +126,6 @@ module Mbeditor
 
         result = GitService.upstream_branch(repo)
         assert_nil result
-      end
-    end
-
-    def test_ahead_behind_returns_zeros_in_non_git_directory
-      Dir.mktmpdir('mbeditor_nongit_') do |dir|
-        ahead, behind = GitService.ahead_behind(dir, 'origin/main')
-        assert_equal [0, 0], [ahead, behind]
       end
     end
 

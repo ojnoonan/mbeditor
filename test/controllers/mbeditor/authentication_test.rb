@@ -31,7 +31,7 @@ module Mbeditor
     end
 
     test "unauthenticated request to git endpoint is blocked" do
-      get "/mbeditor/git/commit_graph"
+      get "/mbeditor/git/combined_diff", params: { scope: "local" }
       assert_response :unauthorized
     end
 
@@ -50,7 +50,7 @@ module Mbeditor
 
     test "authenticated request to git endpoint is allowed" do
       post "/login"
-      get "/mbeditor/git/commit_graph"
+      get "/mbeditor/git/combined_diff", params: { scope: "local" }
       assert_response :ok
     end
 
