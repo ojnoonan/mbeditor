@@ -509,7 +509,7 @@ module Mbeditor
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
       find("body").send_keys([:control, "p"])
-      assert_selector ".quick-open-overlay", wait: 5
+      assert_selector "dialog.mb-dialog[open] .quick-open-box", wait: 5
 
       find(".quick-open-input").set("README")
       assert_selector ".quick-open-result-icon", wait: 5

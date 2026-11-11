@@ -223,7 +223,6 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
   // ── Keyboard ─────────────────────────────────────────────────────────────
 
   var handleKeyDown = function handleKeyDown(e) {
-    if (e.key === 'Escape') { onClose(); return; }
     if (query) {
       if (e.key === 'ArrowDown') { setSelectedIndex(function (i) { return Math.min(i + 1, results.length - 1); }); return; }
       if (e.key === 'ArrowUp')   { setSelectedIndex(function (i) { return Math.max(i - 1, 0); }); return; }
@@ -354,17 +353,17 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
 
   // ── Main render ───────────────────────────────────────────────────────────
 
+  // Esc and the backdrop close it through ModalDialog; the input's own
+  // keydown handler only does list navigation.
   return React.createElement(
-    'div',
-    { className: 'quick-open-overlay', onClick: onClose },
-    React.createElement(
-      'div',
-      { className: 'quick-open-box', onClick: function (e) { e.stopPropagation(); } },
+    window.ModalDialog,
+    { className: 'quick-open-box', dialogClassName: 'mb-dialog-top', label: 'Quick open', onDismiss: onClose },
       React.createElement(
         'div',
         { className: 'quick-open-input-wrap' },
         React.createElement('input', {
           ref: inputRef,
+          "data-autofocus": true,
           type: 'text',
           className: 'quick-open-input',
           placeholder: 'Search files by name',
@@ -439,7 +438,6 @@ var QuickOpenDialog = function QuickOpenDialog(_ref) {
               )
             )
       )
-    )
   );
 };
 

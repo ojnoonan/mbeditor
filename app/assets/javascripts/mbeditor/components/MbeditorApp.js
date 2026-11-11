@@ -1804,7 +1804,7 @@ var MbeditorApp = function MbeditorApp() {
         // Already in a Monaco editor — let Monaco's own binding handle it.
         if (ae.closest('.monaco-editor')) return;
         // Don't hijack Find while typing in another input region.
-        if (ae.closest('.ide-sidebar, .git-panel, .quick-open-overlay, .schema-modal, input, textarea, [contenteditable="true"]')) return;
+        if (ae.closest('.ide-sidebar, .git-panel, dialog, input, textarea, [contenteditable="true"]')) return;
       }
       e.preventDefault();
       e.stopPropagation();
@@ -5261,12 +5261,14 @@ var MbeditorApp = function MbeditorApp() {
     collabDiagOpen && (function () {
       var d = CollaborationService.diagnostics();
       return React.createElement(
-        'div',
-        { className: 'mbeditor-modal-backdrop', onClick: function () { setCollabDiagOpen(false); } },
-        React.createElement(
-          'div',
-          { className: 'mbeditor-collab-diag', onClick: function (e) { e.stopPropagation(); } },
-          React.createElement('div', { className: 'mbeditor-collab-diag-title' }, 'Pair programming status'),
+        window.ModalDialog,
+        {
+          className: 'mbeditor-collab-diag',
+          dialogClassName: 'mb-dialog-light',
+          labelledBy: 'mb-collab-diag-title',
+          onDismiss: function () { setCollabDiagOpen(false); }
+        },
+          React.createElement('div', { className: 'mbeditor-collab-diag-title', id: 'mb-collab-diag-title' }, 'Pair programming status'),
           React.createElement(
             'ul',
             { className: 'mbeditor-collab-diag-list' },
@@ -5295,7 +5297,6 @@ var MbeditorApp = function MbeditorApp() {
             type: 'button', className: 'ide-model-graph-btn',
             onClick: function () { setCollabDiagOpen(false); }
           }, 'Close')
-        )
       );
     })(),
     showHelp && React.createElement(ShortcutHelp, { onClose: function () { return setShowHelp(false); } }),
@@ -6506,21 +6507,13 @@ var MbeditorApp = function MbeditorApp() {
     ),
 
     // File History Panel overlay
-    historyPanelPath && React.createElement(
-      React.Fragment,
-      null,
-      React.createElement("div", {
-        style: { position: 'fixed', inset: 0, zIndex: 9800, background: 'rgba(0,0,0,0.55)' },
-        onClick: function() { setHistoryPanelPath(null); }
-      }),
-      React.createElement(window.FileHistoryPanel || FileHistoryPanel, {
+    historyPanelPath && React.createElement(window.FileHistoryPanel || FileHistoryPanel, {
         path: historyPanelPath,
         onClose: function () { return setHistoryPanelPath(null); },
         onSelectCommit: function (hash, path) {
           TabManager.openDiffTab(path, path.split('/').pop(), hash + '^', hash, null);
         }
-      })
-    ),
+      }),
 
     // Test Results Panel overlay — closing hides the dialog but keeps testResult for inline markers
     (testPanelOpen || testLoading) && React.createElement(window.TestResultsPanel || TestResultsPanel, {
@@ -6685,20 +6678,24 @@ var MbeditorApp = function MbeditorApp() {
           " Copy Path"
         )
     ),
+    // Esc and the backdrop mean Cancel: the tab stays open with its edits.
+    // Save on an untitled tab opens the Save As prompt on top of this one;
+    // both are modal <dialog>s, and the top layer stacks the later one above.
     closingTabId && React.createElement(
-      "div",
-      { className: "quick-open-overlay", style: { zIndex: 10001 } },
+      window.ModalDialog,
+      {
+        className: "schema-modal mb-confirm",
+        labelledBy: "mb-unsaved-title",
+        onDismiss: function () { setClosingTabId(null); setClosingPaneId(null); }
+      },
       React.createElement(
-        "div",
-        { className: "quick-open-box", style: { width: '400px', padding: '20px', background: '#252526', border: '1px solid #454545' } },
+        "div", { className: "schema-modal-header" },
+        React.createElement("div", { className: "schema-modal-title", id: "mb-unsaved-title" }, "Unsaved changes")
+      ),
+      React.createElement(
+        "div", { className: "schema-modal-body" },
         React.createElement(
-          "h3",
-          { style: { marginTop: 0, fontSize: '14px', color: '#fff' } },
-          "Unsaved Changes"
-        ),
-        React.createElement(
-          "p",
-          { style: { color: '#ccc', margin: '16px 0', fontSize: '13px' } },
+          "p", { className: "mb-confirm-message" },
           "Do you want to save the changes you made to ",
           React.createElement(
             "strong",
@@ -6709,43 +6706,28 @@ var MbeditorApp = function MbeditorApp() {
               return t.id === closingTabId;
             }) || {}).name
           ),
-          "?"
+          "? Your changes will be lost if you don't save them."
+        )
+      ),
+      React.createElement(
+        "div", { className: "import-conflict-actions" },
+        React.createElement(
+          "button",
+          { type: "button", className: "import-conflict-btn",
+            onClick: function () { setClosingTabId(null); setClosingPaneId(null); } },
+          "Cancel"
         ),
         React.createElement(
-          "p",
-          { style: { color: '#888', marginBottom: '24px', fontSize: '12px' } },
-          "Your changes will be lost if you don't save them."
+          "button",
+          { type: "button", className: "import-conflict-btn import-conflict-btn-danger",
+            onClick: function () { return confirmCloseTab(false); } },
+          "Don't Save"
         ),
         React.createElement(
-          "div",
-          { style: { display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
-          React.createElement(
-            "button",
-            {
-              onClick: function () {
-                return confirmCloseTab(true);
-              },
-              style: { padding: '6px 16px', background: '#0e639c', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' } },
-            "Save"
-          ),
-          React.createElement(
-            "button",
-            {
-              onClick: function () {
-                return confirmCloseTab(false);
-              },
-              style: { padding: '6px 16px', background: 'transparent', color: '#ccc', border: '1px solid #666', borderRadius: '4px', cursor: 'pointer' } },
-            "Don't Save"
-          ),
-          React.createElement(
-            "button",
-            {
-              onClick: function () {
-                return setClosingTabId(null);
-              },
-              style: { padding: '6px 16px', background: 'transparent', color: '#888', border: 'none', cursor: 'pointer' } },
-            "Cancel"
-          )
+          "button",
+          { type: "button", className: "import-conflict-btn import-conflict-btn-primary", "data-autofocus": true,
+            onClick: function () { return confirmCloseTab(true); } },
+          "Save"
         )
       )
     ),

@@ -32,12 +32,8 @@ var FileHistoryPanel = function FileHistoryPanel(_ref) {
   }, [path]);
 
   return React.createElement(
-    React.Fragment,
-    null,
-    React.createElement('div', { className: 'ide-modal-backdrop', onClick: onClose }),
-    React.createElement(
-    'div',
-    { className: 'ide-modal-panel' },
+    window.ModalDialog,
+    { className: 'ide-modal-panel', label: 'File history: ' + path.split('/').pop(), onDismiss: onClose },
     React.createElement(
       'div',
       { className: 'ide-file-history-header' },
@@ -106,7 +102,6 @@ var FileHistoryPanel = function FileHistoryPanel(_ref) {
         })
       )
     )
-  )
   );
 };
 

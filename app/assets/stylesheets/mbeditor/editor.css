@@ -2823,16 +2823,10 @@ body.mbeditor-migration-pending .ide-statusbar {
    window, not a centred modal. The rows are 22px and single-line — the path
    sits beside the name rather than under it, which is what lets a full
    viewport of results be scanned without scrolling. */
-.quick-open-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.35);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 6px;
-  z-index: 9999;
-}
+/* Quick Open is a ModalDialog pinned to the top like VS Code's, over a
+   lighter backdrop than the centred dialogs. */
+dialog.mb-dialog.mb-dialog-top { margin: 6px auto auto; }
+dialog.mb-dialog-top::backdrop { background: rgba(0, 0, 0, 0.35); }
 
 /* Always a frosted panel — VS Code's Quick Open floats over the editor, not
    inside it, so it stays readable whether or not the glass theme is on. */
@@ -4074,11 +4068,6 @@ input.ide-model-graph-search[type="search"] {
    needs has actually failed — an empty room is silence, not a warning. */
 .mbeditor-collab-trouble { color: var(--ide-warning, #cca700); }
 .mbeditor-conflict-chip { color: var(--ide-error, #f48771); }
-.mbeditor-modal-backdrop {
-  position: fixed; inset: 0; z-index: 5000;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex; align-items: center; justify-content: center;
-}
 .mbeditor-collab-diag {
   width: min(560px, 92vw);
   max-height: 80vh; overflow-y: auto;

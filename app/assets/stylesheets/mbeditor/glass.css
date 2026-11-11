@@ -153,7 +153,7 @@ html[data-glass] .search-input {
 /* ── Quick open ───────────────────────────────────────────────────────────── */
 /* The frosted box itself is the default look now (editor.css) regardless of
    the glass setting — only the capsule-row treatment is glass-specific. */
-html[data-glass] .quick-open-overlay { background: color-mix(in srgb, var(--ide-bg) 30%, transparent); }
+html[data-glass] dialog.mb-dialog-top::backdrop { background: color-mix(in srgb, var(--ide-bg) 30%, transparent); }
 html[data-glass] .quick-open-result { border-radius: 999px; margin: 0 6px; }
 html[data-glass] .quick-open-result:hover { background: var(--g-hover); }
 
