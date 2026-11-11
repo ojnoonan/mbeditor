@@ -2297,9 +2297,6 @@ var MbeditorApp = function MbeditorApp() {
     // explorer, search, rails and git panel are all hidden with it).
     setShowModelGraphView(false);
     TabManager.openTab(path, name, line, null, false, col, endCol);
-    // A line jump focuses the editor itself (gotoLine); without one, nothing
-    // would, and closing Quick Open would leave focus on <body>.
-    if (!line) TabManager.requestFocus(path);
     handleNodeSelect({ path: path, name: name || path.split('/').pop(), type: 'file' });
     setQuickOpen(false);
   };
@@ -6538,7 +6535,14 @@ var MbeditorApp = function MbeditorApp() {
 
     // Modals & Panels
     state.isQuickOpenVisible && React.createElement(window.QuickOpenDialog || QuickOpenDialog, {
-      onSelect: handleSelectFile,
+      // Focus the opened file's editor. A line jump does that itself
+      // (gotoLine); without one, closing Quick Open would leave focus on
+      // <body>. Only here: handleSelectFile also serves follow mode, which must
+      // not pull focus out of whatever the user is typing in.
+      onSelect: function (path, name, line, col, endCol) {
+        handleSelectFile(path, name, line, col, endCol);
+        if (!line) TabManager.requestFocus(path);
+      },
       showFolders: !!(editorPrefs.quickOpenShowFolders),
       onSelectFolder: handleOpenFolderInExplorer,
       onClose: function () { return setQuickOpen(false); }

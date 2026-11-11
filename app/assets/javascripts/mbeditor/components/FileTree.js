@@ -282,7 +282,11 @@ var FileTree = function FileTree(_ref) {
 
     function onGlobalKeyDown(e) {
       if (!typeaheadEnabled) return;
-      if (!sidebarActiveRef.current) return;
+      var treeFocused = !!containerRef.current && e.target === containerRef.current;
+      if (!sidebarActiveRef.current && !treeFocused) return;
+      // Space selects in the tree (handleTreeKeyDown); it only extends a
+      // type-to-find search that is already under way.
+      if (e.key === ' ' && !typeaheadBufferRef.current) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       // Prevent typeahead from jumping files while typing a new name in inline create/rename.
       if (pendingCreateRef.current || pendingRenameRef.current) return;
@@ -424,8 +428,8 @@ var FileTree = function FileTree(_ref) {
       if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
-    sorted.forEach(function(node) {
-      result.push({ kind: 'node', node: node, depth: depth });
+    sorted.forEach(function(node, i) {
+      result.push({ kind: 'node', node: node, depth: depth, pos: i + 1, size: sorted.length, parentPath: parentPath });
       if (node.type === 'folder' && expandedDirs && expandedDirs[node.path] && node.children) {
         var children = flattenVisible(node.children, depth + 1, node.path);
         for (var ci = 0; ci < children.length; ci++) result.push(children[ci]);
@@ -514,22 +518,114 @@ var FileTree = function FileTree(_ref) {
     };
   }, []);
 
-  // Shift+F10 / the context-menu key: the explorer menu for the selected row
-  // (else the open file), anchored under it, with focus on its first item.
-  // Handled on keydown so the browser's own contextmenu event never follows.
-  var handleTreeKeyDown = function handleTreeKeyDown(e) {
-    if (!(e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey))) return;
-    if (!onContextMenu || !containerRef.current) return;
-    var flat = flatItemsRef.current;
+  // The row the keyboard is on: the selection anchor, else the open file.
+  var cursorIndex = function cursorIndex(flat) {
     var want = anchorPath || activePath;
-    var idx = flat.findIndex(function (it) { return it.kind === 'node' && it.node.path === want; });
-    if (idx < 0) idx = flat.findIndex(function (it) { return it.kind === 'node'; });
-    if (idx < 0) return;
-    e.preventDefault();
-    scrollToItem(idx);
-    var rect = containerRef.current.getBoundingClientRect();
-    var indent = 8 + flat[idx].depth * 12;
-    onContextMenu({ clientX: rect.left + indent + 16, clientY: rect.top + (idx + 1) * ROW_HEIGHT, keyboard: true }, flat[idx].node);
+    var idx = want ? flat.findIndex(function (it) { return it.kind === 'node' && it.node.path === want; }) : -1;
+    return idx;
+  };
+
+  var setExpanded = function setExpanded(path, open) {
+    if (!onExpandedDirsChange) return;
+    onExpandedDirsChange(Object.assign({}, expandedDirs || {}, _defineProperty({}, path, open)));
+  };
+
+  // Keyboard model (WAI-ARIA tree pattern). Focus stays on the container;
+  // the current row is announced through aria-activedescendant, because the
+  // tree is virtualized and an off-screen row has no element to focus.
+  //   Up/Down, Home/End   move the selection
+  //   Right               open a folder, or step into an open one
+  //   Left                close an open folder, or step out to the parent
+  //   Enter               open the file (as double-click) and focus its
+  //                       editor, or toggle a folder
+  //   Space               preview the file (as click), focus stays here
+  //   Shift+F10 / Menu    the explorer context menu for the row
+  var handleTreeKeyDown = function handleTreeKeyDown(e) {
+    // Keys typed in the inline create/rename input bubble here; they are its.
+    if (!containerRef.current || e.target !== containerRef.current) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var flat = flatItemsRef.current;
+    var nodeIdx = function (i) { return i >= 0 && i < flat.length && flat[i].kind === 'node'; };
+    var idx = cursorIndex(flat);
+    var item = idx >= 0 ? flat[idx] : null;
+    var node = item && item.node;
+    var isFolder = !!node && node.type === 'folder';
+    var isOpen = isFolder && !!(expandedDirs && expandedDirs[node.path]);
+
+    var moveTo = function (i) {
+      if (!nodeIdx(i)) return;
+      selectNode(flat[i].node);
+      scrollToItem(i);
+    };
+    var step = function (from, dir) {
+      for (var i = from + dir; i >= 0 && i < flat.length; i += dir) {
+        if (flat[i].kind === 'node') return i;
+      }
+      return -1;
+    };
+
+    var key = e.key;
+    var handled = true;
+    if (key === 'ContextMenu' || (key === 'F10' && e.shiftKey)) {
+      if (!onContextMenu) return;
+      if (idx < 0) idx = step(-1, 1);
+      if (idx < 0) return;
+      e.preventDefault();
+      scrollToItem(idx);
+      var rect = containerRef.current.getBoundingClientRect();
+      var indent = 8 + flat[idx].depth * 12;
+      onContextMenu({ clientX: rect.left + indent + 16, clientY: rect.top + (idx + 1) * ROW_HEIGHT, keyboard: true }, flat[idx].node);
+      return;
+    } else if (e.shiftKey) {
+      return;
+    } else if (key === 'ArrowDown') {
+      moveTo(idx < 0 ? step(-1, 1) : step(idx, 1));
+    } else if (key === 'ArrowUp') {
+      moveTo(idx < 0 ? step(flat.length, -1) : step(idx, -1));
+    } else if (key === 'Home') {
+      moveTo(step(-1, 1));
+    } else if (key === 'End') {
+      moveTo(step(flat.length, -1));
+    } else if (key === 'ArrowRight') {
+      if (!isFolder) { /* nothing to open */ }
+      else if (!isOpen) setExpanded(node.path, true);
+      else if (idx + 1 < flat.length && flat[idx + 1].depth > item.depth) moveTo(idx + 1);
+    } else if (key === 'ArrowLeft') {
+      if (isOpen) setExpanded(node.path, false);
+      else if (item && item.parentPath) {
+        var parentIdx = flat.findIndex(function (it) { return it.kind === 'node' && it.node.path === item.parentPath; });
+        moveTo(parentIdx);
+      }
+    } else if (key === 'Enter') {
+      if (!node) return;
+      if (isFolder) setExpanded(node.path, !isOpen);
+      else {
+        if (onFileDoubleClick) onFileDoubleClick(node.path, node.name);
+        else onSelect(node.path, node.name);
+        // Enter means "edit this": type into it straight away.
+        TabManager.requestFocus(node.path);
+      }
+    } else if (key === ' ') {
+      if (!node) { moveTo(step(-1, 1)); }
+      else if (isFolder) setExpanded(node.path, !isOpen);
+      else {
+        onSelect(node.path, node.name);
+        // Opening a file hands focus to its editor; a preview keeps it here.
+        setTimeout(function () { if (containerRef.current) containerRef.current.focus(); }, 0);
+      }
+    } else {
+      handled = false;
+    }
+    if (handled) {
+      e.preventDefault();
+      // Draw the cursor ring only while the keyboard is driving; a click
+      // clears it (onMouseDown below).
+      containerRef.current.classList.add('kbd-nav');
+    }
+  };
+
+  var rowId = function rowId(path) {
+    return 'mbt-' + path.replace(/[^A-Za-z0-9_-]/g, function (c) { return '_' + c.charCodeAt(0).toString(16); });
   };
 
   var renderRow = function renderRow(item, idx) {
@@ -548,6 +644,7 @@ var FileTree = function FileTree(_ref) {
     var isExpanded = !!(expandedDirs && expandedDirs[node.path]);
     var isRenamingThisNode = !!(pendingRename && pendingRename.path === node.path);
     var isOpenFile = activePath === node.path;
+    var isCursor = (anchorPath || activePath) === node.path;
     var isSelected = !!(selectedPaths && selectedPaths.has(node.path));
     var isDragOver = isFolder && dragOverFolder === node.path;
     var isDragOverExternal = isFolder && externalDragOver === node.path;
@@ -570,8 +667,15 @@ var FileTree = function FileTree(_ref) {
         : React.createElement(
           'div',
           {
-            className: classNames,
+            className: classNames + (isCursor ? ' is-cursor' : ''),
             style: { paddingLeft: indentPx },
+            id: rowId(node.path),
+            role: 'treeitem',
+            'aria-level': item.depth + 1,
+            'aria-posinset': item.pos,
+            'aria-setsize': item.size,
+            'aria-selected': isSelected,
+            'aria-expanded': isFolder ? isExpanded : undefined,
             'data-path': node.path,
             'data-name': node.name,
             'data-type': node.type,
@@ -708,6 +812,11 @@ var FileTree = function FileTree(_ref) {
     );
   };
 
+  var cursorIdx = cursorIndex(flatItems);
+  var activeDescendant = cursorIdx >= startIdx && cursorIdx <= endIdx && flatItems[cursorIdx].kind === 'node' &&
+    !(pendingRename && pendingRename.path === flatItems[cursorIdx].node.path)
+    ? rowId(flatItems[cursorIdx].node.path) : undefined;
+
   var visibleRows = [];
   for (var vi = startIdx; vi <= endIdx; vi++) {
     visibleRows.push(renderRow(flatItems[vi], vi));
@@ -719,7 +828,14 @@ var FileTree = function FileTree(_ref) {
       className: 'file-tree file-tree-root',
       ref: containerRef,
       tabIndex: 0,
+      role: 'tree',
+      'aria-label': 'Files',
+      'aria-multiselectable': true,
+      // Only a rendered row can be referenced; moving the cursor scrolls its
+      // row into the rendered window first.
+      'aria-activedescendant': activeDescendant,
       onKeyDown: handleTreeKeyDown,
+      onMouseDown: function () { if (containerRef.current) containerRef.current.classList.remove('kbd-nav'); },
       // No root drag handlers here. This element is only as tall as its rows,
       // so it can't cover the empty space users actually aim at; the whole
       // scrollable panel handles the root drop instead (see the effect above).

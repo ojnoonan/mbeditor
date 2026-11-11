@@ -522,6 +522,81 @@ module Mbeditor
     # Closing the dialog hands focus back to the editor that had it, then the
     # tab switch unmounts that editor (EditorPanel is keyed by tab id), which
     # used to leave focus on <body>: the file opened but typing went nowhere.
+    test "the file tree works from the keyboard" do
+      visit "/mbeditor"
+      assert_selector ".file-tree[role='tree'] .tree-item[role='treeitem'][data-path='app']", wait: 10
+      page.execute_script("document.querySelector('[role=tree]').focus()")
+
+      press = ->(*keys) { page.driver.browser.keyboard.type(*keys) }
+      # The keyboard's row is the one aria-activedescendant names.
+      cursor = lambda do
+        page.evaluate_script(<<~JS)
+          (function () {
+            var tree = document.querySelector('[role=tree]');
+            var id = tree.getAttribute('aria-activedescendant');
+            var row = id && document.getElementById(id);
+            return row ? row.getAttribute('data-path') : null;
+          })()
+        JS
+      end
+      expect_cursor = lambda do |path|
+        assert wait_for_condition("tree cursor on #{path}", timeout: 5) { cursor.call == path || nil },
+               "tree cursor is on #{cursor.call.inspect}, expected #{path.inspect}"
+      end
+      expanded = ->(path) { find(".tree-item[data-path='#{path}']")["aria-expanded"] }
+
+      press.call(:down)
+      expect_cursor.call("app")
+      assert_equal "false", expanded.call("app")
+
+      press.call(:right) # opens
+      assert_selector ".tree-item[data-path='app'][aria-expanded='true']", wait: 5
+      press.call(:right) # steps in
+      expect_cursor.call("app/controllers")
+      press.call(:down)
+      expect_cursor.call("app/models")
+      press.call(:right)
+      assert_selector ".tree-item[data-path='app/models/user.rb']", wait: 5
+      press.call(:right)
+      expect_cursor.call("app/models/user.rb")
+      assert_equal "3", find(".tree-item[data-path='app/models/user.rb']")["aria-level"]
+
+      press.call(:left)  # a file steps out to its folder
+      expect_cursor.call("app/models")
+      press.call(:left)  # an open folder closes
+      assert_selector ".tree-item[data-path='app/models'][aria-expanded='false']", wait: 5
+      press.call(:left)  # a closed one steps out
+      expect_cursor.call("app")
+      press.call(:left)
+      assert_selector ".tree-item[data-path='app'][aria-expanded='false']", wait: 5
+
+      press.call(:end)
+      last = page.evaluate_script("Array.from(document.querySelectorAll('.tree-item[data-path]')).pop().getAttribute('data-path')")
+      expect_cursor.call(last)
+      press.call(:home)
+      expect_cursor.call("app")
+
+      # Space previews the file and leaves focus in the tree.
+      20.times do
+        break if cursor.call == "Gemfile"
+        press.call(:down)
+        sleep 0.05
+      end
+      expect_cursor.call("Gemfile")
+      press.call(:space)
+      assert_selector ".tab-item.tab-soft", text: "Gemfile", wait: 10
+      assert wait_for_condition("focus back on the tree", timeout: 5) {
+        page.evaluate_script("document.activeElement.getAttribute('role') === 'tree'") || nil
+      }
+
+      # Enter opens it for real and puts focus in its editor.
+      press.call(:enter)
+      assert_selector ".tab-item:not(.tab-soft)", text: "Gemfile", wait: 10
+      assert wait_for_condition("focus in the Gemfile editor", timeout: 10) {
+        page.evaluate_script("!!(document.activeElement && document.activeElement.closest('.monaco-editor'))") || nil
+      }
+    end
+
     test "a file opened from quick open gets keyboard focus" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10

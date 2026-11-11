@@ -413,6 +413,10 @@ html, body, #mbeditor-root {
 .tree-item.active { background: var(--ide-active-bg); }
 .tree-item.selected { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ide-accent) 35%, transparent); background: color-mix(in srgb, var(--ide-accent) 8%, transparent); }
 .tree-item.active.selected { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ide-accent) 55%, transparent); }
+/* The keyboard's current row (aria-activedescendant), shown only while arrow
+   keys are driving the focused tree: FileTree adds .kbd-nav on a handled key
+   and drops it on mousedown. */
+.file-tree.kbd-nav:focus .tree-item.is-cursor { outline: 1px solid var(--ide-accent-fg); outline-offset: -1px; }
 .tree-item.drag-over { background: rgba(100, 160, 220, 0.25); box-shadow: inset 0 0 0 1px rgba(100, 160, 220, 0.7); }
 /* External file drop (import) — green, to read as "add" rather than "move" */
 .tree-item.drag-over-external { background: rgba(120, 200, 140, 0.22); box-shadow: inset 0 0 0 1px rgba(120, 200, 140, 0.75); }
