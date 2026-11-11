@@ -156,6 +156,18 @@ unmount = close: native close requests are cancelled and routed to
 `window.confirm`/`window.prompt`. Don't reintroduce the native ones; they
 block the page, cable heartbeats included.
 
+Menus, dropdowns and hovercards use `window.Popover` (`components/Popover.js`)
+the same way: mount = open, the element is shown with `showPopover()` so it
+renders in the top layer, and positioning stays with the caller's inline
+`top`/`left`. The default mode `'auto'` gives light dismiss (outside click,
+Esc), so don't add a full-screen click-catcher div or a document `mousedown`
+listener. Pass the opening button as `source` so that clicking it toggles the
+menu instead of light-dismissing it and reopening it. Key a context menu by its
+position so that a second right-click mounts a fresh one. `'manual'` is for
+hover-driven surfaces that only need the top layer. The top layer also ignores
+an ancestor's `backdrop-filter`, which used to need a portal to `body` under the
+glass chrome.
+
 **Vendored `pico.classless.css` styles every `<dialog>` as a full-viewport
 overlay.** `dialog.mb-dialog` in `editor.css` resets it. Without that reset the
 dialog box covers the screen and backdrop clicks never land "outside" it.

@@ -1652,10 +1652,12 @@ var MbeditorApp = function MbeditorApp() {
         setShowLogPanel(function (prev) { return !prev; });
       }
       // Ctrl+Shift+Z is handled in capture phase below so Monaco cannot swallow it.
+      // The context menu closes itself on Esc now (popover light dismiss).
+      // setCollabOverflowOpen, called here before, never existed: every Esc
+      // threw a ReferenceError after the setters above had run.
       if (e.key === 'Escape') {
-        setContextMenu(null);
         setShowHelp(false);
-        setCollabOverflowOpen(false);
+        setCollabOverflowAnchor(null);
       }
     };
 
@@ -3070,9 +3072,9 @@ var MbeditorApp = function MbeditorApp() {
   // the popover — so the close is delayed and cancelled by either one's
   // onMouseEnter. Click still toggles it directly, which is what makes it
   // reachable without a mouse at all.
-  // The anchor, not a boolean: the popover renders at the root next to the
-  // hovercard, because an absolutely-positioned child of the title bar is
-  // painted under the editor whatever its z-index.
+  // The anchor, not a boolean: it is positioned from the button's rect. It
+  // renders as a manual popover (top layer) — as an ordinary child of the
+  // title bar it was painted under the editor whatever its z-index.
   var _useStateOverflow = useState(null);
   var collabOverflowAnchor = _useStateOverflow[0];
   var setCollabOverflowAnchor = _useStateOverflow[1];
@@ -5184,8 +5186,9 @@ var MbeditorApp = function MbeditorApp() {
       )
     ),
     collabOverflowOpen && React.createElement(
-      "div",
+      window.Popover,
       {
+        mode: "manual",
         className: "collab-overflow-popover",
         style: { top: collabOverflowAnchor.top + 'px', right: collabOverflowAnchor.right + 'px' },
         onMouseEnter: cancelOverflowClose,
@@ -5223,8 +5226,8 @@ var MbeditorApp = function MbeditorApp() {
       var idle = typeof stats.idle === 'number' ? stats.idle : null;
 
       return React.createElement(
-        'div',
-        { className: 'collab-hovercard', style: { top: collabHover.top + 'px', right: collabHover.right + 'px' } },
+        window.Popover,
+        { mode: 'manual', className: 'collab-hovercard', style: { top: collabHover.top + 'px', right: collabHover.right + 'px' } },
         React.createElement(
           'div',
           { className: 'collab-hovercard-name' },
@@ -6592,26 +6595,20 @@ var MbeditorApp = function MbeditorApp() {
           )
         )
     ),
+    // A popover: outside clicks and Esc close it natively (onDismiss), where a
+    // full-screen click-catcher div used to. Keyed by position so a second
+    // right-click mounts a fresh menu rather than moving the open one.
     contextMenu && React.createElement(
-      React.Fragment,
-      null,
-      React.createElement("div", {
-        style: { position: 'fixed', inset: 0, zIndex: 9998 },
-        onClick: closeContextMenu,
-        onContextMenu: function (e) {
-          e.preventDefault();closeContextMenu();
-        }
-      }),
-      React.createElement(
-        "div",
-        {
-          className: "context-menu",
-          ref: contextMenuRef,
-          style: { left: contextMenu.x, top: contextMenu.y },
-          onClick: function (e) {
-            return e.stopPropagation();
-          }
-        },
+      window.Popover,
+      {
+        key: contextMenu.x + ',' + contextMenu.y,
+        className: "context-menu",
+        popoverRef: contextMenuRef,
+        style: { left: contextMenu.x, top: contextMenu.y },
+        onDismiss: closeContextMenu,
+        onClick: function (e) { e.stopPropagation(); },
+        onContextMenu: function (e) { e.preventDefault(); }
+      },
         contextMenu.node && contextMenu.node.type === 'file' && React.createElement(
           "div",
           { className: "context-menu-item", onClick: function () {
@@ -6687,7 +6684,6 @@ var MbeditorApp = function MbeditorApp() {
           React.createElement("i", { className: "fas fa-copy context-menu-icon" }),
           " Copy Path"
         )
-      )
     ),
     closingTabId && React.createElement(
       "div",

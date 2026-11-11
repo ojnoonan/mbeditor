@@ -119,7 +119,6 @@ var EditorPanel = function EditorPanel(_ref) {
   var setMethodsDropdownPos = _useState19[1];
 
   var methodsBtnRef = useRef(null);
-  var methodsDropdownRef = useRef(null);
   // Discards a JS outline that resolves after the dropdown was closed or reopened.
   var methodsRequestRef = useRef(0);
 
@@ -2150,20 +2149,6 @@ var EditorPanel = function EditorPanel(_ref) {
     return function () { el.removeEventListener('scroll', onScroll); };
   }, [tab.isPreview, isMarkdown, sourcePath]);
 
-  // Click-outside handler to close the methods dropdown
-  useEffect(function() {
-    if (!methodsOpen) return;
-    function handleClickOutside(e) {
-      var btn = methodsBtnRef.current;
-      var dropdown = methodsDropdownRef.current;
-      if (btn && !btn.contains(e.target) && (!dropdown || !dropdown.contains(e.target))) {
-        setMethodsOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return function() { document.removeEventListener('mousedown', handleClickOutside); };
-  }, [methodsOpen]);
-
   // Large-file performance tuning. Above this many lines, scroll- and edit-time
   // work from these features (minimap canvas repaint on every scroll,
   // sticky-scroll scope recompute, folding-range and bracket-pair recomputation,
@@ -2622,15 +2607,18 @@ var EditorPanel = function EditorPanel(_ref) {
       )
     ),
     React.createElement('div', { ref: editorRef, className: 'monaco-container', style: { flex: 1, minHeight: 0 } }),
-    // Portalled to body: under the glass chrome the centre column has a
-    // backdrop-filter, which makes it the containing block for position:fixed
-    // and shoves the menu ~130px off its button.
-    methodsOpen && methodsDropdownPos && ReactDOM.createPortal(React.createElement(
-      'div',
+    // A popover in the top layer, so it positions against the viewport even
+    // under the glass chrome, whose centre column has a backdrop-filter that
+    // otherwise becomes the containing block for position:fixed (this used to
+    // need a portal to body). Outside clicks and Esc close it (onDismiss); the
+    // button is its source, so clicking the button toggles instead.
+    methodsOpen && methodsDropdownPos && React.createElement(
+      window.Popover,
       {
-        ref: methodsDropdownRef,
         className: 'ide-methods-dropdown',
-        style: { position: 'fixed', top: methodsDropdownPos.top + 'px', right: methodsDropdownPos.right + 'px', left: 'auto', zIndex: 9900 }
+        source: methodsBtnRef.current,
+        style: { position: 'fixed', top: methodsDropdownPos.top + 'px', right: methodsDropdownPos.right + 'px', left: 'auto' },
+        onDismiss: function () { setMethodsOpen(false); }
       },
       methodsUnavailable
         ? React.createElement('div', { className: 'ide-methods-dropdown-message' }, 'Outline unavailable')
@@ -2723,7 +2711,7 @@ var EditorPanel = function EditorPanel(_ref) {
               }
               return rows;
             })()
-    ), document.body),
+    ),
     React.createElement('div', { ref: vimStatusRef, className: 'vim-statusbar', style: { display: editorPrefs.vimMode ? 'flex' : 'none', height: '22px', alignItems: 'center', padding: '0 10px', fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace", fontSize: '12px', background: 'var(--ide-statusbar-bg, #1e1e2e)', color: 'var(--ide-statusbar-fg, #9cdcfe)', borderTop: '1px solid var(--ide-border, #3e3e3e)', flexShrink: 0, userSelect: 'none', letterSpacing: '0.02em' } })
   );
 };

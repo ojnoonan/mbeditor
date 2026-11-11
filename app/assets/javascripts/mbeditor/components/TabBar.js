@@ -116,14 +116,6 @@ var TabBar = function TabBar(_ref) {
   // or switching a tab can move the active one out of view.
   }, [activeId, tabs.length]);
 
-  // Close context menu on outside click (bubble phase so onMouseDown on the menu can stop it)
-  useEffect(function () {
-    if (!tabContextMenu) return;
-    var handler = function () { setTabContextMenu(null); };
-    document.addEventListener('mousedown', handler);
-    return function () { document.removeEventListener('mousedown', handler); };
-  }, [tabContextMenu]);
-
   // Clamp into view whenever the menu opens at a new position.
   useEffect(function () {
     if (tabContextMenu) window.clampMenuIntoView(tabContextMenuRef.current);
@@ -252,30 +244,24 @@ var TabBar = function TabBar(_ref) {
       React.createElement('i', { className: 'fas fa-plus' })
     )
   ),
+  // A popover: outside clicks and Esc close it natively (onDismiss). Shares
+  // .context-menu's themed surface with the explorer menu; it used to carry
+  // hard-coded dark colours inline and ignored light themes.
   tabContextMenu && React.createElement(
-    'div',
+    window.Popover,
     {
-      className: 'ide-tab-context-menu',
-      ref: tabContextMenuRef,
-      style: {
-        position: 'fixed',
-        top: tabContextMenu.y,
-        left: tabContextMenu.x,
-        zIndex: 9999,
-        background: '#252526',
-        border: '1px solid #454545',
-        borderRadius: '4px',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-        minWidth: '160px',
-        padding: '4px 0'
-      },
-      onMouseDown: function(e) { e.stopPropagation(); }
+      key: tabContextMenu.x + ',' + tabContextMenu.y,
+      className: 'context-menu ide-tab-context-menu',
+      popoverRef: tabContextMenuRef,
+      style: { top: tabContextMenu.y, left: tabContextMenu.x, minWidth: '160px' },
+      onDismiss: function () { setTabContextMenu(null); },
+      onContextMenu: function (e) { e.preventDefault(); }
     },
     menuItem('fas fa-times', 'Close', function() { setTabContextMenu(null); onClose(tabContextMenu.tab.id); }),
     onCloseOthers && menuItem('fas fa-times-circle', 'Close Others', function() { setTabContextMenu(null); onCloseOthers(tabContextMenu.tab.id); }),
     onCloseSaved && menuItem('fas fa-check', 'Close Saved', function() { setTabContextMenu(null); onCloseSaved(); }),
     onCloseAll && menuItem('fas fa-times', 'Close All', function() { setTabContextMenu(null); onCloseAll(); }),
-    React.createElement('div', { style: { height: '1px', background: '#454545', margin: '4px 0' } }),
+    React.createElement('div', { className: 'context-menu-divider' }),
     onShowHistory && menuItem('fas fa-history', 'File History', function() {
       setTabContextMenu(null);
       onShowHistory(tabContextMenu.tab.path);

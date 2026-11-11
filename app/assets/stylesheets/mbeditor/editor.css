@@ -767,6 +767,21 @@ dialog.mb-dialog::backdrop {
 }
 dialog.mb-dialog-light::backdrop { background: rgba(0, 0, 0, 0.45); }
 
+/* ── Popover shell (components/Popover.js) ───────────────── */
+/* Undo the UA [popover] defaults (centred via inset:0 + margin:auto, Canvas
+   colours, a medium border, padding, overflow:auto) so the caller's inline
+   top/left/right place it and the component class styles it. :where() keeps
+   this at zero specificity, so any component rule wins whatever its order. */
+:where(.mb-popover[popover]) {
+  inset: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  overflow: visible;
+}
+
 /* MbeditorDialogs.confirm / .prompt — reuses the .schema-modal panel. */
 .mb-confirm { min-width: 360px; max-width: min(520px, 94vw); }
 .mb-confirm .schema-modal-body { padding: 14px 16px; }
@@ -1120,10 +1135,10 @@ body.mbeditor-migration-pending .ide-statusbar {
 /* Own popover rather than a title attribute: native tooltips wait ~1s before
    appearing, cannot show the colour swatch, and collapse the newlines this
    content needs. Fixed positioning is anchored from the chip's rect at hover
-   time — the titlebar never scrolls, so there is nothing to keep in sync. */
+   time — the titlebar never scrolls, so there is nothing to keep in sync.
+   Rendered as a manual popover (top layer), so it needs no z-index. */
 .collab-hovercard {
   position: fixed;
-  z-index: 4000;
   min-width: 180px;
   max-width: 320px;
   padding: 8px 10px;
@@ -1183,10 +1198,10 @@ body.mbeditor-migration-pending .ide-statusbar {
 }
 .collab-avatar-overflow { position: relative; }
 /* Fixed and anchored from the button's rect, like .collab-hovercard: inside the
-   title bar it was painted under the editor whatever its z-index. */
+   title bar it was painted under the editor whatever its z-index. A manual
+   popover now, so the top layer handles stacking. */
 .collab-overflow-popover {
   position: fixed;
-  z-index: 4000;
   min-width: 180px;
   max-width: 260px;
   max-height: 240px;
@@ -2721,8 +2736,8 @@ body.mbeditor-migration-pending .ide-statusbar {
 
 /* Context menu */
 .context-menu {
+  /* Rendered as a popover (top layer): no z-index to keep ahead of. */
   position: fixed;
-  z-index: 9999;
   min-width: 180px;
   background: var(--ide-panel-bg);
   border: 1px solid var(--ide-border-input);
@@ -2770,7 +2785,7 @@ body.mbeditor-migration-pending .ide-statusbar {
 .ide-tab-context-menu-item {
   padding: 6px 14px;
   cursor: pointer;
-  color: #ccc;
+  color: var(--ide-text);
   font-size: 12px;
   display: flex;
   align-items: center;
@@ -2779,7 +2794,8 @@ body.mbeditor-migration-pending .ide-statusbar {
 }
 
 .ide-tab-context-menu-item:hover {
-  background: #094771;
+  background: var(--ide-active-bg);
+  color: #ffffff;
 }
 
 .ide-tab-context-menu-item i {
