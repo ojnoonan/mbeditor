@@ -1460,6 +1460,21 @@ var EditorPanel = function EditorPanel(_ref) {
     return function () { clearTimeout(timer); };
   }, [tab.gotoLine, tab.gotoCol, tab.gotoEndCol, tab.content, tab.loading]);
 
+  // Take keyboard focus when the opener asked for it (TabManager.requestFocus):
+  // once the content has loaded and the Monaco instance exists. Until then
+  // the request waits: editorReady flipping re-runs this. An image tab never
+  // gets an editor, so its request is dropped.
+  useEffect(function () {
+    if (!tab.focusOnLoad || tab.loading) return;
+    var editor = monacoRef.current;
+    if (!editor) {
+      if (tab.isImage) TabManager.clearFocusRequest(paneId, tab.id);
+      return;
+    }
+    editor.focus();
+    TabManager.clearFocusRequest(paneId, tab.id);
+  }, [tab.focusOnLoad, tab.loading, editorReady]);
+
   // Apply RuboCop markers
   useEffect(function () {
     if (monacoRef.current && window.monaco) {

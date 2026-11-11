@@ -2297,6 +2297,9 @@ var MbeditorApp = function MbeditorApp() {
     // explorer, search, rails and git panel are all hidden with it).
     setShowModelGraphView(false);
     TabManager.openTab(path, name, line, null, false, col, endCol);
+    // A line jump focuses the editor itself (gotoLine); without one, nothing
+    // would, and closing Quick Open would leave focus on <body>.
+    if (!line) TabManager.requestFocus(path);
     handleNodeSelect({ path: path, name: name || path.split('/').pop(), type: 'file' });
     setQuickOpen(false);
   };

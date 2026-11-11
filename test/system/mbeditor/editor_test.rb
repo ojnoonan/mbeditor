@@ -519,6 +519,32 @@ module Mbeditor
       assert_equal "", find(".quick-open-input").value
     end
 
+    # Closing the dialog hands focus back to the editor that had it, then the
+    # tab switch unmounts that editor (EditorPanel is keyed by tab id), which
+    # used to leave focus on <body>: the file opened but typing went nowhere.
+    test "a file opened from quick open gets keyboard focus" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+
+      # Meta+P through the page keyboard, so focus stays where it is (a node's
+      # send_keys clicks it first). Headless Chrome reports a Mac here, and on
+      # a Mac Monaco takes Ctrl+P for cursor-up, so Cmd+P is the real gesture.
+      quick_open = lambda do |name|
+        page.driver.browser.keyboard.type([:Meta, "p"])
+        input = find("dialog.mb-dialog[open] .quick-open-input", wait: 5)
+        input.set(name)
+        assert_selector ".quick-open-result-icon", wait: 5
+        input.send_keys(:enter)
+        assert_selector ".tab-item.active", text: name, wait: 10
+        assert wait_for_condition("focus in the #{name} editor") {
+          page.evaluate_script("!!(document.activeElement && document.activeElement.closest('.monaco-editor'))") || nil
+        }, "focus is on #{page.evaluate_script('document.activeElement.tagName')}, not the editor"
+      end
+
+      quick_open.call("Gemfile")      # from nothing focused
+      quick_open.call("Gemfile.lock") # from another editor: the case that broke
+    end
+
     test "sidebar search shows loading and clear controls" do
       visit "/mbeditor"
       assert_selector ".file-tree", wait: 10
