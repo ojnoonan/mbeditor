@@ -384,9 +384,12 @@ html, body, #mbeditor-root {
   overflow-x: hidden;
 }
 
-.ide-sidebar-scrollable::-webkit-scrollbar { width: 6px; }
-.ide-sidebar-scrollable::-webkit-scrollbar-track { background: transparent; }
-.ide-sidebar-scrollable::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 3px; }
+.ide-sidebar-scrollable { scrollbar-color: var(--ide-scrollbar) transparent; }
+@supports not (scrollbar-color: auto) {
+  .ide-sidebar-scrollable::-webkit-scrollbar { width: 6px; }
+  .ide-sidebar-scrollable::-webkit-scrollbar-track { background: transparent; }
+  .ide-sidebar-scrollable::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 3px; }
+}
 
 /* ── File Tree ────────────────────────────────────────────── */
 .file-tree-root { padding: 4px 0; }
@@ -521,8 +524,18 @@ html, body, #mbeditor-root {
   flex-shrink: 0;
 }
 
+/* The one deliberate ::-webkit-scrollbar holdout. The standard properties
+   cannot express a 3px bar — `thin` takes ~8px of layout out of a 35px row —
+   so Chrome/Safari keep the WebKit pseudo-elements here. They only honour
+   those while the element's scrollbar-color and scrollbar-width are both
+   `auto`, hence the reset of the inherited/universal values. Engines without
+   ::-webkit-scrollbar (Firefox) get the standard properties instead. */
+.tab-bar { scrollbar-color: auto; scrollbar-width: auto; }
 .tab-bar::-webkit-scrollbar { height: 3px; }
 .tab-bar::-webkit-scrollbar-thumb { background: var(--ide-hover-bg); }
+@supports not selector(::-webkit-scrollbar) {
+  .tab-bar { scrollbar-color: var(--ide-hover-bg) transparent; scrollbar-width: thin; }
+}
 
 .tab-new-file-btn {
   display: flex;
@@ -714,17 +727,56 @@ html, body, #mbeditor-root {
   user-select: none;
 }
 
-/* ── Shortcut Help Drawer ────────────────────────────────── */
-.shelp-backdrop {
+/* ── Modal dialog shell (components/ModalDialog.js) ──────── */
+/* The native <dialog> is an unstyled shell exactly the size of the panel it
+   wraps: the panel classes below (.schema-modal, .shelp-panel, …) keep all the
+   visual styling, and a pointer outside the dialog box is a backdrop click.
+   Top layer replaces the z-index ladder the overlay divs used to need.
+   Vendored pico.classless.css styles every <dialog> as its own full-viewport
+   flex overlay (inset 0, min-width/height 100%, tinted background, blur).
+   Left in place, the dialog box covers the whole screen, so no click ever
+   lands "outside" it and the backdrop never dismisses — hence the explicit
+   reset of position, size, display and backdrop-filter back to UA centring. */
+dialog.mb-dialog {
+  display: block;
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  z-index: 9000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  margin: auto;
+  width: fit-content;
+  height: fit-content;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: inherit;
+  overflow: visible;
 }
+dialog.mb-dialog:not([open]) { display: none; }
+/* Both rules: without them a scroll gesture over the backdrop or past the end
+   of the dialog's content chains to the page behind. */
+dialog.mb-dialog:modal { overscroll-behavior: contain; }
+dialog.mb-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+dialog.mb-dialog-light::backdrop { background: rgba(0, 0, 0, 0.45); }
 
+/* MbeditorDialogs.confirm / .prompt — reuses the .schema-modal panel. */
+.mb-confirm { min-width: 360px; max-width: min(520px, 94vw); }
+.mb-confirm .schema-modal-body { padding: 14px 16px; }
+.mb-confirm-message { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.mb-confirm-message + .import-dest-input { margin-top: 10px; }
+.mb-confirm .import-dest-input { width: 100%; box-sizing: border-box; }
+/* pico.classless.css makes [type=submit] a full-width block. */
+.mb-confirm .import-conflict-btn { width: auto; margin: 0; }
+
+/* ── Shortcut Help Drawer ────────────────────────────────── */
 .shelp-panel {
   background: var(--ide-panel-bg);
   color: var(--ide-text);
@@ -1574,15 +1626,6 @@ body.mbeditor-migration-pending .ide-statusbar {
 }
 
 /* ── Schema modal ─────────────────────────────────────────── */
-.schema-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.55);
-  z-index: 9000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 .schema-modal {
   background: var(--ide-bg, #1e1e1e);
   border: 1px solid var(--ide-border, #3c3c3c);
@@ -2395,9 +2438,12 @@ body.mbeditor-migration-pending .ide-statusbar {
   overflow-y: auto;
   overflow-x: hidden;
 }
-.ide-sidebar-fixed .collapsible-content::-webkit-scrollbar { width: 6px; }
-.ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-track { background: transparent; }
-.ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 3px; }
+.ide-sidebar-fixed .collapsible-content { scrollbar-color: var(--ide-scrollbar) transparent; }
+@supports not (scrollbar-color: auto) {
+  .ide-sidebar-fixed .collapsible-content::-webkit-scrollbar { width: 6px; }
+  .ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-track { background: transparent; }
+  .ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 3px; }
+}
 
 .open-editors-group-header {
   font-size: 10px;
@@ -2917,21 +2963,21 @@ body.mbeditor-migration-pending .ide-statusbar {
 .pdf-icon { color: var(--ide-danger) !important; }
 
 /* ── Scrollbars ────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: var(--ide-bg); }
-::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--ide-hover-bg); }
+/* Standard properties. scrollbar-color inherits, so :root colours every
+   native scrollbar; scrollbar-width does not, hence the universal rule (zero
+   specificity, so any component rule overrides it). Where these apply, Chrome
+   and Safari ignore ::-webkit-scrollbar, so the WebKit rules are only the
+   fallback for engines without scrollbar-color. */
+:root { scrollbar-color: var(--ide-scrollbar) var(--ide-bg); }
+* { scrollbar-width: thin; }
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--ide-bg); }
+  ::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--ide-hover-bg); }
+}
 
 /* ── Draft restore dialog ───────────────────────────────────── */
-.ide-draft-restore-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.55);
-  z-index: 10001;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 .ide-draft-restore-dialog {
   background: var(--ide-panel-bg-alt);
   border: 1px solid var(--ide-border-input);
@@ -2990,16 +3036,6 @@ body.mbeditor-migration-pending .ide-statusbar {
 /* ══ SETTINGS MODAL ═════════════════════════════════════════════════════════
  * VS Code-style: left nav of sections, scrolling right pane of rows.
  * ─────────────────────────────────────────────────────────────────────────── */
-.ide-settings-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.45);
-  z-index: 9100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 /* Frosted like Quick Open — it floats over the editor, not inside it. */
 .ide-settings-modal {
   backdrop-filter: blur(20px) saturate(180%);

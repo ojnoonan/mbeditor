@@ -2430,10 +2430,15 @@ var MbeditorApp = function MbeditorApp() {
       return tab.dirty;
     }).length;
 
-    if (dirtyCount === 0) return true;
+    if (dirtyCount === 0) return Promise.resolve(true);
 
     var dirtyLabel = dirtyCount === 1 ? "1 unsaved editor has changes." : dirtyCount + " unsaved editors have changes.";
-    return window.confirm(dirtyLabel + " Close " + scopeLabel + " without saving?");
+    return window.MbeditorDialogs.confirm({
+      title: "Close " + scopeLabel + "?",
+      message: dirtyLabel + " Their changes will be lost.",
+      confirmLabel: "Close without saving",
+      danger: true
+    });
   };
 
   var handleCloseAllEditors = function handleCloseAllEditors() {
@@ -2441,13 +2446,14 @@ var MbeditorApp = function MbeditorApp() {
       return pane.tabs;
     });
     if (allTabs.length === 0) return;
-    if (!confirmBulkClose(allTabs, "all editors")) return;
-
-    TabManager.closeAllTabs();
-    forgetClosedTabs();
-    setClosingTabId(null);
-    setClosingPaneId(null);
-    EditorStore.setStatus("Closed " + allTabs.length + " editor" + (allTabs.length === 1 ? "" : "s"), "info");
+    confirmBulkClose(allTabs, "all editors").then(function (ok) {
+      if (!ok) return;
+      TabManager.closeAllTabs();
+      forgetClosedTabs();
+      setClosingTabId(null);
+      setClosingPaneId(null);
+      EditorStore.setStatus("Closed " + allTabs.length + " editor" + (allTabs.length === 1 ? "" : "s"), "info");
+    });
   };
 
   var handleCloseEditorsInGroup = function handleCloseEditorsInGroup(paneId) {
@@ -2455,13 +2461,14 @@ var MbeditorApp = function MbeditorApp() {
       return p.id === paneId;
     });
     if (!pane || pane.tabs.length === 0) return;
-    if (!confirmBulkClose(pane.tabs, "all editors in Group " + paneId)) return;
-
-    TabManager.closeAllTabsInPane(paneId);
-    forgetClosedTabs();
-    setClosingTabId(null);
-    setClosingPaneId(null);
-    EditorStore.setStatus("Closed " + pane.tabs.length + " editor" + (pane.tabs.length === 1 ? "" : "s") + " in Group " + paneId, "info");
+    confirmBulkClose(pane.tabs, "all editors in Group " + paneId).then(function (ok) {
+      if (!ok) return;
+      TabManager.closeAllTabsInPane(paneId);
+      forgetClosedTabs();
+      setClosingTabId(null);
+      setClosingPaneId(null);
+      EditorStore.setStatus("Closed " + pane.tabs.length + " editor" + (pane.tabs.length === 1 ? "" : "s") + " in Group " + paneId, "info");
+    });
   };
 
   var handleCloseOtherTabs = function handleCloseOtherTabs(paneId, keepId) {
@@ -2469,10 +2476,12 @@ var MbeditorApp = function MbeditorApp() {
     if (!pane) return;
     var others = pane.tabs.filter(function (t) { return t.id !== keepId; });
     if (others.length === 0) return;
-    if (!confirmBulkClose(others, "other editors")) return;
-    TabManager.closeOtherTabsInPane(paneId, keepId);
-    forgetClosedTabs();
-    EditorStore.setStatus("Closed " + others.length + " editor" + (others.length === 1 ? "" : "s"), "info");
+    confirmBulkClose(others, "other editors").then(function (ok) {
+      if (!ok) return;
+      TabManager.closeOtherTabsInPane(paneId, keepId);
+      forgetClosedTabs();
+      EditorStore.setStatus("Closed " + others.length + " editor" + (others.length === 1 ? "" : "s"), "info");
+    });
   };
 
   var handleCloseSavedTabs = function handleCloseSavedTabs(paneId) {
@@ -2490,9 +2499,18 @@ var MbeditorApp = function MbeditorApp() {
   // Returns a promise that rejects with {cancelled: true} when the user backs
   // out, so close-flows can abort instead of discarding.
   var saveUntitledTab = function saveUntitledTab(paneId, tab, opts) {
-    var input = window.prompt('Save as (path relative to workspace root):', tab.name + '.txt');
-    if (!input || !input.trim()) return Promise.reject({ cancelled: true });
-    var newPath = input.trim().replace(/^\/+/, '');
+    return window.MbeditorDialogs.prompt({
+      title: 'Save as',
+      message: 'Path relative to the workspace root:',
+      value: tab.name + '.txt',
+      confirmLabel: 'Save'
+    }).then(function (input) {
+      if (!input || !input.trim()) return Promise.reject({ cancelled: true });
+      return writeUntitledTab(paneId, tab, opts, input.trim().replace(/^\/+/, ''));
+    });
+  };
+
+  var writeUntitledTab = function writeUntitledTab(paneId, tab, opts, newPath) {
     var startedAt = Date.now();
     return FileService.saveFile(newPath, tab.content).then(function () {
       var audit = window.MbeditorAudit;
@@ -3904,7 +3922,11 @@ var MbeditorApp = function MbeditorApp() {
     if (matchCount > 0) {
       confirmMsg += " (" + matchCount + (searchHasMore ? "+" : "") + " match" + (matchCount !== 1 ? "es" : "") + " across files)";
     }
-    if (!window.confirm(confirmMsg)) return;
+    window.MbeditorDialogs.confirm({ title: "Replace all", message: confirmMsg, confirmLabel: "Replace all", danger: true })
+      .then(function (ok) { if (ok) runReplaceAll(); });
+  };
+
+  var runReplaceAll = function runReplaceAll() {
 
     setReplaceLoading(true);
     EditorStore.setStatus("Replacing…", "info");
@@ -4735,8 +4757,15 @@ var MbeditorApp = function MbeditorApp() {
     });
 
     var label = pathsToDelete.length === 1 ? pathsToDelete[0] : pathsToDelete.length + ' items';
-    var confirmed = window.confirm('Delete ' + label + '? This cannot be undone.');
-    if (!confirmed) return;
+    window.MbeditorDialogs.confirm({
+      title: 'Delete ' + label + '?',
+      message: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true
+    }).then(function (ok) { if (ok) runDelete(pathsToDelete, label); });
+  };
+
+  var runDelete = function runDelete(pathsToDelete, label) {
 
     // Computed against the pre-delete tree, since the deleted paths' siblings
     // are only known before the tree is refreshed.
@@ -6513,17 +6542,11 @@ var MbeditorApp = function MbeditorApp() {
       onSelectFolder: handleOpenFolderInExplorer,
       onClose: function () { return setQuickOpen(false); }
     }),
+    // No onDismiss: neither Esc nor the backdrop may silently pick one of
+    // restore/discard, so this dialog closes only through its buttons.
     draftRestoreOffer && React.createElement(
-      "div",
-      {
-        className: "ide-draft-restore-overlay",
-        role: "dialog",
-        "aria-modal": "true",
-        "aria-label": "Restore unsaved drafts"
-      },
-      React.createElement(
-        "div",
-        { className: "ide-draft-restore-dialog" },
+      window.ModalDialog,
+      { className: "ide-draft-restore-dialog", label: "Restore unsaved drafts" },
         React.createElement("div", { className: "ide-draft-restore-title" },
           React.createElement("i", { className: "fas fa-save", style: { marginRight: 8 } }),
           "Unsaved drafts found"
@@ -6568,7 +6591,6 @@ var MbeditorApp = function MbeditorApp() {
             "Discard drafts"
           )
         )
-      )
     ),
     contextMenu && React.createElement(
       React.Fragment,
@@ -6760,17 +6782,12 @@ var MbeditorApp = function MbeditorApp() {
 
     /* ── Schema modal ──────────────────────────────────────────────────── */
     schemaModal && React.createElement(
-      'div',
+      window.ModalDialog,
       {
-        className: 'schema-modal-overlay',
-        onClick: function() { setSchemaModal(null); }
+        className: 'schema-modal',
+        label: 'Schema for ' + schemaModal.label,
+        onDismiss: function() { setSchemaModal(null); }
       },
-      React.createElement(
-        'div',
-        {
-          className: 'schema-modal',
-          onClick: function(e) { e.stopPropagation(); }
-        },
         /* Header */
         React.createElement(
           'div', { className: 'schema-modal-header' },
@@ -6845,7 +6862,6 @@ var MbeditorApp = function MbeditorApp() {
               )
             ]
         )
-      )
     )
   );
 };

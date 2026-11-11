@@ -19,7 +19,6 @@ var ImportDialog = function ImportDialog(_ref) {
   var onCancel = _ref.onCancel;
   var onImport = _ref.onImport;
 
-  var modalRef = React.useRef(null);
   var filesInputRef = React.useRef(null);
   var folderInputRef = React.useRef(null);
 
@@ -31,7 +30,6 @@ var ImportDialog = function ImportDialog(_ref) {
   var dest = _dest[0];
   var setDest = _dest[1];
 
-  window.useModalFocusTrap(modalRef, onCancel);
 
   // webkitdirectory has no JSX/React prop, and React strips unknown lowercase
   // attributes on <input>, so it is set on the DOM node directly.
@@ -111,19 +109,8 @@ var ImportDialog = function ImportDialog(_ref) {
   var replacing = targets.filter(function (t) { return existingFiles.has(t); }).length;
 
   return React.createElement(
-    'div',
-    { className: 'schema-modal-overlay', onClick: onCancel },
-    React.createElement(
-      'div',
-      {
-        ref: modalRef,
-        className: 'schema-modal import-dialog',
-        role: 'dialog',
-        'aria-modal': 'true',
-        'aria-label': 'Upload files',
-        tabIndex: -1,
-        onClick: function (e) { e.stopPropagation(); }
-      },
+    window.ModalDialog,
+    { className: 'schema-modal import-dialog', label: 'Upload files', onDismiss: onCancel },
       React.createElement(
         'div', { className: 'schema-modal-header' },
         React.createElement('div', { className: 'schema-modal-title' },
@@ -216,7 +203,6 @@ var ImportDialog = function ImportDialog(_ref) {
           entries.length === 0 ? 'Upload' : 'Upload ' + entries.length + ' file' + (entries.length === 1 ? '' : 's')
         )
       )
-    )
   );
 };
 

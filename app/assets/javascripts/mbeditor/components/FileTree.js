@@ -289,6 +289,9 @@ var FileTree = function FileTree(_ref) {
       if (e.key.length !== 1) return;
       // Still skip when an inline rename/create input is the actual focused element.
       if (e.target && e.target.tagName === 'INPUT') return;
+      // The sidebar flag survives opening a modal by shortcut; keystrokes in
+      // a dialog (e.g. Paste & Place's textarea) are never typeahead.
+      if (e.target && e.target.closest && e.target.closest('dialog')) return;
       if (!containerRef.current) return;
 
       e.preventDefault();

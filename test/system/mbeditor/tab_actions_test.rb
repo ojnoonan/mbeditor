@@ -71,11 +71,14 @@ module Mbeditor
       assert_selector ".tab-item", text: "Untitled-1", wait: 10
       assert_empty Dir.glob(File.join(@workspace, "Untitled*"))
 
-      # Saving prompts for a path (stub the prompt) and converts the tab.
-      page.execute_script("window.prompt = function () { return 'scratch.txt'; };")
+      # Saving asks for a path in the Save as dialog and converts the tab.
       find(".monaco-editor .view-lines").click
       page.send_keys("scratch content")
       find("button.statusbar-btn[title^='Save the active file']").click
+      within("dialog.mb-dialog", wait: 10) do
+        find("input.import-dest-input").set("scratch.txt")
+        click_button "Save"
+      end
 
       assert_selector ".tab-item", text: "scratch.txt", wait: 10
       assert_no_selector ".tab-item", text: "Untitled-1"

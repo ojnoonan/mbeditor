@@ -139,6 +139,28 @@ same file. An earlier attempt converted the source to tabs *before* handing it
 to RuboCop, which simply discarded it. Converting an already-open file is
 Monaco's built-in "Convert Indentation to Tabs / to Spaces" (F1).
 
+## Modals: one native `<dialog>` shell
+
+Every blocking modal renders through `window.ModalDialog`
+(`components/ModalDialog.js`), a `<dialog>` opened with `showModal()`. The
+browser provides the inert page, focus containment, top layer, Esc and
+`::backdrop`, so don't add `role="dialog"`, `aria-modal`, a focus trap, a
+z-index or a keydown Escape listener to a new modal. Mount = open,
+unmount = close: native close requests are cancelled and routed to
+`onDismiss`, so React state stays the only source of truth. Leave out
+`onDismiss` for a dialog that must be answered (draft restore). Use
+`data-autofocus`, not React's `autoFocus`: the latter fires before
+`showModal()` and is lost.
+
+`MbeditorDialogs.confirm()` / `.prompt()` return promises and replace
+`window.confirm`/`window.prompt`. Don't reintroduce the native ones; they
+block the page, cable heartbeats included.
+
+**Vendored `pico.classless.css` styles every `<dialog>` as a full-viewport
+overlay.** `dialog.mb-dialog` in `editor.css` resets it. Without that reset the
+dialog box covers the screen and backdrop clicks never land "outside" it.
+Pico also makes `[type=submit]` full-width.
+
 ## Ruby intelligence: ruby-lsp, and what it does not cover
 
 `lib/mbeditor/ruby_lsp_client.rb` runs one ruby-lsp per workspace and speaks LSP

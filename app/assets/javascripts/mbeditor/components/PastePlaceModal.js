@@ -10,7 +10,6 @@
 
 var PastePlaceModal = (function () {
   var useState = React.useState;
-  var useRef = React.useRef;
   var useMemo = React.useMemo;
 
   var MAX_CANDIDATE_FILES = 10;
@@ -237,7 +236,6 @@ var PastePlaceModal = (function () {
   }
 
   var Modal = function PastePlaceModal(props) {
-    var modalRef = useRef(null);
     var _c = useState('');
     var code = _c[0]; var setCode = _c[1];
     var _p = useState(null);
@@ -249,7 +247,6 @@ var PastePlaceModal = (function () {
     var _e = useState(null);
     var error = _e[0]; var setError = _e[1];
 
-    window.useModalFocusTrap(modalRef, props.onClose);
 
     var byFile = useMemo(function () {
       return plan ? buildEdits(plan.items, choices, plan.texts) : {};
@@ -282,11 +279,7 @@ var PastePlaceModal = (function () {
     };
 
     var h = React.createElement;
-    return h('div', { className: 'schema-modal-overlay', onClick: props.onClose },
-      h('div', {
-        ref: modalRef, className: 'schema-modal paste-place-modal', role: 'dialog', 'aria-modal': 'true',
-        'aria-label': 'Paste and place', tabIndex: -1, onClick: function (e) { e.stopPropagation(); }
-      },
+    return h(window.ModalDialog, { className: 'schema-modal paste-place-modal', label: 'Paste and place', onDismiss: props.onClose },
         h('div', { className: 'schema-modal-header' }, h('div', { className: 'schema-modal-title' }, 'Paste & Place')),
         h('div', { className: 'schema-modal-body paste-place-body' },
           !plan && h('textarea', {
@@ -319,7 +312,6 @@ var PastePlaceModal = (function () {
             ? h('button', { type: 'button', className: 'import-conflict-btn import-conflict-btn-primary', disabled: busy || files.length === 0, onClick: apply }, 'Apply to editor')
             : h('button', { type: 'button', className: 'import-conflict-btn import-conflict-btn-primary', disabled: busy || !code.trim(), onClick: find }, busy ? 'Searching...' : 'Find placement')
         )
-      )
     );
   };
 
