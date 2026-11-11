@@ -168,6 +168,16 @@ hover-driven surfaces that only need the top layer. The top layer also ignores
 an ancestor's `backdrop-filter`, which used to need a portal to `body` under the
 glass chrome.
 
+Context menus go one level up, through `window.PopupMenu` + `MenuItem` /
+`MenuSeparator` (`components/PopupMenu.js`): `<button>` items in a
+`focusgroup="menu nomemory"`, so they are keyboard-operable. Native focusgroup
+infers the roles and does the arrows; elsewhere the component sets
+`role=menu/menuitem` and handles them. Never set those roles on both paths, as
+explicit roles block the native inference. Pass `keyboard: true` when a key opened it
+(Shift+F10 in `FileTree`), so focus starts on the first item. On close it
+returns focus to the opener. Items carry the app's global `:focus-visible` ring
+on purpose.
+
 **Vendored `pico.classless.css` styles every `<dialog>` as a full-viewport
 overlay.** `dialog.mb-dialog` in `editor.css` resets it. Without that reset the
 dialog box covers the screen and backdrop clicks never land "outside" it.

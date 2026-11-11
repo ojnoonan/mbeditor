@@ -7,12 +7,7 @@ var useEffect = _React.useEffect;
 var useRef = _React.useRef;
 
 var menuItem = function menuItem(icon, label, onClick) {
-  return React.createElement(
-    'div',
-    { className: 'ide-tab-context-menu-item', onClick: onClick },
-    React.createElement('i', { className: icon }),
-    label
-  );
+  return React.createElement(window.MenuItem, { icon: icon, label: label, onClick: onClick });
 };
 
 // Clamps a position:fixed, content-sized popup menu into the viewport.
@@ -244,13 +239,15 @@ var TabBar = function TabBar(_ref) {
       React.createElement('i', { className: 'fas fa-plus' })
     )
   ),
-  // A popover: outside clicks and Esc close it natively (onDismiss). Shares
-  // .context-menu's themed surface with the explorer menu; it used to carry
-  // hard-coded dark colours inline and ignored light themes.
+  // A PopupMenu (popover + arrow-key buttons): outside clicks and Esc close
+  // it natively (onDismiss). Shares .context-menu's themed surface with the
+  // explorer menu; it used to carry hard-coded dark colours inline and
+  // ignored light themes.
   tabContextMenu && React.createElement(
-    window.Popover,
+    window.PopupMenu,
     {
       key: tabContextMenu.x + ',' + tabContextMenu.y,
+      label: tabContextMenu.tab.name,
       className: 'context-menu ide-tab-context-menu',
       popoverRef: tabContextMenuRef,
       style: { top: tabContextMenu.y, left: tabContextMenu.x, minWidth: '160px' },
@@ -261,7 +258,7 @@ var TabBar = function TabBar(_ref) {
     onCloseOthers && menuItem('fas fa-times-circle', 'Close Others', function() { setTabContextMenu(null); onCloseOthers(tabContextMenu.tab.id); }),
     onCloseSaved && menuItem('fas fa-check', 'Close Saved', function() { setTabContextMenu(null); onCloseSaved(); }),
     onCloseAll && menuItem('fas fa-times', 'Close All', function() { setTabContextMenu(null); onCloseAll(); }),
-    React.createElement('div', { className: 'context-menu-divider' }),
+    React.createElement(window.MenuSeparator),
     onShowHistory && menuItem('fas fa-history', 'File History', function() {
       setTabContextMenu(null);
       onShowHistory(tabContextMenu.tab.path);

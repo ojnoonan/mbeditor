@@ -4332,7 +4332,9 @@ var MbeditorApp = function MbeditorApp() {
   };
 
   var openContextMenu = function openContextMenu(e, node) {
-    setContextMenu({ x: e.clientX, y: e.clientY, node: node });
+    // e.keyboard: opened by Shift+F10 / the menu key (FileTree), so focus
+    // starts on the first item instead of the menu itself.
+    setContextMenu({ x: e.clientX, y: e.clientY, node: node, keyboard: !!e.keyboard });
     if (!actsOnSelection(node)) handleNodeSelect(node);
   };
 
@@ -6591,13 +6593,16 @@ var MbeditorApp = function MbeditorApp() {
           )
         )
     ),
-    // A popover: outside clicks and Esc close it natively (onDismiss), where a
-    // full-screen click-catcher div used to. Keyed by position so a second
-    // right-click mounts a fresh menu rather than moving the open one.
+    // A PopupMenu: a popover, so outside clicks and Esc close it natively
+    // (onDismiss) where a full-screen click-catcher div used to, with buttons
+    // that arrow keys move between. Keyed by position so a second right-click
+    // mounts a fresh menu rather than moving the open one.
     contextMenu && React.createElement(
-      window.Popover,
+      window.PopupMenu,
       {
         key: contextMenu.x + ',' + contextMenu.y,
+        label: contextMenu.node ? contextMenu.node.name : 'Explorer',
+        keyboard: contextMenu.keyboard,
         className: "context-menu",
         popoverRef: contextMenuRef,
         style: { left: contextMenu.x, top: contextMenu.y },
@@ -6605,81 +6610,45 @@ var MbeditorApp = function MbeditorApp() {
         onClick: function (e) { e.stopPropagation(); },
         onContextMenu: function (e) { e.preventDefault(); }
       },
-        contextMenu.node && contextMenu.node.type === 'file' && React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('open');
-            } },
-          React.createElement("i", { className: "far fa-file-code context-menu-icon" }),
-          " Open"
-        ),
-        React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('newFile');
-            } },
-          React.createElement("i", { className: "far fa-file context-menu-icon" }),
-          " New File"
-        ),
-        React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('newFolder');
-            } },
-          React.createElement("i", { className: "far fa-folder context-menu-icon" }),
-          " New Folder"
-        ),
-        React.createElement("div", { className: "context-menu-divider" }),
-        React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('rename');
-            } },
-          React.createElement("i", { className: "fas fa-pen context-menu-icon" }),
-          " Rename"
-        ),
-        React.createElement(
-          "div",
-          { className: "context-menu-item context-menu-item-danger", onClick: function () {
-              return handleContextMenuAction('delete');
-            } },
-          React.createElement("i", { className: "far fa-trash-alt context-menu-icon" }),
-          " " + deleteMenuLabel(contextMenu.node)
-        ),
-        React.createElement("div", { className: "context-menu-divider" }),
-        contextMenu.node && (actsOnSelection(contextMenu.node) || contextMenu.node.type === 'folder') && React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('combinedView');
-            } },
-          React.createElement("i", { className: "fas fa-layer-group context-menu-icon" }),
-          " Open in Combined View"
-        ),
-        contextMenu.node && React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('download');
-            } },
-          React.createElement("i", { className: "fas fa-download context-menu-icon" }),
-          " " + downloadMenuLabel(contextMenu.node)
-        ),
-        React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('upload');
-            } },
-          React.createElement("i", { className: "fas fa-upload context-menu-icon" }),
-          " Upload Files Here..."
-        ),
-        React.createElement("div", { className: "context-menu-divider" }),
-        React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('copyPath');
-            } },
-          React.createElement("i", { className: "fas fa-copy context-menu-icon" }),
-          " Copy Path"
-        )
+        contextMenu.node && contextMenu.node.type === 'file' && React.createElement(window.MenuItem, {
+          icon: "far fa-file-code", label: "Open",
+          onClick: function () { return handleContextMenuAction('open'); }
+        }),
+        React.createElement(window.MenuItem, {
+          icon: "far fa-file", label: "New File",
+          onClick: function () { return handleContextMenuAction('newFile'); }
+        }),
+        React.createElement(window.MenuItem, {
+          icon: "far fa-folder", label: "New Folder",
+          onClick: function () { return handleContextMenuAction('newFolder'); }
+        }),
+        React.createElement(window.MenuSeparator),
+        React.createElement(window.MenuItem, {
+          icon: "fas fa-pen", label: "Rename",
+          onClick: function () { return handleContextMenuAction('rename'); }
+        }),
+        React.createElement(window.MenuItem, {
+          icon: "far fa-trash-alt", label: deleteMenuLabel(contextMenu.node), danger: true,
+          onClick: function () { return handleContextMenuAction('delete'); }
+        }),
+        React.createElement(window.MenuSeparator),
+        contextMenu.node && (actsOnSelection(contextMenu.node) || contextMenu.node.type === 'folder') && React.createElement(window.MenuItem, {
+          icon: "fas fa-layer-group", label: "Open in Combined View",
+          onClick: function () { return handleContextMenuAction('combinedView'); }
+        }),
+        contextMenu.node && React.createElement(window.MenuItem, {
+          icon: "fas fa-download", label: downloadMenuLabel(contextMenu.node),
+          onClick: function () { return handleContextMenuAction('download'); }
+        }),
+        React.createElement(window.MenuItem, {
+          icon: "fas fa-upload", label: "Upload Files Here...",
+          onClick: function () { return handleContextMenuAction('upload'); }
+        }),
+        React.createElement(window.MenuSeparator),
+        React.createElement(window.MenuItem, {
+          icon: "fas fa-copy", label: "Copy Path",
+          onClick: function () { return handleContextMenuAction('copyPath'); }
+        })
     ),
     // Esc and the backdrop mean Cancel: the tab stays open with its edits.
     // Save on an untitled tab opens the Save As prompt on top of this one;

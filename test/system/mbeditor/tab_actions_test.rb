@@ -42,7 +42,7 @@ module Mbeditor
       assert_selector ".tab-item", count: 2, wait: 10
 
       find(".tab-item", text: "a.rb").right_click
-      find(".ide-tab-context-menu-item", text: "Close Others").click
+      find(".ide-tab-context-menu .context-menu-item", text: "Close Others").click
 
       assert_selector ".tab-item", count: 1
       assert_selector ".tab-item", text: "a.rb"
@@ -55,9 +55,92 @@ module Mbeditor
       assert_selector ".tab-item", count: 2, wait: 10
 
       find(".tab-item", text: "b.rb").right_click
-      find(".ide-tab-context-menu-item", text: "Close All").click
+      find(".ide-tab-context-menu .context-menu-item", text: "Close All").click
 
       assert_no_selector ".tab-item", wait: 10
+    end
+
+    # Keys go through the page keyboard, which types into whatever has focus;
+    # a node's send_keys would click it first and move focus itself.
+    def press(*keys)
+      page.driver.browser.keyboard.type(*keys)
+    end
+
+    def focused_menu_item
+      page.evaluate_script(<<~JS)
+        (function () {
+          var el = document.activeElement;
+          return el && el.classList.contains('context-menu-item') ? el.textContent.trim() : null;
+        })()
+      JS
+    end
+
+    def wait_for_condition(description, timeout: 5)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+      loop do
+        result = yield
+        return result if result
+        raise "Timed out waiting for #{description}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        sleep 0.05
+      end
+    end
+
+    def assert_focused_item(label)
+      assert wait_for_condition("focus on the #{label} menu item") { focused_menu_item == label || nil },
+             "focused menu item is #{focused_menu_item.inspect}, expected #{label.inspect}"
+    end
+
+    test "the explorer context menu works from the keyboard" do
+      visit "/mbeditor"
+      assert_selector ".file-tree", wait: 10
+      find(".tree-item[data-path='a.rb']").click
+
+      press([:shift, :f10])
+      assert_selector ".context-menu:popover-open", wait: 5
+      assert_focused_item "Open"
+      press(:down)
+      assert_focused_item "New File"
+      press(:end)
+      assert_focused_item "Copy Path"
+      press(:down) # wraps
+      assert_focused_item "Open"
+      press(:up)   # wraps back
+      assert_focused_item "Copy Path"
+      press(:home)
+      assert_focused_item "Open"
+
+      # Esc closes it and hands focus back to the tree.
+      press(:escape)
+      assert_no_selector ".context-menu", wait: 5
+      assert wait_for_condition("focus back on the file tree") {
+        page.evaluate_script("document.activeElement && document.activeElement.classList.contains('file-tree')") || nil
+      }
+
+      # Enter runs the focused item.
+      press([:shift, :f10])
+      assert_focused_item "Open"
+      press(:enter)
+      assert_no_selector ".context-menu", wait: 5
+      assert_selector ".tab-item:not(.tab-soft)", text: "a.rb", wait: 10
+    end
+
+    test "a pointer-opened tab menu is entered with the first arrow key" do
+      visit "/mbeditor"
+      open_file("a.rb")
+      open_file("b.rb")
+      assert_selector ".tab-item", count: 2, wait: 10
+
+      find(".tab-item", text: "a.rb").right_click
+      assert_selector ".ide-tab-context-menu:popover-open", wait: 5
+      assert_nil focused_menu_item, "a pointer open must not focus an item"
+      press(:down)
+      assert_focused_item "Close"
+      press(:down)
+      assert_focused_item "Close Others"
+      press(:enter)
+
+      assert_selector ".tab-item", count: 1, wait: 10
+      assert_selector ".tab-item", text: "a.rb"
     end
 
     test "plus button opens an untitled scratch tab, and saving converts it to a real file" do

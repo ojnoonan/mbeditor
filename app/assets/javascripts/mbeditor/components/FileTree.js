@@ -292,6 +292,8 @@ var FileTree = function FileTree(_ref) {
       // The sidebar flag survives opening a modal by shortcut; keystrokes in
       // a dialog (e.g. Paste & Place's textarea) are never typeahead.
       if (e.target && e.target.closest && e.target.closest('dialog')) return;
+      // Nor in an open context menu: its keys belong to the menu.
+      if (e.target && e.target.closest && e.target.closest('[popover]')) return;
       if (!containerRef.current) return;
 
       e.preventDefault();
@@ -512,6 +514,24 @@ var FileTree = function FileTree(_ref) {
     };
   }, []);
 
+  // Shift+F10 / the context-menu key: the explorer menu for the selected row
+  // (else the open file), anchored under it, with focus on its first item.
+  // Handled on keydown so the browser's own contextmenu event never follows.
+  var handleTreeKeyDown = function handleTreeKeyDown(e) {
+    if (!(e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey))) return;
+    if (!onContextMenu || !containerRef.current) return;
+    var flat = flatItemsRef.current;
+    var want = anchorPath || activePath;
+    var idx = flat.findIndex(function (it) { return it.kind === 'node' && it.node.path === want; });
+    if (idx < 0) idx = flat.findIndex(function (it) { return it.kind === 'node'; });
+    if (idx < 0) return;
+    e.preventDefault();
+    scrollToItem(idx);
+    var rect = containerRef.current.getBoundingClientRect();
+    var indent = 8 + flat[idx].depth * 12;
+    onContextMenu({ clientX: rect.left + indent + 16, clientY: rect.top + (idx + 1) * ROW_HEIGHT, keyboard: true }, flat[idx].node);
+  };
+
   var renderRow = function renderRow(item, idx) {
     var indentPx = 8 + item.depth * 12;
 
@@ -699,6 +719,7 @@ var FileTree = function FileTree(_ref) {
       className: 'file-tree file-tree-root',
       ref: containerRef,
       tabIndex: 0,
+      onKeyDown: handleTreeKeyDown,
       // No root drag handlers here. This element is only as tall as its rows,
       // so it can't cover the empty space users actually aim at; the whole
       // scrollable panel handles the root drop instead (see the effect above).

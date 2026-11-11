@@ -2749,23 +2749,48 @@ body.mbeditor-migration-pending .ide-statusbar {
   user-select: none;
 }
 
-.context-menu-item {
+/* Items are <button>s (PopupMenu.js). Two classes deep so the reset beats
+   pico.classless's button rules (background, border, padding, focus shadow). */
+.context-menu .context-menu-item {
+  appearance: none;
   display: flex;
   align-items: center;
   gap: 8px;
+  inline-size: 100%;
+  margin: 0;
   padding: 6px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
   cursor: pointer;
   white-space: nowrap;
 }
 
-.context-menu-item:hover {
+/* Hover moves focus onto the item (PopupMenu), so these are one item. While
+   the keyboard owns the menu, an item merely under the pointer stays plain. */
+.context-menu .context-menu-item:hover,
+.context-menu .context-menu-item:focus-visible {
   background: var(--ide-active-bg);
   color: #ffffff;
 }
 
-.context-menu-item-danger:hover {
+.context-menu:has(.context-menu-item:focus-visible) .context-menu-item:hover:not(:focus-visible) {
+  background: transparent;
+  color: inherit;
+}
+
+.context-menu .context-menu-item-danger:hover,
+.context-menu .context-menu-item-danger:focus-visible {
   background: rgba(244, 135, 113, 0.15);
   color: var(--ide-danger);
+}
+
+.context-menu-group:focus {
+  outline: none;
 }
 
 .context-menu-icon {
@@ -2776,31 +2801,11 @@ body.mbeditor-migration-pending .ide-statusbar {
   opacity: 0.8;
 }
 
-.context-menu-divider {
+.context-menu .context-menu-divider {
   height: 1px;
-  background: var(--ide-border);
   margin: 4px 0;
-}
-
-.ide-tab-context-menu-item {
-  padding: 6px 14px;
-  cursor: pointer;
-  color: var(--ide-text);
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: transparent;
-}
-
-.ide-tab-context-menu-item:hover {
-  background: var(--ide-active-bg);
-  color: #ffffff;
-}
-
-.ide-tab-context-menu-item i {
-  width: 14px;
-  text-align: center;
+  border: 0;
+  background: var(--ide-border);
 }
 
 .collapsible-content {
@@ -3326,14 +3331,6 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-
-/* Context menu items */
-.context-menu-item {
-  --pico-form-element-spacing-vertical: 6px;
-  font-size: 12px;
-  border-radius: 0;
-  border: none;
 }
 
 /* Tree inline create input — ultra-compact */
