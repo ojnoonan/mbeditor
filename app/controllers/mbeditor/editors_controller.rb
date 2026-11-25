@@ -1227,6 +1227,11 @@ module Mbeditor
       render json: { controller: key, actions: RouteService.for_controller(key) }
     end
 
+    # GET /mbeditor/all_routes — every host-app route for the Routes panel.
+    def all_routes
+      render json: { routes: RouteService.all(workspace_root) }
+    end
+
     # GET /mbeditor/related_files?path=... — the Rails panel's groups for a file.
     # GET /mbeditor/related_files?q=User — everything related to a resource,
     # for the AI export picker: { files: [{path, reason, direct}], capped }.

@@ -5429,6 +5429,16 @@ var MbeditorApp = function MbeditorApp() {
             "button",
             {
               type: "button",
+              className: "ide-activity-btn" + (!sidebarCollapsed && activeSidebarTab === 'routes' ? ' active' : ''),
+              title: "Routes",
+              onClick: function() { handleActivityBarClick('routes'); }
+            },
+            React.createElement("i", { className: "fas fa-route" })
+          ),
+          React.createElement(
+            "button",
+            {
+              type: "button",
               className: "ide-activity-btn" + (showModelGraphView ? ' active' : ''),
               title: "Model graph",
               onClick: function() { handleActivityBarClick('models'); }
@@ -5458,7 +5468,8 @@ var MbeditorApp = function MbeditorApp() {
         React.createElement("div", { className: "sidebar-panel-title" },
           activeSidebarTab === 'explorer' ? 'Explorer' :
           activeSidebarTab === 'search' ? 'Search' :
-          activeSidebarTab === 'rails' ? 'Rails' : ''
+          activeSidebarTab === 'rails' ? 'Rails' :
+          activeSidebarTab === 'routes' ? 'Routes' : ''
         ),
         activeSidebarTab === 'explorer' && React.createElement(
           "div",
@@ -5942,6 +5953,9 @@ var MbeditorApp = function MbeditorApp() {
             );
           })()
         ),
+        activeSidebarTab === 'routes' && React.createElement(window.RoutesPanel, {
+          onOpenFile: function (path, line) { handleSelectFile(path, path.split('/').pop(), line); }
+        }),
         activeSidebarTab === 'rails' && React.createElement(
           "div",
           { className: "rails-panel" },

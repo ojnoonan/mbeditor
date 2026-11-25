@@ -27,6 +27,7 @@
 //= require mbeditor/components/DiffViewer
 //= require mbeditor/components/CombinedDiffViewer
 //= require mbeditor/components/ModelGraph
+//= require mbeditor/components/RoutesPanel
 //= require mbeditor/components/ChangelogView
 //= require mbeditor/components/CombinedFileView
 //= require mbeditor/components/FileHistoryPanel

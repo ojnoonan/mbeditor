@@ -470,6 +470,10 @@ var FileService = (function () {
     }).then(function (res) { return res.data; });
   }
 
+  function getAllRoutes() {
+    return axios.get(window.mbeditorBasePath() + '/all_routes').then(function (res) { return res.data; });
+  }
+
   // Whole-workspace rubocop. mode 'autocorrect' runs `-a` and writes to disk.
   // Generous timeout: a cold run over a large app is slow, and there is no
   // progress stream to fall back on.
@@ -584,6 +588,7 @@ var FileService = (function () {
     lspDiagnostics: lspDiagnostics,
     rubyRename: rubyRename,
     getModelGraph: getModelGraph,
+    getAllRoutes: getAllRoutes,
     runRubocop: runRubocop,
     setTestTimeout: setTestTimeout,
     getExceptions: getExceptions,
