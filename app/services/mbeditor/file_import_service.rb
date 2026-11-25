@@ -81,7 +81,10 @@ module Mbeditor
     def write(target, io)
       FileUtils.mkdir_p(File.dirname(target))
       io.rewind
-      File.open(target, "wb") { |f| IO.copy_stream(io, f) }
+      # Read fully before touching the target, then swap it in: copying straight
+      # into an overwritten file left it empty when the copy failed midway.
+      # Bounded by MAX_FILE_SIZE_BYTES, checked by the caller.
+      FileOperationService.new(@workspace_root).atomic_write(target, io.read.b)
     end
 
     # "logo.png" -> "logo 2.png" -> "logo 3.png" ...

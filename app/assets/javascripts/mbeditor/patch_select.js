@@ -17,6 +17,40 @@
     return line.replace(/\r?\n$/, '');
   }
 
+  // git quotes a path with non-ASCII or special characters ("caf\303\251.txt").
+  // Escapes become %XX so decodeURIComponent reads the octal bytes as UTF-8.
+  var QUOTED_ESCAPES = { n: '%0A', t: '%09', r: '%0D', a: '%07', b: '%08', f: '%0C', v: '%0B', '"': '%22', '\\': '%5C' };
+  function unquote(p) {
+    if (p.length < 2 || p.charAt(0) !== '"' || p.charAt(p.length - 1) !== '"') return p;
+    var out = p.slice(1, -1).replace(/\\([0-7]{3}|[\s\S])|%/g, function (m, esc) {
+      if (m === '%') return '%25';
+      if (/^[0-7]{3}$/.test(esc)) return '%' + ('0' + parseInt(esc, 8).toString(16)).slice(-2).toUpperCase();
+      return QUOTED_ESCAPES[esc] || esc;
+    });
+    try { return decodeURIComponent(out); } catch (e) { return p; }
+  }
+
+  // Where the hunk whose "@@" header is lines[i] ends, by its own counts, or -1
+  // when the body does not match them (hand-edited or miscounted).
+  function hunkEnd(lines, i) {
+    var m = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(lines[i]);
+    if (!m) return -1;
+    var oldLeft = m[1] === undefined ? 1 : +m[1];
+    var newLeft = m[2] === undefined ? 1 : +m[2];
+    var j = i + 1;
+    while (oldLeft > 0 || newLeft > 0) {
+      var c = (lines[j] || '').charAt(0);
+      if (c === ' ') { oldLeft--; newLeft--; }
+      else if (c === '-') oldLeft--;
+      else if (c === '+') newLeft--;
+      else if (c !== '\\') return -1;
+      if (oldLeft < 0 || newLeft < 0) return -1;
+      j++;
+    }
+    while ((lines[j] || '').charAt(0) === '\\') j++;
+    return j;
+  }
+
   function describe(f) {
     var h = f.header;
     var m;
@@ -28,12 +62,12 @@
     else f.status = 'modified';
 
     if (f.status === 'renamed') {
-      f.from = (m = /^rename from (.+)$/m.exec(h)) ? bare(m[1]) : null;
-      f.path = (m = /^rename to (.+)$/m.exec(h)) ? bare(m[1]) : '';
+      f.from = (m = /^rename from (.+)$/m.exec(h)) ? unquote(bare(m[1])) : null;
+      f.path = (m = /^rename to (.+)$/m.exec(h)) ? unquote(bare(m[1])) : '';
     } else if ((m = /^\+\+\+ (?!\/dev\/null)(.+)$/m.exec(h)) || (m = /^--- (?!\/dev\/null)(.+)$/m.exec(h))) {
-      f.path = bare(m[1]).replace(/\t.*$/, '').replace(/^[ab]\//, '');
-    } else if ((m = /^diff --git a\/.+ b\/(.+)$/m.exec(h))) {
-      f.path = bare(m[1]);
+      f.path = unquote(bare(m[1]).replace(/\t.*$/, '')).replace(/^[ab]\//, '');
+    } else if ((m = /^diff --git (?:"a\/.*"|a\/.+) ("b\/.*"|b\/.+)$/m.exec(h))) {
+      f.path = unquote(bare(m[1])).replace(/^b\//, '');
     } else {
       f.path = '';
     }
@@ -45,12 +79,13 @@
     var files = [];
     var file = null;
     var inHunk = false;
+    var hunkUntil = 0;
     lines.forEach(function (l, i) {
       var startsFile = l.indexOf('diff --git ') === 0 ||
         !file ||
         // A plain (non-git) patch has no per-file marker. Three lines together
         // are unambiguous where a removed "-- x" line alone is not.
-        (inHunk && l.indexOf('--- ') === 0 && (lines[i + 1] || '').indexOf('+++ ') === 0 && (lines[i + 2] || '').indexOf('@@') === 0);
+        (inHunk && i >= hunkUntil && l.indexOf('--- ') === 0 && (lines[i + 1] || '').indexOf('+++ ') === 0 && (lines[i + 2] || '').indexOf('@@') === 0);
       if (startsFile) {
         file = { header: '', hunks: [] };
         files.push(file);
@@ -59,6 +94,7 @@
       if (l.indexOf('@@') === 0) {
         file.hunks.push('');
         inHunk = true;
+        hunkUntil = Math.max(hunkEnd(lines, i), 0);
       }
       if (inHunk) file.hunks[file.hunks.length - 1] += l;
       else file.header += l;
@@ -98,14 +134,18 @@
   }
 
   // Paths of the files that would be written, old name of a rename included.
-  function touchedPaths(files, selection) {
+  // +serverFiles+ (the check response's files, in patch order) is authoritative
+  // when it lines up with the parse, since git decodes quoted names itself.
+  function touchedPaths(files, selection, serverFiles) {
     var out = [];
+    var useServer = serverFiles && serverFiles.length === files.length;
     files.forEach(function (f, i) {
       var s = selection[i] || [];
       var on = f.atomic ? !!s[0] : s.some(Boolean);
       if (!on) return;
-      out.push(f.path);
-      if (f.from) out.push(f.from);
+      var src = useServer ? serverFiles[i] : f;
+      out.push(src.path);
+      if (src.from) out.push(src.from);
     });
     return out;
   }

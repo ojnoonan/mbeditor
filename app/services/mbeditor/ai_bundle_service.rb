@@ -19,6 +19,17 @@ module Mbeditor
     # in the index as skipped, so the assistant knows they exist.
     GENERATED = /(\A(package-lock\.json|yarn\.lock|pnpm-lock\.yaml)\z)|\.(lock|map)\z|\.min\.(js|css)\z/
 
+    # Never sent to a third-party chat. Hard-coded on purpose: a bundle is
+    # uploaded wholesale, so this is not something a config key should loosen.
+    def self.secret?(rel)
+      base = File.basename(rel).downcase
+      return true if rel.start_with?("config/credentials/") || rel.include?("/config/credentials/")
+      return false if %w[.env.example .env.sample].include?(base)
+
+      base == ".env" || base.start_with?(".env.") || base.start_with?("id_rsa") ||
+        base.end_with?(".key", ".pem", ".p12")
+    end
+
     # Lossless by construction: file bytes are written exactly as they are, so a
     # diff made against the unpacked copy applies to the real workspace.
     #
@@ -28,9 +39,16 @@ module Mbeditor
       BUNDLE = "/mnt/data/bundle.md"
       import os, re, subprocess
       text = open(BUNDLE, encoding="utf-8", newline="").read()
-      pat = re.compile(r"^=== FILE: (.+?) \((\d+) lines( no-eol)?\) ===\n(.*?)^=== END FILE: \1 ===$", re.S | re.M)
-      for m in pat.finditer(text):
-          body = m.group(4)[:-1] if m.group(3) else m.group(4)
+      hdr = re.compile(r"^=== FILE: ([^\n]+?) \((\d+) lines( no-eol)?\) ===\n", re.M)
+      pos = 0
+      while True:
+          m = hdr.search(text, pos)
+          if not m: break
+          end = m.end()
+          for _ in range(int(m.group(2))): end = text.index("\n", end) + 1
+          body = text[m.end():end]
+          if m.group(3): body = body[:-1]
+          pos = end
           dest = os.path.join("project", m.group(1))
           os.makedirs(os.path.dirname(dest), exist_ok=True)
           with open(dest, "w", encoding="utf-8", newline="") as f:
@@ -76,17 +94,28 @@ module Mbeditor
       entries = ArchiveService.new(@root).collect(full_paths).uniq { |e| e[:name] }.sort_by { |e| e[:name] }
       raise "Nothing to bundle" if entries.empty?
 
-      skipped, wanted = entries.partition { |e| GENERATED.match?(File.basename(e[:name])) }
-      total = wanted.sum { |e| e[:size] }
+      skipped = []
+      wanted = []
+      entries.each do |e|
+        e = e.merge(name: utf8(e[:name]))
+        reason = skip_reason(e[:name])
+        reason ? skipped << e.merge(reason: reason) : wanted << e
+      end
+
+      # Only text counts toward the cap: a binary that is never written to the
+      # bundle must not make the selection "too large".
+      texty = []
+      wanted.each { |e| binary?(e) ? skipped << e.merge(reason: "binary or not UTF-8") : texty << e }
+      total = texty.sum { |e| e[:size] }
       if total > MAX_BYTES
         raise LimitExceededError,
               "Selection is too large (#{human(total)}). Limit is #{human(MAX_BYTES)}."
       end
 
       included = []
-      wanted.each do |e|
-        text = read_text(e[:path])
-        text ? included << [e[:name], text] : skipped << e.merge(binary: true)
+      texty.each do |e|
+        text = read_text(e)
+        text ? included << [e[:name], text] : skipped << e.merge(reason: "binary or not UTF-8")
       end
 
       markdown = render(included, skipped.sort_by { |e| e[:name] })
@@ -95,21 +124,42 @@ module Mbeditor
 
     private
 
-    def read_text(path)
-      data = File.binread(path)
-      return nil if data.byteslice(0, BINARY_PROBE_BYTES).include?("\0")
+    # A name with a line break would forge a bundle header; names are listed
+    # escaped instead of being bundled.
+    def skip_reason(name)
+      if self.class.secret?(name) then "secret"
+      elsif name.match?(/[\r\n]/) then "unsafe name"
+      elsif GENERATED.match?(File.basename(name)) then "generated"
+      end
+    end
 
+    # Names come off the filesystem in default_external, which is US-ASCII when
+    # LANG is unset; tag them UTF-8 so they join the UTF-8 document.
+    def utf8(str)
+      str.dup.force_encoding(Encoding::UTF_8).scrub
+    end
+
+    def binary?(entry)
+      File.open(entry[:path], "rb") { |f| f.read(BINARY_PROBE_BYTES).to_s.include?("\0") }
+    rescue SystemCallError => e
+      raise ArchiveService.read_error(entry[:name], e)
+    end
+
+    def read_text(entry)
+      data = File.binread(entry[:path])
       data.force_encoding(Encoding::UTF_8)
       data.valid_encoding? ? data : nil
-    rescue SystemCallError
-      nil
+    rescue SystemCallError => e
+      raise ArchiveService.read_error(entry[:name], e)
     end
 
     def render(included, skipped)
-      out = +"# #{File.basename(@root)}\n\n## Instructions\n\n#{INSTRUCTIONS}\n## Index\n\n"
+      out = +"# #{utf8(File.basename(@root))}\n\n## Instructions\n\n#{INSTRUCTIONS}\n## Index\n\n"
       included.each { |name, text| out << "- #{name} (#{line_count(text)} lines, #{text.bytesize} bytes)\n" }
       skipped.each do |e|
-        out << "- #{e[:name]} skipped (#{e[:binary] ? "binary or not UTF-8" : "generated"}, #{human(e[:size])})\n"
+        label = e[:name].match?(/[\r\n]/) ? e[:name].inspect : e[:name]
+        detail = e[:reason] == "secret" ? "secret" : "#{e[:reason]}, #{human(e[:size])}"
+        out << "- #{label} skipped (#{detail})\n"
       end
       out << "\n"
       included.each do |name, text|

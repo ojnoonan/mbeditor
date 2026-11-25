@@ -217,5 +217,21 @@ module Mbeditor
         File.chmod(0o700, locked) if locked && File.directory?(locked)
       end
     end
+
+    test "overwrite leaves the existing file intact when reading the upload fails" do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "keep.txt"), "original")
+        io = Object.new
+        io.define_singleton_method(:size) { 5 }
+        io.define_singleton_method(:rewind) { nil }
+        io.define_singleton_method(:read) { |*| raise IOError, "disk went away" }
+
+        result = FileImportService.new(dir).import([{ target_path: File.join(dir, "keep.txt"), io: io }], on_conflict: :overwrite)
+
+        assert_equal ["keep.txt"], result[:errors].map { |e| e[:path] }
+        assert_equal "original", File.read(File.join(dir, "keep.txt"))
+        assert_equal ["keep.txt"], Dir.children(dir)
+      end
+    end
   end
 end

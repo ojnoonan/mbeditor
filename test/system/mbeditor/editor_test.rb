@@ -159,7 +159,7 @@ module Mbeditor
       assert_equal "function", page.evaluate_script("typeof window.awarenessProtocol.encodeAwarenessUpdate")
     end
 
-    test "external on-disk edit does not clobber a collaboratively-bound buffer" do
+    def open_collab_bound_readme
       # A room needs someone to be in it — see join_collaboration_peer.
       join_collaboration_peer
 
@@ -175,23 +175,38 @@ module Mbeditor
 
       all(".tree-item-name", text: "README.md").first.click
       assert_selector ".monaco-editor", wait: 10
-
-      # Wait until the collaborative binding is live for README.md.
       assert wait_for_js("window.CollaborationService.isAttached('README.md')"),
              "collaboration binding should attach for README.md"
       wait_for_editor_value("# Hello\n")
+    end
 
-      # Another tool edits the file on disk while it's open and collab-bound.
+    # Skipping collab-bound tabs used to leave the shared buffer on the old text,
+    # and the next save wrote it back over the external change. A clean buffer
+    # now takes the disk content, exactly once.
+    test "external on-disk edit replaces a clean collaboratively-bound buffer once" do
+      open_collab_bound_readme
+
       File.write(File.join(@workspace, "README.md"), "# Changed on disk\n")
-
-      # Refresh-workspace runs the external-change detection
-      # (checkOpenTabsForExternalChanges) against the now-changed file on disk.
       # SidebarActionButton keeps its tooltip on a data-tip wrapper, not a title attribute.
       find("button[aria-label='Refresh workspace']").click
 
-      # The live shared buffer wins: the external disk content is NOT applied over
-      # the collaborative buffer.
-      assert_editor_value_stays("# Hello\n")
+      wait_for_editor_value("# Changed on disk\n", timeout: 10)
+      assert_editor_value_stays("# Changed on disk\n")
+    end
+
+    test "external on-disk edit does not clobber unsaved shared edits" do
+      open_collab_bound_readme
+      page.execute_script(<<~'JS')
+        var ed = window.__mbeditorActiveEditor;
+        ed.executeEdits('test', [{ range: new monaco.Range(2, 1, 2, 1), text: 'unsaved\n' }]);
+      JS
+      wait_for_editor_value("# Hello\nunsaved\n")
+
+      File.write(File.join(@workspace, "README.md"), "# Changed on disk\n")
+      find("button[aria-label='Refresh workspace']").click
+
+      assert_selector "button", text: "Discard & Reload", wait: 10
+      assert_editor_value_stays("# Hello\nunsaved\n")
     end
 
     test "an already-open tab joins the room once a participant arrives" do

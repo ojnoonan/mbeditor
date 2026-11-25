@@ -70,6 +70,42 @@ module Mbeditor
       end
     end
 
+    # A server-side write (apply_patch, import) changed the file under a room.
+    # Every attached client notices, but only one may push the new disk content
+    # into the shared doc: two clients each replacing the text insert two copies,
+    # exactly as with the seed. +key+ identifies the new content, so a second
+    # client reporting the same write is refused while a different write wins.
+    # ponytail: in-memory only, unlike claim_seed's lock file; with several Puma
+    # workers two clients on different processes could both be granted.
+    DISK_CLAIM_TTL = 10
+
+    def claim_disk_write(path, key, now: monotonic)
+      MUTEX.synchronize do
+        room = touch(path, now)
+        last = room[:disk_claim]
+        next false if last && last[:key] == key && (now - last[:at]) < DISK_CLAIM_TTL
+
+        room[:disk_claim] = { key: key, at: now }
+        true
+      end
+    end
+
+    # The file was rewritten on disk. A room nobody is subscribed to still holds
+    # the old text for GRACE_TTL, and the next opener would late-join onto it and
+    # be shown (then save) the pre-write content. Drop it so that opener seeds
+    # from disk. A subscribed room is left alone (see #join); its clients
+    # reconcile through #claim_disk_write.
+    def discard_idle(path)
+      MUTEX.synchronize do
+        room = rooms[path]
+        next unless room && room[:subscribers].zero?
+
+        release_claim(path)
+        rooms.delete(path)
+      end
+      nil
+    end
+
     # Subscriber accounting. A room with a live subscriber must never be evicted:
     # eviction empties the server's copy while clients still hold content, and the
     # next client to attach would be granted a seed it must not perform.

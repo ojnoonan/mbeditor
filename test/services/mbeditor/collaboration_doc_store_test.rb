@@ -334,5 +334,37 @@ module Mbeditor
       assert_equal [], CollaborationDocStore.state_for("a.rb")[:deltas]
       assert_nil CollaborationDocStore.state_for("b.rb")[:snapshot]
     end
+
+    # an external write under a live room: exactly one client may push the new
+    # disk content into the shared doc, or two replacements insert two copies
+
+    def test_claim_disk_write_grants_one_client_per_write
+      assert CollaborationDocStore.claim_disk_write("f.rb", "k1", now: 0)
+      refute CollaborationDocStore.claim_disk_write("f.rb", "k1", now: 1)
+      assert CollaborationDocStore.claim_disk_write("f.rb", "k2", now: 2)
+    end
+
+    def test_claim_disk_write_expires_so_an_unapplied_write_is_retried
+      assert CollaborationDocStore.claim_disk_write("f.rb", "k1", now: 0)
+      assert CollaborationDocStore.claim_disk_write("f.rb", "k1", now: CollaborationDocStore::DISK_CLAIM_TTL + 1)
+    end
+
+    # an idle room still holds the pre-write text; the next opener must seed from disk
+
+    def test_discard_idle_drops_an_unsubscribed_room_so_the_next_opener_seeds
+      CollaborationDocStore.replace_snapshot("f.rb", "OLD")
+      CollaborationDocStore.discard_idle("f.rb")
+
+      assert_nil CollaborationDocStore.state_for("f.rb")[:snapshot]
+      assert CollaborationDocStore.claim_seed("f.rb")
+    end
+
+    def test_discard_idle_keeps_a_subscribed_room
+      CollaborationDocStore.join("f.rb")
+      CollaborationDocStore.replace_snapshot("f.rb", "LIVE")
+      CollaborationDocStore.discard_idle("f.rb")
+
+      assert_equal "LIVE", CollaborationDocStore.state_for("f.rb")[:snapshot]
+    end
   end
 end

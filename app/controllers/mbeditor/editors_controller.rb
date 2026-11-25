@@ -33,6 +33,10 @@ module Mbeditor
     # this guard is only reachable if it trips first.
     IMPORT_MAX_FILES = 100
     IMPORT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+    # Multipart boundaries and part headers on top of the file bytes.
+    IMPORT_MULTIPART_OVERHEAD = 256 * 1024
+    RAW_AS_TEXT_EXTENSIONS = %w[.html .htm .xhtml .xml].freeze
+    before_action :reject_oversized_import, only: :import
 
     class << self
       # Small (path, mtime) => total-line-count cache so windowed reads of big
@@ -312,9 +316,20 @@ module Mbeditor
 
       stat = File.stat(path)
       return render_file_too_large(stat.size) if stat.size > FileOperationService::MAX_FILE_SIZE_BYTES
+
+      # A repo file served inline from the editor's own origin could script the
+      # write endpoints. The sandbox gives it an opaque origin (an <img> of an
+      # svg is unaffected), and markup types are shown as text, not rendered.
+      response.headers["Content-Security-Policy"] = "sandbox"
+      response.headers["X-Content-Type-Options"] = "nosniff"
       return unless stale?(last_modified: stat.mtime, public: false)
 
-      send_file path, disposition: params[:download].present? ? "attachment" : "inline"
+      if params[:download].present?
+        send_file path, disposition: "attachment"
+      else
+        as_text = RAW_AS_TEXT_EXTENSIONS.include?(File.extname(path).downcase)
+        send_file path, disposition: "inline", **(as_text ? { type: "text/plain" } : {})
+      end
     end
 
     # GET /mbeditor/archive?paths[]=a&paths[]=b — bundle a multi-selection of
@@ -329,9 +344,8 @@ module Mbeditor
 
       resolved = requested.map { |p| resolve_path(p) }
       return render json: { error: "Forbidden" }, status: :forbidden if resolved.any?(&:nil?)
-      unless resolved.all? { |p| File.exist?(p) || File.symlink?(p) }
-        return render json: { error: "Not found" }, status: :not_found
-      end
+      missing = first_missing(requested, resolved)
+      return render json: { error: "Not found: #{missing}" }, status: :not_found if missing
 
       name = File.basename(resolved.length == 1 ? resolved.first : workspace_root.to_s)
       send_data ArchiveService.new(workspace_root).build(resolved),
@@ -353,9 +367,8 @@ module Mbeditor
 
       resolved = requested.map { |p| resolve_path(p) }
       return render json: { error: "Forbidden" }, status: :forbidden if resolved.any?(&:nil?)
-      unless resolved.all? { |p| File.exist?(p) || File.symlink?(p) }
-        return render json: { error: "Not found" }, status: :not_found
-      end
+      missing = first_missing(requested, resolved)
+      return render json: { error: "Not found: #{missing}" }, status: :not_found if missing
 
       bundle = AiBundleService.new(workspace_root).build(resolved)
       response.headers["X-Mbeditor-Bundle-Files"] = bundle[:files].to_s
@@ -372,10 +385,14 @@ module Mbeditor
     # so verify_mbeditor_client guards it.
     def apply_patch
       check = ActiveModel::Type::Boolean.new.cast(params.fetch(:check, true))
-      result = PatchApplyService.new(workspace_root).call(params[:patch].to_s, check: check)
+      root = workspace_root.to_s
+      result = PatchApplyService.new(workspace_root).call(
+        params[:patch].to_s, check: check, blocked: ->(rel) { path_blocked_for_operations?(File.join(root, rel)) }
+      )
       unless check
-        root = workspace_root.to_s
-        broadcast_files_changed(result[:files].flat_map { |f| [f[:path], f[:from]] }.compact.map { |p| File.join(root, p) })
+        rels = result[:files].flat_map { |f| [f[:path], f[:from]] }.compact
+        broadcast_files_changed(rels.map { |p| File.join(root, p) })
+        CollaborationChannel.files_written(rels)
       end
       render json: result
     rescue PatchApplyService::Error => e
@@ -460,6 +477,7 @@ module Mbeditor
 
       written = result[:imported].map { |e| File.join(workspace_root.to_s, e[:path]) }
       broadcast_files_changed(written) if written.any?
+      CollaborationChannel.files_written(result[:imported].map { |e| e[:path] })
 
       render json: result
     rescue StandardError => e
@@ -1471,6 +1489,17 @@ module Mbeditor
       end
     rescue URI::InvalidURIError
       false
+    end
+
+    # The first requested (relative) path whose resolved target is missing.
+    def first_missing(requested, resolved)
+      requested.zip(resolved).find { |_, p| !(File.exist?(p) || File.symlink?(p)) }&.first
+    end
+
+    def reject_oversized_import
+      return if request.content_length.to_i <= IMPORT_MAX_TOTAL_BYTES + IMPORT_MULTIPART_OVERHEAD
+
+      render json: { error: "Drop is too large. Limit is #{human_size(IMPORT_MAX_TOTAL_BYTES)}." }, status: :content_too_large
     end
 
     def path_blocked_for_operations?(full_path)

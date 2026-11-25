@@ -7,10 +7,26 @@
 // broadcast the server sends for the write.
 var AI_SELECTION_KEY = 'mbeditor.aiBundle.selection';
 
-function aiLoadSelection() {
+function aiFolderPaths(nodes, into) {
+  nodes.forEach(function (n) {
+    if (n.type !== 'folder') return;
+    into[n.path] = true;
+    aiFolderPaths(n.children || [], into);
+  });
+  return into;
+}
+
+// A saved directory that has since been deleted would 404 the whole export, so
+// saved dirs are checked against the tree (when it has loaded).
+function aiLoadSelection(treeData) {
   try {
     var saved = JSON.parse(localStorage.getItem(AI_SELECTION_KEY) || '{}');
-    return { dirs: Array.isArray(saved.dirs) ? saved.dirs : [], topFiles: saved.topFiles === true };
+    var dirs = Array.isArray(saved.dirs) ? saved.dirs : [];
+    if (treeData.length) {
+      var known = aiFolderPaths(treeData, {});
+      dirs = dirs.filter(function (d) { return known[d]; });
+    }
+    return { dirs: dirs, topFiles: saved.topFiles === true };
   } catch (e) {
     return { dirs: [], topFiles: false };
   }
@@ -84,7 +100,7 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var tab = _tab[0];
   var setTab = _tab[1];
 
-  var initial = React.useMemo(aiLoadSelection, []);
+  var initial = React.useMemo(function () { return aiLoadSelection(treeData); }, []);
   var _dirs = React.useState(initial.dirs);
   var dirs = _dirs[0];
   var setDirs = _dirs[1];
@@ -206,6 +222,7 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
     setExp(Object.assign({}, idle, { busy: true }));
     var big = null;
     var stats = null;
+    var buildError = null;
     var load = fetchBundle().then(function (r) {
       stats = r.stats;
       return r.blob.text().then(function (text) {
@@ -215,9 +232,13 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
         }
         return text;
       });
+    }, function (err) {
+      buildError = err;
+      throw err;
     });
     var fail = function (err) {
       if (big !== null) setExp(Object.assign({}, idle, { pendingCopy: { text: big, stats: stats } }));
+      else if (buildError) setExp(Object.assign({}, idle, { error: 'Could not build bundle: ' + (buildError.message || 'request failed') }));
       else copyFailed(err);
     };
     if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
@@ -266,7 +287,7 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
 
   var dirtyTouched = function () {
     var touched = {};
-    window.MbeditorPatchSelect.touchedPaths(apply.parsed, apply.sel).forEach(function (p) { touched[p] = true; });
+    window.MbeditorPatchSelect.touchedPaths(apply.parsed, apply.sel, apply.files).forEach(function (p) { touched[p] = true; });
     var names = [];
     EditorStore.getState().panes.forEach(function (p) {
       p.tabs.forEach(function (t) { if (t.dirty && touched[t.path]) names.push(t.path); });
