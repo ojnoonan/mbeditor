@@ -360,7 +360,12 @@ module Mbeditor
     # web chat; prompt=1 returns only the message to paste alongside it.
     def ai_bundle
       bundle_name = "#{File.basename(workspace_root.to_s)}-bundle.md"
-      return render plain: AiBundleService.prompt(bundle_name) if params[:prompt].present?
+      parts = params.fetch(:parts, 1).to_i
+      part = params.fetch(:part, 1).to_i
+      unless parts.between?(1, AiBundleService::MAX_PARTS) && part.between?(1, parts)
+        return render json: { error: "parts must be 1-#{AiBundleService::MAX_PARTS} and part within it" }, status: :bad_request
+      end
+      return render plain: AiBundleService.prompt(bundle_name, parts) if params[:prompt].present?
 
       requested = Array(params[:paths]).map(&:to_s).reject(&:blank?)
       return render json: { error: "No paths given" }, status: :bad_request if requested.empty?
@@ -370,7 +375,8 @@ module Mbeditor
       missing = first_missing(requested, resolved)
       return render json: { error: "Not found: #{missing}" }, status: :not_found if missing
 
-      bundle = AiBundleService.new(workspace_root).build(resolved)
+      bundle = AiBundleService.new(workspace_root).build(resolved, parts: parts, part: part)
+      bundle_name = AiBundleService.part_filename(bundle_name, part, parts) if parts > 1
       response.headers["X-Mbeditor-Bundle-Files"] = bundle[:files].to_s
       response.headers["X-Mbeditor-Bundle-Bytes"] = bundle[:bytes].to_s
       send_data bundle[:markdown], type: "text/markdown", disposition: "attachment", filename: bundle_name

@@ -13,6 +13,7 @@ module Mbeditor
     def teardown
       FileUtils.rm_rf(@dir)
       Mbeditor.configuration.excluded_paths = Configuration.new.excluded_paths
+      Mbeditor.configuration.ai_bundle_exclude = []
     end
 
     def put(rel, content)
@@ -171,6 +172,140 @@ module Mbeditor
       refute_includes err.message, @dir
     ensure
       File.chmod(0o644, full) if full
+    end
+
+    def part(n, of)
+      AiBundleService.new(@dir).build([@dir], parts: of, part: n)
+    end
+
+    def files_in(md)
+      md.scan(/^=== FILE: (.+?) \(\d+ lines/).flatten
+    end
+
+    def seed_parts
+      put("a.txt", "a" * 100)
+      put("b.txt", "b" * 100)
+      put("c/d.txt", "d" * 300)
+      put("e.txt", "e" * 100)
+      put("f.txt", "f" * 200)
+    end
+
+    test "parts cover every file exactly once, in path order, without cutting a file" do
+      seed_parts
+      all = files_in(build(".")[:markdown])
+      [2, 3].each do |n|
+        per = (1..n).map { |k| files_in(part(k, n)[:markdown]) }
+
+        assert_equal all, per.flatten, "n=#{n}"
+        assert_equal all.length, per.flatten.uniq.length
+      end
+    end
+
+    test "the split is deterministic and balances bytes" do
+      seed_parts
+      first = (1..2).map { |k| part(k, 2)[:markdown] }
+
+      assert_equal first, (1..2).map { |k| part(k, 2)[:markdown] }
+      assert_equal %w[a.txt b.txt c/d.txt], files_in(first[0])
+      assert_equal %w[e.txt f.txt], files_in(first[1])
+    end
+
+    test "each part is self-contained and says which part it is" do
+      seed_parts
+      md = part(2, 3)[:markdown]
+
+      assert_includes md, "(part 2 of 3)"
+      assert_includes md, "This is part 2 of 3."
+      assert_includes md, AiBundleService::UNPACK_SNIPPET
+      refute_includes build(".")[:markdown], "part 1 of"
+    end
+
+    test "a single file lands in one part and the others are empty" do
+      put("only.txt", "x\n")
+
+      assert_equal %w[only.txt], files_in(part(1, 3)[:markdown]) + files_in(part(2, 3)[:markdown]) + files_in(part(3, 3)[:markdown])
+    end
+
+    test "the 64 MB cap applies per part and suggests splitting below three parts" do
+      put("a.txt", "a" * (40 * 1024 * 1024))
+      put("b.txt", "b" * (40 * 1024 * 1024))
+      err = assert_raises(AiBundleService::LimitExceededError) { part(1, 1) }
+
+      assert_match(/Selection is too large \(80 MB\)\. Limit is 64 MB\. Split the export into more parts/, err.message)
+      assert_equal 1, part(1, 2)[:files]
+      assert_equal 1, part(2, 2)[:files]
+    end
+
+    test "no split hint when already at three parts" do
+      put("big.txt", "a" * (AiBundleService::MAX_BYTES + 1))
+      err = assert_raises(AiBundleService::LimitExceededError) { part(1, 3) }
+
+      assert_match(/A part is too large/, err.message)
+      refute_match(/Split/, err.message)
+    end
+
+    test "prompt for N parts names every part and says to unpack each" do
+      prompt = AiBundleService.prompt("proj-bundle.md", 2)
+
+      assert_includes prompt, "`proj-bundle-1-of-2.md`, `proj-bundle-2-of-2.md` are the 2 parts"
+      assert_includes prompt, "Upload all 2"
+      assert_includes prompt, "once per part"
+      assert prompt.end_with?("\nTASK: ")
+    end
+
+    test "ai_bundle_exclude: basename glob matches at any depth and wins over an explicit tick" do
+      Mbeditor.configuration.ai_bundle_exclude = ["*.sql"]
+      put("dump.sql", "SECRETROWS\n")
+      put("db/deep/x.sql", "SECRETROWS\n")
+      put("ok.txt", "hi\n")
+      result = build("dump.sql", "db", "ok.txt")
+
+      assert_equal 1, result[:files]
+      refute_includes result[:markdown], "SECRETROWS"
+      assert_includes result[:markdown], "- dump.sql skipped (excluded by config, 11 Bytes)"
+      assert_includes result[:markdown], "- db/deep/x.sql skipped (excluded by config"
+    end
+
+    test "ai_bundle_exclude: a slashed pattern matches the relative path only" do
+      Mbeditor.configuration.ai_bundle_exclude = ["config/*.yml", "private/**/*"]
+      put("config/a.yml", "NOPE\n")
+      put("other/config/a.yml", "keepme\n")
+      put("private/x/y.txt", "NOPE\n")
+      md = build(".")[:markdown]
+
+      refute_includes md, "NOPE"
+      assert_includes md, "- config/a.yml skipped (excluded by config"
+      assert_includes md, "=== FILE: other/config/a.yml "
+      assert_includes md, "- private/x/y.txt skipped (excluded by config"
+    end
+
+    test "ai_bundle_exclude never loosens secret?" do
+      Mbeditor.configuration.ai_bundle_exclude = ["nothing"]
+      put(".env", "TOPSECRET\n")
+
+      refute_includes build(".env", ".")[:markdown], "TOPSECRET"
+      assert AiBundleService.secret?(".env")
+    end
+
+    test "unpacking every part into one project leaves a single base commit holding all files" do
+      skip "python3 not installed" unless system("python3", "--version", out: File::NULL, err: File::NULL)
+      skip "git not installed" unless system("git", "--version", out: File::NULL, err: File::NULL)
+
+      seed_parts
+      Dir.mktmpdir("mbeditor_parts_") do |sandbox|
+        project = File.join(sandbox, "project")
+        counts = (1..2).map do |k|
+          unpack_bundle(part(k, 2)[:markdown], sandbox)
+          Open3.capture2("git", "rev-list", "--count", "HEAD", chdir: project).first.to_i
+        end
+        files = Open3.capture2("git", "ls-tree", "-r", "--name-only", "HEAD", chdir: project).first.split("\n")
+
+        assert_equal [1, 1], counts
+        assert_equal %w[a.txt b.txt c/d.txt e.txt f.txt], files
+        assert_equal "d" * 300, File.read(File.join(project, "c/d.txt"))
+        unpack_bundle(part(2, 2)[:markdown], sandbox)
+        assert_equal "1", Open3.capture2("git", "rev-list", "--count", "HEAD", chdir: project).first.strip
+      end
     end
 
     SOURCES = {

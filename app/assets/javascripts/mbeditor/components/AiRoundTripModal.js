@@ -110,6 +110,11 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var _open = React.useState({});
   var open = _open[0];
   var setOpen = _open[1];
+  // Copilot takes three attachments at a time, so a big selection can be cut
+  // into up to three parts; each part is requested on its own.
+  var _parts = React.useState(1);
+  var parts = _parts[0];
+  var setParts = _parts[1];
   var _exp = React.useState({ busy: false, error: null, stats: null, pendingCopy: null, notice: null });
   var exp = _exp[0];
   var setExp = _exp[1];
@@ -120,10 +125,11 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var promptText = _prompt[0];
   var setPromptText = _prompt[1];
   React.useEffect(function () {
-    fetch(window.mbeditorBasePath() + '/ai_bundle?prompt=1').then(function (r) {
+    setPromptText(null);
+    fetch(window.mbeditorBasePath() + '/ai_bundle?prompt=1&parts=' + parts).then(function (r) {
       return r.ok ? r.text() : null;
     }).then(setPromptText, function () { setPromptText(null); });
-  }, []);
+  }, [parts]);
 
   var _patch = React.useState('');
   var patch = _patch[0];
@@ -157,8 +163,8 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
     return (err && err.response && err.response.data && err.response.data.error) || (err && err.message) || 'Request failed';
   };
 
-  var fetchBundle = function () {
-    var url = window.mbeditorBasePath() + '/ai_bundle?' + selectedPaths.map(function (p) {
+  var fetchBundle = function (part) {
+    var url = window.mbeditorBasePath() + '/ai_bundle?parts=' + parts + '&part=' + part + '&' + selectedPaths.map(function (p) {
       return 'paths[]=' + encodeURIComponent(p);
     }).join('&');
     return fetch(url).then(function (resp) {
@@ -183,9 +189,9 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
 
   var idle = { busy: false, error: null, stats: null, pendingCopy: null, notice: null };
 
-  var download = function () {
+  var download = function (part) {
     setExp(Object.assign({}, idle, { busy: true }));
-    fetchBundle().then(function (r) {
+    fetchBundle(part).then(function (r) {
       var objectUrl = URL.createObjectURL(r.blob);
       var link = document.createElement('a');
       link.href = objectUrl;
@@ -218,12 +224,12 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   // promise for the text. An oversized bundle rejects that promise, so nothing
   // is copied, and the text kept in `big` goes to "Copy anyway", which writes
   // inside its own click.
-  var copyBundle = function () {
+  var copyBundle = function (part) {
     setExp(Object.assign({}, idle, { busy: true }));
     var big = null;
     var stats = null;
     var buildError = null;
-    var load = fetchBundle().then(function (r) {
+    var load = fetchBundle(part).then(function (r) {
       stats = r.stats;
       return r.blob.text().then(function (text) {
         if (r.stats.bytes / 4 > AI_PASTE_TOKEN_WARN) {
@@ -337,6 +343,12 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
 
   var exportPane = h('div', { className: 'ai-pane' },
     h('p', { className: 'ai-hint' }, 'Pick what the assistant should see. Upload the .md to the chat, then paste the prompt with it.'),
+    h('label', { className: 'ai-hint' }, 'Split into ',
+      h('select', {
+        value: parts, 'aria-label': 'Split into parts',
+        onChange: function (e) { setParts(parseInt(e.target.value, 10)); setExp(idle); }
+      }, [1, 2, 3].map(function (n) { return h('option', { key: n, value: n }, n); })),
+      ' part' + (parts === 1 ? '' : 's')),
     h('ul', { className: 'ai-dir-list' },
       treeData.filter(function (n) { return n.type === 'folder' && n.name !== '.git'; }).map(function (n) { return renderDir(n, false); }),
       h('li', { key: '__top_files' },
@@ -415,12 +427,16 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var counts = previewing ? window.MbeditorPatchSelect.count(apply.parsed, apply.sel) : null;
   var canApply = previewing && counts.selected > 0 && !apply.busy;
   var exportDisabled = exp.busy || selectedPaths.length === 0;
+  var partNumbers = Array.from({ length: parts }, function (_, i) { return i + 1; });
+  var partLabel = function (verb, whole, k) { return parts === 1 ? whole : verb + ' part ' + k; };
   var footer = tab === 'export'
     ? [
-        h('button', { key: 'prompt', type: 'button', className: 'import-conflict-btn', disabled: promptText === null, onClick: copyPrompt }, 'Copy prompt'),
-        h('button', { key: 'copy', type: 'button', className: 'import-conflict-btn', disabled: exportDisabled, onClick: copyBundle }, 'Copy to clipboard'),
-        h('button', { key: 'md', type: 'button', className: 'import-conflict-btn import-conflict-btn-primary', disabled: exportDisabled, onClick: download }, exp.busy ? 'Building...' : 'Download .md')
-      ]
+        h('button', { key: 'prompt', type: 'button', className: 'import-conflict-btn', disabled: promptText === null, onClick: copyPrompt }, 'Copy prompt')
+      ].concat(partNumbers.map(function (k) {
+        return h('button', { key: 'copy' + k, type: 'button', className: 'import-conflict-btn', disabled: exportDisabled, onClick: function () { copyBundle(k); } }, partLabel('Copy', 'Copy to clipboard', k));
+      }), partNumbers.map(function (k) {
+        return h('button', { key: 'md' + k, type: 'button', className: 'import-conflict-btn import-conflict-btn-primary', disabled: exportDisabled, onClick: function () { download(k); } }, exp.busy && parts === 1 ? 'Building...' : partLabel('Download', 'Download .md', k));
+      }))
     : [
         h('button', {
           key: 'check', type: 'button', className: 'import-conflict-btn',

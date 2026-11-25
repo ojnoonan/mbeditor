@@ -12,6 +12,9 @@ module Mbeditor
     # purpose: the consumer is a sandbox that greps it, not a context window.
     MAX_BYTES = 64 * 1024 * 1024
     BINARY_PROBE_BYTES = 8 * 1024
+    # Copilot accepts three attachments at a time.
+    MAX_PARTS = 3
+    EXCLUDE_FLAGS = File::FNM_PATHNAME | File::FNM_DOTMATCH | File::FNM_EXTGLOB
 
     class LimitExceededError < StandardError; end
 
@@ -28,6 +31,21 @@ module Mbeditor
 
       base == ".env" || base.start_with?(".env.") || base.start_with?("id_rsa") ||
         base.end_with?(".key", ".pem", ".p12")
+    end
+
+    # config.ai_bundle_exclude: workspace-relative globs that are never sent. A
+    # pattern without a "/" matches the basename at any depth. Only ever adds to
+    # secret?.
+    def self.excluded?(rel)
+      Array(Mbeditor.configuration.ai_bundle_exclude).any? do |pat|
+        pat = pat.to_s
+        File.fnmatch?(pat, pat.include?("/") ? rel : File.basename(rel), EXCLUDE_FLAGS)
+      end
+    end
+
+    # "<name>-bundle.md" -> "<name>-bundle-K-of-N.md"
+    def self.part_filename(filename, part, parts)
+      filename.sub(/\.md\z/, "-#{part}-of-#{parts}.md")
     end
 
     # Lossless by construction: file bytes are written exactly as they are, so a
@@ -53,9 +71,11 @@ module Mbeditor
           os.makedirs(os.path.dirname(dest), exist_ok=True)
           with open(dest, "w", encoding="utf-8", newline="") as f:
               f.write(body)
-      def git(*a): subprocess.run(["git", *a], cwd="project", check=True)
-      git("init", "-q"); git("config", "core.autocrlf", "false"); git("add", "-A", "-f")
-      git("-c", "user.name=bundle", "-c", "user.email=bundle@example.invalid", "commit", "-qm", "base")
+      def git(*a): return subprocess.run(["git", *a], cwd="project", check=True, capture_output=True)
+      if not os.path.isdir("project/.git"): git("init", "-q"); git("config", "core.autocrlf", "false")
+      git("add", "-A", "-f")
+      amend = subprocess.run(["git", "rev-parse", "-q", "--verify", "HEAD"], cwd="project", capture_output=True).returncode == 0
+      git("-c", "user.name=bundle", "-c", "user.email=bundle@example.invalid", "commit", "-q", "--allow-empty", "-m", "base", *(["--amend"] if amend else []))
     PY
 
     WORKFLOW = <<~'TEXT'
@@ -77,11 +97,23 @@ module Mbeditor
     # Paste-ready message to send with the uploaded bundle. The chat may read
     # the whole file before it reaches the header, so this goes first. Needs
     # only the bundle's file name; no files are read.
-    def self.prompt(filename)
-      snippet = UNPACK_SNIPPET.sub(/^BUNDLE = .*$/) { "BUNDLE = #{"/mnt/data/#{filename}".to_json}" }
-      "`#{filename}` is a large source bundle. Do not open, read or print it directly.\n" \
-      "Load it only from your code sandbox with this snippet (adjust BUNDLE if the path differs):\n\n" \
-      "```python\n#{snippet}```\n\nThen:\n#{WORKFLOW}\n#{DIFF_RULES}\n\nTASK: "
+    #
+    # With +parts+ > 1, +filename+ is the unsplit name and the message lists
+    # each part's name.
+    def self.prompt(filename, parts = 1)
+      names = parts > 1 ? (1..parts).map { |k| part_filename(filename, k, parts) } : [filename]
+      snippet = UNPACK_SNIPPET.sub(/^BUNDLE = .*$/) { "BUNDLE = #{"/mnt/data/#{names.first}".to_json}" }
+      intro = if parts > 1
+                "#{names.map { |n| "`#{n}`" }.join(', ')} are the #{parts} parts of one large source bundle. " \
+                "Upload all #{parts}. Do not open, read or print them directly.\n" \
+                "Load each from your code sandbox by running this snippet once per part, setting BUNDLE to " \
+                "that part's path each time. All parts unpack into the same ./project, and the git base " \
+                "commit is rebuilt after each one, so edit nothing until all #{parts} are unpacked:\n\n"
+              else
+                "`#{filename}` is a large source bundle. Do not open, read or print it directly.\n" \
+                "Load it only from your code sandbox with this snippet (adjust BUNDLE if the path differs):\n\n"
+              end
+      "#{intro}```python\n#{snippet}```\n\nThen:\n#{WORKFLOW}\n#{DIFF_RULES}\n\nTASK: "
     end
 
     def initialize(workspace_root)
@@ -90,7 +122,11 @@ module Mbeditor
 
     # +full_paths+ are absolute, already through resolve_path. Returns
     # { markdown:, files:, bytes: } where +files+ counts included files.
-    def build(full_paths)
+    #
+    # +parts+ > 1 returns part +part+ (1-based): files sorted by path, cut into
+    # contiguous runs of roughly equal bytes, so the split is the same on every
+    # request and no file straddles two parts.
+    def build(full_paths, parts: 1, part: 1)
       entries = ArchiveService.new(@root).collect(full_paths).uniq { |e| e[:name] }.sort_by { |e| e[:name] }
       raise "Nothing to bundle" if entries.empty?
 
@@ -106,28 +142,46 @@ module Mbeditor
       # bundle must not make the selection "too large".
       texty = []
       wanted.each { |e| binary?(e) ? skipped << e.merge(reason: "binary or not UTF-8") : texty << e }
-      total = texty.sum { |e| e[:size] }
-      if total > MAX_BYTES
+      groups = partition(texty, parts)
+      biggest = groups.map { |g| g.sum { |e| e[:size] } }.max
+      if biggest > MAX_BYTES
+        what = parts > 1 ? "A part" : "Selection"
+        hint = parts < MAX_PARTS ? " Split the export into more parts (up to #{MAX_PARTS})." : ""
         raise LimitExceededError,
-              "Selection is too large (#{human(total)}). Limit is #{human(MAX_BYTES)}."
+              "#{what} is too large (#{human(biggest)}). Limit is #{human(MAX_BYTES)}.#{hint}"
       end
 
       included = []
-      texty.each do |e|
+      groups[part - 1].each do |e|
         text = read_text(e)
         text ? included << [e[:name], text] : skipped << e.merge(reason: "binary or not UTF-8")
       end
 
-      markdown = render(included, skipped.sort_by { |e| e[:name] })
+      markdown = render(included, skipped.sort_by { |e| e[:name] }, part, parts)
       { markdown: markdown, files: included.length, bytes: markdown.bytesize }
     end
 
     private
 
+    # Each file goes to the part holding its midpoint, which is monotonic in
+    # path order (so runs stay contiguous) and balances bytes.
+    def partition(entries, parts)
+      total = entries.sum { |e| e[:size] }
+      cum = 0
+      groups = Array.new(parts) { [] }
+      entries.each do |e|
+        idx = total.zero? ? 0 : [((cum + (e[:size] / 2.0)) * parts / total).floor, parts - 1].min
+        groups[idx] << e
+        cum += e[:size]
+      end
+      groups
+    end
+
     # A name with a line break would forge a bundle header; names are listed
     # escaped instead of being bundled.
     def skip_reason(name)
       if self.class.secret?(name) then "secret"
+      elsif self.class.excluded?(name) then "excluded by config"
       elsif name.match?(/[\r\n]/) then "unsafe name"
       elsif GENERATED.match?(File.basename(name)) then "generated"
       end
@@ -153,8 +207,10 @@ module Mbeditor
       raise ArchiveService.read_error(entry[:name], e)
     end
 
-    def render(included, skipped)
-      out = +"# #{utf8(File.basename(@root))}\n\n## Instructions\n\n#{INSTRUCTIONS}\n## Index\n\n"
+    def render(included, skipped, part, parts)
+      title = "# #{utf8(File.basename(@root))}#{" (part #{part} of #{parts})" if parts > 1}"
+      note = parts > 1 ? "This is part #{part} of #{parts}. Unpack every part into the same ./project.\n\n" : ""
+      out = +"#{title}\n\n## Instructions\n\n#{note}#{INSTRUCTIONS}\n## Index\n\n"
       included.each { |name, text| out << "- #{name} (#{line_count(text)} lines, #{text.bytesize} bytes)\n" }
       skipped.each do |e|
         label = e[:name].match?(/[\r\n]/) ? e[:name].inspect : e[:name]
