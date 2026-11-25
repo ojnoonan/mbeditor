@@ -86,6 +86,52 @@ module Mbeditor
       UnusedMethodsService.call(@workspace)[:views]
     end
 
+    def test_render_form_builder_local_uses_sibling_form_partial
+      write("app/views/rules/_form.html.haml", "x")
+      write("app/views/rules/new.html.haml", "= render form\n")
+      write("app/controllers/rules_controller.rb", "class RulesController < ApplicationController\n  def new\n  end\nend\n")
+
+      assert_empty views
+    end
+
+    def test_partial_named_after_a_model_is_used_whatever_the_render_variable
+      write("app/models/account_warning.rb", "class AccountWarning; end\n")
+      write("app/views/admin/account_warnings/_account_warning.html.haml", "x")
+
+      assert_empty views
+    end
+
+    def test_gem_override_dirs_are_never_reported
+      write("Gemfile.lock", "GEM\n  specs:\n    kaminari (1.2.2)\n")
+      write("app/views/kaminari/_gap.html.haml", "x")
+
+      assert_empty views
+    end
+
+    def test_action_inherited_from_a_workspace_or_gem_controller_is_used
+      write("app/controllers/admin/settings_controller.rb",
+            "module Admin\n  class SettingsController < BaseController\n    def show\n    end\n  end\nend\n")
+      write("app/controllers/admin/base_controller.rb", "module Admin\n  class BaseController < ApplicationController\n  end\nend\n")
+      write("app/controllers/admin/settings/about_controller.rb", "class Admin::Settings::AboutController < Admin::SettingsController\nend\n")
+      write("app/controllers/auth/sessions_controller.rb", "class Auth::SessionsController < Devise::SessionsController\nend\n")
+      write("app/views/admin/settings/about/show.html.haml", "x")
+      write("app/views/auth/sessions/new.html.haml", "x")
+      write("app/views/admin/settings/about/stale.html.haml", "x")
+
+      assert_equal ["app/views/admin/settings/about/stale.html.haml"], views
+    end
+
+    def test_file_named_by_its_constant_or_import_is_not_dead
+      write("app/workers/purge_worker.rb", "class PurgeWorker\n  def helper_x\n  end\nend\n")
+      write("app/models/caller.rb", "PurgeWorker.perform_async\n")
+      write("app/javascript/types/quotes.ts", "export function quoteHelper() {}\n")
+      write("app/javascript/app.ts", "import type { Q } from './types/quotes';\n")
+      write("app/javascript/dead_utils.ts", "export function deadHelper() {}\n")
+      write("config/initializers/patch.rb", "module Patch\n  def patched_x\n  end\nend\n")
+
+      assert_equal ["app/javascript/dead_utils.ts"], UnusedMethodsService.call(@workspace)[:files]
+    end
+
     def test_unrendered_partial_is_reported_and_layout_application_never
       write("app/views/users/_orphan.html.erb", "x")
       write("app/views/layouts/application.html.erb", "x")

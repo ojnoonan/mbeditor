@@ -27,7 +27,8 @@ module Mbeditor
 
     NEVER_REPORT = %w[
       initialize call perform to_s to_param as_json method_missing respond_to_missing? inspect
-      setup teardown render constructor
+      setup teardown render constructor included extended inherited table_name_prefix
+      build_enumerator each_iteration
       componentDidMount componentDidUpdate componentWillUnmount shouldComponentUpdate
       getDerivedStateFromProps getSnapshotBeforeUpdate componentDidCatch
     ].freeze
@@ -50,6 +51,10 @@ module Mbeditor
     LAYOUT_CALL = %r{\blayout:?\s*\(?\s*:?["']?(\w[\w/]*)}
     BARE_NAME = /["'](\w+)["']|:(\w+)/
     MODEL_ARG = /\A\s*\(?\s*(?:(?:collection|object):\s*)?(@?[\w.]+)/
+    LOCAL_ARG = /\A\s*\(?\s*([a-z_]\w*)\s*(?:[,)]|\z)/
+    CONST_DEF = /^\s*(?:class|module)\s+(?:\w+::)*(\w+)/
+    CLASS_DEF = /^\s*class\s+([\w:]+)\s*<\s*([\w:]+)/
+    BASE_CONTROLLERS = %w[ApplicationController ActionController::Base ActionController::API ApplicationMailer ActionMailer::Base].freeze
 
     def self.call(workspace_root)
       new(workspace_root).call
@@ -64,14 +69,16 @@ module Mbeditor
       counts = Hash.new(0)
       defs = []
       scanned = 0
+      consts = {}
       refs = { quoted: Set.new, prefixes: [], bare: Set.new, loose: Set.new, models: Set.new,
-               layouts: Set.new, owners: Set.new, views: [] }
+               layouts: Set.new, owners: Set.new, views: [], supers: {} }
 
       each_source_file do |rel, abs|
         text = File.read(abs, encoding: "UTF-8").scrub
         text.scan(TOKEN) { |token| counts[token] += 1 }
         scanned += 1
         defs.concat(definitions(rel, text)) unless rel.match?(TEST_PATH)
+        consts[rel] = file_name_token(rel, text)
         collect_refs(rel, text, refs)
       rescue SystemCallError
         next
@@ -82,7 +89,12 @@ module Mbeditor
       per_name = defs.group_by { |d| d[:name] }.transform_values(&:size)
       defs.each { |d| d[:unused] = !d[:routed] && counts[d[:name]] == per_name[d[:name]] }
 
-      files = defs.group_by { |d| d[:file] }.select { |_, all| all.all? { |d| d[:unused] } }.keys.sort
+      # A file is dead only if nothing names it either: a Ruby class is reached
+      # through its constant (workers, jobs, framework subclasses), a JS module
+      # through the import path that ends in its file name.
+      files = defs.group_by { |d| d[:file] }.select { |_, all| all.all? { |d| d[:unused] } }.keys
+                  .reject { |f| f.start_with?("config/") } # initializers load themselves
+                  .select { |f| token, own = consts[f]; token.nil? || counts[token] <= own }.sort
       unused = defs.select { |d| d[:unused] }.sort_by { |d| [d[:file], d[:line]] }
       {
         methods: unused.first(MAX_REPORTED).map { |d| d.slice(:file, :line, :name, :kind) },
@@ -94,6 +106,15 @@ module Mbeditor
     end
 
     private
+
+    # [token, occurrences the file itself accounts for].
+    def file_name_token(rel, text)
+      return [text[CONST_DEF, 1], 1] if rel.end_with?(".rb")
+
+      stem = File.basename(rel).sub(/\..*\z/, "")
+      stem = File.basename(File.dirname(rel)) if stem == "index"
+      [stem, 0] if JS_EXTENSIONS.include?(File.extname(rel))
+    end
 
     def each_source_file
       Find.find(@root) do |abs|
@@ -116,9 +137,15 @@ module Mbeditor
 
       dir = rel[VIEW_FILE, 1]&.then { |logical| File.dirname(logical) } || rel[OWNER_FILE, 1]
       refs[:owners] << dir if dir && !rel.start_with?("app/views/")
+      # `render @warnings` may hold any model, whatever the variable is called,
+      # so `account_warnings/_account_warning` counts as used for every model.
+      refs[:models] << File.basename(rel, ".rb") if rel.match?(%r{\Aapp/models/[^/]+\.rb\z})
       text.scan(QUOTED_PATH) { |(path)| refs[:quoted] << path }
       text.scan(DYNAMIC_PATH) { |(prefix)| refs[:prefixes] << prefix }
       text.scan(LAYOUT_CALL) { |(name)| refs[:layouts] << name }
+      if (key = rel[OWNER_FILE, 1]) && (m = text.match(CLASS_DEF))
+        refs[:supers][key] = m[2]
+      end
       text.scan(RENDER_CALL) do |(args)|
         args.scan(BARE_NAME) do |quoted, symbol|
           name = quoted || symbol
@@ -126,6 +153,8 @@ module Mbeditor
         end
         # `render @users`, `render user`, `render collection: @user.posts`
         args[MODEL_ARG, 1]&.split(/[.@]/)&.each { |seg| refs[:models] << seg.singularize unless seg.empty? }
+        # `render form` / `render f`: a form builder renders `_form` beside the caller.
+        (local = args[LOCAL_ARG, 1]) && (dir ? refs[:bare] << "#{dir}/#{local}" : refs[:loose] << local)
       end
     end
 
@@ -138,7 +167,42 @@ module Mbeditor
     def unused_views(refs, defs)
       routed = RouteService.all(@root).to_set { |r| "#{r[:controller]}/#{r[:action]}" }
       actions = defs.filter_map { |d| (key = d[:file][OWNER_FILE, 1]) && "#{key}/#{d[:name]}" }.to_set
-      refs[:views].reject { |rel| view_used?(rel, refs, routed, actions) }.sort
+      gems = locked_gems
+      refs[:views].reject do |rel|
+        gems.include?(rel[%r{\Aapp/views/([^/]+)/}, 1]) || view_used?(rel, refs, routed, actions)
+      end.sort
+    end
+
+    # Top-level view dirs named after a locked gem (kaminari/, devise/) override
+    # that gem's own templates, which the gem renders.
+    def locked_gems
+      File.read(File.join(@root, "Gemfile.lock")).scan(/^    ([\w-]+) \(/).flatten.to_set
+    rescue SystemCallError
+      Set.new
+    end
+
+    # The action is defined on the controller or a workspace ancestor, or the
+    # chain reaches a gem's controller (Devise::, Doorkeeper::) that supplies it.
+    def inherited_action?(key, name, refs, actions)
+      seen = Set.new
+      while key && seen.add?(key)
+        return true if actions.include?("#{key}/#{name}")
+        return false unless (sup = refs[:supers][key])
+        return false if BASE_CONTROLLERS.include?(sup)
+
+        key = controller_key_for(sup, key, refs)
+        return true unless key
+      end
+      false
+    end
+
+    # "BaseController" seen from "admin/settings/about" tries admin/settings/base,
+    # admin/base, base.
+    def controller_key_for(klass, from, refs)
+      tail = klass.underscore.delete_suffix("_controller").delete_suffix("_mailer")
+      scopes = File.dirname(from).split("/")
+      scopes.length.downto(0).map { |n| [*scopes.first(n), tail].join("/") }
+            .find { |k| refs[:supers].key?(k) || refs[:owners].include?(k) }
     end
 
     def view_used?(rel, refs, routed, actions)
@@ -156,7 +220,7 @@ module Mbeditor
         layout = path.delete_prefix("layouts/")
         refs[:layouts].include?(layout) || layout == "mailer" || refs[:owners].include?(layout)
       else
-        refs[:bare].include?(path) || actions.include?(path) || routed.include?(path)
+        refs[:bare].include?(path) || routed.include?(path) || inherited_action?(dir, name, refs, actions)
       end
     end
 

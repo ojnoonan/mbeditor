@@ -97,6 +97,7 @@ module Mbeditor
       - Keep replies short: the diff, then at most 3 one-line bullets for anything I must know. No restating the task, no walkthrough of the code, no summary.
       - Never paste file contents or command output back to me.
       - Follow-ups in this chat reuse ./project; rerun the snippet only after a new upload.
+      - If ./project or the uploaded bundle is no longer available to you (for example it fell out of your context or the sandbox reset), stop and ask me to re-upload it before doing anything else. Never guess file contents.
     TEXT
 
     DIFF_RULES = "Diff rules: `diff --git a/p b/p`, `--- a/p`, `+++ b/p`; paths relative to the project root; " \
