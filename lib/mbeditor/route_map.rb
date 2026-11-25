@@ -52,6 +52,7 @@ module Mbeditor
     get    'related_files',   to: 'editors#related_files'
     get    'model_schema',    to: 'editors#model_schema'
     get    'routes',          to: 'editors#routes'
+    get    'unused_methods',  to: 'editors#unused_methods'
     get    'changelog',       to: 'editors#changelog'
     get    'git_info',        to: 'editors#git_info'
     get    'git_status',      to: 'editors#git_status'
