@@ -15,6 +15,8 @@ module Mbeditor
     get    'file',            to: 'editors#show'
     get    'raw',             to: 'editors#raw'
     get    'archive',         to: 'editors#archive'
+    get    'ai_bundle',       to: 'editors#ai_bundle'
+    post   'apply_patch',     to: 'editors#apply_patch'
     post   'file',            to: 'editors#save'
     post   'create_file',     to: 'editors#create_file'
     post   'create_dir',      to: 'editors#create_dir'

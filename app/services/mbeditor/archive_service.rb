@@ -48,9 +48,8 @@ module Mbeditor
       write(entries)
     end
 
-    private
-
-    # Breadth-first walk of the selection, yielding regular files only.
+    # Breadth-first walk of the selection, yielding regular files only. Public
+    # so AiBundleService reuses the containment, exclusion and symlink rules.
     def collect(full_paths)
       entries = []
       seen_dirs = {}
@@ -96,6 +95,8 @@ module Mbeditor
 
       entries
     end
+
+    private
 
     def write(entries)
       buffer = StringIO.new(+"".b)

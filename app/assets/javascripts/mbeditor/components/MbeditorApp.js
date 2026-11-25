@@ -615,6 +615,9 @@ var MbeditorApp = function MbeditorApp() {
   var setImportConflict = _useStateImportConflict[1];
 
   // { initialFolder } while the upload dialog is open, null otherwise.
+  var _useStateAiModal = useState(false);
+  var showAiModal = _useStateAiModal[0];
+  var setShowAiModal = _useStateAiModal[1];
   var _useStateImportDialog = useState(null);
   var importDialog = _useStateImportDialog[0];
   var setImportDialog = _useStateImportDialog[1];
@@ -2686,6 +2689,7 @@ var MbeditorApp = function MbeditorApp() {
   };
 
   var RAILS_MAX_RESOURCES = 10;
+  var RAILS_CONVENTION_PATH = /^(app\/(controllers|models|views|helpers)|test|spec)\//;
 
   // Map resource label → representative path (capped at RAILS_MAX_RESOURCES, focused pane first)
   // Memoised: all three of these walk every tab in every pane and were rebuilt
@@ -2701,15 +2705,21 @@ var MbeditorApp = function MbeditorApp() {
         return a.id === p.activeTabId ? -1 : b.id === p.activeTabId ? 1 : 0;
       });
       tabs.forEach(function(t) {
-        if (Object.keys(deps).length >= RAILS_MAX_RESOURCES) return;
         if (!t.path || t.path.startsWith('mbeditor://')) return;
         var label = resourceLabelFromPath(t.path);
-        if (label && !deps[label]) deps[label] = t.path;
+        if (!label) return;
+        if (!deps[label]) {
+          if (Object.keys(deps).length < RAILS_MAX_RESOURCES) deps[label] = t.path;
+        } else if (!RAILS_CONVENTION_PATH.test(deps[label]) && RAILS_CONVENTION_PATH.test(t.path)) {
+          // A custom-path file's lookup returns only its custom group; a
+          // conventional file's returns controller, model, views and custom.
+          deps[label] = t.path;
+        }
       });
     });
     return deps;
   }, [state.panes, state.focusedPaneId, customPaths]);
-  var railsResourceDepStr = Object.keys(railsResourceDeps).sort().join('|');
+  var railsResourceDepStr = Object.keys(railsResourceDeps).sort().map(function(k) { return k + '=' + railsResourceDeps[k]; }).join('|');
 
   var railsOverflow = useMemo(function() {
     var all = {};
@@ -2729,6 +2739,14 @@ var MbeditorApp = function MbeditorApp() {
       p.tabs.forEach(function(t) {
         if (t.dirty && t.path) set[t.path] = true;
       });
+    });
+    return set;
+  }, [state.panes]);
+
+  var openPaths = useMemo(function() {
+    var set = {};
+    state.panes.forEach(function(p) {
+      p.tabs.forEach(function(t) { if (t.path) set[t.path] = true; });
     });
     return set;
   }, [state.panes]);
@@ -5162,6 +5180,13 @@ var MbeditorApp = function MbeditorApp() {
         React.createElement("div", { className: "statusbar-sep" }),
         React.createElement(
           "button",
+          { type: "button", className: "statusbar-btn", onClick: function () { return setShowAiModal(true); }, title: "Export project for AI / apply an AI diff" },
+          React.createElement("i", { className: "fas fa-robot" }),
+          !toolbarIconOnly && " AI"
+        ),
+        React.createElement("div", { className: "statusbar-sep" }),
+        React.createElement(
+          "button",
           { type: "button", className: "statusbar-btn", onClick: function () { return setShowHelp(true); }, title: "Keyboard shortcuts & help" },
           React.createElement("i", { className: "fas fa-keyboard" }),
           !toolbarIconOnly && " Help"
@@ -5900,6 +5925,19 @@ var MbeditorApp = function MbeditorApp() {
                 });
               }
               if (allFiles.length === 0) return null;
+              var openAllBtn = React.createElement(
+                'button',
+                {
+                  className: 'rails-schema-btn',
+                  title: 'Open all ' + label + ' files',
+                  onClick: (function(files) { return function(e) {
+                    e.stopPropagation();
+                    setShowModelGraphView(false);
+                    files.forEach(function(f) { TabManager.openTab(f.path, f.name, null, null, false); });
+                  }; })(allFiles)
+                },
+                React.createElement('i', { className: 'fas fa-folder-open' })
+              );
               var schemaBtn = React.createElement(
                 'button',
                 {
@@ -5922,7 +5960,7 @@ var MbeditorApp = function MbeditorApp() {
                   key: label,
                   title: label.toUpperCase(),
                   isCollapsed: !!railsGroupsCollapsed[label],
-                  actions: schemaBtn,
+                  actions: React.createElement(React.Fragment, null, openAllBtn, schemaBtn),
                   onToggle: (function(captured) { return function(isCollapsed) {
                     setRailsGroupsCollapsed(function(prev) {
                       var next = Object.assign({}, prev);
@@ -5938,7 +5976,7 @@ var MbeditorApp = function MbeditorApp() {
                     return React.createElement(
                       "div", {
                         key: f.path,
-                        className: "rails-group-item",
+                        className: "rails-group-item" + (openPaths[f.path] ? " rails-group-item-open" : ""),
                         onClick: (function(file) { return function() { handleSelectFile(file.path, file.name); }; })(f),
                         title: f.path
                       },
@@ -6707,6 +6745,11 @@ var MbeditorApp = function MbeditorApp() {
         )
       )
     ),
+
+    showAiModal && React.createElement(AiRoundTripModal, {
+      treeData: treeData,
+      onClose: function () { setShowAiModal(false); }
+    }),
 
     /* ── Upload dialog ─────────────────────────────────────────────────── */
     importDialog && React.createElement(ImportDialog, {

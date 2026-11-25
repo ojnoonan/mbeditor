@@ -224,5 +224,6 @@
     );
   };
 
+  window.MbeditorLanguageForPath = languageFor;
   window.CombinedFileView = CombinedFileView;
 })();
