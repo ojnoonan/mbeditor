@@ -5449,6 +5449,16 @@ var MbeditorApp = function MbeditorApp() {
             "button",
             {
               type: "button",
+              className: "ide-activity-btn" + (!sidebarCollapsed && activeSidebarTab === 'migrations' ? ' active' : ''),
+              title: "Migrations",
+              onClick: function() { handleActivityBarClick('migrations'); }
+            },
+            React.createElement("i", { className: "fas fa-database" })
+          ),
+          React.createElement(
+            "button",
+            {
+              type: "button",
               className: "ide-activity-btn" + (!sidebarCollapsed && activeSidebarTab === 'unused' ? ' active' : ''),
               title: "Unused methods",
               onClick: function() { handleActivityBarClick('unused'); }
@@ -5480,8 +5490,12 @@ var MbeditorApp = function MbeditorApp() {
           activeSidebarTab === 'search' ? 'Search' :
           activeSidebarTab === 'rails' ? 'Rails' :
           activeSidebarTab === 'routes' ? 'Routes' :
+          activeSidebarTab === 'migrations' ? 'Migrations' :
           activeSidebarTab === 'unused' ? 'Unused methods' : ''
         ),
+        activeSidebarTab === 'migrations' && React.createElement(MigrationsPanel, {
+          onOpenFile: function (path) { handleSelectFile(path, path.split('/').pop()); }
+        }),
         activeSidebarTab === 'unused' && React.createElement(UnusedMethodsPanel, {
           onOpenFile: function (path, line) { handleSelectFile(path, path.split('/').pop(), line); }
         }),

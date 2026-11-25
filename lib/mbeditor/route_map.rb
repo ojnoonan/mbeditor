@@ -53,6 +53,7 @@ module Mbeditor
     get    'model_schema',    to: 'editors#model_schema'
     get    'routes',          to: 'editors#routes'
     get    'all_routes',      to: 'editors#all_routes'
+    get    'migrations',      to: 'editors#migrations'
     get    'unused_methods',  to: 'editors#unused_methods'
     get    'changelog',       to: 'editors#changelog'
     get    'git_info',        to: 'editors#git_info'
