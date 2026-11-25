@@ -7,23 +7,24 @@
 // broadcast the server sends for the write.
 var AI_SELECTION_KEY = 'mbeditor.aiBundle.selection';
 
-function aiFolderPaths(nodes, into) {
+// Folders and files: a selection holds folders, plus single files added from
+// the related-files search.
+function aiKnownPaths(nodes, into) {
   nodes.forEach(function (n) {
-    if (n.type !== 'folder') return;
-    into[n.path] = true;
-    aiFolderPaths(n.children || [], into);
+    into[n.path] = n.type;
+    aiKnownPaths(n.children || [], into);
   });
   return into;
 }
 
-// A saved directory that has since been deleted would 404 the whole export, so
+// A saved path that has since been deleted would 404 the whole export, so
 // saved dirs are checked against the tree (when it has loaded).
 function aiLoadSelection(treeData) {
   try {
     var saved = JSON.parse(localStorage.getItem(AI_SELECTION_KEY) || '{}');
     var dirs = Array.isArray(saved.dirs) ? saved.dirs : [];
     if (treeData.length) {
-      var known = aiFolderPaths(treeData, {});
+      var known = aiKnownPaths(treeData, {});
       dirs = dirs.filter(function (d) { return known[d]; });
     }
     return { dirs: dirs, topFiles: saved.topFiles === true };
@@ -91,6 +92,74 @@ var AiDiffHunk = function AiDiffHunk(_ref) {
     }));
 };
 
+// "Related to...": type a resource, get its files as a checklist. Direct hits
+// start ticked, one-step-out hits unticked; nothing joins the export until
+// "Add selected" hands the ticked paths to onAdd.
+var AiRelatedPicker = function AiRelatedPicker(_ref) {
+  var h = React.createElement;
+  var _q = React.useState('');
+  var q = _q[0];
+  var setQ = _q[1];
+  var _st = React.useState({ busy: false, error: null, result: null, ticks: {}, added: null });
+  var st = _st[0];
+  var setSt = _st[1];
+
+  var find = function () {
+    if (!q.trim()) return;
+    setSt({ busy: true, error: null, result: null, ticks: {}, added: null });
+    fetch(window.mbeditorBasePath() + '/related_files?q=' + encodeURIComponent(q.trim())).then(function (r) {
+      return r.json().then(function (body) {
+        if (!r.ok) throw new Error(body.error || ('HTTP ' + r.status));
+        return body;
+      });
+    }).then(function (body) {
+      var ticks = {};
+      body.files.forEach(function (f) { ticks[f.path] = f.direct; });
+      setSt({ busy: false, error: null, result: body, ticks: ticks, added: null });
+    }, function (err) {
+      setSt({ busy: false, error: err.message || 'Request failed', result: null, ticks: {}, added: null });
+    });
+  };
+
+  var ticked = st.result ? st.result.files.filter(function (f) { return st.ticks[f.path]; }) : [];
+  var add = function () {
+    _ref.onAdd(ticked.map(function (f) { return f.path; }));
+    setSt({ busy: false, error: null, result: null, ticks: {}, added: ticked.length });
+  };
+
+  return h('div', { className: 'ai-related' },
+    h('div', { className: 'ai-dir-row' },
+      h('input', {
+        type: 'text', value: q, placeholder: 'Related to... (e.g. User)', 'aria-label': 'Related to',
+        onChange: function (e) { setQ(e.target.value); },
+        onKeyDown: function (e) { if (e.key === 'Enter') find(); }
+      }),
+      h('button', { type: 'button', className: 'import-conflict-btn', disabled: st.busy || !q.trim(), onClick: find },
+        st.busy ? 'Finding...' : 'Find')),
+    st.error && h('div', { className: 'ai-error' }, st.error),
+    st.added !== null && h('div', { className: 'ai-result' }, 'Added ' + st.added + ' file' + (st.added === 1 ? '' : 's') + ' to the export.'),
+    st.result && h('div', null,
+      h('p', { className: 'ai-hint' }, st.result.files.length ? 'Suggested' : 'Nothing found.'),
+      st.result.capped && h('div', { className: 'ai-error' }, 'Many files mention it, so the list of references is cut short.'),
+      h('ul', { className: 'ai-dir-list' },
+        st.result.files.map(function (f) {
+          return h('li', { key: f.path },
+            h('label', { title: f.path },
+              h('input', {
+                type: 'checkbox', checked: !!st.ticks[f.path],
+                onChange: function () {
+                  var ticks = Object.assign({}, st.ticks);
+                  ticks[f.path] = !ticks[f.path];
+                  setSt(Object.assign({}, st, { ticks: ticks }));
+                }
+              }),
+              ' ' + f.path + ' ', h('span', { className: 'ai-hint' }, f.reason)));
+        })),
+      st.result.files.length > 0 && h('button', {
+        type: 'button', className: 'import-conflict-btn', disabled: ticked.length === 0, onClick: add
+      }, 'Add selected (' + ticked.length + ')')));
+};
+
 var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var h = React.createElement;
   var treeData = _ref.treeData || [];
@@ -114,16 +183,12 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var exp = _exp[0];
   var setExp = _exp[1];
 
-  // Fetched on open so the click can call writeText synchronously and keep the
-  // user gesture in Safari.
+  // The prompt for what Download would produce right now, plus the part count
+  // and size the server computed for it. Fetched ahead of the click so
+  // writeText can run synchronously and keep the user gesture in Safari.
   var _prompt = React.useState(null);
-  var promptText = _prompt[0];
-  var setPromptText = _prompt[1];
-  React.useEffect(function () {
-    fetch(window.mbeditorBasePath() + '/ai_bundle?prompt=1').then(function (r) {
-      return r.ok ? r.text() : null;
-    }).then(setPromptText, function () { setPromptText(null); });
-  }, []);
+  var promptInfo = _prompt[0];
+  var setPromptInfo = _prompt[1];
 
   var _patch = React.useState('');
   var patch = _patch[0];
@@ -133,6 +198,7 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var setApply = _apply[1];
 
   var rootFiles = treeData.filter(function (n) { return n.type === 'file'; });
+  var knownPaths = React.useMemo(function () { return aiKnownPaths(treeData, {}); }, [treeData]);
 
   var persist = function (nextDirs, nextTop) {
     try { localStorage.setItem(AI_SELECTION_KEY, JSON.stringify({ dirs: nextDirs, topFiles: nextTop })); } catch (e) { /* storage unavailable */ }
@@ -150,18 +216,47 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
     return dirs.some(function (d) { return path.indexOf(d + '/') === 0; });
   };
 
+  var addPaths = function (paths) {
+    var next = dirs.concat(paths.filter(function (p) { return dirs.indexOf(p) === -1 && !coveredBy(p); }));
+    setDirs(next);
+    persist(next, topFiles);
+  };
+
   var selectedPaths = dirs.filter(function (d) { return !coveredBy(d); })
     .concat(topFiles ? rootFiles.map(function (f) { return f.path; }) : []);
+
+  var selectionKey = selectedPaths.join('\n');
+  var pathsQuery = selectedPaths.map(function (p) { return 'paths[]=' + encodeURIComponent(p); }).join('&');
+
+  // Debounced; a response for an older selection is dropped.
+  React.useEffect(function () {
+    setPromptInfo(null);
+    var cancelled = false;
+    var timer = setTimeout(function () {
+      fetch(window.mbeditorBasePath() + '/ai_bundle?prompt=1&' + pathsQuery).then(function (r) {
+        if (r.ok) {
+          return r.text().then(function (text) {
+            return { text: text, parts: parseInt(r.headers.get('X-Mbeditor-Bundle-Parts'), 10) || 1, bytes: parseInt(r.headers.get('X-Mbeditor-Bundle-Bytes'), 10) || 0 };
+          });
+        }
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          return { error: (body && body.error) || ('HTTP ' + r.status) };
+        });
+      }).then(function (info) {
+        if (!cancelled) setPromptInfo(info);
+      }, function () {
+        if (!cancelled) setPromptInfo({ error: 'Could not check the selection' });
+      });
+    }, 300);
+    return function () { cancelled = true; clearTimeout(timer); };
+  }, [selectionKey]);
 
   var errorMessage = function (err) {
     return (err && err.response && err.response.data && err.response.data.error) || (err && err.message) || 'Request failed';
   };
 
   var fetchBundle = function () {
-    var url = window.mbeditorBasePath() + '/ai_bundle?' + selectedPaths.map(function (p) {
-      return 'paths[]=' + encodeURIComponent(p);
-    }).join('&');
-    return fetch(url).then(function (resp) {
+    return fetch(window.mbeditorBasePath() + '/ai_bundle?' + pathsQuery).then(function (resp) {
       if (!resp.ok) {
         return resp.json().catch(function () { return {}; }).then(function (body) {
           throw new Error((body && body.error) || ('HTTP ' + resp.status));
@@ -252,7 +347,7 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   };
 
   var copyPrompt = function () {
-    navigator.clipboard.writeText(promptText).then(function () {
+    navigator.clipboard.writeText(promptInfo.text).then(function () {
       setExp(Object.assign({}, idle, { notice: 'Prompt copied. Fill in the TASK line after pasting.' }));
     }, copyFailed);
   };
@@ -335,10 +430,32 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
         folders.map(function (c) { return renderDir(c, covered || dirs.indexOf(node.path) !== -1); })));
   };
 
+  var splits = !!promptInfo && promptInfo.parts > 1;
+  var summary = selectedPaths.length === 0 ? 'Nothing selected'
+    : !promptInfo ? 'Checking size...'
+    : promptInfo.error ? promptInfo.error
+    : splits ? 'Too big for one file: splits into ' + promptInfo.parts + ' parts, downloaded as one .zip (' + aiHumanSize(promptInfo.bytes) + ')'
+    : 'One file, ' + aiHumanSize(promptInfo.bytes);
+
   var exportPane = h('div', { className: 'ai-pane' },
-    h('p', { className: 'ai-hint' }, 'Pick what the assistant should see. Upload the .md to the chat, then paste the prompt with it.'),
+    h('p', { className: 'ai-hint' }, 'Pick what the assistant should see. Upload the file to the chat, then paste the prompt with it.'),
+    h('details', { className: 'ai-prompt' },
+      h('summary', null, 'Prompt to paste'),
+      h('pre', { className: 'ai-prompt-text' }, promptInfo && promptInfo.text || ''),
+      h('button', {
+        type: 'button', className: 'import-conflict-btn', disabled: !promptInfo || !promptInfo.text, onClick: copyPrompt
+      }, 'Copy')),
+    h(AiRelatedPicker, { onAdd: addPaths }),
     h('ul', { className: 'ai-dir-list' },
       treeData.filter(function (n) { return n.type === 'folder' && n.name !== '.git'; }).map(function (n) { return renderDir(n, false); }),
+      dirs.filter(function (p) { return knownPaths[p] === 'file' && !coveredBy(p); }).map(function (p) {
+        return h('li', { key: 'file:' + p },
+          h('div', { className: 'ai-dir-row' },
+            h('span', { className: 'ai-dir-toggle' }),
+            h('label', null,
+              h('input', { type: 'checkbox', checked: true, onChange: function () { toggleDir(p); } }),
+              ' ' + p)));
+      }),
       h('li', { key: '__top_files' },
         h('div', { className: 'ai-dir-row' },
           h('span', { className: 'ai-dir-toggle' }),
@@ -355,7 +472,8 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
     exp.stats && h('div', { className: 'ai-result' },
       exp.stats.filename + ': ' + exp.stats.files + ' files, ' + aiHumanSize(exp.stats.bytes) +
       ', about ' + Math.round(exp.stats.bytes / 4).toLocaleString() + ' tokens'),
-    exp.notice && h('div', { className: 'ai-result' }, exp.notice)
+    exp.notice && h('div', { className: 'ai-result' }, exp.notice),
+    h('div', { className: 'ai-hint' }, summary)
   );
 
   var filesList = apply.files && h('ul', { className: 'import-conflict-list ai-files' },
@@ -417,9 +535,13 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var exportDisabled = exp.busy || selectedPaths.length === 0;
   var footer = tab === 'export'
     ? [
-        h('button', { key: 'prompt', type: 'button', className: 'import-conflict-btn', disabled: promptText === null, onClick: copyPrompt }, 'Copy prompt'),
-        h('button', { key: 'copy', type: 'button', className: 'import-conflict-btn', disabled: exportDisabled, onClick: copyBundle }, 'Copy to clipboard'),
-        h('button', { key: 'md', type: 'button', className: 'import-conflict-btn import-conflict-btn-primary', disabled: exportDisabled, onClick: download }, exp.busy ? 'Building...' : 'Download .md')
+        h('button', {
+          key: 'copy', type: 'button', className: 'import-conflict-btn', disabled: exportDisabled || splits,
+          title: splits ? 'Split bundles download as a zip' : undefined, onClick: copyBundle
+        }, 'Copy to clipboard'),
+        h('button', {
+          key: 'download', type: 'button', className: 'import-conflict-btn import-conflict-btn-primary', disabled: exportDisabled, onClick: download
+        }, exp.busy ? 'Building...' : 'Download ' + (splits ? '.zip' : '.md'))
       ]
     : [
         h('button', {

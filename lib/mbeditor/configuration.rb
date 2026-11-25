@@ -13,7 +13,7 @@ module Mbeditor
                   :js_syntax_check, :babel_standalone_path, :js_scope_lint,
                   :ruby_lsp, :ruby_lsp_command, :ruby_lsp_timeout,
                   :exception_capture, :audit_log, :model_graph_max_models,
-                  :search_respect_gitignore, :ripgrep_command
+                  :search_respect_gitignore, :ripgrep_command, :ai_bundle_exclude
 
     def initialize
       @allowed_environments = [:development]
@@ -86,6 +86,11 @@ module Mbeditor
       # stay on ambient declarations instead. Add any other directory of
       # third-party or generated JS here, e.g. "app/assets/javascripts/react".
       @js_program_exclude = %w[vendor]
+      # Workspace-relative globs never sent in an AI bundle, even when ticked or
+      # inside a ticked folder (File.fnmatch? with FNM_PATHNAME | FNM_DOTMATCH |
+      # FNM_EXTGLOB). A pattern without "/" matches the basename at any depth.
+      # Adds to the built-in secret list and never loosens it.
+      @ai_bundle_exclude = []
       @js_syntax_check = :auto # save-time babel parse check via host mini_racer + babel-standalone; false disables
       @js_scope_lint   = true  # save-time undeclared-identifier warnings (needs js_syntax_check active); false disables
       @babel_standalone_path = nil # explicit path to babel-standalone JS; nil auto-detects via the asset pipeline

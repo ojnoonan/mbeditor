@@ -356,13 +356,14 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
-    # GET /mbeditor/ai_bundle?paths[]=a — the selection as one text file for a
-    # web chat; prompt=1 returns only the message to paste alongside it.
+    # GET /mbeditor/ai_bundle?paths[]=a — the selection as one download for a
+    # web chat: a .md, or a .zip of parts when it is too big for one file.
+    # prompt=1 returns only the message to paste alongside it, for the file the
+    # same selection would download.
     def ai_bundle
       bundle_name = "#{File.basename(workspace_root.to_s)}-bundle.md"
-      return render plain: AiBundleService.prompt(bundle_name) if params[:prompt].present?
-
       requested = Array(params[:paths]).map(&:to_s).reject(&:blank?)
+      return render plain: AiBundleService.prompt(bundle_name) if params[:prompt].present? && requested.empty?
       return render json: { error: "No paths given" }, status: :bad_request if requested.empty?
 
       resolved = requested.map { |p| resolve_path(p) }
@@ -370,10 +371,21 @@ module Mbeditor
       missing = first_missing(requested, resolved)
       return render json: { error: "Not found: #{missing}" }, status: :not_found if missing
 
-      bundle = AiBundleService.new(workspace_root).build(resolved)
+      service = AiBundleService.new(workspace_root)
+      if params[:prompt].present?
+        plan = service.plan(resolved)
+        response.headers["X-Mbeditor-Bundle-Parts"] = plan[:parts].to_s
+        response.headers["X-Mbeditor-Bundle-Bytes"] = plan[:bytes].to_s
+        return render plain: AiBundleService.prompt(bundle_name, plan[:parts])
+      end
+
+      bundle = service.build(resolved)
+      split = bundle[:parts] > 1
+      response.headers["X-Mbeditor-Bundle-Parts"] = bundle[:parts].to_s
       response.headers["X-Mbeditor-Bundle-Files"] = bundle[:files].to_s
       response.headers["X-Mbeditor-Bundle-Bytes"] = bundle[:bytes].to_s
-      send_data bundle[:markdown], type: "text/markdown", disposition: "attachment", filename: bundle_name
+      send_data bundle[:data], type: split ? "application/zip" : "text/markdown", disposition: "attachment",
+                               filename: split ? AiBundleService.zip_filename(bundle_name) : bundle_name
     rescue AiBundleService::LimitExceededError => e
       render json: { error: e.message }, status: :content_too_large
     rescue StandardError => e
@@ -1215,8 +1227,17 @@ module Mbeditor
       render json: { controller: key, actions: RouteService.for_controller(key) }
     end
 
-    # GET /mbeditor/related_files?path=...
+    # GET /mbeditor/related_files?path=... — the Rails panel's groups for a file.
+    # GET /mbeditor/related_files?q=User — everything related to a resource,
+    # for the AI export picker: { files: [{path, reason, direct}], capped }.
     def related_files
+      if params.key?(:q)
+        q = params[:q].to_s.strip.camelize
+        return render json: { error: "Enter a model name like User" }, status: :bad_request unless q.match?(RUBY_CONSTANT_PATH)
+
+        return render json: RelatedFilesService.call(workspace_root, q, excluded_paths: Mbeditor.configuration.excluded_paths)
+      end
+
       path = resolve_path(params[:path])
       return render json: {}, status: :bad_request unless path
       rel = relative_path(path)

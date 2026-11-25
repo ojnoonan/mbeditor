@@ -17,6 +17,17 @@ WebMock.disable_net_connect!
 Mbeditor.configuration.rubocop_server = false
 
 class Minitest::Test
+  # AiBundleService caps a part at 64 MB; tests lower it instead of writing that much.
+  def with_max_bytes(limit)
+    old = Mbeditor::AiBundleService::MAX_BYTES
+    Mbeditor::AiBundleService.send(:remove_const, :MAX_BYTES)
+    Mbeditor::AiBundleService.const_set(:MAX_BYTES, limit)
+    yield
+  ensure
+    Mbeditor::AiBundleService.send(:remove_const, :MAX_BYTES)
+    Mbeditor::AiBundleService.const_set(:MAX_BYTES, old)
+  end
+
   # Temporarily wrap ProcessRunner.call so every subprocess invocation is
   # recorded (cmd + timeout) while still delegating to the real runner.
   def with_process_runner_recorder(captured)

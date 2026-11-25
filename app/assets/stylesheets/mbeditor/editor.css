@@ -4131,6 +4131,8 @@ input.ide-model-graph-search[type="search"] {
 .ai-tab.active { color: var(--ide-text, #ccc); border-bottom-color: var(--ide-accent, #0e639c); }
 .ai-pane { padding: 12px 16px; font-size: 12px; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .ai-hint { margin: 0 0 8px; color: var(--ide-text-muted, #999); }
+.ai-prompt { margin-bottom: 8px; }
+.ai-prompt-text { max-height: 160px; overflow: auto; white-space: pre-wrap; font-size: 12px; margin: 4px 0; }
 .ai-dir-list, .ai-dir-list li { list-style: none; margin: 0; }
 .ai-dir-list { padding-left: 16px; }
 .ai-pane > .ai-dir-list { padding-left: 0; flex: 1; min-height: 0; overflow-y: auto; }
