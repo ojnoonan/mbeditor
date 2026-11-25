@@ -36,3 +36,14 @@ class Minitest::Test
     $VERBOSE = verbose
   end
 end
+
+# The dummy app reloads code in test (enable_reloading), and a reload runs
+# ActionCable.server.restart, which discards the adapter ActionCable::TestHelper
+# swapped in, so assert_broadcast_on then errors. Settle a pending reload before
+# that swap rather than letting the test's first request trigger it.
+ActionCable::TestHelper.prepend(Module.new do
+  def before_setup
+    Rails.application.reloader.reload! if Rails.application.reloaders.any?(&:updated?)
+    super
+  end
+end)
