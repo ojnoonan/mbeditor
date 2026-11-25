@@ -179,26 +179,16 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var _open = React.useState({});
   var open = _open[0];
   var setOpen = _open[1];
-  // Copilot takes three attachments at a time, so a big selection can be cut
-  // into up to three parts; each part is requested on its own.
-  var _parts = React.useState(1);
-  var parts = _parts[0];
-  var setParts = _parts[1];
   var _exp = React.useState({ busy: false, error: null, stats: null, pendingCopy: null, notice: null });
   var exp = _exp[0];
   var setExp = _exp[1];
 
-  // Fetched on open so the click can call writeText synchronously and keep the
-  // user gesture in Safari.
+  // The prompt for what Download would produce right now, plus the part count
+  // and size the server computed for it. Fetched ahead of the click so
+  // writeText can run synchronously and keep the user gesture in Safari.
   var _prompt = React.useState(null);
-  var promptText = _prompt[0];
-  var setPromptText = _prompt[1];
-  React.useEffect(function () {
-    setPromptText(null);
-    fetch(window.mbeditorBasePath() + '/ai_bundle?prompt=1&parts=' + parts).then(function (r) {
-      return r.ok ? r.text() : null;
-    }).then(setPromptText, function () { setPromptText(null); });
-  }, [parts]);
+  var promptInfo = _prompt[0];
+  var setPromptInfo = _prompt[1];
 
   var _patch = React.useState('');
   var patch = _patch[0];
@@ -235,15 +225,38 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var selectedPaths = dirs.filter(function (d) { return !coveredBy(d); })
     .concat(topFiles ? rootFiles.map(function (f) { return f.path; }) : []);
 
+  var selectionKey = selectedPaths.join('\n');
+  var pathsQuery = selectedPaths.map(function (p) { return 'paths[]=' + encodeURIComponent(p); }).join('&');
+
+  // Debounced; a response for an older selection is dropped.
+  React.useEffect(function () {
+    setPromptInfo(null);
+    var cancelled = false;
+    var timer = setTimeout(function () {
+      fetch(window.mbeditorBasePath() + '/ai_bundle?prompt=1&' + pathsQuery).then(function (r) {
+        if (r.ok) {
+          return r.text().then(function (text) {
+            return { text: text, parts: parseInt(r.headers.get('X-Mbeditor-Bundle-Parts'), 10) || 1, bytes: parseInt(r.headers.get('X-Mbeditor-Bundle-Bytes'), 10) || 0 };
+          });
+        }
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          return { error: (body && body.error) || ('HTTP ' + r.status) };
+        });
+      }).then(function (info) {
+        if (!cancelled) setPromptInfo(info);
+      }, function () {
+        if (!cancelled) setPromptInfo({ error: 'Could not check the selection' });
+      });
+    }, 300);
+    return function () { cancelled = true; clearTimeout(timer); };
+  }, [selectionKey]);
+
   var errorMessage = function (err) {
     return (err && err.response && err.response.data && err.response.data.error) || (err && err.message) || 'Request failed';
   };
 
-  var fetchBundle = function (part) {
-    var url = window.mbeditorBasePath() + '/ai_bundle?parts=' + parts + '&part=' + part + '&' + selectedPaths.map(function (p) {
-      return 'paths[]=' + encodeURIComponent(p);
-    }).join('&');
-    return fetch(url).then(function (resp) {
+  var fetchBundle = function () {
+    return fetch(window.mbeditorBasePath() + '/ai_bundle?' + pathsQuery).then(function (resp) {
       if (!resp.ok) {
         return resp.json().catch(function () { return {}; }).then(function (body) {
           throw new Error((body && body.error) || ('HTTP ' + resp.status));
@@ -265,9 +278,9 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
 
   var idle = { busy: false, error: null, stats: null, pendingCopy: null, notice: null };
 
-  var download = function (part) {
+  var download = function () {
     setExp(Object.assign({}, idle, { busy: true }));
-    fetchBundle(part).then(function (r) {
+    fetchBundle().then(function (r) {
       var objectUrl = URL.createObjectURL(r.blob);
       var link = document.createElement('a');
       link.href = objectUrl;
@@ -300,12 +313,12 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   // promise for the text. An oversized bundle rejects that promise, so nothing
   // is copied, and the text kept in `big` goes to "Copy anyway", which writes
   // inside its own click.
-  var copyBundle = function (part) {
+  var copyBundle = function () {
     setExp(Object.assign({}, idle, { busy: true }));
     var big = null;
     var stats = null;
     var buildError = null;
-    var load = fetchBundle(part).then(function (r) {
+    var load = fetchBundle().then(function (r) {
       stats = r.stats;
       return r.blob.text().then(function (text) {
         if (r.stats.bytes / 4 > AI_PASTE_TOKEN_WARN) {
@@ -334,7 +347,7 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   };
 
   var copyPrompt = function () {
-    navigator.clipboard.writeText(promptText).then(function () {
+    navigator.clipboard.writeText(promptInfo.text).then(function () {
       setExp(Object.assign({}, idle, { notice: 'Prompt copied. Fill in the TASK line after pasting.' }));
     }, copyFailed);
   };
@@ -417,14 +430,21 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
         folders.map(function (c) { return renderDir(c, covered || dirs.indexOf(node.path) !== -1); })));
   };
 
+  var splits = !!promptInfo && promptInfo.parts > 1;
+  var summary = selectedPaths.length === 0 ? 'Nothing selected'
+    : !promptInfo ? 'Checking size...'
+    : promptInfo.error ? promptInfo.error
+    : splits ? 'Too big for one file: splits into ' + promptInfo.parts + ' parts, downloaded as one .zip (' + aiHumanSize(promptInfo.bytes) + ')'
+    : 'One file, ' + aiHumanSize(promptInfo.bytes);
+
   var exportPane = h('div', { className: 'ai-pane' },
-    h('p', { className: 'ai-hint' }, 'Pick what the assistant should see. Upload the .md to the chat, then paste the prompt with it.'),
-    h('label', { className: 'ai-hint' }, 'Split into ',
-      h('select', {
-        value: parts, 'aria-label': 'Split into parts',
-        onChange: function (e) { setParts(parseInt(e.target.value, 10)); setExp(idle); }
-      }, [1, 2, 3].map(function (n) { return h('option', { key: n, value: n }, n); })),
-      ' part' + (parts === 1 ? '' : 's')),
+    h('p', { className: 'ai-hint' }, 'Pick what the assistant should see. Upload the file to the chat, then paste the prompt with it.'),
+    h('details', { className: 'ai-prompt' },
+      h('summary', null, 'Prompt to paste'),
+      h('pre', { className: 'ai-prompt-text' }, promptInfo && promptInfo.text || ''),
+      h('button', {
+        type: 'button', className: 'import-conflict-btn', disabled: !promptInfo || !promptInfo.text, onClick: copyPrompt
+      }, 'Copy')),
     h(AiRelatedPicker, { onAdd: addPaths }),
     h('ul', { className: 'ai-dir-list' },
       treeData.filter(function (n) { return n.type === 'folder' && n.name !== '.git'; }).map(function (n) { return renderDir(n, false); }),
@@ -452,7 +472,8 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
     exp.stats && h('div', { className: 'ai-result' },
       exp.stats.filename + ': ' + exp.stats.files + ' files, ' + aiHumanSize(exp.stats.bytes) +
       ', about ' + Math.round(exp.stats.bytes / 4).toLocaleString() + ' tokens'),
-    exp.notice && h('div', { className: 'ai-result' }, exp.notice)
+    exp.notice && h('div', { className: 'ai-result' }, exp.notice),
+    h('div', { className: 'ai-hint' }, summary)
   );
 
   var filesList = apply.files && h('ul', { className: 'import-conflict-list ai-files' },
@@ -512,16 +533,16 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var counts = previewing ? window.MbeditorPatchSelect.count(apply.parsed, apply.sel) : null;
   var canApply = previewing && counts.selected > 0 && !apply.busy;
   var exportDisabled = exp.busy || selectedPaths.length === 0;
-  var partNumbers = Array.from({ length: parts }, function (_, i) { return i + 1; });
-  var partLabel = function (verb, whole, k) { return parts === 1 ? whole : verb + ' part ' + k; };
   var footer = tab === 'export'
     ? [
-        h('button', { key: 'prompt', type: 'button', className: 'import-conflict-btn', disabled: promptText === null, onClick: copyPrompt }, 'Copy prompt')
-      ].concat(partNumbers.map(function (k) {
-        return h('button', { key: 'copy' + k, type: 'button', className: 'import-conflict-btn', disabled: exportDisabled, onClick: function () { copyBundle(k); } }, partLabel('Copy', 'Copy to clipboard', k));
-      }), partNumbers.map(function (k) {
-        return h('button', { key: 'md' + k, type: 'button', className: 'import-conflict-btn import-conflict-btn-primary', disabled: exportDisabled, onClick: function () { download(k); } }, exp.busy && parts === 1 ? 'Building...' : partLabel('Download', 'Download .md', k));
-      }))
+        h('button', {
+          key: 'copy', type: 'button', className: 'import-conflict-btn', disabled: exportDisabled || splits,
+          title: splits ? 'Split bundles download as a zip' : undefined, onClick: copyBundle
+        }, 'Copy to clipboard'),
+        h('button', {
+          key: 'download', type: 'button', className: 'import-conflict-btn import-conflict-btn-primary', disabled: exportDisabled, onClick: download
+        }, exp.busy ? 'Building...' : 'Download ' + (splits ? '.zip' : '.md'))
+      ]
     : [
         h('button', {
           key: 'check', type: 'button', className: 'import-conflict-btn',

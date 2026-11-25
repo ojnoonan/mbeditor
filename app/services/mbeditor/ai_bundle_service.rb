@@ -12,7 +12,8 @@ module Mbeditor
     # purpose: the consumer is a sandbox that greps it, not a context window.
     MAX_BYTES = 64 * 1024 * 1024
     BINARY_PROBE_BYTES = 8 * 1024
-    # Copilot accepts three attachments at a time.
+    # Copilot accepts three attachments at a time; parts travel as one zip, but
+    # the cap per part is what keeps each member small enough to unpack.
     MAX_PARTS = 3
     EXCLUDE_FLAGS = File::FNM_PATHNAME | File::FNM_DOTMATCH | File::FNM_EXTGLOB
 
@@ -48,6 +49,11 @@ module Mbeditor
       filename.sub(/\.md\z/, "-#{part}-of-#{parts}.md")
     end
 
+    # "<name>-bundle.md" -> "<name>-bundle.zip"
+    def self.zip_filename(filename)
+      filename.sub(/\.md\z/, ".zip")
+    end
+
     # Lossless by construction: file bytes are written exactly as they are, so a
     # diff made against the unpacked copy applies to the real workspace.
     #
@@ -55,22 +61,26 @@ module Mbeditor
     # two cannot drift.
     UNPACK_SNIPPET = <<~'PY'
       BUNDLE = "/mnt/data/bundle.md"
-      import os, re, subprocess
-      text = open(BUNDLE, encoding="utf-8", newline="").read()
+      import os, re, subprocess, zipfile
+      if BUNDLE.endswith(".zip"):
+          with zipfile.ZipFile(BUNDLE) as z: texts = [z.read(n).decode("utf-8") for n in sorted(z.namelist())]
+      else:
+          texts = [open(BUNDLE, encoding="utf-8", newline="").read()]
       hdr = re.compile(r"^=== FILE: ([^\n]+?) \((\d+) lines( no-eol)?\) ===\n", re.M)
-      pos = 0
-      while True:
-          m = hdr.search(text, pos)
-          if not m: break
-          end = m.end()
-          for _ in range(int(m.group(2))): end = text.index("\n", end) + 1
-          body = text[m.end():end]
-          if m.group(3): body = body[:-1]
-          pos = end
-          dest = os.path.join("project", m.group(1))
-          os.makedirs(os.path.dirname(dest), exist_ok=True)
-          with open(dest, "w", encoding="utf-8", newline="") as f:
-              f.write(body)
+      for text in texts:
+          pos = 0
+          while True:
+              m = hdr.search(text, pos)
+              if not m: break
+              end = m.end()
+              for _ in range(int(m.group(2))): end = text.index("\n", end) + 1
+              body = text[m.end():end]
+              if m.group(3): body = body[:-1]
+              pos = end
+              dest = os.path.join("project", m.group(1))
+              os.makedirs(os.path.dirname(dest), exist_ok=True)
+              with open(dest, "w", encoding="utf-8", newline="") as f:
+                  f.write(body)
       def git(*a): return subprocess.run(["git", *a], cwd="project", check=True, capture_output=True)
       if not os.path.isdir("project/.git"): git("init", "-q"); git("config", "core.autocrlf", "false")
       git("add", "-A", "-f")
@@ -98,35 +108,72 @@ module Mbeditor
     # the whole file before it reaches the header, so this goes first. Needs
     # only the bundle's file name; no files are read.
     #
-    # With +parts+ > 1, +filename+ is the unsplit name and the message lists
-    # each part's name.
+    # +filename+ is the unsplit .md name. With +parts+ > 1 the single upload is
+    # the matching .zip.
     def self.prompt(filename, parts = 1)
-      names = parts > 1 ? (1..parts).map { |k| part_filename(filename, k, parts) } : [filename]
-      snippet = UNPACK_SNIPPET.sub(/^BUNDLE = .*$/) { "BUNDLE = #{"/mnt/data/#{names.first}".to_json}" }
-      intro = if parts > 1
-                "#{names.map { |n| "`#{n}`" }.join(', ')} are the #{parts} parts of one large source bundle. " \
-                "Upload all #{parts}. Do not open, read or print them directly.\n" \
-                "Load each from your code sandbox by running this snippet once per part, setting BUNDLE to " \
-                "that part's path each time. All parts unpack into the same ./project, and the git base " \
-                "commit is rebuilt after each one, so edit nothing until all #{parts} are unpacked:\n\n"
-              else
-                "`#{filename}` is a large source bundle. Do not open, read or print it directly.\n" \
-                "Load it only from your code sandbox with this snippet (adjust BUNDLE if the path differs):\n\n"
-              end
-      "#{intro}```python\n#{snippet}```\n\nThen:\n#{WORKFLOW}\n#{DIFF_RULES}\n\nTASK: "
+      attached = parts > 1 ? zip_filename(filename) : filename
+      snippet = UNPACK_SNIPPET.sub(/^BUNDLE = .*$/) { "BUNDLE = #{"/mnt/data/#{attached}".to_json}" }
+      what = parts > 1 ? "a zip of #{parts} markdown parts of one large source bundle" : "a large source bundle"
+      "`#{attached}` is #{what}. Do not open, read or print it directly.\n" \
+        "Load it only from your code sandbox with this snippet (adjust BUNDLE if the path differs):\n\n" \
+        "```python\n#{snippet}```\n\nThen:\n#{WORKFLOW}\n#{DIFF_RULES}\n\nTASK: "
     end
 
     def initialize(workspace_root)
       @root = workspace_root.to_s.chomp("/")
     end
 
+    def bundle_name
+      "#{File.basename(@root)}-bundle.md"
+    end
+
     # +full_paths+ are absolute, already through resolve_path. Returns
-    # { markdown:, files:, bytes: } where +files+ counts included files.
+    # { parts:, bytes: }: the fewest parts (1..MAX_PARTS) that each fit under
+    # MAX_BYTES, from the sizes the walk already has. Raises LimitExceededError
+    # when even MAX_PARTS parts do not fit.
+    def plan(full_paths)
+      texty, = classify(full_paths)
+      groups = choose_groups(texty)
+      { parts: groups.length, bytes: texty.sum { |e| e[:size] } }
+    end
+
+    # Returns { data:, parts:, files:, bytes: }. +data+ is the markdown when
+    # parts is 1, else a zip of parts markdown files named by part_filename.
+    # +bytes+ is the rendered markdown size, summed over parts.
     #
-    # +parts+ > 1 returns part +part+ (1-based): files sorted by path, cut into
-    # contiguous runs of roughly equal bytes, so the split is the same on every
-    # request and no file straddles two parts.
-    def build(full_paths, parts: 1, part: 1)
+    # Files are sorted by path and cut into contiguous runs of roughly equal
+    # bytes, so the split is the same on every request and no file straddles
+    # two parts. Lossless by construction: see UNPACK_SNIPPET.
+    def build(full_paths)
+      texty, skipped = classify(full_paths)
+      groups = choose_groups(texty)
+      skipped = skipped.sort_by { |e| e[:name] }
+
+      files = 0
+      docs = groups.each_with_index.map do |group, i|
+        included = []
+        group.each do |e|
+          text = read_text(e)
+          text ? included << [e[:name], text] : skipped << e.merge(reason: "binary or not UTF-8")
+        end
+        files += included.length
+        render(included, skipped.sort_by { |e| e[:name] }, i + 1, groups.length)
+      end
+
+      data = if docs.length == 1
+               docs.first
+             else
+               ZipWriter.write(docs.each_with_index.map { |md, i| [self.class.part_filename(bundle_name, i + 1, docs.length), md] })
+             end
+      { data: data, parts: docs.length, files: files, bytes: docs.sum(&:bytesize) }
+    end
+
+    private
+
+    # Sorted, de-duplicated walk split into [text entries, skipped entries].
+    # Only text counts toward the cap: a binary that is never written to the
+    # bundle must not make the selection "too large".
+    def classify(full_paths)
       entries = ArchiveService.new(@root).collect(full_paths).uniq { |e| e[:name] }.sort_by { |e| e[:name] }
       raise "Nothing to bundle" if entries.empty?
 
@@ -138,30 +185,20 @@ module Mbeditor
         reason ? skipped << e.merge(reason: reason) : wanted << e
       end
 
-      # Only text counts toward the cap: a binary that is never written to the
-      # bundle must not make the selection "too large".
       texty = []
       wanted.each { |e| binary?(e) ? skipped << e.merge(reason: "binary or not UTF-8") : texty << e }
-      groups = partition(texty, parts)
-      biggest = groups.map { |g| g.sum { |e| e[:size] } }.max
-      if biggest > MAX_BYTES
-        what = parts > 1 ? "A part" : "Selection"
-        hint = parts < MAX_PARTS ? " Split the export into more parts (up to #{MAX_PARTS})." : ""
-        raise LimitExceededError,
-              "#{what} is too large (#{human(biggest)}). Limit is #{human(MAX_BYTES)}.#{hint}"
-      end
-
-      included = []
-      groups[part - 1].each do |e|
-        text = read_text(e)
-        text ? included << [e[:name], text] : skipped << e.merge(reason: "binary or not UTF-8")
-      end
-
-      markdown = render(included, skipped.sort_by { |e| e[:name] }, part, parts)
-      { markdown: markdown, files: included.length, bytes: markdown.bytesize }
+      [texty, skipped]
     end
 
-    private
+    def choose_groups(texty)
+      (1..MAX_PARTS).each do |n|
+        groups = partition(texty, n)
+        return groups if groups.all? { |g| g.sum { |e| e[:size] } <= MAX_BYTES }
+      end
+      raise LimitExceededError,
+            "Selection is too large (#{human(texty.sum { |e| e[:size] })}) even split into #{MAX_PARTS} parts. " \
+            "Limit is #{human(MAX_BYTES)} per part."
+    end
 
     # Each file goes to the part holding its midpoint, which is monotonic in
     # path order (so runs stay contiguous) and balances bytes.
@@ -209,7 +246,7 @@ module Mbeditor
 
     def render(included, skipped, part, parts)
       title = "# #{utf8(File.basename(@root))}#{" (part #{part} of #{parts})" if parts > 1}"
-      note = parts > 1 ? "This is part #{part} of #{parts}. Unpack every part into the same ./project.\n\n" : ""
+      note = parts > 1 ? "This is part #{part} of #{parts}, packed in one .zip with the others. Point BUNDLE at the .zip: the snippet unpacks every part into ./project.\n\n" : ""
       out = +"#{title}\n\n## Instructions\n\n#{note}#{INSTRUCTIONS}\n## Index\n\n"
       included.each { |name, text| out << "- #{name} (#{line_count(text)} lines, #{text.bytesize} bytes)\n" }
       skipped.each do |e|

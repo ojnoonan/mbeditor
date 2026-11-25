@@ -41,32 +41,57 @@ module Mbeditor
       assert_includes response.body, "=== FILE: lib/b.rb (1 lines) ==="
     end
 
-    test "ai_bundle part K of N returns that part under a part filename" do
-      get "/mbeditor/ai_bundle", params: { paths: ["lib", "a.txt"], parts: 2, part: 2 }
+    test "ai_bundle too big for one file downloads one zip of numbered parts" do
+      with_max_bytes(8) { get "/mbeditor/ai_bundle", params: { paths: ["lib", "a.txt"] } }
+      name = File.basename(@workspace)
 
       assert_response :success
-      assert_match(/filename="#{File.basename(@workspace)}-bundle-2-of-2\.md"/, response.headers["Content-Disposition"])
-      assert_includes response.body, "(part 2 of 2)"
-      assert_equal "1", response.headers["X-Mbeditor-Bundle-Files"]
-      assert_includes response.body, "=== FILE: lib/b.rb "
-      refute_includes response.body, "=== FILE: a.txt "
+      assert_equal "application/zip", response.media_type
+      assert_match(/filename="#{name}-bundle\.zip"/, response.headers["Content-Disposition"])
+      assert_equal "2", response.headers["X-Mbeditor-Bundle-Parts"]
+      assert_equal "2", response.headers["X-Mbeditor-Bundle-Files"]
+      assert_equal "PK", response.body.b[0, 2]
+      assert_includes response.body.b, "#{name}-bundle-1-of-2.md".b
+      assert_includes response.body.b, "#{name}-bundle-2-of-2.md".b
     end
 
-    test "ai_bundle rejects bad parts and part values" do
-      [{ parts: 4 }, { parts: 0 }, { parts: 2, part: 3 }, { parts: 2, part: 0 }].each do |extra|
-        get "/mbeditor/ai_bundle", params: { paths: ["a.txt"] }.merge(extra)
+    test "ai_bundle that fits is one md with Parts 1" do
+      get "/mbeditor/ai_bundle", params: { paths: ["a.txt"] }
 
-        assert_response :bad_request, extra.inspect
-      end
+      assert_equal "1", response.headers["X-Mbeditor-Bundle-Parts"]
+      assert_equal "text/markdown", response.media_type
     end
 
-    test "ai_bundle prompt=1 with parts names every part" do
-      get "/mbeditor/ai_bundle", params: { prompt: 1, parts: 3 }
+    test "ai_bundle ignores the retired parts and part params" do
+      get "/mbeditor/ai_bundle", params: { paths: ["a.txt"], parts: 3, part: 2 }
 
       assert_response :success
-      assert_includes response.body, "-bundle-1-of-3.md"
-      assert_includes response.body, "-bundle-3-of-3.md"
-      assert_includes response.body, "Upload all 3"
+      assert_match(/-bundle\.md"/, response.headers["Content-Disposition"])
+    end
+
+    test "ai_bundle prompt=1 with paths names the .md when the selection fits" do
+      get "/mbeditor/ai_bundle", params: { prompt: 1, paths: ["lib", "a.txt"] }
+
+      assert_response :success
+      assert_equal "1", response.headers["X-Mbeditor-Bundle-Parts"]
+      assert_equal "14", response.headers["X-Mbeditor-Bundle-Bytes"]
+      assert_includes response.body, "#{File.basename(@workspace)}-bundle.md` is a large source bundle"
+    end
+
+    test "ai_bundle prompt=1 with paths names the one .zip when the selection splits" do
+      with_max_bytes(8) { get "/mbeditor/ai_bundle", params: { prompt: 1, paths: ["lib", "a.txt"] } }
+
+      assert_response :success
+      assert_equal "2", response.headers["X-Mbeditor-Bundle-Parts"]
+      assert_includes response.body, "#{File.basename(@workspace)}-bundle.zip` is a zip of 2 markdown parts"
+      refute_includes response.body, "Upload all"
+    end
+
+    test "ai_bundle prompt=1 with a selection too big for three parts is 413" do
+      with_max_bytes(2) { get "/mbeditor/ai_bundle", params: { prompt: 1, paths: ["lib", "a.txt"] } }
+
+      assert_response :content_too_large
+      assert_match(/even split into 3 parts/, JSON.parse(response.body)["error"])
     end
 
     test "ai_bundle prompt=1 returns the plain-text prompt without needing paths" do

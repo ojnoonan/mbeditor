@@ -29,7 +29,7 @@ module Mbeditor
 
     test "renders instructions, index and marker-delimited byte-exact files" do
       put("app/a.rb", "puts 1\n")
-      md = build("app")[:markdown]
+      md = build("app")[:data]
 
       assert_includes md, "# #{File.basename(@dir)}"
       assert_includes md, "Do not read this file top to bottom"
@@ -49,13 +49,13 @@ module Mbeditor
       assert prompt.end_with?("\nTASK: ")
       put("t.txt", "secret-content\n")
       refute_includes prompt, "secret-content"
-      assert_includes build("t.txt")[:markdown], AiBundleService::DIFF_RULES
+      assert_includes build("t.txt")[:data], AiBundleService::DIFF_RULES
     end
 
     test "a file without a final newline is flagged no-eol and gets one" do
       put("t.txt", "tail")
 
-      assert_includes build("t.txt")[:markdown], "=== FILE: t.txt (1 lines no-eol) ===\ntail\n=== END FILE: t.txt ===\n"
+      assert_includes build("t.txt")[:data], "=== FILE: t.txt (1 lines no-eol) ===\ntail\n=== END FILE: t.txt ===\n"
     end
 
     test "binary files are skipped and listed" do
@@ -64,8 +64,8 @@ module Mbeditor
       result = build("img.bin", "ok.txt")
 
       assert_equal 1, result[:files]
-      assert_includes result[:markdown], "- img.bin skipped (binary or not UTF-8, 5 Bytes)"
-      refute_includes result[:markdown], "=== FILE: img.bin"
+      assert_includes result[:data], "- img.bin skipped (binary or not UTF-8, 5 Bytes)"
+      refute_includes result[:data], "=== FILE: img.bin"
     end
 
     test "lock, minified and map files are skipped but indexed with their size" do
@@ -75,26 +75,28 @@ module Mbeditor
 
       assert_equal 1, result[:files]
       %w[Gemfile.lock package-lock.json yarn.lock pnpm-lock.yaml app.min.js app.min.css app.js.map].each do |n|
-        assert_includes result[:markdown], "- #{n} skipped (generated, 2 KB)"
-        refute_includes result[:markdown], "=== FILE: #{n}"
+        assert_includes result[:data], "- #{n} skipped (generated, 2 KB)"
+        refute_includes result[:data], "=== FILE: #{n}"
       end
     end
 
     test "excluded paths are not bundled" do
       put("tmp/secret.txt", "nope")
       put("keep.txt", "yes\n")
-      md = build(".")[:markdown]
+      md = build(".")[:data]
 
       refute_includes md, "secret.txt"
       assert_includes md, "=== FILE: keep.txt"
     end
 
-    test "a selection over the 64 MB cap is refused with its size" do
-      put("big.txt", "a" * (AiBundleService::MAX_BYTES + (1024 * 1024)))
-      err = assert_raises(AiBundleService::LimitExceededError) { build("big.txt") }
+    test "a selection too big even for three parts is refused with its size" do
+      put("big.txt", "a" * 20)
+      with_max_bytes(10) do
+        err = assert_raises(AiBundleService::LimitExceededError) { build("big.txt") }
 
+        assert_match(/Selection is too large \(20 Bytes\) even split into 3 parts\. Limit is 10 Bytes per part/, err.message)
+      end
       assert_equal 64 * 1024 * 1024, AiBundleService::MAX_BYTES
-      assert_match(/too large \(65 MB\)\. Limit is 64 MB/, err.message)
     end
 
     test "skipped files do not count toward the cap" do
@@ -108,7 +110,7 @@ module Mbeditor
       put("a.txt", "hi\n")
       result = build("a.txt")
 
-      assert_equal result[:markdown].bytesize, result[:bytes]
+      assert_equal result[:data].bytesize, result[:bytes]
     end
 
     test "secret files are listed as skipped (secret) and never bundled" do
@@ -118,7 +120,7 @@ module Mbeditor
       put(".env.example", "KEY=\n")
       put(".env.sample", "KEY=\n")
       put("ok.txt", "hi\n")
-      md = build(".")[:markdown]
+      md = build(".")[:data]
 
       refute_includes md, "TOPSECRET"
       secrets.each do |n|
@@ -136,9 +138,9 @@ module Mbeditor
       result = build(".")
 
       assert_equal 1, result[:files]
-      assert_equal 1, result[:markdown].scan("FORGED").length
-      assert_includes result[:markdown], "- #{name.inspect} skipped (unsafe name"
-      refute_match(/^FORGED$/, result[:markdown])
+      assert_equal 1, result[:data].scan("FORGED").length
+      assert_includes result[:data], "- #{name.inspect} skipped (unsafe name"
+      refute_match(/^FORGED$/, result[:data])
     end
 
     test "non-ASCII names and content bundle when default_external is US-ASCII" do
@@ -146,7 +148,7 @@ module Mbeditor
       original = Encoding.default_external
       Encoding.default_external = "US-ASCII"
       begin
-        md = build(".")[:markdown]
+        md = build(".")[:data]
         assert_includes md, "=== FILE: é/ü.txt (1 lines) ===\nhéllo\n"
       ensure
         Encoding.default_external = original
@@ -159,7 +161,7 @@ module Mbeditor
       result = build(".")
 
       assert_equal 1, result[:files]
-      assert_includes result[:markdown], "- big.bin skipped (binary or not UTF-8"
+      assert_includes result[:data], "- big.bin skipped (binary or not UTF-8"
     end
 
     test "an unreadable file raises with the relative name only" do
@@ -174,10 +176,6 @@ module Mbeditor
       File.chmod(0o644, full) if full
     end
 
-    def part(n, of)
-      AiBundleService.new(@dir).build([@dir], parts: of, part: n)
-    end
-
     def files_in(md)
       md.scan(/^=== FILE: (.+?) \(\d+ lines/).flatten
     end
@@ -190,66 +188,119 @@ module Mbeditor
       put("f.txt", "f" * 200)
     end
 
-    test "parts cover every file exactly once, in path order, without cutting a file" do
-      seed_parts
-      all = files_in(build(".")[:markdown])
-      [2, 3].each do |n|
-        per = (1..n).map { |k| files_in(part(k, n)[:markdown]) }
-
-        assert_equal all, per.flatten, "n=#{n}"
-        assert_equal all.length, per.flatten.uniq.length
+    # { member name => text }, read back by Python's zipfile after testzip.
+    def zip_members(data)
+      Tempfile.create(["bundle", ".zip"], binmode: true) do |f|
+        f.write(data)
+        f.flush
+        script = "import zipfile, sys, json\nz = zipfile.ZipFile(sys.argv[1])\n" \
+                 "assert z.testzip() is None\nprint(json.dumps({n: z.read(n).decode('utf-8') for n in z.namelist()}))"
+        out, status = Open3.capture2e("python3", "-I", "-c", script, f.path)
+        assert status.success?, out
+        JSON.parse(out)
       end
     end
 
-    test "the split is deterministic and balances bytes" do
+    test "plan picks the fewest parts that fit" do
       seed_parts
-      first = (1..2).map { |k| part(k, 2)[:markdown] }
+      plan = ->(limit) { with_max_bytes(limit) { AiBundleService.new(@dir).plan([@dir]) } }
 
-      assert_equal first, (1..2).map { |k| part(k, 2)[:markdown] }
-      assert_equal %w[a.txt b.txt c/d.txt], files_in(first[0])
-      assert_equal %w[e.txt f.txt], files_in(first[1])
+      assert_equal({ parts: 1, bytes: 800 }, plan.call(800))
+      assert_equal 2, plan.call(799)[:parts]
+      assert_equal 2, plan.call(500)[:parts]
+      assert_equal 3, plan.call(499)[:parts]
+      assert_equal 3, plan.call(300)[:parts]
+      assert_raises(AiBundleService::LimitExceededError) { plan.call(299) }
     end
 
-    test "each part is self-contained and says which part it is" do
+    test "plan decides from sizes alone and ignores skipped and binary files" do
+      put("a.txt", "a" * 10)
+      put("x.lock", "z" * 1000)
+      put("img.bin", "\0" * 1000)
+
+      assert_equal({ parts: 1, bytes: 10 }, with_max_bytes(20) { AiBundleService.new(@dir).plan([@dir]) })
+    end
+
+    test "a selection that fits is one markdown file" do
       seed_parts
-      md = part(2, 3)[:markdown]
+      result = build(".")
 
-      assert_includes md, "(part 2 of 3)"
-      assert_includes md, "This is part 2 of 3."
-      assert_includes md, AiBundleService::UNPACK_SNIPPET
-      refute_includes build(".")[:markdown], "part 1 of"
+      assert_equal 1, result[:parts]
+      assert_equal 5, result[:files]
+      assert_includes result[:data], "=== FILE: a.txt "
+      refute_includes result[:data], "part 1 of"
     end
 
-    test "a single file lands in one part and the others are empty" do
-      put("only.txt", "x\n")
+    test "too big for one file builds a valid zip of the minimum number of parts" do
+      skip "python3 not installed" unless system("python3", "--version", out: File::NULL, err: File::NULL)
 
-      assert_equal %w[only.txt], files_in(part(1, 3)[:markdown]) + files_in(part(2, 3)[:markdown]) + files_in(part(3, 3)[:markdown])
+      seed_parts
+      result = with_max_bytes(500) { build(".") }
+      members = zip_members(result[:data])
+      name = "#{File.basename(@dir)}-bundle"
+
+      assert_equal 2, result[:parts]
+      assert_equal 5, result[:files]
+      assert_equal %W[#{name}-1-of-2.md #{name}-2-of-2.md], members.keys
+      assert_equal %w[a.txt b.txt c/d.txt], files_in(members.values[0])
+      assert_equal %w[e.txt f.txt], files_in(members.values[1])
+      assert_includes members.values[1], "(part 2 of 2)"
+      assert_equal members.values.sum(&:bytesize), result[:bytes]
     end
 
-    test "the 64 MB cap applies per part and suggests splitting below three parts" do
-      put("a.txt", "a" * (40 * 1024 * 1024))
-      put("b.txt", "b" * (40 * 1024 * 1024))
-      err = assert_raises(AiBundleService::LimitExceededError) { part(1, 1) }
+    test "the split is deterministic" do
+      seed_parts
+      first = with_max_bytes(500) { build(".")[:data] }
 
-      assert_match(/Selection is too large \(80 MB\)\. Limit is 64 MB\. Split the export into more parts/, err.message)
-      assert_equal 1, part(1, 2)[:files]
-      assert_equal 1, part(2, 2)[:files]
+      assert_equal first, with_max_bytes(500) { build(".")[:data] }
     end
 
-    test "no split hint when already at three parts" do
-      put("big.txt", "a" * (AiBundleService::MAX_BYTES + 1))
-      err = assert_raises(AiBundleService::LimitExceededError) { part(1, 3) }
+    test "three parts cover every file exactly once, in path order" do
+      skip "python3 not installed" unless system("python3", "--version", out: File::NULL, err: File::NULL)
 
-      assert_match(/A part is too large/, err.message)
-      refute_match(/Split/, err.message)
+      seed_parts
+      result = with_max_bytes(350) { build(".") }
+
+      assert_equal 3, result[:parts]
+      assert_equal %w[a.txt b.txt c/d.txt e.txt f.txt], zip_members(result[:data]).values.flat_map { |md| files_in(md) }
     end
 
-    test "prompt for N parts names every part and says to unpack each" do
+    test "the zip passes the system unzip -t" do
+      skip "unzip not installed" unless system("unzip", "-v", out: File::NULL, err: File::NULL)
+
+      seed_parts
+      data = with_max_bytes(350) { build(".")[:data] }
+      Tempfile.create(["bundle", ".zip"], binmode: true) do |f|
+        f.write(data)
+        f.flush
+        out, status = Open3.capture2e("unzip", "-t", f.path)
+
+        assert status.success?, out
+        assert_match(/No errors detected/, out)
+      end
+    end
+
+    test "ZipWriter handles empty and non-ASCII content" do
+      skip "python3 not installed" unless system("python3", "--version", out: File::NULL, err: File::NULL)
+
+      members = zip_members(ZipWriter.write([["é.md", "héllo\n"], ["empty.md", ""]]))
+
+      assert_equal({ "é.md" => "héllo\n", "empty.md" => "" }, members)
+    end
+
+    test "prompt for a selection that fits names the .md and says it is one file" do
+      prompt = AiBundleService.prompt("proj-bundle.md", 1)
+
+      assert_includes prompt, "`proj-bundle.md` is a large source bundle"
+      assert_includes prompt, 'BUNDLE = "/mnt/data/proj-bundle.md"'
+    end
+
+    test "prompt for a split names the one .zip, never several files" do
       prompt = AiBundleService.prompt("proj-bundle.md", 2)
 
-      assert_includes prompt, "`proj-bundle-1-of-2.md`, `proj-bundle-2-of-2.md` are the 2 parts"
-      assert_includes prompt, "Upload all 2"
-      assert_includes prompt, "once per part"
+      assert_includes prompt, "`proj-bundle.zip` is a zip of 2 markdown parts"
+      assert_includes prompt, 'BUNDLE = "/mnt/data/proj-bundle.zip"'
+      refute_match(/of-2\.md|Upload all|once per part/, prompt)
       assert prompt.end_with?("\nTASK: ")
     end
 
@@ -261,9 +312,9 @@ module Mbeditor
       result = build("dump.sql", "db", "ok.txt")
 
       assert_equal 1, result[:files]
-      refute_includes result[:markdown], "SECRETROWS"
-      assert_includes result[:markdown], "- dump.sql skipped (excluded by config, 11 Bytes)"
-      assert_includes result[:markdown], "- db/deep/x.sql skipped (excluded by config"
+      refute_includes result[:data], "SECRETROWS"
+      assert_includes result[:data], "- dump.sql skipped (excluded by config, 11 Bytes)"
+      assert_includes result[:data], "- db/deep/x.sql skipped (excluded by config"
     end
 
     test "ai_bundle_exclude: a slashed pattern matches the relative path only" do
@@ -271,7 +322,7 @@ module Mbeditor
       put("config/a.yml", "NOPE\n")
       put("other/config/a.yml", "keepme\n")
       put("private/x/y.txt", "NOPE\n")
-      md = build(".")[:markdown]
+      md = build(".")[:data]
 
       refute_includes md, "NOPE"
       assert_includes md, "- config/a.yml skipped (excluded by config"
@@ -283,27 +334,27 @@ module Mbeditor
       Mbeditor.configuration.ai_bundle_exclude = ["nothing"]
       put(".env", "TOPSECRET\n")
 
-      refute_includes build(".env", ".")[:markdown], "TOPSECRET"
+      refute_includes build(".env", ".")[:data], "TOPSECRET"
       assert AiBundleService.secret?(".env")
     end
 
-    test "unpacking every part into one project leaves a single base commit holding all files" do
+    test "the snippet unpacks a real 2-part zip into one project with a single base commit" do
       skip "python3 not installed" unless system("python3", "--version", out: File::NULL, err: File::NULL)
       skip "git not installed" unless system("git", "--version", out: File::NULL, err: File::NULL)
 
       seed_parts
+      result = with_max_bytes(500) { build(".") }
+      assert_equal 2, result[:parts]
+      first_md = zip_members(result[:data]).values.first
+
       Dir.mktmpdir("mbeditor_parts_") do |sandbox|
-        project = File.join(sandbox, "project")
-        counts = (1..2).map do |k|
-          unpack_bundle(part(k, 2)[:markdown], sandbox)
-          Open3.capture2("git", "rev-list", "--count", "HEAD", chdir: project).first.to_i
-        end
+        project = unpack_bundle(first_md, sandbox, zip: result[:data])
         files = Open3.capture2("git", "ls-tree", "-r", "--name-only", "HEAD", chdir: project).first.split("\n")
 
-        assert_equal [1, 1], counts
+        assert_equal "1", Open3.capture2("git", "rev-list", "--count", "HEAD", chdir: project).first.strip
         assert_equal %w[a.txt b.txt c/d.txt e.txt f.txt], files
         assert_equal "d" * 300, File.read(File.join(project, "c/d.txt"))
-        unpack_bundle(part(2, 2)[:markdown], sandbox)
+        unpack_bundle(first_md, sandbox, zip: result[:data])
         assert_equal "1", Open3.capture2("git", "rev-list", "--count", "HEAD", chdir: project).first.strip
       end
     end
@@ -319,10 +370,10 @@ module Mbeditor
       "dir/empty.txt" => ""
     }.freeze
 
-    def unpack_bundle(markdown, into)
+    def unpack_bundle(markdown, into, zip: nil)
       snippet = markdown[/```python\n(.*?)```/m, 1]
-      bundle = File.join(into, "bundle.md")
-      File.binwrite(bundle, markdown)
+      bundle = File.join(into, zip ? "bundle.zip" : "bundle.md")
+      File.binwrite(bundle, zip || markdown)
       script = snippet.sub(/^BUNDLE = .*$/) { "BUNDLE = #{bundle.inspect}" }
       out, status = Open3.capture2e("python3", "-c", script, chdir: into)
       assert status.success?, out
@@ -334,7 +385,7 @@ module Mbeditor
       skip "git not installed" unless system("git", "--version", out: File::NULL, err: File::NULL)
 
       SOURCES.each { |rel, body| put(rel, body) }
-      markdown = build(".")[:markdown]
+      markdown = build(".")[:data]
 
       Dir.mktmpdir("mbeditor_unpack_") do |sandbox|
         project = unpack_bundle(markdown, sandbox)
