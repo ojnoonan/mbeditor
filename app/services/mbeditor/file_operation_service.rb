@@ -64,8 +64,6 @@ module Mbeditor
       { ok: true, type: "file", path: relative_path(path), name: File.basename(path) }
     end
 
-    private
-
     # Write through a temp file in the same directory and rename over the
     # target: a truncate-then-write loses the file outright if the process dies
     # mid-save. The symlink is resolved first — renaming onto the link itself
@@ -74,13 +72,15 @@ module Mbeditor
       target = link_target(path)
       tmp = File.join(File.dirname(target), ".#{File.basename(target)}.mbeditor-tmp")
       mode = File.stat(target).mode & 0o7777 if File.exist?(target)
-      File.write(tmp, content)
+      File.binwrite(tmp, content)
       File.chmod(mode, tmp) if mode
       File.rename(tmp, target)
     rescue StandardError
       FileUtils.rm_f(tmp) if tmp
       raise
     end
+
+    private
 
     def link_target(path)
       return path.to_s unless File.symlink?(path)

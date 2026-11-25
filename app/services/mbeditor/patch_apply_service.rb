@@ -21,26 +21,32 @@ module Mbeditor
 
     # Returns { ok:, files: [{path, added, removed, status}], output:, patch: }
     # where patch is the normalised text that was checked or applied.
-    def call(raw_patch, check: true)
+    #
+    # +blocked+ is an optional predicate over a workspace-relative path; a patch
+    # touching a path it accepts is refused before anything is written.
+    def call(raw_patch, check: true, blocked: nil)
       patch = normalize(raw_patch)
+      reject_symlinks!(patch)
       prefix = git_prefix
 
       # A workspace below the repository root: git reads `diff --git` paths as
       # repo-root-relative, the AI wrote them workspace-relative.
-      args = %w[git apply --recount --whitespace=nowarn]
-      args << "--directory=#{prefix}" unless prefix.empty?
+      base = %w[git -c core.quotepath=off apply --whitespace=nowarn]
+      base << "--directory=#{prefix}" unless prefix.empty?
 
+      args, check_error = pick_args(base, patch)
       files = list_files(patch, args, prefix)
-      run!(args + ["--check"], patch)
+      reject_blocked!(files, blocked)
+      raise check_error if check_error
+
       result = check ? nil : run!(args, patch)
       { ok: true, files: files, output: result ? result[:stderr].strip : "", patch: patch }
     end
 
     private
 
-    # Chat replies arrive as a fenced block with prose around it. Take from the
-    # first diff line to the closing fence; a bare ``` can never be a hunk line
-    # (those start with space, + or -).
+    # Chat replies arrive as fenced blocks with prose around them. A bare ```
+    # can never be a hunk line (those start with space, + or -).
     def normalize(raw)
       raise Error, "Patch is too large (limit #{MAX_PATCH_BYTES / 1024 / 1024} MB)." if raw.to_s.bytesize > MAX_PATCH_BYTES
 
@@ -49,22 +55,69 @@ module Mbeditor
       # patch for a CRLF file (LF structure, CRLF content) and must stay as is.
       text = text.gsub("\r\n", "\n") unless text.match?(/(?<!\r)\n/)
       lines = text.lines
-      start = lines.index { |l| l.start_with?("diff --git ", "--- ") }
-      raise Error, "No diff found. Paste a unified diff (diff --git / --- / +++ lines)." unless start
 
-      body = lines.drop(start)
-      fence = body.index { |l| l.start_with?("```") }
-      body = body.first(fence) if fence
-      text = body.join
-      text.end_with?("\n") ? text : "#{text}\n"
+      # Every diff block in the reply, fenced or not: from a diff line to the
+      # closing fence (or the end of the text), then on to the next block.
+      chunks = []
+      while (start = lines.index { |l| l.start_with?("diff --git ", "--- ") })
+        body = lines.drop(start)
+        fence = body.index { |l| l.start_with?("```") }
+        chunk = (fence ? body.first(fence) : body).join
+        chunks << (chunk.end_with?("\n") ? chunk : "#{chunk}\n")
+        lines = fence ? body.drop(fence + 1) : []
+      end
+      raise Error, "No diff found. Paste a unified diff (diff --git / --- / +++ lines)." if chunks.empty?
+
+      chunks.join
+    end
+
+    # `--recount` rescues wrong hunk counts, but on a patch with no `diff --git`
+    # headers it reads a `--- a/b` line as a removed line, so a failed check
+    # retries without it. Returns [args, nil], or [args, error] when nothing
+    # applies; the error says so if only whitespace differs.
+    def pick_args(base, patch)
+      variants = [base + ["--recount"], base]
+      ok = variants.find { |args| passes?(args + ["--check"], patch) }
+      return [ok, nil] if ok
+
+      error = begin
+        run!(variants.first + ["--check"], patch)
+      rescue Error => e
+        e
+      end
+      if variants.any? { |args| passes?(args + %w[--ignore-whitespace --check], patch) }
+        error = Error.new("#{error.message}\n\nHint: line endings or trailing newline differ from the file on disk.")
+      end
+      [variants.first, error]
+    end
+
+    def passes?(cmd, patch)
+      run!(cmd, patch)
+      true
+    rescue Error
+      false
+    end
+
+    # A symlink made by a patch can point anywhere, and later writes would go
+    # through it.
+    def reject_symlinks!(patch)
+      return unless patch.match?(/^(?:new (?:file )?mode|index [0-9a-f]+\.\.[0-9a-f]+) 120000\b/)
+
+      raise Error, "Refusing a patch that creates or changes a symbolic link."
+    end
+
+    def reject_blocked!(files, blocked)
+      return unless blocked
+
+      files.flat_map { |f| [f[:path], f[:from]] }.compact.each do |p|
+        raise Error, "Refusing to touch #{p.inspect}: this path is excluded from editing." if blocked.call(p)
+      end
     end
 
     # A non-repo directory gives "" (git apply works there), as does the repo root.
     def git_prefix
       r = run(%w[git rev-parse --show-prefix])
       r[:exit_status].success? ? r[:stdout].strip : ""
-    rescue Errno::ENOENT
-      raise Error, "git is not installed; it is needed to apply patches."
     end
 
     def list_files(patch, args, prefix)
@@ -114,6 +167,12 @@ module Mbeditor
 
     def run(cmd, stdin = nil)
       ProcessRunner.call(cmd, timeout: TIMEOUT, stdin_data: stdin, chdir: @root, max_bytes: OUTPUT_CAP)
+    rescue ProcessRunner::TimeoutError
+      raise Error, "git timed out after #{TIMEOUT}s."
+    rescue Errno::EPIPE
+      raise Error, "git stopped reading the patch before the end; it may be malformed."
+    rescue Errno::ENOENT
+      raise Error, "git is not installed; it is needed to apply patches."
     end
 
     def run!(cmd, stdin)

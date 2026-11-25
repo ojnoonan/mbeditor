@@ -14,6 +14,19 @@ module Mbeditor
 
     STREAM_PREFIX = "mbeditor_collab"
 
+    # A room is identified by workspace *and* relative path. Keying on the path
+    # alone means two workspaces that both contain "README.md" share one buffer,
+    # so pointing `workspace_root` at a different project seeds its file with the
+    # previous project's content. The NUL separator cannot occur in either part.
+    def self.room_key(path)
+      "#{WorkspaceRootResolver.call}\0#{path}"
+    end
+
+    # Called by endpoints that rewrite files server-side.
+    def self.files_written(relative_paths)
+      relative_paths.compact.each { |p| CollaborationDocStore.discard_idle(room_key(p)) }
+    end
+
     def subscribed
       return unless mbeditor_authenticated?
 
@@ -57,6 +70,16 @@ module Mbeditor
       relay("type" => "request_snapshot")
     end
 
+    # Answered to the asker only: the one granted client rewrites the shared doc
+    # to the new disk content, everyone else receives that as a doc_update.
+    def claim_disk_write(data)
+      key = data["key"].to_s
+      return if key.empty?
+
+      transmit({ "type" => "disk_claim", "key" => key,
+                 "granted" => CollaborationDocStore.claim_disk_write(room_key, key) })
+    end
+
     def awareness(data)
       bytes = data["awareness"]
       return if bytes.nil?
@@ -88,12 +111,8 @@ module Mbeditor
                  "seed" => CollaborationDocStore.claim_seed(room_key) })
     end
 
-    # A room is identified by workspace *and* relative path. Keying on the path
-    # alone means two workspaces that both contain "README.md" share one buffer,
-    # so pointing `workspace_root` at a different project seeds its file with the
-    # previous project's content. The NUL separator cannot occur in either part.
     def room_key
-      @room_key ||= "#{WorkspaceRootResolver.call}\0#{@path}"
+      @room_key ||= self.class.room_key(@path)
     end
 
     def stream_name

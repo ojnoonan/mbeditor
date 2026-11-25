@@ -102,5 +102,98 @@ module Mbeditor
       assert_equal 403, integration_session.response.status
       assert_equal "one\ntwo\n", File.read(File.join(@workspace, "a.txt"))
     end
+
+    test "ai_bundle 404 names the relative path that was not found" do
+      get "/mbeditor/ai_bundle", params: { paths: ["lib", "gone_dir"] }
+
+      assert_response :not_found
+      assert_equal "Not found: gone_dir", JSON.parse(response.body)["error"]
+    end
+
+    test "archive 404 names the relative path that was not found" do
+      get "/mbeditor/archive", params: { paths: ["gone_dir"] }
+
+      assert_response :not_found
+      assert_equal "Not found: gone_dir", JSON.parse(response.body)["error"]
+    end
+
+    test "ai_bundle never lists secrets with content" do
+      File.write(File.join(@workspace, ".env"), "TOPSECRET=1\n")
+      get "/mbeditor/ai_bundle", params: { paths: [".", "a.txt"] }
+
+      assert_response :success
+      refute_includes response.body, "TOPSECRET"
+      assert_includes response.body, "- .env skipped (secret)"
+    end
+
+    test "ai_bundle error for an unreadable file carries no absolute path" do
+      skip "root can read anything" if Process.uid.zero?
+      full = File.join(@workspace, "locked.txt")
+      File.write(full, "x")
+      File.chmod(0, full)
+      get "/mbeditor/ai_bundle", params: { paths: ["locked.txt"] }
+
+      assert_response :unprocessable_content
+      refute_includes response.body, @workspace
+      assert_includes response.body, "locked.txt"
+    ensure
+      File.chmod(0o644, full) if full
+    end
+
+    test "raw sends a sandbox CSP and nosniff, and serves html as text" do
+      File.write(File.join(@workspace, "page.html"), "<script>alert(1)</script>")
+      get "/mbeditor/raw", params: { path: "page.html" }
+
+      assert_response :success
+      assert_equal "sandbox", response.headers["Content-Security-Policy"]
+      assert_equal "nosniff", response.headers["X-Content-Type-Options"]
+      assert_equal "text/plain", response.media_type
+    end
+
+    test "raw keeps svg as an image but sandboxed, and html stays html as a download" do
+      File.write(File.join(@workspace, "i.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>")
+      File.write(File.join(@workspace, "page.html"), "<p>x</p>")
+      get "/mbeditor/raw", params: { path: "i.svg" }
+
+      assert_equal "image/svg+xml", response.media_type
+      assert_equal "sandbox", response.headers["Content-Security-Policy"]
+
+      get "/mbeditor/raw", params: { path: "page.html", download: "1" }
+
+      assert_equal "text/html", response.media_type
+      assert_equal "sandbox", response.headers["Content-Security-Policy"]
+      assert_match(/attachment/, response.headers["Content-Disposition"])
+    end
+
+    test "apply_patch refuses a path in excluded_paths on check and on apply" do
+      patch = "diff --git a/tmp/x.txt b/tmp/x.txt\nnew file mode 100644\n--- /dev/null\n+++ b/tmp/x.txt\n@@ -0,0 +1 @@\n+x\n"
+      [true, false].each do |check|
+        post_patch(check: check, patch: patch)
+
+        assert_response :unprocessable_content
+        assert_match(/tmp\/x\.txt/, JSON.parse(response.body)["error"])
+        refute File.exist?(File.join(@workspace, "tmp", "x.txt"))
+      end
+    end
+
+    test "apply_patch turns a git timeout into a clear error" do
+      original = ProcessRunner.method(:call)
+      ProcessRunner.define_singleton_method(:call) { |*, **| raise ProcessRunner::TimeoutError, "boom" }
+      begin
+        post_patch(check: true)
+      ensure
+        ProcessRunner.define_singleton_method(:call, original)
+      end
+
+      assert_response :unprocessable_content
+      assert_match(/timed out/, JSON.parse(response.body)["error"])
+    end
+
+    test "import over the size cap is rejected with 413 before parsing" do
+      post "/mbeditor/import", params: { on_conflict: "ask" },
+                               headers: { "X-Mbeditor-Client" => "1", "CONTENT_LENGTH" => (EditorsController::IMPORT_MAX_TOTAL_BYTES + 10_000_000).to_s }
+
+      assert_response :content_too_large
+    end
   end
 end

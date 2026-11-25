@@ -204,6 +204,22 @@ module Mbeditor
       assert_equal ["DELTA"], CollaborationDocStore.state_for(room_key_for(path))[:deltas]
     end
 
+    test "claim_disk_write answers the asker only, granting the first claim of a write" do
+      subscribe path: "app/models/user.rb"
+      perform :claim_disk_write, "key" => "12:abc"
+      assert_equal({ "type" => "disk_claim", "key" => "12:abc", "granted" => true }, transmissions.last)
+
+      perform :claim_disk_write, "key" => "12:abc"
+      assert_equal false, transmissions.last["granted"]
+    end
+
+    test "files_written discards an idle room under the channel's room key" do
+      CollaborationDocStore.replace_snapshot(room_key_for("app/models/user.rb"), "OLD")
+      CollaborationChannel.files_written(["app/models/user.rb", nil])
+
+      assert_nil CollaborationDocStore.state_for(room_key_for("app/models/user.rb"))[:snapshot]
+    end
+
     private
 
     def with_auth(hook)

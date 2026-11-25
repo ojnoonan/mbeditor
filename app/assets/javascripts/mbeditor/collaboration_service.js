@@ -407,6 +407,9 @@ var CollaborationService = (function () {
       // A peer's replay was incomplete. Answer with our full state if we hold
       // one, so it can attach instead of diverging on stale text.
       if (room.binding && room.text.length > 0) pushSnapshot(room.path);
+    } else if (data.type === 'disk_claim') {
+      var onClaim = room.diskClaims && room.diskClaims[data.key];
+      if (onClaim) { delete room.diskClaims[data.key]; onClaim(!!data.granted); }
     } else if (data.type === 'awareness') {
       if (data.awareness && room.awareness && window.awarenessProtocol) {
         // REMOTE origin keeps the outbound handler from echoing peer state back.
@@ -895,8 +898,7 @@ var CollaborationService = (function () {
 
   // True when the room owns the file's content (a late-join applied shared state):
   // EditorPanel must then NOT apply the disk content at open, which would clobber it.
-  // Later external on-disk edits are filtered earlier, at the change-detection source
-  // (MbeditorApp.checkOpenTabsForExternalChanges), which skips any collab-bound file.
+  // Later external on-disk edits reach an attached room through applyDiskContent.
   function consumesDiskLoad(path) {
     var room = _rooms[path];
     return !!(room && room.binding && room.lateJoin);
@@ -984,6 +986,74 @@ var CollaborationService = (function () {
     return !!(room && room.binding);
   }
 
+  function _normEol(s) { return String(s).replace(/\r\n/g, '\n'); }
+
+  // FNV-1a: an opaque key the server compares for equality, nothing more.
+  function _contentKey(s) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return s.length + ':' + (h >>> 0).toString(16);
+  }
+
+  // The file was rewritten on disk (apply patch, import) while this room's
+  // shared text still holds the old version. Every attached client calls this,
+  // but only the one the server grants (claim_disk_write) replaces the text;
+  // two replacements would insert two copies. The rest receive it as a
+  // doc_update. onConverged fires on each client once its text matches disk,
+  // so it can rebaseline the tab as clean. Returns false when not attached.
+  function applyDiskContent(path, content, onConverged) {
+    var room = _rooms[path];
+    if (!room || !room.binding || !room.subscription) return false;
+    // Stop listening if the granted peer's update never arrives; the next
+    // external-change check finds the tab still behind and asks again.
+    var watch = _watchText(room, content, onConverged, 15000);
+    if (watch.done()) return true;
+    var key = _contentKey(_normEol(content));
+    room.diskClaims = room.diskClaims || {};
+    room.diskClaims[key] = function (granted) {
+      if (!granted || watch.done() || !room.binding) return;
+      room.doc.transact(function () {
+        room.text.delete(0, room.text.length);
+        room.text.insert(0, content);
+      });
+    };
+    try { room.subscription.perform('claim_disk_write', { key: key }); } catch (e) { /* cable down */ }
+    return true;
+  }
+
+  // A tab waiting on a reload banner: a peer may resolve it (Discard & Reload)
+  // without any disk write, so no files_changed ever reaches this client. Fire
+  // cb once the shared text equals content. No timeout; leaveRoom destroys the
+  // doc and its observers with it.
+  function whenContentMatches(path, content, cb) {
+    var room = _rooms[path];
+    if (!room || !room.binding) return false;
+    _watchText(room, content, cb, 0);
+    return true;
+  }
+
+  function _watchText(room, content, cb, timeoutMs) {
+    var target = _normEol(content);
+    var done = false;
+    var timer = null;
+    var settle = function () {
+      if (done || _normEol(room.text.toString()) !== target) return;
+      done = true;
+      room.text.unobserve(settle);
+      if (timer) clearTimeout(timer);
+      cb();
+    };
+    settle();
+    if (!done) {
+      room.text.observe(settle);
+      if (timeoutMs) timer = setTimeout(function () { done = true; room.text.unobserve(settle); }, timeoutMs);
+    }
+    return { done: function () { return done; } };
+  }
+
   // Push a fresh full snapshot to the server so it can compact the doc store:
   // CollaborationDocStore.replace_snapshot swaps the cached snapshot and keeps
   // only the deltas recorded after `applied_seq` (the newest sequence this client
@@ -1019,6 +1089,8 @@ var CollaborationService = (function () {
     isBound: isBound,
     isAttached: isAttached,
     pushSnapshot: pushSnapshot,
+    applyDiskContent: applyDiskContent,
+    whenContentMatches: whenContentMatches,
     setFollow: setFollow,
     clearFollow: clearFollow
   };

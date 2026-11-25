@@ -168,5 +168,78 @@ module Mbeditor
         assert_equal "one\nTWO\nthree\n", File.read(File.join(plain, "a.txt"))
       end
     end
+
+    test "refuses a patch that creates a symlink" do
+      ["new file mode 120000", "new mode 120000"].each do |line|
+        patch = "diff --git a/ln b/ln\n#{line}\n--- /dev/null\n+++ b/ln\n@@ -0,0 +1 @@\n+/etc/passwd\n"
+        err = assert_raises(PatchApplyService::Error, line) { apply(patch) }
+
+        assert_match(/symbolic link/, err.message)
+      end
+      refute File.symlink?(File.join(@dir, "ln"))
+    end
+
+    test "blocked paths are refused on check and apply, naming the path" do
+      patch = "diff --git a/tmp/x.txt b/tmp/x.txt\nnew file mode 100644\n--- /dev/null\n+++ b/tmp/x.txt\n@@ -0,0 +1 @@\n+x\n"
+      [true, false].each do |check|
+        err = assert_raises(PatchApplyService::Error) do
+          PatchApplyService.new(@dir).call(patch, check: check, blocked: ->(rel) { rel.start_with?("tmp/") })
+        end
+
+        assert_includes err.message, "tmp/x.txt"
+      end
+      refute File.exist?(File.join(@dir, "tmp"))
+    end
+
+    test "every fenced diff block in a reply is applied" do
+      File.write(File.join(@dir, "b.txt"), "x\n")
+      reply = "First:\n```diff\n#{MODIFY}```\nand then\n```diff\n" \
+              "diff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-x\n+y\n```\nDone.\n"
+      result = apply(reply)
+
+      assert_equal %w[a.txt b.txt], result[:files].map { |f| f[:path] }
+      assert_equal "one\nTWO\nthree\n", read("a.txt")
+      assert_equal "y\n", read("b.txt")
+    end
+
+    test "a CRLF mismatch fails with a hint and writes nothing" do
+      File.binwrite(File.join(@dir, "a.txt"), "one\r\ntwo\r\nthree\r\n")
+      err = assert_raises(PatchApplyService::Error) { apply(MODIFY) }
+
+      assert_match(/does not apply/, err.message)
+      assert_match(/line endings or trailing newline differ/, err.message)
+      assert_equal "one\r\ntwo\r\nthree\r\n", File.binread(File.join(@dir, "a.txt"))
+    end
+
+    test "a genuine mismatch gets no whitespace hint" do
+      err = assert_raises(PatchApplyService::Error) { apply(MODIFY.sub("-two", "-nope")) }
+
+      refute_match(/line endings/, err.message)
+    end
+
+    test "a headerless two-file patch applies when --recount would misread it" do
+      File.write(File.join(@dir, "b.txt"), "x\n")
+      patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,3 +1,3 @@\n one\n-two\n+TWO\n three\n" \
+              "--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-x\n+y\n"
+      apply(patch)
+
+      assert_equal "one\nTWO\nthree\n", read("a.txt")
+      assert_equal "y\n", read("b.txt")
+    end
+
+    test "a content line starting with -- does not break the patch under recount" do
+      File.write(File.join(@dir, "m.md"), "x\n-- y\nz\n")
+      patch = "diff --git a/m.md b/m.md\n--- a/m.md\n+++ b/m.md\n@@ -1,3 +1,3 @@\n x\n--- y\n+++ w\n z\n"
+      apply(patch)
+
+      assert_equal "x\n++ w\nz\n", read("m.md")
+    end
+
+    test "non-ASCII created paths come back unquoted with their created status" do
+      patch = "diff --git a/café.txt b/café.txt\nnew file mode 100644\n--- /dev/null\n+++ b/café.txt\n@@ -0,0 +1 @@\n+x\n"
+      result = apply(patch, check: true)
+
+      assert_equal [["café.txt", :created]], result[:files].map { |f| [f[:path], f[:status]] }
+    end
   end
 end

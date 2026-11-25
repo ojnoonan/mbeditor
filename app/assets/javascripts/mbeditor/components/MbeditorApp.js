@@ -2050,39 +2050,52 @@ var MbeditorApp = function MbeditorApp() {
       // still deferring, or degraded to local, holds its own buffer — a peer save
       // is an external change for it, handled by the files_changed path.
       if (typeof CollaborationService === 'undefined' || !CollaborationService.isAttached(path)) return;
-
-      var st = EditorStore.getState();
-      var changed = false;
-      var newPanes = st.panes.map(function (p) {
-        return Object.assign({}, p, {
-          tabs: p.tabs.map(function (t) {
-            if (t.path !== path || !t.dirty) return t;
-            changed = true;
-            return Object.assign({}, t, { dirty: false, cleanContent: t.content });
-          })
-        });
-      });
-      if (changed) EditorStore.setState({ panes: newPanes });
-
-      // The CRDT kept our buffer identical to what the peer just wrote, so the
-      // buffer is the new on-disk truth — refresh the external-change baseline.
-      var _savedTab = null;
-      newPanes.forEach(function (p) {
-        p.tabs.forEach(function (t) { if (t.path === path) _savedTab = t; });
-      });
-      if (_savedTab && typeof _savedTab.content === 'string') {
-        lastDiskContentRef.current[path] = _savedTab.content.replace(/\r\n/g, '\n');
-      }
-
-      // Reset the AVI clean baseline so undo past this peer's save shows dirty correctly.
-      var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[path];
-      if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
-        _modelEntry.cleanVersionId = _modelEntry.model.getAlternativeVersionId();
-      }
+      markCollabTabsClean(path);
     }
     WebSocketService.onFileSaved(handleFileSaved);
     return function () { WebSocketService.offFileSaved(handleFileSaved); };
   }, []);
+
+  // An attached tab's buffer now equals disk (a peer saved it, or an external
+  // write converged through the shared doc): clear dirty, rebaseline. content,
+  // when given, is the new disk text and replaces tab.content, which lags the
+  // model by the 250 ms content sync and is never synced for a background tab.
+  function markCollabTabsClean(path, content) {
+    var st = EditorStore.getState();
+    var changed = false;
+    var newPanes = st.panes.map(function (p) {
+      return Object.assign({}, p, {
+        tabs: p.tabs.map(function (t) {
+          if (t.path !== path) return t;
+          var next = typeof content === 'string' ? content : t.content;
+          if (!t.dirty && t.content === next) return t;
+          changed = true;
+          return Object.assign({}, t, { dirty: false, content: next, cleanContent: next });
+        })
+      });
+    });
+    // The banner asked about disk content the buffer now holds.
+    var reloads = st.pendingReloads || [];
+    var keptReloads = reloads.filter(function (r) { return r.path !== path; });
+    var update = {};
+    if (changed) update.panes = newPanes;
+    if (keptReloads.length !== reloads.length) update.pendingReloads = keptReloads;
+    if (update.panes || update.pendingReloads) EditorStore.setState(update);
+
+    var _savedTab = null;
+    newPanes.forEach(function (p) {
+      p.tabs.forEach(function (t) { if (t.path === path) _savedTab = t; });
+    });
+    if (_savedTab && typeof _savedTab.content === 'string') {
+      lastDiskContentRef.current[path] = _savedTab.content.replace(/\r\n/g, '\n');
+    }
+
+    // Reset the AVI clean baseline so undo past this point shows dirty correctly.
+    var _modelEntry = window.__mbeditorModels && window.__mbeditorModels[path];
+    if (_modelEntry && _modelEntry.model && !_modelEntry.model.isDisposed()) {
+      _modelEntry.cleanVersionId = _modelEntry.model.getAlternativeVersionId();
+    }
+  }
 
   // onlyPaths: when the trigger names the files that changed (the
   // files_changed push always does — it only ever announces mbeditor's own
@@ -2118,16 +2131,6 @@ var MbeditorApp = function MbeditorApp() {
     fileTabs.forEach(function (pt) {
       var savedAt = recentSavesRef.current[pt.tab.path];
       if (savedAt && Date.now() - savedAt < 3000) return;
-      // A collaboratively-bound file's live buffer is the shared CRDT, kept
-      // converged across peers and reconciled with disk on save (file_saved).
-      // Re-applying an external on-disk snapshot over it would silently clobber
-      // everyone's shared state, so skip detection here — the CRDT is authoritative
-      // while peers are editing. Intentional local edits (Format/Load) still flow
-      // through the binding and are unaffected.
-      if (typeof CollaborationService !== 'undefined' &&
-          CollaborationService.isAttached(pt.tab.path)) {
-        return;
-      }
       FileService.getFile(pt.tab.path, { allowMissing: true }).then(function (data) {
         if (!data || typeof data.content !== 'string') return;
         // Re-read the tab: the snapshot above predates the fetch, and edits or
@@ -2141,7 +2144,18 @@ var MbeditorApp = function MbeditorApp() {
         if (savedAgain && Date.now() - savedAgain < 3000) return;
         pt = { paneId: pt.paneId, tab: liveTab };
         var serverNorm = data.content.replace(/\r\n/g, '\n');
-        var tabNorm = (pt.tab.content || '').replace(/\r\n/g, '\n');
+        // An attached tab's buffer is the shared doc, which a peer may have
+        // changed without this tab's content catching up; read the model.
+        var attached = typeof CollaborationService !== 'undefined' &&
+          CollaborationService.isAttached(pt.tab.path);
+        var _m = attached && window.__mbeditorModels && window.__mbeditorModels[pt.tab.path];
+        var liveText = _m && _m.model && !_m.model.isDisposed() ? _m.model.getValue() : pt.tab.content;
+        var tabNorm = (liveText || '').replace(/\r\n/g, '\n');
+        if (attached && serverNorm === tabNorm) {
+          // The shared doc already carries the write (another client applied it).
+          markCollabTabsClean(pt.tab.path, data.content);
+          return;
+        }
 
         // Did the file on disk actually change? Compare disk against the last
         // disk content we saw, never against the buffer — a dirty buffer
@@ -2153,11 +2167,27 @@ var MbeditorApp = function MbeditorApp() {
         var prevDisk = lastDiskContentRef.current[pt.tab.path];
         lastDiskContentRef.current[pt.tab.path] = serverNorm;
         if (serverNorm === tabNorm) return;
-        if (prevDisk === undefined && pt.tab.dirty) return;
+        // An attached tab's dirty flag only moves while its editor is mounted,
+        // so peer edits to a background tab leave it "clean". Unsaved shared
+        // edits are the text differing from the last disk content we know.
+        var dirty = pt.tab.dirty;
+        if (attached && !dirty) {
+          dirty = tabNorm !== (prevDisk !== undefined ? prevDisk : (pt.tab.content || '').replace(/\r\n/g, '\n'));
+        }
+        if (prevDisk === undefined && dirty && !attached) return;
         if (prevDisk === undefined) prevDisk = tabNorm;
         if (serverNorm === prevDisk) return;
 
-        if (!pt.tab.dirty) {
+        if (!dirty && attached) {
+          // Never set the tab content here: EditorPanel would push the whole
+          // file through the binding on every client and duplicate it. The
+          // baseline only advances once the shared doc converges, so a write
+          // that never lands is retried by the next check.
+          lastDiskContentRef.current[pt.tab.path] = prevDisk;
+          CollaborationService.applyDiskContent(pt.tab.path, data.content, function () {
+            markCollabTabsClean(pt.tab.path, data.content);
+          });
+        } else if (!dirty) {
           EditorStore.setState({
             panes: EditorStore.getState().panes.map(function (p) {
               if (p.id !== pt.paneId) return p;
@@ -2198,6 +2228,11 @@ var MbeditorApp = function MbeditorApp() {
                 serverContent: data.content
               }])
             });
+            if (attached) {
+              CollaborationService.whenContentMatches(pt.tab.path, data.content, function () {
+                markCollabTabsClean(pt.tab.path, data.content);
+              });
+            }
           }
         }
       })["catch"](function () {});
@@ -2253,7 +2288,13 @@ var MbeditorApp = function MbeditorApp() {
       GitService.fetchStatus()["catch"](function () {});
     };
     var intervalId = setInterval(refresh, 5000);
-    var onVisible = function () { if (!document.hidden) fullRefresh(); };
+    // files_changed pushes are dropped while hidden, so catch the open tabs up
+    // here. The check writes state only for a tab whose disk content moved.
+    var onVisible = function () {
+      if (document.hidden) return;
+      fullRefresh();
+      checkOpenTabsForExternalChanges();
+    };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', fullRefresh);
     return function () {
@@ -3395,6 +3436,14 @@ var MbeditorApp = function MbeditorApp() {
   }
 
   function handleDiscardAndReload(reload) {
+    // Every peer sees this banner; see applyDiskContent for why only one may write.
+    if (typeof CollaborationService !== 'undefined' && CollaborationService.applyDiskContent(
+      reload.path, reload.serverContent,
+      function () { markCollabTabsClean(reload.path, reload.serverContent); }
+    )) {
+      dismissPendingReload(reload);
+      return;
+    }
     EditorStore.setState({
       panes: EditorStore.getState().panes.map(function (p) {
         if (p.id !== reload.paneId) return p;

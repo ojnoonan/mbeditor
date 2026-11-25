@@ -23,8 +23,23 @@ module Mbeditor
 
     class LimitExceededError < StandardError; end
 
+    # A message safe to show: names the workspace-relative path and never the
+    # absolute one that Errno messages carry.
+    class Error < StandardError; end
+
+    def self.read_error(rel, err)
+      Error.new("Cannot read #{rel}: #{SystemCallError.new(nil, err.errno).message}")
+    end
+
     def initialize(workspace_root)
       @root = workspace_root.to_s.chomp("/")
+      # Named paths are checked against the real root: a symlinked ancestor
+      # (macOS /tmp, a linked-in directory) makes lexical comparison unreliable.
+      @real_root = begin
+        File.realpath(@root)
+      rescue SystemCallError
+        @root
+      end
       @matcher = ExclusionMatcher.new(Mbeditor.configuration.excluded_paths, root: @root)
     end
 
@@ -53,7 +68,11 @@ module Mbeditor
     def collect(full_paths)
       entries = []
       seen_dirs = {}
-      queue = full_paths.dup
+      # A named path inside a symlinked directory passes the lexical check and
+      # lstat only inspects the leaf, so the real location is compared too. Only
+      # named paths need it: the walk never descends into a symlink.
+      queue = full_paths.select { |p| real_inside?(p) }
+      path = nil
 
       until queue.empty?
         path = queue.shift
@@ -94,9 +113,18 @@ module Mbeditor
       end
 
       entries
+    rescue SystemCallError => e
+      raise self.class.read_error(path ? relative(path) : "", e)
     end
 
     private
+
+    def real_inside?(path)
+      real = File.realpath(File.symlink?(path) ? File.dirname(path) : path)
+      real == @real_root || real.start_with?("#{@real_root}/")
+    rescue SystemCallError
+      false
+    end
 
     def write(entries)
       buffer = StringIO.new(+"".b)
@@ -107,8 +135,16 @@ module Mbeditor
             # TarWriter bounds the entry to the size it was given, so a file
             # that changed since it was stat-ed would otherwise write a short
             # or over-long member.
-            data = File.binread(entry[:path])
-            tar.add_file_simple(entry[:name], entry[:mode], data.bytesize) { |io| io.write(data) }
+            data = begin
+              File.binread(entry[:path])
+            rescue SystemCallError => e
+              raise self.class.read_error(entry[:name], e)
+            end
+            begin
+              tar.add_file_simple(entry[:name], entry[:mode], data.bytesize) { |io| io.write(data) }
+            rescue Gem::Package::TooLongFileName
+              raise Error, "Path is too long for a tar archive (#{entry[:name].bytesize} bytes, limit 256): #{entry[:name]}"
+            end
           end
         end
       end

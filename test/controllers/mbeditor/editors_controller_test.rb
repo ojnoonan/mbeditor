@@ -3063,8 +3063,8 @@ module Mbeditor
     end
 
     test "import rejects a batch over the total size limit" do
-      # Two files of 30 MB each clear the per-file 5 MB check only because the
-      # batch guard runs first — this asserts the batch guard, not the entry one.
+      # 60 MB of Content-Length trips the 413 guard before the body is read; the
+      # 422 batch check behind it covers requests with no Content-Length.
       chunk = "x" * (30 * 1024 * 1024)
 
       post "/mbeditor/import", params: {
@@ -3073,7 +3073,7 @@ module Mbeditor
         on_conflict: "ask"
       }
 
-      assert_response :unprocessable_content
+      assert_response :content_too_large
       assert_match(/too large/i, json["error"])
     end
 

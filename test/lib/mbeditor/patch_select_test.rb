@@ -180,5 +180,34 @@ module Mbeditor
       assert_equal %w[a.txt b.txt], files.map { |f| f["path"] }
       assert_equal plain, build(plain, [[true], [true]])
     end
+
+    test "hunk counts keep a removed '-- y' and an added '++ z' line inside their hunk" do
+      patch = "diff --git a/a.md b/a.md\n--- a/a.md\n+++ b/a.md\n@@ -1,2 +1,2 @@\n x\n--- y\n+++ z\n@@ -9 +9 @@\n-q\n+r\n"
+      files = parse(patch)
+
+      assert_equal 1, files.length
+      assert_equal 2, files[0]["hunks"].length
+      assert_equal patch, build(patch, [[true, true]])
+    end
+
+    test "without usable counts the old heuristic still splits plain-patch files" do
+      patch = "--- a/a\n+++ b/a\n@@ -1 +1 @@\n-1\n+2\n--- a/b\n+++ b/b\n@@ -1 +1 @@\n-1\n+2\n"
+
+      assert_equal %w[a b], parse(patch).map { |f| f["path"] }
+    end
+
+    test "git C-quoted paths are unquoted" do
+      patch = "diff --git \"a/caf\\303\\251.txt\" \"b/caf\\303\\251.txt\"\n--- \"a/caf\\303\\251.txt\"\n+++ \"b/caf\\303\\251.txt\"\n@@ -1 +1 @@\n-a\n+b\n"
+
+      assert_equal "café.txt", parse(patch)[0]["path"]
+    end
+
+    test "touchedPaths prefers the server's file list when it lines up" do
+      patch = "diff --git \"a/caf\\303\\251.txt\" \"b/caf\\303\\251.txt\"\n--- \"a/x\"\n+++ \"b/x\"\n@@ -1 +1 @@\n-a\n+b\n"
+      out = @ctx.eval("(function(){var f=MbeditorPatchSelect.parse(#{patch.to_json});" \
+                      "return MbeditorPatchSelect.touchedPaths(f,[[true]],[{path:'server/path.txt'}]);})()")
+
+      assert_equal ["server/path.txt"], out
+    end
   end
 end
