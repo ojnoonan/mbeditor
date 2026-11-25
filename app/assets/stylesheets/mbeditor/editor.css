@@ -384,9 +384,12 @@ html, body, #mbeditor-root {
   overflow-x: hidden;
 }
 
-.ide-sidebar-scrollable::-webkit-scrollbar { width: 6px; }
-.ide-sidebar-scrollable::-webkit-scrollbar-track { background: transparent; }
-.ide-sidebar-scrollable::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 3px; }
+.ide-sidebar-scrollable { scrollbar-color: var(--ide-scrollbar) transparent; }
+@supports not (scrollbar-color: auto) {
+  .ide-sidebar-scrollable::-webkit-scrollbar { width: 6px; }
+  .ide-sidebar-scrollable::-webkit-scrollbar-track { background: transparent; }
+  .ide-sidebar-scrollable::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 3px; }
+}
 
 /* ── File Tree ────────────────────────────────────────────── */
 .file-tree-root { padding: 4px 0; }
@@ -410,6 +413,10 @@ html, body, #mbeditor-root {
 .tree-item.active { background: var(--ide-active-bg); }
 .tree-item.selected { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ide-accent) 35%, transparent); background: color-mix(in srgb, var(--ide-accent) 8%, transparent); }
 .tree-item.active.selected { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ide-accent) 55%, transparent); }
+/* The keyboard's current row (aria-activedescendant), shown only while arrow
+   keys are driving the focused tree: FileTree adds .kbd-nav on a handled key
+   and drops it on mousedown. */
+.file-tree.kbd-nav:focus .tree-item.is-cursor { outline: 1px solid var(--ide-accent-fg); outline-offset: -1px; }
 .tree-item.drag-over { background: rgba(100, 160, 220, 0.25); box-shadow: inset 0 0 0 1px rgba(100, 160, 220, 0.7); }
 /* External file drop (import) — green, to read as "add" rather than "move" */
 .tree-item.drag-over-external { background: rgba(120, 200, 140, 0.22); box-shadow: inset 0 0 0 1px rgba(120, 200, 140, 0.75); }
@@ -521,8 +528,18 @@ html, body, #mbeditor-root {
   flex-shrink: 0;
 }
 
+/* The one deliberate ::-webkit-scrollbar holdout. The standard properties
+   cannot express a 3px bar — `thin` takes ~8px of layout out of a 35px row —
+   so Chrome/Safari keep the WebKit pseudo-elements here. They only honour
+   those while the element's scrollbar-color and scrollbar-width are both
+   `auto`, hence the reset of the inherited/universal values. Engines without
+   ::-webkit-scrollbar (Firefox) get the standard properties instead. */
+.tab-bar { scrollbar-color: auto; scrollbar-width: auto; }
 .tab-bar::-webkit-scrollbar { height: 3px; }
 .tab-bar::-webkit-scrollbar-thumb { background: var(--ide-hover-bg); }
+@supports not selector(::-webkit-scrollbar) {
+  .tab-bar { scrollbar-color: var(--ide-hover-bg) transparent; scrollbar-width: thin; }
+}
 
 .tab-new-file-btn {
   display: flex;
@@ -714,17 +731,71 @@ html, body, #mbeditor-root {
   user-select: none;
 }
 
-/* ── Shortcut Help Drawer ────────────────────────────────── */
-.shelp-backdrop {
+/* ── Modal dialog shell (components/ModalDialog.js) ──────── */
+/* The native <dialog> is an unstyled shell exactly the size of the panel it
+   wraps: the panel classes below (.schema-modal, .shelp-panel, …) keep all the
+   visual styling, and a pointer outside the dialog box is a backdrop click.
+   Top layer replaces the z-index ladder the overlay divs used to need.
+   Vendored pico.classless.css styles every <dialog> as its own full-viewport
+   flex overlay (inset 0, min-width/height 100%, tinted background, blur).
+   Left in place, the dialog box covers the whole screen, so no click ever
+   lands "outside" it and the backdrop never dismisses — hence the explicit
+   reset of position, size, display and backdrop-filter back to UA centring. */
+dialog.mb-dialog {
+  display: block;
   position: fixed;
   inset: 0;
+  margin: auto;
+  width: fit-content;
+  height: fit-content;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: inherit;
+  overflow: visible;
+}
+dialog.mb-dialog:not([open]) { display: none; }
+/* Both rules: without them a scroll gesture over the backdrop or past the end
+   of the dialog's content chains to the page behind. */
+dialog.mb-dialog:modal { overscroll-behavior: contain; }
+dialog.mb-dialog::backdrop {
   background: rgba(0, 0, 0, 0.55);
-  z-index: 9000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+dialog.mb-dialog-light::backdrop { background: rgba(0, 0, 0, 0.45); }
+
+/* ── Popover shell (components/Popover.js) ───────────────── */
+/* Undo the UA [popover] defaults (centred via inset:0 + margin:auto, Canvas
+   colours, a medium border, padding, overflow:auto) so the caller's inline
+   top/left/right place it and the component class styles it. :where() keeps
+   this at zero specificity, so any component rule wins whatever its order. */
+:where(.mb-popover[popover]) {
+  inset: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  overflow: visible;
 }
 
+/* MbeditorDialogs.confirm / .prompt — reuses the .schema-modal panel. */
+.mb-confirm { min-width: 360px; max-width: min(520px, 94vw); }
+.mb-confirm .schema-modal-body { padding: 14px 16px; }
+.mb-confirm-message { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.mb-confirm-message + .import-dest-input { margin-top: 10px; }
+.mb-confirm .import-dest-input { width: 100%; box-sizing: border-box; }
+/* pico.classless.css makes [type=submit] a full-width block. */
+.mb-confirm .import-conflict-btn { width: auto; margin: 0; }
+
+/* ── Shortcut Help Drawer ────────────────────────────────── */
 .shelp-panel {
   background: var(--ide-panel-bg);
   color: var(--ide-text);
@@ -1068,10 +1139,10 @@ body.mbeditor-migration-pending .ide-statusbar {
 /* Own popover rather than a title attribute: native tooltips wait ~1s before
    appearing, cannot show the colour swatch, and collapse the newlines this
    content needs. Fixed positioning is anchored from the chip's rect at hover
-   time — the titlebar never scrolls, so there is nothing to keep in sync. */
+   time — the titlebar never scrolls, so there is nothing to keep in sync.
+   Rendered as a manual popover (top layer), so it needs no z-index. */
 .collab-hovercard {
   position: fixed;
-  z-index: 4000;
   min-width: 180px;
   max-width: 320px;
   padding: 8px 10px;
@@ -1131,10 +1202,10 @@ body.mbeditor-migration-pending .ide-statusbar {
 }
 .collab-avatar-overflow { position: relative; }
 /* Fixed and anchored from the button's rect, like .collab-hovercard: inside the
-   title bar it was painted under the editor whatever its z-index. */
+   title bar it was painted under the editor whatever its z-index. A manual
+   popover now, so the top layer handles stacking. */
 .collab-overflow-popover {
   position: fixed;
-  z-index: 4000;
   min-width: 180px;
   max-width: 260px;
   max-height: 240px;
@@ -1579,15 +1650,6 @@ body.mbeditor-migration-pending .ide-statusbar {
 }
 
 /* ── Schema modal ─────────────────────────────────────────── */
-.schema-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.55);
-  z-index: 9000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 .schema-modal {
   background: var(--ide-bg, #1e1e1e);
   border: 1px solid var(--ide-border, #3c3c3c);
@@ -2400,9 +2462,12 @@ body.mbeditor-migration-pending .ide-statusbar {
   overflow-y: auto;
   overflow-x: hidden;
 }
-.ide-sidebar-fixed .collapsible-content::-webkit-scrollbar { width: 6px; }
-.ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-track { background: transparent; }
-.ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 3px; }
+.ide-sidebar-fixed .collapsible-content { scrollbar-color: var(--ide-scrollbar) transparent; }
+@supports not (scrollbar-color: auto) {
+  .ide-sidebar-fixed .collapsible-content::-webkit-scrollbar { width: 6px; }
+  .ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-track { background: transparent; }
+  .ide-sidebar-fixed .collapsible-content::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 3px; }
+}
 
 .open-editors-group-header {
   font-size: 10px;
@@ -2680,8 +2745,8 @@ body.mbeditor-migration-pending .ide-statusbar {
 
 /* Context menu */
 .context-menu {
+  /* Rendered as a popover (top layer): no z-index to keep ahead of. */
   position: fixed;
-  z-index: 9999;
   min-width: 180px;
   background: var(--ide-panel-bg);
   border: 1px solid var(--ide-border-input);
@@ -2693,23 +2758,48 @@ body.mbeditor-migration-pending .ide-statusbar {
   user-select: none;
 }
 
-.context-menu-item {
+/* Items are <button>s (PopupMenu.js). Two classes deep so the reset beats
+   pico.classless's button rules (background, border, padding, focus shadow). */
+.context-menu .context-menu-item {
+  appearance: none;
   display: flex;
   align-items: center;
   gap: 8px;
+  inline-size: 100%;
+  margin: 0;
   padding: 6px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
   cursor: pointer;
   white-space: nowrap;
 }
 
-.context-menu-item:hover {
+/* Hover moves focus onto the item (PopupMenu), so these are one item. While
+   the keyboard owns the menu, an item merely under the pointer stays plain. */
+.context-menu .context-menu-item:hover,
+.context-menu .context-menu-item:focus-visible {
   background: var(--ide-active-bg);
   color: #ffffff;
 }
 
-.context-menu-item-danger:hover {
+.context-menu:has(.context-menu-item:focus-visible) .context-menu-item:hover:not(:focus-visible) {
+  background: transparent;
+  color: inherit;
+}
+
+.context-menu .context-menu-item-danger:hover,
+.context-menu .context-menu-item-danger:focus-visible {
   background: rgba(244, 135, 113, 0.15);
   color: var(--ide-danger);
+}
+
+.context-menu-group:focus {
+  outline: none;
 }
 
 .context-menu-icon {
@@ -2720,30 +2810,11 @@ body.mbeditor-migration-pending .ide-statusbar {
   opacity: 0.8;
 }
 
-.context-menu-divider {
+.context-menu .context-menu-divider {
   height: 1px;
-  background: var(--ide-border);
   margin: 4px 0;
-}
-
-.ide-tab-context-menu-item {
-  padding: 6px 14px;
-  cursor: pointer;
-  color: #ccc;
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: transparent;
-}
-
-.ide-tab-context-menu-item:hover {
-  background: #094771;
-}
-
-.ide-tab-context-menu-item i {
-  width: 14px;
-  text-align: center;
+  border: 0;
+  background: var(--ide-border);
 }
 
 .collapsible-content {
@@ -2766,16 +2837,10 @@ body.mbeditor-migration-pending .ide-statusbar {
    window, not a centred modal. The rows are 22px and single-line — the path
    sits beside the name rather than under it, which is what lets a full
    viewport of results be scanned without scrolling. */
-.quick-open-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.35);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 6px;
-  z-index: 9999;
-}
+/* Quick Open is a ModalDialog pinned to the top like VS Code's, over a
+   lighter backdrop than the centred dialogs. */
+dialog.mb-dialog.mb-dialog-top { margin: 6px auto auto; }
+dialog.mb-dialog-top::backdrop { background: rgba(0, 0, 0, 0.35); }
 
 /* Always a frosted panel — VS Code's Quick Open floats over the editor, not
    inside it, so it stays readable whether or not the glass theme is on. */
@@ -2922,21 +2987,21 @@ body.mbeditor-migration-pending .ide-statusbar {
 .pdf-icon { color: var(--ide-danger) !important; }
 
 /* ── Scrollbars ────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: var(--ide-bg); }
-::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--ide-hover-bg); }
+/* Standard properties. scrollbar-color inherits, so :root colours every
+   native scrollbar; scrollbar-width does not, hence the universal rule (zero
+   specificity, so any component rule overrides it). Where these apply, Chrome
+   and Safari ignore ::-webkit-scrollbar, so the WebKit rules are only the
+   fallback for engines without scrollbar-color. */
+:root { scrollbar-color: var(--ide-scrollbar) var(--ide-bg); }
+* { scrollbar-width: thin; }
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--ide-bg); }
+  ::-webkit-scrollbar-thumb { background: var(--ide-scrollbar); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--ide-hover-bg); }
+}
 
 /* ── Draft restore dialog ───────────────────────────────────── */
-.ide-draft-restore-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.55);
-  z-index: 10001;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 .ide-draft-restore-dialog {
   background: var(--ide-panel-bg-alt);
   border: 1px solid var(--ide-border-input);
@@ -2995,16 +3060,6 @@ body.mbeditor-migration-pending .ide-statusbar {
 /* ══ SETTINGS MODAL ═════════════════════════════════════════════════════════
  * VS Code-style: left nav of sections, scrolling right pane of rows.
  * ─────────────────────────────────────────────────────────────────────────── */
-.ide-settings-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.45);
-  z-index: 9100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 /* Frosted like Quick Open — it floats over the editor, not inside it. */
 .ide-settings-modal {
   backdrop-filter: blur(20px) saturate(180%);
@@ -3285,14 +3340,6 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-
-/* Context menu items */
-.context-menu-item {
-  --pico-form-element-spacing-vertical: 6px;
-  font-size: 12px;
-  border-radius: 0;
-  border: none;
 }
 
 /* Tree inline create input — ultra-compact */
@@ -4027,11 +4074,6 @@ input.ide-model-graph-search[type="search"] {
    needs has actually failed — an empty room is silence, not a warning. */
 .mbeditor-collab-trouble { color: var(--ide-warning, #cca700); }
 .mbeditor-conflict-chip { color: var(--ide-error, #f48771); }
-.mbeditor-modal-backdrop {
-  position: fixed; inset: 0; z-index: 5000;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex; align-items: center; justify-content: center;
-}
 .mbeditor-collab-diag {
   width: min(560px, 92vw);
   max-height: 80vh; overflow-y: auto;

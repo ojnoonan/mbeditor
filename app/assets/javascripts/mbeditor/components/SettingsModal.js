@@ -220,7 +220,6 @@ var SETTINGS_SECTIONS = settingsSections(SETTINGS_ROWS);
 var SettingsModal = function SettingsModal(props) {
   var _React = React;
   var useState = _React.useState;
-  var useEffect = _React.useEffect;
   var useRef = _React.useRef;
 
   var onClose = props.onClose;
@@ -238,12 +237,6 @@ var SettingsModal = function SettingsModal(props) {
 
   var sectionRefs = useRef({});
 
-  useEffect(function() {
-    function onKeyDown(e) { if (e.key === 'Escape') onClose(); }
-    window.addEventListener('keydown', onKeyDown);
-    return function() { window.removeEventListener('keydown', onKeyDown); };
-  }, [onClose]);
-
   var q = query.trim().toLowerCase();
   var visible = sections.map(function(s) {
     if (!q) return s;
@@ -257,11 +250,8 @@ var SettingsModal = function SettingsModal(props) {
   }).filter(function(s) { return s.rows.length > 0; });
 
   return React.createElement(
-    'div',
-    { className: 'ide-settings-overlay', onClick: onClose },
-    React.createElement(
-      'div',
-      { className: 'ide-settings-modal', onClick: function(e) { e.stopPropagation(); } },
+    window.ModalDialog,
+    { className: 'ide-settings-modal', dialogClassName: 'mb-dialog-light', label: 'Settings', onDismiss: onClose },
       React.createElement(
         'div', { className: 'ide-settings-modal-header' },
         React.createElement('span', { className: 'ide-settings-modal-title' }, 'Settings'),
@@ -269,7 +259,7 @@ var SettingsModal = function SettingsModal(props) {
           type: 'search',
           className: 'ide-settings-search',
           placeholder: 'Search settings',
-          autoFocus: true,
+          'data-autofocus': true,
           value: query,
           onChange: function(e) { setQuery(e.target.value); }
         }),
@@ -335,7 +325,6 @@ var SettingsModal = function SettingsModal(props) {
           )
         )
       )
-    )
   );
 };
 

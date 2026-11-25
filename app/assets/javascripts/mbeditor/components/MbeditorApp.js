@@ -1655,10 +1655,12 @@ var MbeditorApp = function MbeditorApp() {
         setShowLogPanel(function (prev) { return !prev; });
       }
       // Ctrl+Shift+Z is handled in capture phase below so Monaco cannot swallow it.
+      // The context menu closes itself on Esc now (popover light dismiss).
+      // setCollabOverflowOpen, called here before, never existed: every Esc
+      // threw a ReferenceError after the setters above had run.
       if (e.key === 'Escape') {
-        setContextMenu(null);
         setShowHelp(false);
-        setCollabOverflowOpen(false);
+        setCollabOverflowAnchor(null);
       }
     };
 
@@ -1805,7 +1807,7 @@ var MbeditorApp = function MbeditorApp() {
         // Already in a Monaco editor — let Monaco's own binding handle it.
         if (ae.closest('.monaco-editor')) return;
         // Don't hijack Find while typing in another input region.
-        if (ae.closest('.ide-sidebar, .git-panel, .quick-open-overlay, .schema-modal, input, textarea, [contenteditable="true"]')) return;
+        if (ae.closest('.ide-sidebar, .git-panel, dialog, input, textarea, [contenteditable="true"]')) return;
       }
       e.preventDefault();
       e.stopPropagation();
@@ -2433,10 +2435,15 @@ var MbeditorApp = function MbeditorApp() {
       return tab.dirty;
     }).length;
 
-    if (dirtyCount === 0) return true;
+    if (dirtyCount === 0) return Promise.resolve(true);
 
     var dirtyLabel = dirtyCount === 1 ? "1 unsaved editor has changes." : dirtyCount + " unsaved editors have changes.";
-    return window.confirm(dirtyLabel + " Close " + scopeLabel + " without saving?");
+    return window.MbeditorDialogs.confirm({
+      title: "Close " + scopeLabel + "?",
+      message: dirtyLabel + " Their changes will be lost.",
+      confirmLabel: "Close without saving",
+      danger: true
+    });
   };
 
   var handleCloseAllEditors = function handleCloseAllEditors() {
@@ -2444,13 +2451,14 @@ var MbeditorApp = function MbeditorApp() {
       return pane.tabs;
     });
     if (allTabs.length === 0) return;
-    if (!confirmBulkClose(allTabs, "all editors")) return;
-
-    TabManager.closeAllTabs();
-    forgetClosedTabs();
-    setClosingTabId(null);
-    setClosingPaneId(null);
-    EditorStore.setStatus("Closed " + allTabs.length + " editor" + (allTabs.length === 1 ? "" : "s"), "info");
+    confirmBulkClose(allTabs, "all editors").then(function (ok) {
+      if (!ok) return;
+      TabManager.closeAllTabs();
+      forgetClosedTabs();
+      setClosingTabId(null);
+      setClosingPaneId(null);
+      EditorStore.setStatus("Closed " + allTabs.length + " editor" + (allTabs.length === 1 ? "" : "s"), "info");
+    });
   };
 
   var handleCloseEditorsInGroup = function handleCloseEditorsInGroup(paneId) {
@@ -2458,13 +2466,14 @@ var MbeditorApp = function MbeditorApp() {
       return p.id === paneId;
     });
     if (!pane || pane.tabs.length === 0) return;
-    if (!confirmBulkClose(pane.tabs, "all editors in Group " + paneId)) return;
-
-    TabManager.closeAllTabsInPane(paneId);
-    forgetClosedTabs();
-    setClosingTabId(null);
-    setClosingPaneId(null);
-    EditorStore.setStatus("Closed " + pane.tabs.length + " editor" + (pane.tabs.length === 1 ? "" : "s") + " in Group " + paneId, "info");
+    confirmBulkClose(pane.tabs, "all editors in Group " + paneId).then(function (ok) {
+      if (!ok) return;
+      TabManager.closeAllTabsInPane(paneId);
+      forgetClosedTabs();
+      setClosingTabId(null);
+      setClosingPaneId(null);
+      EditorStore.setStatus("Closed " + pane.tabs.length + " editor" + (pane.tabs.length === 1 ? "" : "s") + " in Group " + paneId, "info");
+    });
   };
 
   var handleCloseOtherTabs = function handleCloseOtherTabs(paneId, keepId) {
@@ -2472,10 +2481,12 @@ var MbeditorApp = function MbeditorApp() {
     if (!pane) return;
     var others = pane.tabs.filter(function (t) { return t.id !== keepId; });
     if (others.length === 0) return;
-    if (!confirmBulkClose(others, "other editors")) return;
-    TabManager.closeOtherTabsInPane(paneId, keepId);
-    forgetClosedTabs();
-    EditorStore.setStatus("Closed " + others.length + " editor" + (others.length === 1 ? "" : "s"), "info");
+    confirmBulkClose(others, "other editors").then(function (ok) {
+      if (!ok) return;
+      TabManager.closeOtherTabsInPane(paneId, keepId);
+      forgetClosedTabs();
+      EditorStore.setStatus("Closed " + others.length + " editor" + (others.length === 1 ? "" : "s"), "info");
+    });
   };
 
   var handleCloseSavedTabs = function handleCloseSavedTabs(paneId) {
@@ -2493,9 +2504,18 @@ var MbeditorApp = function MbeditorApp() {
   // Returns a promise that rejects with {cancelled: true} when the user backs
   // out, so close-flows can abort instead of discarding.
   var saveUntitledTab = function saveUntitledTab(paneId, tab, opts) {
-    var input = window.prompt('Save as (path relative to workspace root):', tab.name + '.txt');
-    if (!input || !input.trim()) return Promise.reject({ cancelled: true });
-    var newPath = input.trim().replace(/^\/+/, '');
+    return window.MbeditorDialogs.prompt({
+      title: 'Save as',
+      message: 'Path relative to the workspace root:',
+      value: tab.name + '.txt',
+      confirmLabel: 'Save'
+    }).then(function (input) {
+      if (!input || !input.trim()) return Promise.reject({ cancelled: true });
+      return writeUntitledTab(paneId, tab, opts, input.trim().replace(/^\/+/, ''));
+    });
+  };
+
+  var writeUntitledTab = function writeUntitledTab(paneId, tab, opts, newPath) {
     var startedAt = Date.now();
     return FileService.saveFile(newPath, tab.content).then(function () {
       var audit = window.MbeditorAudit;
@@ -3070,9 +3090,9 @@ var MbeditorApp = function MbeditorApp() {
   // the popover — so the close is delayed and cancelled by either one's
   // onMouseEnter. Click still toggles it directly, which is what makes it
   // reachable without a mouse at all.
-  // The anchor, not a boolean: the popover renders at the root next to the
-  // hovercard, because an absolutely-positioned child of the title bar is
-  // painted under the editor whatever its z-index.
+  // The anchor, not a boolean: it is positioned from the button's rect. It
+  // renders as a manual popover (top layer) — as an ordinary child of the
+  // title bar it was painted under the editor whatever its z-index.
   var _useStateOverflow = useState(null);
   var collabOverflowAnchor = _useStateOverflow[0];
   var setCollabOverflowAnchor = _useStateOverflow[1];
@@ -3922,7 +3942,11 @@ var MbeditorApp = function MbeditorApp() {
     if (matchCount > 0) {
       confirmMsg += " (" + matchCount + (searchHasMore ? "+" : "") + " match" + (matchCount !== 1 ? "es" : "") + " across files)";
     }
-    if (!window.confirm(confirmMsg)) return;
+    window.MbeditorDialogs.confirm({ title: "Replace all", message: confirmMsg, confirmLabel: "Replace all", danger: true })
+      .then(function (ok) { if (ok) runReplaceAll(); });
+  };
+
+  var runReplaceAll = function runReplaceAll() {
 
     setReplaceLoading(true);
     EditorStore.setStatus("Replacing…", "info");
@@ -4323,7 +4347,9 @@ var MbeditorApp = function MbeditorApp() {
   };
 
   var openContextMenu = function openContextMenu(e, node) {
-    setContextMenu({ x: e.clientX, y: e.clientY, node: node });
+    // e.keyboard: opened by Shift+F10 / the menu key (FileTree), so focus
+    // starts on the first item instead of the menu itself.
+    setContextMenu({ x: e.clientX, y: e.clientY, node: node, keyboard: !!e.keyboard });
     if (!actsOnSelection(node)) handleNodeSelect(node);
   };
 
@@ -4753,8 +4779,15 @@ var MbeditorApp = function MbeditorApp() {
     });
 
     var label = pathsToDelete.length === 1 ? pathsToDelete[0] : pathsToDelete.length + ' items';
-    var confirmed = window.confirm('Delete ' + label + '? This cannot be undone.');
-    if (!confirmed) return;
+    window.MbeditorDialogs.confirm({
+      title: 'Delete ' + label + '?',
+      message: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true
+    }).then(function (ok) { if (ok) runDelete(pathsToDelete, label); });
+  };
+
+  var runDelete = function runDelete(pathsToDelete, label) {
 
     // Computed against the pre-delete tree, since the deleted paths' siblings
     // are only known before the tree is refreshed.
@@ -5180,8 +5213,9 @@ var MbeditorApp = function MbeditorApp() {
       )
     ),
     collabOverflowOpen && React.createElement(
-      "div",
+      window.Popover,
       {
+        mode: "manual",
         className: "collab-overflow-popover",
         style: { top: collabOverflowAnchor.top + 'px', right: collabOverflowAnchor.right + 'px' },
         onMouseEnter: cancelOverflowClose,
@@ -5219,8 +5253,8 @@ var MbeditorApp = function MbeditorApp() {
       var idle = typeof stats.idle === 'number' ? stats.idle : null;
 
       return React.createElement(
-        'div',
-        { className: 'collab-hovercard', style: { top: collabHover.top + 'px', right: collabHover.right + 'px' } },
+        window.Popover,
+        { mode: 'manual', className: 'collab-hovercard', style: { top: collabHover.top + 'px', right: collabHover.right + 'px' } },
         React.createElement(
           'div',
           { className: 'collab-hovercard-name' },
@@ -5254,12 +5288,14 @@ var MbeditorApp = function MbeditorApp() {
     collabDiagOpen && (function () {
       var d = CollaborationService.diagnostics();
       return React.createElement(
-        'div',
-        { className: 'mbeditor-modal-backdrop', onClick: function () { setCollabDiagOpen(false); } },
-        React.createElement(
-          'div',
-          { className: 'mbeditor-collab-diag', onClick: function (e) { e.stopPropagation(); } },
-          React.createElement('div', { className: 'mbeditor-collab-diag-title' }, 'Pair programming status'),
+        window.ModalDialog,
+        {
+          className: 'mbeditor-collab-diag',
+          dialogClassName: 'mb-dialog-light',
+          labelledBy: 'mb-collab-diag-title',
+          onDismiss: function () { setCollabDiagOpen(false); }
+        },
+          React.createElement('div', { className: 'mbeditor-collab-diag-title', id: 'mb-collab-diag-title' }, 'Pair programming status'),
           React.createElement(
             'ul',
             { className: 'mbeditor-collab-diag-list' },
@@ -5288,7 +5324,6 @@ var MbeditorApp = function MbeditorApp() {
             type: 'button', className: 'ide-model-graph-btn',
             onClick: function () { setCollabDiagOpen(false); }
           }, 'Close')
-        )
       );
     })(),
     showHelp && React.createElement(ShortcutHelp, { onClose: function () { return setShowHelp(false); } }),
@@ -6512,21 +6547,13 @@ var MbeditorApp = function MbeditorApp() {
     ),
 
     // File History Panel overlay
-    historyPanelPath && React.createElement(
-      React.Fragment,
-      null,
-      React.createElement("div", {
-        style: { position: 'fixed', inset: 0, zIndex: 9800, background: 'rgba(0,0,0,0.55)' },
-        onClick: function() { setHistoryPanelPath(null); }
-      }),
-      React.createElement(window.FileHistoryPanel || FileHistoryPanel, {
+    historyPanelPath && React.createElement(window.FileHistoryPanel || FileHistoryPanel, {
         path: historyPanelPath,
         onClose: function () { return setHistoryPanelPath(null); },
         onSelectCommit: function (hash, path) {
           TabManager.openDiffTab(path, path.split('/').pop(), hash + '^', hash, null);
         }
-      })
-    ),
+      }),
 
     // Test Results Panel overlay — closing hides the dialog but keeps testResult for inline markers
     (testPanelOpen || testLoading) && React.createElement(window.TestResultsPanel || TestResultsPanel, {
@@ -6546,22 +6573,23 @@ var MbeditorApp = function MbeditorApp() {
 
     // Modals & Panels
     state.isQuickOpenVisible && React.createElement(window.QuickOpenDialog || QuickOpenDialog, {
-      onSelect: handleSelectFile,
+      // Focus the opened file's editor. A line jump does that itself
+      // (gotoLine); without one, closing Quick Open would leave focus on
+      // <body>. Only here: handleSelectFile also serves follow mode, which must
+      // not pull focus out of whatever the user is typing in.
+      onSelect: function (path, name, line, col, endCol) {
+        handleSelectFile(path, name, line, col, endCol);
+        if (!line) TabManager.requestFocus(path);
+      },
       showFolders: !!(editorPrefs.quickOpenShowFolders),
       onSelectFolder: handleOpenFolderInExplorer,
       onClose: function () { return setQuickOpen(false); }
     }),
+    // No onDismiss: neither Esc nor the backdrop may silently pick one of
+    // restore/discard, so this dialog closes only through its buttons.
     draftRestoreOffer && React.createElement(
-      "div",
-      {
-        className: "ide-draft-restore-overlay",
-        role: "dialog",
-        "aria-modal": "true",
-        "aria-label": "Restore unsaved drafts"
-      },
-      React.createElement(
-        "div",
-        { className: "ide-draft-restore-dialog" },
+      window.ModalDialog,
+      { className: "ide-draft-restore-dialog", label: "Restore unsaved drafts" },
         React.createElement("div", { className: "ide-draft-restore-title" },
           React.createElement("i", { className: "fas fa-save", style: { marginRight: 8 } }),
           "Unsaved drafts found"
@@ -6606,119 +6634,82 @@ var MbeditorApp = function MbeditorApp() {
             "Discard drafts"
           )
         )
-      )
     ),
+    // A PopupMenu: a popover, so outside clicks and Esc close it natively
+    // (onDismiss) where a full-screen click-catcher div used to, with buttons
+    // that arrow keys move between. Keyed by position so a second right-click
+    // mounts a fresh menu rather than moving the open one.
     contextMenu && React.createElement(
-      React.Fragment,
-      null,
-      React.createElement("div", {
-        style: { position: 'fixed', inset: 0, zIndex: 9998 },
-        onClick: closeContextMenu,
-        onContextMenu: function (e) {
-          e.preventDefault();closeContextMenu();
-        }
-      }),
-      React.createElement(
-        "div",
-        {
-          className: "context-menu",
-          ref: contextMenuRef,
-          style: { left: contextMenu.x, top: contextMenu.y },
-          onClick: function (e) {
-            return e.stopPropagation();
-          }
-        },
-        contextMenu.node && contextMenu.node.type === 'file' && React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('open');
-            } },
-          React.createElement("i", { className: "far fa-file-code context-menu-icon" }),
-          " Open"
-        ),
-        React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('newFile');
-            } },
-          React.createElement("i", { className: "far fa-file context-menu-icon" }),
-          " New File"
-        ),
-        React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('newFolder');
-            } },
-          React.createElement("i", { className: "far fa-folder context-menu-icon" }),
-          " New Folder"
-        ),
-        React.createElement("div", { className: "context-menu-divider" }),
-        React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('rename');
-            } },
-          React.createElement("i", { className: "fas fa-pen context-menu-icon" }),
-          " Rename"
-        ),
-        React.createElement(
-          "div",
-          { className: "context-menu-item context-menu-item-danger", onClick: function () {
-              return handleContextMenuAction('delete');
-            } },
-          React.createElement("i", { className: "far fa-trash-alt context-menu-icon" }),
-          " " + deleteMenuLabel(contextMenu.node)
-        ),
-        React.createElement("div", { className: "context-menu-divider" }),
-        contextMenu.node && (actsOnSelection(contextMenu.node) || contextMenu.node.type === 'folder') && React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('combinedView');
-            } },
-          React.createElement("i", { className: "fas fa-layer-group context-menu-icon" }),
-          " Open in Combined View"
-        ),
-        contextMenu.node && React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('download');
-            } },
-          React.createElement("i", { className: "fas fa-download context-menu-icon" }),
-          " " + downloadMenuLabel(contextMenu.node)
-        ),
-        React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('upload');
-            } },
-          React.createElement("i", { className: "fas fa-upload context-menu-icon" }),
-          " Upload Files Here..."
-        ),
-        React.createElement("div", { className: "context-menu-divider" }),
-        React.createElement(
-          "div",
-          { className: "context-menu-item", onClick: function () {
-              return handleContextMenuAction('copyPath');
-            } },
-          React.createElement("i", { className: "fas fa-copy context-menu-icon" }),
-          " Copy Path"
-        )
-      )
+      window.PopupMenu,
+      {
+        key: contextMenu.x + ',' + contextMenu.y,
+        label: contextMenu.node ? contextMenu.node.name : 'Explorer',
+        keyboard: contextMenu.keyboard,
+        className: "context-menu",
+        popoverRef: contextMenuRef,
+        style: { left: contextMenu.x, top: contextMenu.y },
+        onDismiss: closeContextMenu,
+        onClick: function (e) { e.stopPropagation(); },
+        onContextMenu: function (e) { e.preventDefault(); }
+      },
+        contextMenu.node && contextMenu.node.type === 'file' && React.createElement(window.MenuItem, {
+          icon: "far fa-file-code", label: "Open",
+          onClick: function () { return handleContextMenuAction('open'); }
+        }),
+        React.createElement(window.MenuItem, {
+          icon: "far fa-file", label: "New File",
+          onClick: function () { return handleContextMenuAction('newFile'); }
+        }),
+        React.createElement(window.MenuItem, {
+          icon: "far fa-folder", label: "New Folder",
+          onClick: function () { return handleContextMenuAction('newFolder'); }
+        }),
+        React.createElement(window.MenuSeparator),
+        React.createElement(window.MenuItem, {
+          icon: "fas fa-pen", label: "Rename",
+          onClick: function () { return handleContextMenuAction('rename'); }
+        }),
+        React.createElement(window.MenuItem, {
+          icon: "far fa-trash-alt", label: deleteMenuLabel(contextMenu.node), danger: true,
+          onClick: function () { return handleContextMenuAction('delete'); }
+        }),
+        React.createElement(window.MenuSeparator),
+        contextMenu.node && (actsOnSelection(contextMenu.node) || contextMenu.node.type === 'folder') && React.createElement(window.MenuItem, {
+          icon: "fas fa-layer-group", label: "Open in Combined View",
+          onClick: function () { return handleContextMenuAction('combinedView'); }
+        }),
+        contextMenu.node && React.createElement(window.MenuItem, {
+          icon: "fas fa-download", label: downloadMenuLabel(contextMenu.node),
+          onClick: function () { return handleContextMenuAction('download'); }
+        }),
+        React.createElement(window.MenuItem, {
+          icon: "fas fa-upload", label: "Upload Files Here...",
+          onClick: function () { return handleContextMenuAction('upload'); }
+        }),
+        React.createElement(window.MenuSeparator),
+        React.createElement(window.MenuItem, {
+          icon: "fas fa-copy", label: "Copy Path",
+          onClick: function () { return handleContextMenuAction('copyPath'); }
+        })
     ),
+    // Esc and the backdrop mean Cancel: the tab stays open with its edits.
+    // Save on an untitled tab opens the Save As prompt on top of this one;
+    // both are modal <dialog>s, and the top layer stacks the later one above.
     closingTabId && React.createElement(
-      "div",
-      { className: "quick-open-overlay", style: { zIndex: 10001 } },
+      window.ModalDialog,
+      {
+        className: "schema-modal mb-confirm",
+        labelledBy: "mb-unsaved-title",
+        onDismiss: function () { setClosingTabId(null); setClosingPaneId(null); }
+      },
       React.createElement(
-        "div",
-        { className: "quick-open-box", style: { width: '400px', padding: '20px', background: '#252526', border: '1px solid #454545' } },
+        "div", { className: "schema-modal-header" },
+        React.createElement("div", { className: "schema-modal-title", id: "mb-unsaved-title" }, "Unsaved changes")
+      ),
+      React.createElement(
+        "div", { className: "schema-modal-body" },
         React.createElement(
-          "h3",
-          { style: { marginTop: 0, fontSize: '14px', color: '#fff' } },
-          "Unsaved Changes"
-        ),
-        React.createElement(
-          "p",
-          { style: { color: '#ccc', margin: '16px 0', fontSize: '13px' } },
+          "p", { className: "mb-confirm-message" },
           "Do you want to save the changes you made to ",
           React.createElement(
             "strong",
@@ -6729,43 +6720,28 @@ var MbeditorApp = function MbeditorApp() {
               return t.id === closingTabId;
             }) || {}).name
           ),
-          "?"
+          "? Your changes will be lost if you don't save them."
+        )
+      ),
+      React.createElement(
+        "div", { className: "import-conflict-actions" },
+        React.createElement(
+          "button",
+          { type: "button", className: "import-conflict-btn",
+            onClick: function () { setClosingTabId(null); setClosingPaneId(null); } },
+          "Cancel"
         ),
         React.createElement(
-          "p",
-          { style: { color: '#888', marginBottom: '24px', fontSize: '12px' } },
-          "Your changes will be lost if you don't save them."
+          "button",
+          { type: "button", className: "import-conflict-btn import-conflict-btn-danger",
+            onClick: function () { return confirmCloseTab(false); } },
+          "Don't Save"
         ),
         React.createElement(
-          "div",
-          { style: { display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
-          React.createElement(
-            "button",
-            {
-              onClick: function () {
-                return confirmCloseTab(true);
-              },
-              style: { padding: '6px 16px', background: '#0e639c', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' } },
-            "Save"
-          ),
-          React.createElement(
-            "button",
-            {
-              onClick: function () {
-                return confirmCloseTab(false);
-              },
-              style: { padding: '6px 16px', background: 'transparent', color: '#ccc', border: '1px solid #666', borderRadius: '4px', cursor: 'pointer' } },
-            "Don't Save"
-          ),
-          React.createElement(
-            "button",
-            {
-              onClick: function () {
-                return setClosingTabId(null);
-              },
-              style: { padding: '6px 16px', background: 'transparent', color: '#888', border: 'none', cursor: 'pointer' } },
-            "Cancel"
-          )
+          "button",
+          { type: "button", className: "import-conflict-btn import-conflict-btn-primary", "data-autofocus": true,
+            onClick: function () { return confirmCloseTab(true); } },
+          "Save"
         )
       )
     ),
@@ -6803,17 +6779,12 @@ var MbeditorApp = function MbeditorApp() {
 
     /* ── Schema modal ──────────────────────────────────────────────────── */
     schemaModal && React.createElement(
-      'div',
+      window.ModalDialog,
       {
-        className: 'schema-modal-overlay',
-        onClick: function() { setSchemaModal(null); }
+        className: 'schema-modal',
+        label: 'Schema for ' + schemaModal.label,
+        onDismiss: function() { setSchemaModal(null); }
       },
-      React.createElement(
-        'div',
-        {
-          className: 'schema-modal',
-          onClick: function(e) { e.stopPropagation(); }
-        },
         /* Header */
         React.createElement(
           'div', { className: 'schema-modal-header' },
@@ -6888,7 +6859,6 @@ var MbeditorApp = function MbeditorApp() {
               )
             ]
         )
-      )
     )
   );
 };

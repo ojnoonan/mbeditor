@@ -781,6 +781,23 @@ var TabManager = (function () {
     EditorStore.setState({ panes: newPanes });
   }
 
+  // Ask the editor for `path` to take keyboard focus once it has loaded and
+  // Monaco exists (EditorPanel's focusOnLoad effect does it and clears the
+  // flag). For openers that have no line to jump to — a gotoLine already
+  // focuses. Quick Open needs it: closing its dialog hands focus back to the
+  // editor that was focused before, and switching tabs unmounts that editor
+  // (EditorPanel is keyed by tab id), which left focus on <body>.
+  function requestFocus(path) {
+    var state = EditorStore.getState();
+    var pane = state.panes.find(function(p) { return p.id === state.focusedPaneId && p.activeTabId === path; }) ||
+               state.panes.find(function(p) { return p.activeTabId === path; });
+    if (pane) _updateTab(pane.id, path, { focusOnLoad: true });
+  }
+
+  function clearFocusRequest(paneId, path) {
+    _updateTab(paneId, path, { focusOnLoad: false });
+  }
+
   function clearGotoLine(paneId, path) {
     _updateTab(paneId, path, { gotoLine: null, gotoCol: null, gotoEndCol: null });
   }
@@ -835,6 +852,8 @@ var TabManager = (function () {
     reorderTabInPane: reorderTabInPane,
     moveTabToPane: moveTabToPane,
     clearGotoLine: clearGotoLine,
+    requestFocus: requestFocus,
+    clearFocusRequest: clearFocusRequest,
     navigateBack: navigateBack,
     navigateForward: navigateForward,
     closeAllTabsInPane: closeAllTabsInPane,

@@ -249,10 +249,14 @@ var ProblemsPanel = (function () {
       var files = workspace.files || [];
       // Each open is a Monaco model plus a tab; a default-config run over a
       // real app returns hundreds, which would wedge the editor silently.
-      if (files.length > 20 && !window.confirm('Open ' + files.length + ' files?')) return;
-      files.forEach(function (f) {
-        onOpenFile(f.path, (f.offenses[0] && f.offenses[0].line) || 1, 1);
-      });
+      var openAll = function () {
+        files.forEach(function (f) {
+          onOpenFile(f.path, (f.offenses[0] && f.offenses[0].line) || 1, 1);
+        });
+      };
+      if (files.length <= 20) { openAll(); return; }
+      window.MbeditorDialogs.confirm({ title: 'Open ' + files.length + ' files?', message: 'Each file opens in its own tab.', confirmLabel: 'Open all' })
+        .then(function (ok) { if (ok) openAll(); });
     };
 
     React.useEffect(function () {

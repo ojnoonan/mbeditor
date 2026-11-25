@@ -338,19 +338,11 @@
   gap: 4px;
 }
 
-/* Shared modal backdrop + panel */
-.ide-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 9000;
-  background: rgba(0,0,0,0.55);
-}
+/* File History / Test Results panel, rendered inside ModalDialog: an in-flow
+   box that the <dialog> shell sizes to and centres. It used to centre itself
+   with position:fixed + translate, which here would collapse the shell to
+   0x0 and turn every click on the panel into a backdrop click. */
 .ide-modal-panel {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 9801;
   width: 560px;
   max-width: 90vw;
   max-height: 75vh;

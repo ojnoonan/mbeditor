@@ -18,6 +18,9 @@
 //= require mbeditor/ruby_outline
 //= require mbeditor/js_outline
 //= require mbeditor/components/CollapsibleSection
+//= require mbeditor/components/ModalDialog
+//= require mbeditor/components/Popover
+//= require mbeditor/components/PopupMenu
 //= require mbeditor/components/SettingsModal
 //= require mbeditor/components/Gutter
 //= require mbeditor/components/ShortcutHelp

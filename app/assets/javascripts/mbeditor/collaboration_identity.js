@@ -206,10 +206,12 @@ var CollaborationIdentity = (function () {
 
   // Prompt-based editor wired to the status-bar presence chip. Returns nothing;
   // listeners pick up the change and push it onto live awareness.
+  // MbeditorDialogs is defined later in the bundle (ModalDialog.js) but is
+  // only read at call time, by which point the whole bundle has run.
   function editName() {
     var current = get().name;
-    var next = window.prompt('Your collaboration name', current);
-    if (next != null) setName(next);
+    window.MbeditorDialogs.prompt({ title: 'Collaboration name', message: 'Shown to people editing with you.', value: current, confirmLabel: 'Save' })
+      .then(function (next) { if (next != null) setName(next); });
   }
 
   // Subscribe to identity changes (name or colour). Returns an unsubscribe fn.

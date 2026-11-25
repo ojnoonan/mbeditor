@@ -2,22 +2,11 @@
 
 // ShortcutHelp — isolated module.
 // Renders a centred overlay listing all keyboard shortcuts and usage tips.
-// Dismissable with the × button, clicking the backdrop, or Escape.
-// Mount/unmount is controlled entirely by the parent (showHelp state).
+// Dismissable with the × button, clicking the backdrop, or Escape (all via
+// ModalDialog). Mount/unmount is controlled entirely by the parent (showHelp).
 
 var ShortcutHelp = function ShortcutHelp(_ref) {
   var onClose = _ref.onClose;
-
-  var _React = React;
-  var useEffect = _React.useEffect;
-
-  useEffect(function () {
-    function onKeyDown(e) {
-      if (e.key === 'Escape') onClose();
-    }
-    window.addEventListener('keydown', onKeyDown);
-    return function () { window.removeEventListener('keydown', onKeyDown); };
-  }, [onClose]);
 
   function Section(props) {
     return React.createElement(
@@ -52,17 +41,8 @@ var ShortcutHelp = function ShortcutHelp(_ref) {
   }
 
   return React.createElement(
-    'div',
-    { className: 'shelp-backdrop', onClick: onClose },
-    React.createElement(
-      'div',
-      {
-        className: 'shelp-panel',
-        onClick: function (e) { e.stopPropagation(); },
-        role: 'dialog',
-        'aria-modal': 'true',
-        'aria-label': 'Keyboard shortcuts and help'
-      },
+    window.ModalDialog,
+    { className: 'shelp-panel', label: 'Keyboard shortcuts and help', onDismiss: onClose },
       React.createElement(
         'div',
         { className: 'shelp-header' },
@@ -202,6 +182,5 @@ var ShortcutHelp = function ShortcutHelp(_ref) {
           )
         )
       )
-    )
   );
 };

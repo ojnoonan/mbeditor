@@ -79,8 +79,6 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var h = React.createElement;
   var treeData = _ref.treeData || [];
   var onClose = _ref.onClose;
-  var modalRef = React.useRef(null);
-  window.useModalFocusTrap(modalRef, onClose);
 
   var _tab = React.useState('export');
   var tab = _tab[0];
@@ -420,18 +418,13 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
     }, label);
   };
 
-  return h('div', { className: 'schema-modal-overlay', onClick: onClose },
-    h('div', {
-      ref: modalRef, className: 'schema-modal ai-modal', role: 'dialog', 'aria-modal': 'true',
-      'aria-label': 'AI export and apply', tabIndex: -1, onClick: function (e) { e.stopPropagation(); }
-    },
-      h('div', { className: 'schema-modal-header' },
-        h('div', { className: 'ai-tabs', role: 'tablist' }, tabButton('export', 'Export'), tabButton('apply', 'Apply diff'))),
-      h('div', { className: 'schema-modal-body' }, tab === 'export' ? exportPane : applyPane),
-      h('div', { className: 'import-conflict-actions' },
-        h('button', { type: 'button', className: 'import-conflict-btn', onClick: onClose }, 'Close'),
-        footer)
-    )
+  return h(window.ModalDialog, { className: 'schema-modal ai-modal', label: 'AI export and apply', onDismiss: onClose },
+    h('div', { className: 'schema-modal-header' },
+      h('div', { className: 'ai-tabs', role: 'tablist' }, tabButton('export', 'Export'), tabButton('apply', 'Apply diff'))),
+    h('div', { className: 'schema-modal-body' }, tab === 'export' ? exportPane : applyPane),
+    h('div', { className: 'import-conflict-actions' },
+      h('button', { type: 'button', className: 'import-conflict-btn', onClick: onClose }, 'Close'),
+      footer)
   );
 };
 

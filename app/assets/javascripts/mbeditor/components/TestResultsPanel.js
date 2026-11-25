@@ -25,12 +25,8 @@ var TestResultsPanel = function TestResultsPanel(_ref) {
   };
 
   return React.createElement(
-    React.Fragment,
-    null,
-    React.createElement('div', { className: 'ide-modal-backdrop', onClick: onClose }),
-    React.createElement(
-    'div',
-    { className: 'ide-modal-panel' },
+    window.ModalDialog,
+    { className: 'ide-modal-panel', label: 'Test results', onDismiss: onClose },
     React.createElement(
       'div',
       { className: 'ide-file-history-header' },
@@ -156,7 +152,6 @@ var TestResultsPanel = function TestResultsPanel(_ref) {
         )
       )
     )
-  )
   );
 };
 
