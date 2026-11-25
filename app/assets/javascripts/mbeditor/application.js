@@ -42,6 +42,8 @@
 // whole app down the first time it renders.
 //= require mbeditor/components/ImportConflictModal
 //= require mbeditor/components/ImportDialog
+//= require mbeditor/patch_select
+//= require mbeditor/components/AiRoundTripModal
 //= require mbeditor/components/PastePlaceModal
 //= require mbeditor/components/MbeditorApp
 //= require mbeditor/application_iife_tail

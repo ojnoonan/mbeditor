@@ -342,6 +342,46 @@ module Mbeditor
       render json: { error: e.message }, status: :unprocessable_content
     end
 
+    # GET /mbeditor/ai_bundle?paths[]=a — the selection as one text file for a
+    # web chat; prompt=1 returns only the message to paste alongside it.
+    def ai_bundle
+      bundle_name = "#{File.basename(workspace_root.to_s)}-bundle.md"
+      return render plain: AiBundleService.prompt(bundle_name) if params[:prompt].present?
+
+      requested = Array(params[:paths]).map(&:to_s).reject(&:blank?)
+      return render json: { error: "No paths given" }, status: :bad_request if requested.empty?
+
+      resolved = requested.map { |p| resolve_path(p) }
+      return render json: { error: "Forbidden" }, status: :forbidden if resolved.any?(&:nil?)
+      unless resolved.all? { |p| File.exist?(p) || File.symlink?(p) }
+        return render json: { error: "Not found" }, status: :not_found
+      end
+
+      bundle = AiBundleService.new(workspace_root).build(resolved)
+      response.headers["X-Mbeditor-Bundle-Files"] = bundle[:files].to_s
+      response.headers["X-Mbeditor-Bundle-Bytes"] = bundle[:bytes].to_s
+      send_data bundle[:markdown], type: "text/markdown", disposition: "attachment", filename: bundle_name
+    rescue AiBundleService::LimitExceededError => e
+      render json: { error: e.message }, status: :content_too_large
+    rescue StandardError => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
+    # POST /mbeditor/apply_patch — JSON { patch:, check: } where check (the
+    # default) validates and lists the files without writing anything. Non-GET,
+    # so verify_mbeditor_client guards it.
+    def apply_patch
+      check = ActiveModel::Type::Boolean.new.cast(params.fetch(:check, true))
+      result = PatchApplyService.new(workspace_root).call(params[:patch].to_s, check: check)
+      unless check
+        root = workspace_root.to_s
+        broadcast_files_changed(result[:files].flat_map { |f| [f[:path], f[:from]] }.compact.map { |p| File.join(root, p) })
+      end
+      render json: result
+    rescue PatchApplyService::Error => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
     # POST /mbeditor/file — save file
     def save
       path = resolve_path(params[:path])
