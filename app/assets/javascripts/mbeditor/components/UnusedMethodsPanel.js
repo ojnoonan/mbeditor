@@ -54,6 +54,18 @@ var UnusedMethodsPanel = function UnusedMethodsPanel(_ref) {
         busy ? 'Scanning…' : 'Scan')
     ),
     error && React.createElement('div', { className: 'rails-panel-empty' }, error),
+    result && React.createElement('div', { className: 'ide-problems-file-name' }, React.createElement('span', null, 'Unused views'),
+      React.createElement('span', { className: 'ide-problems-file-count' }, result.views.length)),
+    result && result.views.length === 0 && React.createElement('div', { className: 'rails-panel-empty' }, 'No unused views found.'),
+    result && result.views.map(function (path) {
+      return React.createElement('button', {
+        key: path,
+        type: 'button',
+        className: 'ide-problems-item',
+        onClick: function () { onOpenFile(path); }
+      }, React.createElement('span', { className: 'ide-problems-msg' }, path.replace(/^app\/views\//, '')));
+    }),
+    result && React.createElement('div', { className: 'ide-problems-file-name' }, React.createElement('span', null, 'Unused methods')),
     result && groups.length === 0 && React.createElement('div', { className: 'rails-panel-empty' },
       'No unused methods found in ' + result.scanned + ' files.'),
     result && result.truncated && React.createElement('div', { className: 'rails-panel-empty' },

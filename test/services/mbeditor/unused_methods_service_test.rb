@@ -81,5 +81,54 @@ module Mbeditor
 
       assert_equal ["app/models/all_dead.rb"], UnusedMethodsService.call(@workspace)[:files]
     end
+
+    def views
+      UnusedMethodsService.call(@workspace)[:views]
+    end
+
+    def test_unrendered_partial_is_reported_and_layout_application_never
+      write("app/views/users/_orphan.html.erb", "x")
+      write("app/views/layouts/application.html.erb", "x")
+
+      assert_equal ["app/views/users/_orphan.html.erb"], views
+    end
+
+    def test_rendered_partials_are_not_reported
+      write("app/views/users/_form.html.erb", "x")
+      write("app/views/users/_user.html.erb", "x")
+      write("app/views/users/_row.html.erb", "x")
+      write("app/views/shared/_nav.html.haml", "x")
+      write("app/views/layouts/_flash.html.erb", "x")
+      write("app/views/users/new.html.erb", "<%= render 'form' %>")
+      write("app/views/users/index.html.erb", "<%= render @users %>\n<%= render partial: :row %>")
+      write("app/views/layouts/application.html.haml", "= render 'shared/nav'\n= render layout: \"layouts/flash\" do\n")
+      write("app/controllers/users_controller.rb", "class UsersController\n  def new; end\n  def index; end\nend\n")
+
+      assert_equal [], views
+    end
+
+    def test_action_template_with_def_is_not_reported_but_orphan_is
+      write("app/controllers/pages_controller.rb", "class PagesController\n  def home; end\nend\n")
+      write("app/views/pages/home.html.erb", "x")
+      write("app/views/pages/stale.html.erb", "x")
+      write("app/views/pages/data.json.jbuilder", "x")
+
+      assert_equal ["app/views/pages/data.json.jbuilder", "app/views/pages/stale.html.erb"], views
+    end
+
+    def test_controller_render_by_name_and_mailer_views_are_not_reported
+      write("app/controllers/pages_controller.rb", "class PagesController\n  def home\n    render :other\n  end\nend\n")
+      write("app/views/pages/other.html.erb", "x")
+      write("app/mailers/user_mailer.rb", "class UserMailer\n  def welcome; end\nend\n")
+      write("app/views/user_mailer/welcome.text.erb", "x")
+
+      assert_equal [], views
+    end
+
+    def test_methods_defined_in_view_files_are_not_reported
+      write("app/views/a.html.erb", "<% def inline_dead; end %>")
+
+      assert_equal [], names
+    end
   end
 end
