@@ -91,6 +91,74 @@ var AiDiffHunk = function AiDiffHunk(_ref) {
     }));
 };
 
+// "Related to...": type a resource, get its files as a checklist. Direct hits
+// start ticked, one-step-out hits unticked; nothing joins the export until
+// "Add selected" hands the ticked paths to onAdd.
+var AiRelatedPicker = function AiRelatedPicker(_ref) {
+  var h = React.createElement;
+  var _q = React.useState('');
+  var q = _q[0];
+  var setQ = _q[1];
+  var _st = React.useState({ busy: false, error: null, result: null, ticks: {}, added: null });
+  var st = _st[0];
+  var setSt = _st[1];
+
+  var find = function () {
+    if (!q.trim()) return;
+    setSt({ busy: true, error: null, result: null, ticks: {}, added: null });
+    fetch(window.mbeditorBasePath() + '/related_files?q=' + encodeURIComponent(q.trim())).then(function (r) {
+      return r.json().then(function (body) {
+        if (!r.ok) throw new Error(body.error || ('HTTP ' + r.status));
+        return body;
+      });
+    }).then(function (body) {
+      var ticks = {};
+      body.files.forEach(function (f) { ticks[f.path] = f.direct; });
+      setSt({ busy: false, error: null, result: body, ticks: ticks, added: null });
+    }, function (err) {
+      setSt({ busy: false, error: err.message || 'Request failed', result: null, ticks: {}, added: null });
+    });
+  };
+
+  var ticked = st.result ? st.result.files.filter(function (f) { return st.ticks[f.path]; }) : [];
+  var add = function () {
+    _ref.onAdd(ticked.map(function (f) { return f.path; }));
+    setSt({ busy: false, error: null, result: null, ticks: {}, added: ticked.length });
+  };
+
+  return h('div', { className: 'ai-related' },
+    h('div', { className: 'ai-dir-row' },
+      h('input', {
+        type: 'text', value: q, placeholder: 'Related to... (e.g. User)', 'aria-label': 'Related to',
+        onChange: function (e) { setQ(e.target.value); },
+        onKeyDown: function (e) { if (e.key === 'Enter') find(); }
+      }),
+      h('button', { type: 'button', className: 'import-conflict-btn', disabled: st.busy || !q.trim(), onClick: find },
+        st.busy ? 'Finding...' : 'Find')),
+    st.error && h('div', { className: 'ai-error' }, st.error),
+    st.added !== null && h('div', { className: 'ai-result' }, 'Added ' + st.added + ' file' + (st.added === 1 ? '' : 's') + ' to the export.'),
+    st.result && h('div', null,
+      h('p', { className: 'ai-hint' }, st.result.files.length ? 'Suggested' : 'Nothing found.'),
+      st.result.capped && h('div', { className: 'ai-error' }, 'Many files mention it, so the list of references is cut short.'),
+      h('ul', { className: 'ai-dir-list' },
+        st.result.files.map(function (f) {
+          return h('li', { key: f.path },
+            h('label', { title: f.path },
+              h('input', {
+                type: 'checkbox', checked: !!st.ticks[f.path],
+                onChange: function () {
+                  var ticks = Object.assign({}, st.ticks);
+                  ticks[f.path] = !ticks[f.path];
+                  setSt(Object.assign({}, st, { ticks: ticks }));
+                }
+              }),
+              ' ' + f.path + ' ', h('span', { className: 'ai-hint' }, f.reason)));
+        })),
+      st.result.files.length > 0 && h('button', {
+        type: 'button', className: 'import-conflict-btn', disabled: ticked.length === 0, onClick: add
+      }, 'Add selected (' + ticked.length + ')')));
+};
+
 var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var h = React.createElement;
   var treeData = _ref.treeData || [];
@@ -148,6 +216,12 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   };
   var coveredBy = function (path) {
     return dirs.some(function (d) { return path.indexOf(d + '/') === 0; });
+  };
+
+  var addPaths = function (paths) {
+    var next = dirs.concat(paths.filter(function (p) { return dirs.indexOf(p) === -1 && !coveredBy(p); }));
+    setDirs(next);
+    persist(next, topFiles);
   };
 
   var selectedPaths = dirs.filter(function (d) { return !coveredBy(d); })
@@ -337,6 +411,7 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
 
   var exportPane = h('div', { className: 'ai-pane' },
     h('p', { className: 'ai-hint' }, 'Pick what the assistant should see. Upload the .md to the chat, then paste the prompt with it.'),
+    h(AiRelatedPicker, { onAdd: addPaths }),
     h('ul', { className: 'ai-dir-list' },
       treeData.filter(function (n) { return n.type === 'folder' && n.name !== '.git'; }).map(function (n) { return renderDir(n, false); }),
       h('li', { key: '__top_files' },

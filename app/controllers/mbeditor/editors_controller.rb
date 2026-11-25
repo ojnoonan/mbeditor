@@ -1215,8 +1215,17 @@ module Mbeditor
       render json: { controller: key, actions: RouteService.for_controller(key) }
     end
 
-    # GET /mbeditor/related_files?path=...
+    # GET /mbeditor/related_files?path=... — the Rails panel's groups for a file.
+    # GET /mbeditor/related_files?q=User — everything related to a resource,
+    # for the AI export picker: { files: [{path, reason, direct}], capped }.
     def related_files
+      if params.key?(:q)
+        q = params[:q].to_s.strip.camelize
+        return render json: { error: "Enter a model name like User" }, status: :bad_request unless q.match?(RUBY_CONSTANT_PATH)
+
+        return render json: RelatedFilesService.call(workspace_root, q, excluded_paths: Mbeditor.configuration.excluded_paths)
+      end
+
       path = resolve_path(params[:path])
       return render json: {}, status: :bad_request unless path
       rel = relative_path(path)
