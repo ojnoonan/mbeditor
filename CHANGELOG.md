@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.3] - 2026-11-25
+
+### Added
+- **AI round trip** (robot button, top right). Export the project, with a
+  choice of folders, as one Markdown bundle for a web chat assistant. A
+  separate short prompt tells the agent to unpack it and grep it instead of
+  reading it whole. Paste or upload the unified diff it returns to see one
+  scrollable, syntax-highlighted red/green view. Choose which hunks to keep,
+  then apply them with `git apply`. Files can be created, deleted and
+  renamed.
+- **Rails panel**: open files are outlined, and an "Open all" button opens
+  every file of a resource (e.g. all User files).
+- **Keyboard-operable file tree** following the WAI-ARIA tree pattern
+  (arrows, Home/End, Enter, Space, type-to-find).
+- **Keyboard-operable context menus** in the explorer and tabs (arrows,
+  Enter/Space, Esc, Shift+F10).
+- Correctness lint for Ruby (`bundle exec rubocop`, Lint department only)
+  and JS (`npm run lint:js`), run in CI.
+
+### Changed
+- Every modal is a native `<dialog>`, and menus and hovercards are popovers.
+  They now get the browser's focus containment, Esc handling and top layer,
+  and follow the light theme. `window.confirm` and `window.prompt` are
+  replaced by in-app dialogs, so they no longer block the page.
+- Themed scrollbars in Firefox (`scrollbar-color` / `scrollbar-width`).
+
+### Fixed
+- **Import and export hardening** after an audit:
+  - The AI bundle skips secrets (`.env*`, keys, credentials).
+  - Unpacking survives a file that contains its own end marker.
+  - Non-ASCII names no longer crash, and errors never show host paths.
+  - Patches cannot write excluded paths or create symlinks.
+  - Imports overwrite files atomically.
+  - `/raw` serves markup sandboxed as plain text.
+- **A shared (collaborative) tab no longer reverts an applied patch or an
+  external edit.** It takes the new disk content once, without duplicating
+  it. Unsaved shared edits are kept, and the reload banner shows instead.
+- A file opened from Quick Open now gets editor focus.
+- Esc no longer threw a ReferenceError.
+- ruby-lsp now restarts once its crash window has passed. Before, it stayed
+  failed until Rails restarted.
+- Monaco ships a patched DOMPurify.
+
 ## [0.14.2] - 2026-10-20
 
 ### Added
