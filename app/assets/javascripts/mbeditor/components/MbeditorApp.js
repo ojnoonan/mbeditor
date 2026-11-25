@@ -5444,6 +5444,16 @@ var MbeditorApp = function MbeditorApp() {
               onClick: function() { handleActivityBarClick('models'); }
             },
             React.createElement("i", { className: "fas fa-project-diagram" })
+          ),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "ide-activity-btn" + (!sidebarCollapsed && activeSidebarTab === 'unused' ? ' active' : ''),
+              title: "Unused methods",
+              onClick: function() { handleActivityBarClick('unused'); }
+            },
+            React.createElement("i", { className: "far fa-trash-alt" })
           )
         ),
         React.createElement(
@@ -5469,8 +5479,12 @@ var MbeditorApp = function MbeditorApp() {
           activeSidebarTab === 'explorer' ? 'Explorer' :
           activeSidebarTab === 'search' ? 'Search' :
           activeSidebarTab === 'rails' ? 'Rails' :
-          activeSidebarTab === 'routes' ? 'Routes' : ''
+          activeSidebarTab === 'routes' ? 'Routes' :
+          activeSidebarTab === 'unused' ? 'Unused methods' : ''
         ),
+        activeSidebarTab === 'unused' && React.createElement(UnusedMethodsPanel, {
+          onOpenFile: function (path, line) { handleSelectFile(path, path.split('/').pop(), line); }
+        }),
         activeSidebarTab === 'explorer' && React.createElement(
           "div",
           { className: "ide-sidebar-content" },
