@@ -37,11 +37,12 @@ module Mbeditor
       write("lib/billing.rb", "Billing.charge(User.first)\n")
       write("lib/audit.rb", "Audit.log('users')\n")
       write("lib/other.rb", "Username = 1\n")
+      @real_call = ModelGraphService.method(:call)
       ModelGraphService.define_singleton_method(:call) { |_root| GRAPH }
     end
 
     def teardown
-      ModelGraphService.singleton_class.send(:remove_method, :call)
+      ModelGraphService.define_singleton_method(:call, @real_call)
       FileUtils.remove_entry(@dir)
     end
 
