@@ -92,6 +92,11 @@ module Mbeditor
       - Find code with `grep -rn` and `sed -n 'A,Bp'`. Print only the lines you need.
       - Edit the files in ./project.
       - Reply with the `git diff` output in one ```diff block. If it is long, also save it as `changes.patch` for download.
+      - Change only what the task asks. No refactors, renames or reformatting it did not ask for.
+      - If the task is ambiguous, ask one short question before editing instead of guessing.
+      - Keep replies short: the diff, then at most 3 one-line bullets for anything I must know. No restating the task, no walkthrough of the code, no summary.
+      - Never paste file contents or command output back to me.
+      - Follow-ups in this chat reuse ./project; rerun the snippet only after a new upload.
     TEXT
 
     DIFF_RULES = "Diff rules: `diff --git a/p b/p`, `--- a/p`, `+++ b/p`; paths relative to the project root; " \
