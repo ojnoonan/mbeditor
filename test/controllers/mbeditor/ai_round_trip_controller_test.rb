@@ -41,8 +41,16 @@ module Mbeditor
       assert_includes response.body, "=== FILE: lib/b.rb (1 lines) ==="
     end
 
-    test "ai_bundle too big for one file downloads one zip of numbered parts" do
+    test "ai_bundle without split stays one md even when large" do
       with_max_bytes(8) { get "/mbeditor/ai_bundle", params: { paths: ["lib", "a.txt"] } }
+
+      assert_response :success
+      assert_equal "text/markdown", response.media_type
+      assert_equal "1", response.headers["X-Mbeditor-Bundle-Parts"]
+    end
+
+    test "ai_bundle with split=1 too big for one file downloads one zip of numbered parts" do
+      with_max_bytes(8) { get "/mbeditor/ai_bundle", params: { paths: ["lib", "a.txt"], split: 1 } }
       name = File.basename(@workspace)
 
       assert_response :success
@@ -79,7 +87,7 @@ module Mbeditor
     end
 
     test "ai_bundle prompt=1 with paths names the one .zip when the selection splits" do
-      with_max_bytes(8) { get "/mbeditor/ai_bundle", params: { prompt: 1, paths: ["lib", "a.txt"] } }
+      with_max_bytes(8) { get "/mbeditor/ai_bundle", params: { prompt: 1, paths: ["lib", "a.txt"], split: 1 } }
 
       assert_response :success
       assert_equal "2", response.headers["X-Mbeditor-Bundle-Parts"]
@@ -88,7 +96,7 @@ module Mbeditor
     end
 
     test "ai_bundle prompt=1 with a selection too big for three parts is 413" do
-      with_max_bytes(2) { get "/mbeditor/ai_bundle", params: { prompt: 1, paths: ["lib", "a.txt"] } }
+      with_max_bytes(2) { get "/mbeditor/ai_bundle", params: { prompt: 1, paths: ["lib", "a.txt"], split: 1 } }
 
       assert_response :content_too_large
       assert_match(/even split into 3 parts/, JSON.parse(response.body)["error"])
@@ -117,8 +125,8 @@ module Mbeditor
     end
 
     test "ai_bundle over the cap is 413 with a JSON error" do
-      File.write(File.join(@workspace, "big.txt"), "a" * (AiBundleService::MAX_BYTES + 1))
-      get "/mbeditor/ai_bundle", params: { paths: ["big.txt"] }
+      File.write(File.join(@workspace, "big.txt"), "a" * 7)
+      with_max_bytes(2) { get "/mbeditor/ai_bundle", params: { paths: ["big.txt"] } }
 
       assert_response :content_too_large
       assert_match(/too large/, JSON.parse(response.body)["error"])

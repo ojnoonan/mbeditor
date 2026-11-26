@@ -37,7 +37,8 @@ module Mbeditor
         version: version,
         name: m[2],
         file: abs.delete_prefix("#{root}/"),
-        tables: File.read(abs).scan(TABLE_CALL).flatten.uniq,
+        tables: tables = File.read(abs).scan(TABLE_CALL).flatten.uniq,
+        models: tables.empty? ? ["Other"] : tables.map(&:classify),
         status: applied.nil? ? "unknown" : (applied.include?(version) ? "up" : "down")
       }
     rescue SystemCallError

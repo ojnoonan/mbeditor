@@ -54,10 +54,22 @@ module Mbeditor
     LOCAL_ARG = /\A\s*\(?\s*([a-z_]\w*)\s*(?:[,)]|\z)/
     CONST_DEF = /^\s*(?:class|module)\s+(?:\w+::)*(\w+)/
     CLASS_DEF = /^\s*class\s+([\w:]+)\s*<\s*([\w:]+)/
+    RESOURCE_FILE = %r{\Aapp/(?:models|controllers|helpers|mailers)/(?:.+/)?([^/]+?)(?:_controller|_helper|_mailer)?\.rb\z}
+    VIEW_DIR = %r{\Aapp/views/(?:.+/)?([^/]+)/[^/]+\z}
     BASE_CONTROLLERS = %w[ApplicationController ActionController::Base ActionController::API ApplicationMailer ActionMailer::Base].freeze
 
     def self.call(workspace_root)
       new(workspace_root).call
+    end
+
+    # The model a path belongs to: users_controller, users_helper, user_mailer,
+    # views/users/_row and models/user.rb all land in "User". Anything else
+    # groups by its directory under app/ ("javascript", "jobs"), else "Other".
+    def self.group_for(path)
+      name = path[RESOURCE_FILE, 1] || path[VIEW_DIR, 1]
+      return name.classify if name
+
+      path[%r{\Aapp/([^/]+)/}, 1] || "Other"
     end
 
     def initialize(workspace_root)
@@ -77,7 +89,7 @@ module Mbeditor
         text = File.read(abs, encoding: "UTF-8").scrub
         text.scan(TOKEN) { |token| counts[token] += 1 }
         scanned += 1
-        defs.concat(definitions(rel, text)) unless rel.match?(TEST_PATH)
+        defs.concat(definitions(rel, text)) unless rel.match?(TEST_PATH) || rel.start_with?("db/") # Rails runs migrations and seeds
         consts[rel] = file_name_token(rel, text)
         collect_refs(rel, text, refs)
       rescue SystemCallError
@@ -97,9 +109,9 @@ module Mbeditor
                   .select { |f| token, own = consts[f]; token.nil? || counts[token] <= own }.sort
       unused = defs.select { |d| d[:unused] }.sort_by { |d| [d[:file], d[:line]] }
       {
-        methods: unused.first(MAX_REPORTED).map { |d| d.slice(:file, :line, :name, :kind) },
-        files: files,
-        views: views,
+        methods: unused.first(MAX_REPORTED).map { |d| d.slice(:file, :line, :name, :kind).merge(group: self.class.group_for(d[:file])) },
+        files: files.map { |f| { path: f, group: self.class.group_for(f) } },
+        views: views.map { |v| { path: v, group: self.class.group_for(v) } },
         scanned: scanned,
         truncated: unused.size > MAX_REPORTED
       }

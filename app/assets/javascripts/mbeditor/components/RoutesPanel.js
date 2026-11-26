@@ -25,22 +25,52 @@ function RoutesPanel(props) {
     });
   });
 
-  var rows;
-  if (error) rows = React.createElement('div', { className: 'rails-panel-empty' }, error);
-  else if (!routes) rows = React.createElement('div', { className: 'rails-panel-loading' }, 'Loading…');
-  else if (shown.length === 0) rows = React.createElement('div', { className: 'rails-panel-empty' }, 'No routes.');
-  else rows = shown.map(function (r, i) {
-    var target = r.controller + '#' + r.action;
+  var _col = VirtualRows.useCollapsed();
+  var collapsed = _col[0], toggle = _col[1];
+
+  // Header row per controller, its routes under it; every row is one 22px line.
+  var byController = {};
+  var groups = [];
+  shown.forEach(function (r, i) {
+    var ctrl = r.controller || '(none)';
+    if (!byController[ctrl]) {
+      byController[ctrl] = { type: 'group', key: 'g:' + ctrl, controller: ctrl, items: [] };
+      groups.push(byController[ctrl]);
+    }
+    byController[ctrl].items.push({ type: 'route', key: 'r:' + i, route: r });
+  });
+  var rows = [];
+  groups.forEach(function (g) {
+    rows.push(g);
+    if (!collapsed[g.controller]) g.items.forEach(function (item) { rows.push(item); });
+  });
+
+  var renderRow = function renderRow(row, style) {
+    if (row.type === 'group') {
+      return VirtualRows.groupHeader({
+        label: row.controller,
+        count: row.items.length,
+        collapsed: !!collapsed[row.controller],
+        onToggle: function () { toggle(row.controller); }
+      }, style);
+    }
+    var r = row.route;
     return React.createElement('div', {
-      key: i,
-      className: 'rails-group-item',
-      title: r.verb + ' ' + r.path + '  ' + target,
+      className: 'search-result-item',
+      style: style,
+      title: r.verb + ' ' + r.path + '  ' + r.controller + '#' + r.action,
       onClick: r.file ? function () { props.onOpenFile(r.file, r.line); } : undefined
     },
-      React.createElement('span', { className: 'rails-group-item-kind' }, r.verb),
-      React.createElement('span', { className: 'rails-group-item-name' }, r.path + '  ' + target)
+      React.createElement('span', { className: 'search-result-line-num' }, r.verb),
+      React.createElement('span', { className: 'search-result-text' }, r.path)
     );
-  });
+  };
+
+  var body;
+  if (error) body = React.createElement('div', { className: 'rails-panel-empty' }, error);
+  else if (!routes) body = React.createElement('div', { className: 'rails-panel-loading' }, 'Loading…');
+  else if (shown.length === 0) body = React.createElement('div', { className: 'rails-panel-empty' }, 'No routes.');
+  else body = React.createElement(VirtualRows, { rows: rows, renderRow: renderRow });
 
   return React.createElement('div', { className: 'rails-panel' },
     React.createElement('div', { className: 'search-input-shell' },
@@ -56,7 +86,7 @@ function RoutesPanel(props) {
         }, React.createElement('i', { className: 'fas fa-sync-alt' }))
       )
     ),
-    rows
+    body
   );
 }
 
