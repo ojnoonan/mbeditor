@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.5] - 2026-11-26
+
+### Added
+- **Editable AI prompt**: the instructions sent with the AI bundle live in
+  the project's `docs/mbeditor-ai-prompt.md`. The first export creates it
+  with the default text, and later exports use your edits as-is. The unpack
+  snippet, STOP line and branch line stay generated.
+- The bundle and paste prompt name the current git branch and tell the agent
+  not to create, switch to or work on another branch without asking.
+
 ## [0.14.4] - 2026-11-26
 
 ### Added
