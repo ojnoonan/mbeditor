@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.4] - 2026-11-26
+
+### Added
+- **Routes panel**: every host-app route, searchable; click one to open its
+  controller action.
+- **Unused panel**: methods in Ruby and JS that nothing references, view
+  templates and partials that are never rendered, and files where everything
+  is unused. Tuned on a large app to avoid false positives (form-builder
+  locals, model-named partials, gem view overrides, inherited actions).
+- **Migrations panel** (read-only): which migrations are pending, with a
+  click to open the file.
+- **AI export**: "Related to..." search in the folder picker; large
+  selections split into up to 3 parts in one zip; `config.ai_bundle_exclude`
+  globs that are never sent.
+
+### Changed
+- **AI bundle is leaner**: vendored and third-party library code, minified
+  files and library-named folders (e.g. `app/assets/javascripts/react/`) are
+  left out and counted on one index line. `Gemfile.lock` is now included.
+- Project docs (`AGENTS.md`, `CLAUDE.md`, other root `.md`, `docs/**`) are
+  always added at the start of the bundle.
+- The bundle opens with the prompt behind a STOP line, so pasting it
+  separately is optional. The prompt asks for short, scoped replies, and
+  for a re-upload if the bundle is lost.
+- Diffs must come from `git diff --cached` and pass `git apply --check`;
+  hand-written or other patch formats are refused.
+
 ## [0.14.3] - 2026-11-25
 
 ### Added
