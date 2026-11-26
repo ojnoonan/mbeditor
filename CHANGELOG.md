@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.6] - 2026-11-26
+
+### Changed
+- **Routes, Migrations and Unused panels** group their entries and every
+  group collapses. Routes are grouped by controller, migrations by model
+  (from the tables they touch), unused methods and views by model.
+- These panels now draw only the rows on screen, the same way search
+  results do, and each row is one line. Hundreds of routes no longer stack
+  on top of each other, and scrolling stays smooth.
+- Migrations show their name first, with the version in the tooltip.
+  Versions recorded in the database with no file in `db/migrate` are listed
+  under "Applied, file missing", with a tooltip explaining what that means.
+- **AI export**: "Related to" is an autocomplete of your models that
+  searches on its own (no Find button) and clears after "Add selected".
+- **AI export**: splitting into up to 3 files is now a checkbox, off by
+  default. With it off you get one file, up to 192 MB.
+
+### Fixed
+- Migration and seed methods (`change`, `up`, `down`) are no longer
+  reported as unused.
+- Group headers in these panels show their collapse arrow even when no
+  editor is open.
+
 ## [0.14.5] - 2026-11-26
 
 ### Added
