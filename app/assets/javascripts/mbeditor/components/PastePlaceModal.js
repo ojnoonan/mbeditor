@@ -301,7 +301,7 @@ var PastePlaceModal = (function () {
             return h('div', { key: p, className: 'paste-place-diff' },
               h(window.DiffViewer, {
                 path: p, original: byFile[p].text, modified: applyToText(byFile[p].text, byFile[p].edits),
-                isDark: props.isDark, editorPrefs: props.editorPrefs
+                editorPrefs: props.editorPrefs
               }));
           }),
           plan && files.length === 0 && h('div', { className: 'combined-note' }, 'Nothing to apply.')

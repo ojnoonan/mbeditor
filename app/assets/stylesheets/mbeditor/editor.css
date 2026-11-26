@@ -2705,6 +2705,17 @@ body.mbeditor-migration-pending .ide-statusbar {
    paints with the dim inactive colour. Same theme variable, one less space. */
 .monaco-editor.focused .selected-text { background-color: var(--vscode-editor-selectionBackground); }
 
+/* Monaco paints a wholly added or removed line with both the line and the
+   character highlight, so its 20% defaults stack to ~36% and theme comment
+   colours drop to 1.2-1.4:1 (Dracula, Monokai, Nord). These stack to ~21%.
+   High-contrast themes keep Monaco's outlines. */
+.monaco-diff-editor .monaco-editor:not(.hc-black):not(.hc-light) {
+  --vscode-diffEditor-insertedLineBackground: rgba(46, 160, 67, 0.10);
+  --vscode-diffEditor-insertedTextBackground: rgba(46, 160, 67, 0.12);
+  --vscode-diffEditor-removedLineBackground: rgba(248, 81, 73, 0.10);
+  --vscode-diffEditor-removedTextBackground: rgba(248, 81, 73, 0.12);
+}
+
 .ide-methods-dropdown-message {
   padding: 8px 12px;
   color: #858585;
@@ -4160,10 +4171,10 @@ input.ide-model-graph-search[type="search"] {
   font-family: var(--ide-mono-font, monospace); font-size: 12px;
 }
 .ai-diff-line { white-space: pre; min-height: 1.4em; line-height: 1.4; padding: 0 6px; }
-.ai-diff-add { background: rgba(46, 160, 67, 0.22); }
-.ai-diff-del { background: rgba(248, 81, 73, 0.22); }
+.ai-diff-add { background: rgba(46, 160, 67, 0.12); }
+.ai-diff-del { background: rgba(248, 81, 73, 0.12); }
 .ai-diff-hunk { color: var(--ide-accent, #4a8fd6); opacity: 0.85; }
-.ai-diff-meta { color: var(--ide-text-muted, #999); }
+.ai-diff-meta { color: var(--ide-text-dim, #bbb); }
 .ai-diff-file { font-weight: 600; }
 .ai-diff-off { opacity: 0.4; }
 .ai-diff-prefix { display: inline-block; width: 1ch; margin-right: 1ch; user-select: none; }

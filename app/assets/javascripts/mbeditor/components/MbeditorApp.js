@@ -2624,6 +2624,13 @@ var MbeditorApp = function MbeditorApp() {
     else delete document.documentElement.dataset.glass;
   }, [editorPrefs.theme, editorPrefs.glass]);
 
+  // Monaco's theme is global and also colours colorize() output (the AI patch
+  // preview). Set it here, not only in EditorPanel, or with no file open it
+  // stays Monaco's default 'vs' and paints light-theme tokens on dark chrome.
+  useEffect(function() {
+    if (monacoReady) window.monaco.editor.setTheme(editorPrefs.theme || 'vs-dark');
+  }, [monacoReady, editorPrefs.theme]);
+
   useEffect(function() {
     EditorStore.setState({ editorPrefs: editorPrefs });
   }, [editorPrefs]);
@@ -6227,14 +6234,11 @@ var MbeditorApp = function MbeditorApp() {
                   total: pActiveTab.combinedTotal || 0
                 });
               } else if (pActiveTab.isDiff) {
-                var _t = editorPrefs.theme || 'vs-dark';
-                var isDiffDark = _t !== 'vs' && _t !== 'hc-light' && _t !== 'github-light';
                 content = React.createElement(window.DiffViewer || DiffViewer, {
                   key: pActiveTab.id,
                   path: pActiveTab.path,
                   original: pActiveTab.diffOriginal || '',
                   modified: pActiveTab.diffModified || '',
-                  isDark: isDiffDark,
                   editorPrefs: editorPrefs,
                   onClose: function() { requestCloseTab(pane.id, pActiveTab.id); }
                 });
@@ -6856,14 +6860,12 @@ var MbeditorApp = function MbeditorApp() {
       errors: importConflict.result.errors,
       entries: importConflict.entries,
       targetFolderPath: importConflict.targetFolderPath,
-      isDark: !['vs', 'hc-light', 'github-light'].includes(editorPrefs.theme || 'vs-dark'),
       editorPrefs: editorPrefs,
       onResolve: resolveImportConflict
     }),
 
     /* ── Paste & Place ─────────────────────────────────────────────────── */
     state.isPastePlaceVisible && React.createElement(PastePlaceModal, {
-      isDark: !['vs', 'hc-light', 'github-light'].includes(editorPrefs.theme || 'vs-dark'),
       editorPrefs: editorPrefs,
       onClose: function () { EditorStore.setState({ isPastePlaceVisible: false }); }
     }),
