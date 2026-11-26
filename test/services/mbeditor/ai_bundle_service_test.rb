@@ -32,7 +32,8 @@ module Mbeditor
       md = build("app")[:data]
 
       assert_includes md, "# #{File.basename(@dir)}"
-      assert_includes md, "Do not read this file top to bottom"
+      assert_includes md, "STOP. Do not read, open, print or summarise this file."
+      assert_includes md, AiBundleService.header(AiBundleService.new(@dir).bundle_name)
       assert_includes md, "- app/a.rb (1 lines, 7 bytes)"
       assert_includes md, "=== FILE: app/a.rb (1 lines) ===\nputs 1\n=== END FILE: app/a.rb ===\n"
       refute_includes md, "```ruby"
@@ -69,15 +70,65 @@ module Mbeditor
     end
 
     test "lock, minified and map files are skipped but indexed with their size" do
-      %w[Gemfile.lock package-lock.json yarn.lock pnpm-lock.yaml app.min.js app.min.css app.js.map].each { |n| put(n, "x" * 2048) }
+      %w[package-lock.json yarn.lock pnpm-lock.yaml app.min.js app.min.css app.js.map].each { |n| put(n, "x" * 2048) }
       put("app.js", "ok\n")
       result = build(".")
 
       assert_equal 1, result[:files]
-      %w[Gemfile.lock package-lock.json yarn.lock pnpm-lock.yaml app.min.js app.min.css app.js.map].each do |n|
+      %w[package-lock.json yarn.lock pnpm-lock.yaml app.js.map].each do |n|
         assert_includes result[:data], "- #{n} skipped (generated, 2 KB)"
-        refute_includes result[:data], "=== FILE: #{n}"
       end
+      assert_includes result[:data], "- 2 third-party library or minified files skipped ("
+      assert_equal ["app.js"], result[:data].scan(/^=== FILE: (\S+)/).flatten
+    end
+
+    test "Gemfile, Gemfile.lock and gemspecs are bundled" do
+      %w[Gemfile Gemfile.lock x.gemspec].each { |n| put(n, "a\n") }
+
+      assert_equal 3, build(".")[:files]
+    end
+
+    test "third-party library files are counted in one line, not bundled or listed" do
+      put("vendor/assets/javascripts/react.js", "lib\n")
+      put("public/packs/app-1.js", "lib\n")
+      put("public/vite-dev/a.js", "lib\n")
+      put("app/assets/builds/x.js", "lib\n")
+      put("app/jquery-3.6.0.min.js", "lib\n")
+      put("app/react-dom.production.min.js", "lib\n")
+      put("app/d3.v7.js", "lib\n")
+      put("app/assets/javascripts/react/components/x.js", "lib\n")
+      put("app/assets/javascripts/bundle.js", "#{"a" * 3000}\n")
+      put("app/assets/javascripts/long_data.rb", "#{"a" * 3000}\n")
+      %w[chart_controller.js reactions.js chart-utils.js reactor.js].each { |n| put("app/#{n}", "ok\n") }
+      result = build(".")
+
+      assert_equal 5, result[:files]
+      assert_includes result[:data], "- 9 third-party library or minified files skipped ("
+      refute_includes result[:data], "=== FILE: vendor/"
+      refute_includes result[:data], "react-dom.production"
+      assert_includes result[:data], "=== FILE: app/chart_controller.js"
+    end
+
+    test "docs come first: root md, docs/**, AGENTS.md before CLAUDE.md, even when not selected" do
+      put("AGENTS.md", "a\n")
+      put("CLAUDE.md", "c\n")
+      put("README.md", "r\n")
+      put("docs/z.md", "z\n")
+      put("docs/a/b.md", "b\n")
+      put("docs/img.png", "x\n")
+      put("app/a.rb", "x\n")
+      put("app/CLAUDE.md", "n\n")
+      md = build("app")[:data]
+
+      order = md.scan(/^=== FILE: (\S+)/).flatten
+      assert_equal %w[AGENTS.md CLAUDE.md README.md app/CLAUDE.md docs/a/b.md docs/z.md app/a.rb], order
+    end
+
+    test "docs are not duplicated when selected and the bundle's own name is left out" do
+      put("README.md", "r\n")
+      put("#{File.basename(@dir)}-bundle.md", "old\n")
+
+      assert_equal %w[README.md], build(".")[:data].scan(/^=== FILE: (\S+)/).flatten
     end
 
     test "excluded paths are not bundled" do

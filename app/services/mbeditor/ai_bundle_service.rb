@@ -21,7 +21,21 @@ module Mbeditor
 
     # Never useful to an assistant and often most of a bundle's bytes. Listed
     # in the index as skipped, so the assistant knows they exist.
-    GENERATED = /(\A(package-lock\.json|yarn\.lock|pnpm-lock\.yaml)\z)|\.(lock|map)\z|\.min\.(js|css)\z/
+    # Gemfile.lock is kept: it pins the versions the assistant needs to know.
+    GENERATED = /(\A(package-lock\.json|yarn\.lock|pnpm-lock\.yaml)\z)|(?<!\AGemfile)\.lock\z|\.map\z/
+
+    # Third-party code: never the project's own, and often most of its bytes.
+    # Counted in one summary line rather than listed, since there can be
+    # thousands. The name pattern is anchored so chart_controller.js and
+    # reactions.js are not caught.
+    LIBRARY_NAMES = "react(-dom)?|material-ui|mui|jquery|lodash|moment|bootstrap|popper|d3|chart|axios|babel|monaco"
+    # A Sprockets directory named after a library (app/assets/javascripts/react/)
+    # holds that library, not the app's code.
+    LIBRARY_DIRS = %r{(\A|/)vendor/|\A(public/(packs(-test)?|vite[^/]*)|app/assets/builds)/|
+                      \Aapp/assets/javascripts/(.+/)?(#{LIBRARY_NAMES})/}x
+    LIBRARY_FILE = /\A(#{LIBRARY_NAMES})
+                    ([.-](v?\d[\w.]*|min|slim|bundle|esm|umd|cjs|production|development|standalone|full|dist))*
+                    \.(js|css)\z/xi
 
     # Never sent to a third-party chat. Hard-coded on purpose: a bundle is
     # uploaded wholesale, so this is not something a config key should loosen.
@@ -91,7 +105,9 @@ module Mbeditor
     WORKFLOW = <<~'TEXT'
       - Find code with `grep -rn` and `sed -n 'A,Bp'`. Print only the lines you need.
       - Edit the files in ./project.
-      - Reply with the `git diff` output in one ```diff block. If it is long, also save it as `changes.patch` for download.
+      - Make the diff only by running `git -C project add -A && git -C project diff --cached`. Paste its output byte-for-byte in one ```diff block. Never write, edit, renumber or trim a diff by hand.
+      - Before replying, check it: `git -C project diff --cached > /tmp/c.patch && git -C project apply --check -R /tmp/c.patch`. Fix the files and regenerate if it fails.
+      - After replying, run `git -C project -c user.name=bundle -c user.email=bundle@example.invalid commit -qm reply` so your next diff holds only new changes.
       - Change only what the task asks. No refactors, renames or reformatting it did not ask for.
       - If the task is ambiguous, ask one short question before editing instead of guessing.
       - Keep replies short: the diff, then at most 3 one-line bullets for anything I must know. No restating the task, no walkthrough of the code, no summary.
@@ -100,29 +116,34 @@ module Mbeditor
       - If ./project or the uploaded bundle is no longer available to you (for example it fell out of your context or the sandbox reset), stop and ask me to re-upload it before doing anything else. Never guess file contents.
     TEXT
 
-    DIFF_RULES = "Diff rules: `diff --git a/p b/p`, `--- a/p`, `+++ b/p`; paths relative to the project root; " \
-                 "3 lines of context; never elide or summarise lines inside a hunk; new files `--- /dev/null`; " \
-                 "deleted files `+++ /dev/null`; no prose inside the block."
+    DIFF_RULES = "Diff rules: git's own format only (`diff --git a/p b/p`, paths relative to the project root). " \
+                 "Never use another patch format: no `*** Begin Patch`, no apply_patch, no `...` elisions, " \
+                 "no line-number-only hunks. No prose inside the block."
 
-    INSTRUCTIONS = "Do not read this file top to bottom. It is a source bundle.\n\n" \
-                   "If you have a code sandbox, unpack it (set BUNDLE to the uploaded path):\n\n" \
-                   "```python\n#{UNPACK_SNIPPET}```\n\nThen:\n#{WORKFLOW}\n" \
-                   "With no sandbox, use the index below to pick files, and read only those between their " \
-                   "`=== FILE: <path>` and `=== END FILE: <path> ===` lines.\n\n#{DIFF_RULES}\n"
+    STOP = "STOP. Do not read, open, print or summarise this file. " \
+           "Load it only with the snippet below, then grep inside ./project."
 
-    # Paste-ready message to send with the uploaded bundle. The chat may read
-    # the whole file before it reaches the header, so this goes first. Needs
-    # only the bundle's file name; no files are read.
+    NO_SANDBOX = "With no sandbox, use the index below to pick files, and read only those between their " \
+                 "`=== FILE: <path>` and `=== END FILE: <path> ===` lines."
+
+    # The paste prompt, minus the TASK: line. It is also the bundle's own
+    # header, so the paste is optional and the two cannot drift.
     #
     # +filename+ is the unsplit .md name. With +parts+ > 1 the single upload is
     # the matching .zip.
-    def self.prompt(filename, parts = 1)
+    def self.header(filename, parts = 1)
       attached = parts > 1 ? zip_filename(filename) : filename
       snippet = UNPACK_SNIPPET.sub(/^BUNDLE = .*$/) { "BUNDLE = #{"/mnt/data/#{attached}".to_json}" }
       what = parts > 1 ? "a zip of #{parts} markdown parts of one large source bundle" : "a large source bundle"
       "`#{attached}` is #{what}. Do not open, read or print it directly.\n" \
         "Load it only from your code sandbox with this snippet (adjust BUNDLE if the path differs):\n\n" \
-        "```python\n#{snippet}```\n\nThen:\n#{WORKFLOW}\n#{DIFF_RULES}\n\nTASK: "
+        "```python\n#{snippet}```\n\nThen:\n#{WORKFLOW}\n#{DIFF_RULES}\n\n"
+    end
+
+    # Paste-ready message to send with the uploaded bundle. Needs only the
+    # bundle's file name; no files are read.
+    def self.prompt(filename, parts = 1)
+      "#{header(filename, parts)}TASK: "
     end
 
     def initialize(workspace_root)
@@ -180,20 +201,46 @@ module Mbeditor
     # Only text counts toward the cap: a binary that is never written to the
     # bundle must not make the selection "too large".
     def classify(full_paths)
-      entries = ArchiveService.new(@root).collect(full_paths).uniq { |e| e[:name] }.sort_by { |e| e[:name] }
+      walker = ArchiveService.new(@root)
+      docs = walker.collect(doc_paths).reject { |e| doc_rank(e[:name]) > 3 }
+      entries = (walker.collect(full_paths) + docs).uniq { |e| e[:name] }
+                       .map { |e| e.merge(name: utf8(e[:name])) }
+                       .reject { |e| e[:name] == bundle_name }
+                       .sort_by { |e| [doc_rank(e[:name]), e[:name]] }
       raise "Nothing to bundle" if entries.empty?
 
       skipped = []
       wanted = []
       entries.each do |e|
-        e = e.merge(name: utf8(e[:name]))
         reason = skip_reason(e[:name])
         reason ? skipped << e.merge(reason: reason) : wanted << e
       end
 
       texty = []
-      wanted.each { |e| binary?(e) ? skipped << e.merge(reason: "binary or not UTF-8") : texty << e }
+      wanted.each { |e| (reason = probe_reason(e)) ? skipped << e.merge(reason: reason) : texty << e }
       [texty, skipped]
+    end
+
+    # Root *.md and docs/ are always offered, selected or not: they say what
+    # the project is. They still go through the walk's containment and
+    # exclusions, and skip_reason's secret and size checks.
+    def doc_paths
+      root_md = Dir.children(@root).select { |n| n.end_with?(".md") }.map { |n| File.join(@root, n) }
+      root_md << File.join(@root, "docs")
+    rescue SystemCallError
+      []
+    end
+
+    # AGENTS.md, CLAUDE.md, other root .md, docs/** and nested AGENTS/CLAUDE,
+    # then everything else. Partitioning is contiguous, so docs land in part 1.
+    def doc_rank(name)
+      case name
+      when "AGENTS.md" then 0
+      when "CLAUDE.md" then 1
+      when %r{\A[^/]+\.md\z} then 2
+      when %r{\Adocs/.*\.md\z}, %r{/(AGENTS|CLAUDE)\.md\z} then 3
+      else 4
+      end
     end
 
     def choose_groups(texty)
@@ -226,6 +273,8 @@ module Mbeditor
       if self.class.secret?(name) then "secret"
       elsif self.class.excluded?(name) then "excluded by config"
       elsif name.match?(/[\r\n]/) then "unsafe name"
+      elsif LIBRARY_DIRS.match?(name) || LIBRARY_FILE.match?(File.basename(name)) || name.match?(/\.min\.(js|css)\z/)
+        "library"
       elsif GENERATED.match?(File.basename(name)) then "generated"
       end
     end
@@ -236,8 +285,14 @@ module Mbeditor
       str.dup.force_encoding(Encoding::UTF_8).scrub
     end
 
-    def binary?(entry)
-      File.open(entry[:path], "rb") { |f| f.read(BINARY_PROBE_BYTES).to_s.include?("\0") }
+    # Minified JS/CSS is any name: mostly lines too long to be hand-written.
+    def probe_reason(entry)
+      probe = File.open(entry[:path], "rb") { |f| f.read(BINARY_PROBE_BYTES).to_s }
+      return "binary or not UTF-8" if probe.include?("\0")
+      return unless entry[:name].match?(/\.(m?js|cjs|css)\z/) && probe.bytesize > 2048
+
+      long = probe.each_line.sum { |l| l.bytesize > 500 ? l.bytesize : 0 }
+      "library" if long * 2 > probe.bytesize
     rescue SystemCallError => e
       raise ArchiveService.read_error(entry[:name], e)
     end
@@ -253,8 +308,13 @@ module Mbeditor
     def render(included, skipped, part, parts)
       title = "# #{utf8(File.basename(@root))}#{" (part #{part} of #{parts})" if parts > 1}"
       note = parts > 1 ? "This is part #{part} of #{parts}, packed in one .zip with the others. Point BUNDLE at the .zip: the snippet unpacks every part into ./project.\n\n" : ""
-      out = +"#{title}\n\n## Instructions\n\n#{note}#{INSTRUCTIONS}\n## Index\n\n"
+      out = +"#{title}\n\n#{STOP}\n\n## Instructions\n\n#{note}#{self.class.header(bundle_name, parts)}#{NO_SANDBOX}\n\n## Index\n\n"
       included.each { |name, text| out << "- #{name} (#{line_count(text)} lines, #{text.bytesize} bytes)\n" }
+      library, skipped = skipped.partition { |e| e[:reason] == "library" }
+      unless library.empty?
+        out << "- #{library.length} third-party library or minified files skipped (#{human(library.sum { |e| e[:size] })}; " \
+               "vendor/, public/packs/, app/assets/builds/, library-named files and directories, minified code)\n"
+      end
       skipped.each do |e|
         label = e[:name].match?(/[\r\n]/) ? e[:name].inspect : e[:name]
         detail = e[:reason] == "secret" ? "secret" : "#{e[:reason]}, #{human(e[:size])}"
