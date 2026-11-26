@@ -126,28 +126,32 @@ module Mbeditor
     NO_SANDBOX = "With no sandbox, use the index below to pick files, and read only those between their " \
                  "`=== FILE: <path>` and `=== END FILE: <path> ===` lines."
 
-    # The paste prompt, minus the TASK: line. It is also the bundle's own
-    # header, so the paste is optional and the two cannot drift.
-    #
-    # +filename+ is the unsplit .md name. With +parts+ > 1 the single upload is
-    # the matching .zip.
-    def self.header(filename, parts = 1)
-      attached = parts > 1 ? zip_filename(filename) : filename
+    # The editable part of the prompt: seeded into the workspace on first use,
+    # then read back verbatim. The unpack snippet, STOP and branch lines stay
+    # generated because they must stay correct.
+    PROMPT_FILE = "docs/mbeditor-ai-prompt.md"
+    MAX_PROMPT_BYTES = 64 * 1024
+    DEFAULT_INSTRUCTIONS = "Then:\n#{WORKFLOW}\n#{DIFF_RULES}"
+
+    def initialize(workspace_root)
+      @root = workspace_root.to_s.chomp("/")
+    end
+
+    # The bundle's own header, minus the TASK: line and the branch line. +parts+
+    # > 1 means the single upload is the matching .zip.
+    def header(parts = 1)
+      attached = parts > 1 ? self.class.zip_filename(bundle_name) : bundle_name
       snippet = UNPACK_SNIPPET.sub(/^BUNDLE = .*$/) { "BUNDLE = #{"/mnt/data/#{attached}".to_json}" }
       what = parts > 1 ? "a zip of #{parts} markdown parts of one large source bundle" : "a large source bundle"
       "`#{attached}` is #{what}. Do not open, read or print it directly.\n" \
         "Load it only from your code sandbox with this snippet (adjust BUNDLE if the path differs):\n\n" \
-        "```python\n#{snippet}```\n\nThen:\n#{WORKFLOW}\n#{DIFF_RULES}\n\n"
+        "```python\n#{snippet}```\n\n#{instructions}\n\n"
     end
 
-    # Paste-ready message to send with the uploaded bundle. Needs only the
-    # bundle's file name; no files are read.
-    def self.prompt(filename, parts = 1)
-      "#{header(filename, parts)}TASK: "
-    end
-
-    def initialize(workspace_root)
-      @root = workspace_root.to_s.chomp("/")
+    # Paste-ready message to send with the uploaded bundle. No files are read
+    # beyond the prompt file.
+    def prompt(parts = 1)
+      "#{branch_line}#{header(parts)}TASK: "
     end
 
     def bundle_name
@@ -197,6 +201,28 @@ module Mbeditor
 
     private
 
+    # Seeds the default on first use. A write failure (read-only FS) just means
+    # the default text is used, unedited.
+    def instructions
+      path = File.join(@root, PROMPT_FILE)
+      unless File.exist?(path)
+        FileUtils.mkdir_p(File.dirname(path))
+        File.write(path, "#{DEFAULT_INSTRUCTIONS}\n")
+      end
+      text = File.read(path, MAX_PROMPT_BYTES, mode: "rb").to_s.force_encoding(Encoding::UTF_8).scrub.rstrip
+      text.empty? ? DEFAULT_INSTRUCTIONS : text
+    rescue SystemCallError
+      DEFAULT_INSTRUCTIONS
+    end
+
+    # Nil outside a git repo and on a detached HEAD, where there is no branch to pin.
+    def branch_line
+      name = GitService.current_branch(@root)
+      return "" if name.blank? || name == "HEAD"
+
+      "Branch: `#{name}`. Do all work for this branch. Never create, switch to, or develop on another branch without asking me first.\n\n"
+    end
+
     # Sorted, de-duplicated walk split into [text entries, skipped entries].
     # Only text counts toward the cap: a binary that is never written to the
     # bundle must not make the selection "too large".
@@ -205,7 +231,7 @@ module Mbeditor
       docs = walker.collect(doc_paths).reject { |e| doc_rank(e[:name]) > 3 }
       entries = (walker.collect(full_paths) + docs).uniq { |e| e[:name] }
                        .map { |e| e.merge(name: utf8(e[:name])) }
-                       .reject { |e| e[:name] == bundle_name }
+                       .reject { |e| e[:name] == bundle_name || e[:name] == PROMPT_FILE }
                        .sort_by { |e| [doc_rank(e[:name]), e[:name]] }
       raise "Nothing to bundle" if entries.empty?
 
@@ -308,7 +334,7 @@ module Mbeditor
     def render(included, skipped, part, parts)
       title = "# #{utf8(File.basename(@root))}#{" (part #{part} of #{parts})" if parts > 1}"
       note = parts > 1 ? "This is part #{part} of #{parts}, packed in one .zip with the others. Point BUNDLE at the .zip: the snippet unpacks every part into ./project.\n\n" : ""
-      out = +"#{title}\n\n#{STOP}\n\n## Instructions\n\n#{note}#{self.class.header(bundle_name, parts)}#{NO_SANDBOX}\n\n## Index\n\n"
+      out = +"#{title}\n\n#{STOP}\n\n#{branch_line}## Instructions\n\n#{note}#{header(parts)}#{NO_SANDBOX}\n\n## Index\n\n"
       included.each { |name, text| out << "- #{name} (#{line_count(text)} lines, #{text.bytesize} bytes)\n" }
       library, skipped = skipped.partition { |e| e[:reason] == "library" }
       unless library.empty?

@@ -23,6 +23,19 @@ module Mbeditor
       full
     end
 
+    def prompt_for(parts, name)
+      dir = File.join(Dir.mktmpdir("mbeditor_prompt_"), name)
+      FileUtils.mkdir_p(dir)
+      AiBundleService.new(dir).prompt(parts)
+    end
+
+    def git_repo(branch)
+      system("git", "init", "-q", "-b", branch, @dir, exception: true)
+      put("seed.txt", "x\n")
+      system("git", "-C", @dir, "add", "-A", exception: true)
+      system("git", "-C", @dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "init", exception: true)
+    end
+
     def build(*rels)
       AiBundleService.new(@dir).build(rels.map { |r| File.expand_path(r, @dir) })
     end
@@ -33,14 +46,59 @@ module Mbeditor
 
       assert_includes md, "# #{File.basename(@dir)}"
       assert_includes md, "STOP. Do not read, open, print or summarise this file."
-      assert_includes md, AiBundleService.header(AiBundleService.new(@dir).bundle_name)
+      assert_includes md, AiBundleService.new(@dir).header
       assert_includes md, "- app/a.rb (1 lines, 7 bytes)"
       assert_includes md, "=== FILE: app/a.rb (1 lines) ===\nputs 1\n=== END FILE: app/a.rb ===\n"
       refute_includes md, "```ruby"
     end
 
+    test "a missing prompt file is created with the default and used" do
+      put("a.rb", "1\n")
+      md = build("a.rb")[:data]
+      written = File.read(File.join(@dir, AiBundleService::PROMPT_FILE))
+
+      assert_equal "#{AiBundleService::DEFAULT_INSTRUCTIONS}\n", written
+      assert_includes md, AiBundleService::WORKFLOW
+      assert_includes md, AiBundleService::DIFF_RULES
+    end
+
+    test "an existing prompt file replaces the default instructions verbatim" do
+      put(AiBundleService::PROMPT_FILE, "Then:\n- Be custom.\n\n  \n")
+      put("a.rb", "1\n")
+      md = build("a.rb")[:data]
+
+      assert_includes md, "- Be custom.\n\n"
+      refute_includes md, AiBundleService::WORKFLOW
+      assert_includes md, 'BUNDLE = "/mnt/data/'
+    end
+
+    test "the prompt file is neither a FILE section nor an index entry" do
+      put("a.rb", "1\n")
+      put("docs/other.md", "hi\n")
+      build("a.rb") # seeds the file
+      md = build("a.rb", AiBundleService::PROMPT_FILE)[:data]
+
+      assert_includes md, "=== FILE: docs/other.md"
+      refute_includes md, "mbeditor-ai-prompt.md"
+    end
+
+    test "branch line follows STOP in the bundle and heads the prompt in a git workspace" do
+      git_repo("feat/x")
+      line = "Branch: `feat/x`. Do all work for this branch."
+
+      assert_includes build("seed.txt")[:data], "#{AiBundleService::STOP}\n\n#{line}"
+      assert AiBundleService.new(@dir).prompt.start_with?(line)
+    end
+
+    test "no branch line outside a git repo" do
+      put("a.rb", "1\n")
+
+      refute_includes build("a.rb")[:data], "Branch:"
+      refute_includes AiBundleService.new(@dir).prompt, "Branch:"
+    end
+
     test "prompt names the file, carries the shared snippet and rules, and ends with TASK" do
-      prompt = AiBundleService.prompt("proj-bundle.md")
+      prompt = prompt_for(1, "proj")
 
       assert_includes prompt, "`proj-bundle.md` is a large source bundle. Do not open, read or print it directly."
       assert_includes prompt, 'BUNDLE = "/mnt/data/proj-bundle.md"'
@@ -340,14 +398,14 @@ module Mbeditor
     end
 
     test "prompt for a selection that fits names the .md and says it is one file" do
-      prompt = AiBundleService.prompt("proj-bundle.md", 1)
+      prompt = prompt_for(1, "proj")
 
       assert_includes prompt, "`proj-bundle.md` is a large source bundle"
       assert_includes prompt, 'BUNDLE = "/mnt/data/proj-bundle.md"'
     end
 
     test "prompt for a split names the one .zip, never several files" do
-      prompt = AiBundleService.prompt("proj-bundle.md", 2)
+      prompt = prompt_for(2, "proj")
 
       assert_includes prompt, "`proj-bundle.zip` is a zip of 2 markdown parts"
       assert_includes prompt, 'BUNDLE = "/mnt/data/proj-bundle.zip"'

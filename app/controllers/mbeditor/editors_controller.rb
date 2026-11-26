@@ -361,9 +361,10 @@ module Mbeditor
     # prompt=1 returns only the message to paste alongside it, for the file the
     # same selection would download.
     def ai_bundle
-      bundle_name = "#{File.basename(workspace_root.to_s)}-bundle.md"
+      service = AiBundleService.new(workspace_root)
+      bundle_name = service.bundle_name
       requested = Array(params[:paths]).map(&:to_s).reject(&:blank?)
-      return render plain: AiBundleService.prompt(bundle_name) if params[:prompt].present? && requested.empty?
+      return render plain: service.prompt if params[:prompt].present? && requested.empty?
       return render json: { error: "No paths given" }, status: :bad_request if requested.empty?
 
       resolved = requested.map { |p| resolve_path(p) }
@@ -371,12 +372,11 @@ module Mbeditor
       missing = first_missing(requested, resolved)
       return render json: { error: "Not found: #{missing}" }, status: :not_found if missing
 
-      service = AiBundleService.new(workspace_root)
       if params[:prompt].present?
         plan = service.plan(resolved)
         response.headers["X-Mbeditor-Bundle-Parts"] = plan[:parts].to_s
         response.headers["X-Mbeditor-Bundle-Bytes"] = plan[:bytes].to_s
-        return render plain: AiBundleService.prompt(bundle_name, plan[:parts])
+        return render plain: service.prompt(plan[:parts])
       end
 
       bundle = service.build(resolved)
