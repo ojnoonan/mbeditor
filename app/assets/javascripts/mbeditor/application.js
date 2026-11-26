@@ -27,12 +27,15 @@
 //= require mbeditor/components/DiffViewer
 //= require mbeditor/components/CombinedDiffViewer
 //= require mbeditor/components/ModelGraph
+//= require mbeditor/components/RoutesPanel
 //= require mbeditor/components/ChangelogView
 //= require mbeditor/components/CombinedFileView
 //= require mbeditor/components/FileHistoryPanel
 //= require mbeditor/components/TestResultsPanel
 //= require mbeditor/components/LogPanel
 //= require mbeditor/components/ProblemsPanel
+//= require mbeditor/components/MigrationsPanel
+//= require mbeditor/components/UnusedMethodsPanel
 //= require mbeditor/components/CodeReviewPanel
 //= require mbeditor/components/EditorPanel
 //= require mbeditor/components/FileTree

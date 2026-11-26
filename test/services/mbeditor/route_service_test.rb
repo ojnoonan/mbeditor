@@ -99,5 +99,18 @@ module Mbeditor
       assert_equal orders, RouteService.for_controller("orders")
       assert_equal admin, RouteService.for_controller("admin/users")
     end
+
+    test "all lists host routes with controller file and def line, minus engines and internals" do
+      RouteService.invalidate
+      routes = RouteService.all(Rails.root)
+      show = routes.find { |r| r[:controller] == "orders" && r[:action] == "show" }
+
+      assert_equal "GET", show[:verb]
+      assert_equal "/orders/:id", show[:path]
+      assert_equal "app/controllers/orders_controller.rb", show[:file]
+      assert_equal 11, show[:line]
+      assert_equal 6, routes.find { |r| r[:controller] == "sessions" && r[:action] == "create" }[:line]
+      assert routes.none? { |r| r[:path].start_with?("/mbeditor", "/rails", "/cable") }
+    end
   end
 end

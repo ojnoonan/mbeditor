@@ -1227,6 +1227,22 @@ module Mbeditor
       render json: { controller: key, actions: RouteService.for_controller(key) }
     end
 
+    # GET /mbeditor/all_routes — every host-app route for the Routes panel.
+    def all_routes
+      render json: { routes: RouteService.all(workspace_root) }
+    end
+
+    # GET /mbeditor/migrations — read-only migration status; never runs one.
+    def migrations
+      render json: MigrationStatusService.call(workspace_root)
+    end
+
+    # GET /mbeditor/unused_methods — methods whose name appears nowhere else.
+    # Scans the whole workspace on every call, so the panel only asks on a click.
+    def unused_methods
+      render json: UnusedMethodsService.call(workspace_root)
+    end
+
     # GET /mbeditor/related_files?path=... — the Rails panel's groups for a file.
     # GET /mbeditor/related_files?q=User — everything related to a resource,
     # for the AI export picker: { files: [{path, reason, direct}], capped }.

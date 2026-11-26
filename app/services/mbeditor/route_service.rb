@@ -57,6 +57,27 @@ module Mbeditor
       {}
     end
 
+    # Controllers that belong to Rails or to this engine, not to the host app.
+    INTERNAL_CONTROLLER = %r{\A(?:rails|active_storage|action_mailbox|mbeditor)(?:/|\z)}
+
+    # Every host-app route for the Routes panel:
+    # [{ verb:, path:, name:, controller:, action:, file:, line: }].
+    # `file` is the workspace-relative controller file when it exists, `line`
+    # the line of its `def <action>` (nil when not found).
+    def all(workspace_root)
+      return [] unless defined?(Rails) && Rails.respond_to?(:application) && Rails.application
+
+      cache_key = "all:#{workspace_root}"
+      cached = cached_routes(cache_key)
+      return cached if cached
+
+      computed = build_all(workspace_root.to_s)
+      store_routes(cache_key, computed)
+      computed
+    rescue StandardError
+      []
+    end
+
     def invalidate
       MUTEX.synchronize { @cache = {} }
       nil
@@ -96,6 +117,31 @@ module Mbeditor
       out
     end
     private_class_method :routes_for
+
+    def build_all(root)
+      lines = {}
+      Rails.application.routes.routes.filter_map do |route|
+        controller = route.defaults[:controller].to_s
+        action = route.defaults[:action].to_s
+        next if controller.empty? || action.empty? || controller.match?(INTERNAL_CONTROLLER)
+
+        file = "app/controllers/#{controller}_controller.rb"
+        file = nil unless File.file?(File.join(root, file))
+        line = file && ((lines[file] ||= def_lines(File.join(root, file)))[action])
+        { verb: verb_for(route), path: path_for(route), name: route.name,
+          controller: controller, action: action, file: file, line: line }
+      end
+    end
+    private_class_method :build_all
+
+    # { "show" => 12, ... } — first `def` of each name, 1-based.
+    def def_lines(path)
+      File.foreach(path, encoding: "utf-8").with_index(1).each_with_object({}) do |(text, n), out|
+        name = text[/^\s*def\s+(?:self\.)?([\w?!]+)/, 1]
+        out[name] ||= n if name
+      end
+    end
+    private_class_method :def_lines
 
     # Rails has moved this between a String and a Regexp across versions; both
     # stringify usefully, but a Regexp needs its slashes stripped.
