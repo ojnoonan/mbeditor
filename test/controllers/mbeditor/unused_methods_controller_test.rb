@@ -23,8 +23,8 @@ module Mbeditor
       get "/mbeditor/unused_methods"
       assert_response :success
       body = JSON.parse(response.body)
-      assert_equal [{ "file" => "app/models/user.rb", "line" => 2, "name" => "never_called", "kind" => "def" }], body["methods"]
-      assert_equal ["app/models/user.rb"], body["files"]
+      assert_equal [{ "file" => "app/models/user.rb", "line" => 2, "name" => "never_called", "kind" => "def", "group" => "User" }], body["methods"]
+      assert_equal [{ "path" => "app/models/user.rb", "group" => "User" }], body["files"]
       assert_equal false, body["truncated"]
     end
   end

@@ -36,8 +36,8 @@ module Mbeditor
       system("git", "-C", @dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "init", exception: true)
     end
 
-    def build(*rels)
-      AiBundleService.new(@dir).build(rels.map { |r| File.expand_path(r, @dir) })
+    def build(*rels, split: false)
+      AiBundleService.new(@dir).build(rels.map { |r| File.expand_path(r, @dir) }, split: split)
     end
 
     test "renders instructions, index and marker-delimited byte-exact files" do
@@ -201,7 +201,7 @@ module Mbeditor
     test "a selection too big even for three parts is refused with its size" do
       put("big.txt", "a" * 20)
       with_max_bytes(10) do
-        err = assert_raises(AiBundleService::LimitExceededError) { build("big.txt") }
+        err = assert_raises(AiBundleService::LimitExceededError) { build("big.txt", split: true) }
 
         assert_match(/Selection is too large \(20 Bytes\) even split into 3 parts\. Limit is 10 Bytes per part/, err.message)
       end
@@ -312,7 +312,7 @@ module Mbeditor
 
     test "plan picks the fewest parts that fit" do
       seed_parts
-      plan = ->(limit) { with_max_bytes(limit) { AiBundleService.new(@dir).plan([@dir]) } }
+      plan = ->(limit) { with_max_bytes(limit) { AiBundleService.new(@dir).plan([@dir], split: true) } }
 
       assert_equal({ parts: 1, bytes: 800 }, plan.call(800))
       assert_equal 2, plan.call(799)[:parts]
@@ -327,7 +327,20 @@ module Mbeditor
       put("x.lock", "z" * 1000)
       put("img.bin", "\0" * 1000)
 
-      assert_equal({ parts: 1, bytes: 10 }, with_max_bytes(20) { AiBundleService.new(@dir).plan([@dir]) })
+      assert_equal({ parts: 1, bytes: 10 }, with_max_bytes(20) { AiBundleService.new(@dir).plan([@dir], split: true) })
+    end
+
+    test "split off is one part even above MAX_BYTES, and refused only above the single-file cap" do
+      seed_parts
+      assert_equal({ parts: 1, bytes: 800 }, with_max_bytes(500) { AiBundleService.new(@dir).plan([@dir]) })
+      result = with_max_bytes(500) { build(".") }
+      assert_equal 1, result[:parts]
+      assert_includes result[:data], "=== FILE: f.txt "
+
+      with_max_bytes(200) do
+        err = assert_raises(AiBundleService::LimitExceededError) { build(".") }
+        assert_match(/Narrow the selection, or turn on splitting/, err.message)
+      end
     end
 
     test "a selection that fits is one markdown file" do
@@ -344,7 +357,7 @@ module Mbeditor
       skip "python3 not installed" unless system("python3", "--version", out: File::NULL, err: File::NULL)
 
       seed_parts
-      result = with_max_bytes(500) { build(".") }
+      result = with_max_bytes(500) { build(".", split: true) }
       members = zip_members(result[:data])
       name = "#{File.basename(@dir)}-bundle"
 
@@ -359,16 +372,16 @@ module Mbeditor
 
     test "the split is deterministic" do
       seed_parts
-      first = with_max_bytes(500) { build(".")[:data] }
+      first = with_max_bytes(500) { build(".", split: true)[:data] }
 
-      assert_equal first, with_max_bytes(500) { build(".")[:data] }
+      assert_equal first, with_max_bytes(500) { build(".", split: true)[:data] }
     end
 
     test "three parts cover every file exactly once, in path order" do
       skip "python3 not installed" unless system("python3", "--version", out: File::NULL, err: File::NULL)
 
       seed_parts
-      result = with_max_bytes(350) { build(".") }
+      result = with_max_bytes(350) { build(".", split: true) }
 
       assert_equal 3, result[:parts]
       assert_equal %w[a.txt b.txt c/d.txt e.txt f.txt], zip_members(result[:data]).values.flat_map { |md| files_in(md) }
@@ -378,7 +391,7 @@ module Mbeditor
       skip "unzip not installed" unless system("unzip", "-v", out: File::NULL, err: File::NULL)
 
       seed_parts
-      data = with_max_bytes(350) { build(".")[:data] }
+      data = with_max_bytes(350) { build(".", split: true)[:data] }
       Tempfile.create(["bundle", ".zip"], binmode: true) do |f|
         f.write(data)
         f.flush
@@ -452,7 +465,7 @@ module Mbeditor
       skip "git not installed" unless system("git", "--version", out: File::NULL, err: File::NULL)
 
       seed_parts
-      result = with_max_bytes(500) { build(".") }
+      result = with_max_bytes(500) { build(".", split: true) }
       assert_equal 2, result[:parts]
       first_md = zip_members(result[:data]).values.first
 

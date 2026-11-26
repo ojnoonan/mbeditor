@@ -159,12 +159,13 @@ module Mbeditor
     end
 
     # +full_paths+ are absolute, already through resolve_path. Returns
-    # { parts:, bytes: }: the fewest parts (1..MAX_PARTS) that each fit under
-    # MAX_BYTES, from the sizes the walk already has. Raises LimitExceededError
-    # when even MAX_PARTS parts do not fit.
-    def plan(full_paths)
+    # { parts:, bytes: }. With +split+ the fewest parts (1..MAX_PARTS) that each
+    # fit under MAX_BYTES, from the sizes the walk already has; otherwise always
+    # one part, capped at MAX_BYTES * MAX_PARTS. Raises LimitExceededError when
+    # the selection does not fit.
+    def plan(full_paths, split: false)
       texty, = classify(full_paths)
-      groups = choose_groups(texty)
+      groups = choose_groups(texty, split)
       { parts: groups.length, bytes: texty.sum { |e| e[:size] } }
     end
 
@@ -175,9 +176,9 @@ module Mbeditor
     # Files are sorted by path and cut into contiguous runs of roughly equal
     # bytes, so the split is the same on every request and no file straddles
     # two parts. Lossless by construction: see UNPACK_SNIPPET.
-    def build(full_paths)
+    def build(full_paths, split: false)
       texty, skipped = classify(full_paths)
-      groups = choose_groups(texty)
+      groups = choose_groups(texty, split)
       skipped = skipped.sort_by { |e| e[:name] }
 
       files = 0
@@ -269,7 +270,15 @@ module Mbeditor
       end
     end
 
-    def choose_groups(texty)
+    def choose_groups(texty, split)
+      unless split
+        total = texty.sum { |e| e[:size] }
+        return [texty] if total <= MAX_BYTES * MAX_PARTS
+
+        raise LimitExceededError,
+              "Selection is too large (#{human(total)}). Limit is #{human(MAX_BYTES * MAX_PARTS)}. " \
+              "Narrow the selection, or turn on splitting."
+      end
       (1..MAX_PARTS).each do |n|
         groups = partition(texty, n)
         return groups if groups.all? { |g| g.sum { |e| e[:size] } <= MAX_BYTES }

@@ -33,7 +33,7 @@ module Mbeditor
 
       result = UnusedMethodsService.call(@workspace)
 
-      assert_equal [{ file: "app/models/thing.rb", line: 2, name: "dead_one", kind: "def" }], result[:methods]
+      assert_equal [{ file: "app/models/thing.rb", line: 2, name: "dead_one", kind: "def", group: "Thing" }], result[:methods]
       assert_equal 2, result[:scanned]
       refute result[:truncated]
     end
@@ -79,11 +79,40 @@ module Mbeditor
       write("app/models/mixed.rb", "class Mixed\n  def m_dead\n  end\n\n  def m_live\n  end\nend\n")
       write("app/models/use.rb", "Mixed.new.m_live\n")
 
-      assert_equal ["app/models/all_dead.rb"], UnusedMethodsService.call(@workspace)[:files]
+      assert_equal ["app/models/all_dead.rb"], files
     end
 
     def views
-      UnusedMethodsService.call(@workspace)[:views]
+      UnusedMethodsService.call(@workspace)[:views].map { |v| v[:path] }
+    end
+
+    def files
+      UnusedMethodsService.call(@workspace)[:files].map { |f| f[:path] }
+    end
+
+    def test_group_for_derives_the_model_from_the_path
+      {
+        "app/models/user.rb" => "User",
+        "app/models/admin/order_item.rb" => "OrderItem",
+        "app/controllers/admin/users_controller.rb" => "User",
+        "app/views/users/_row.html.erb" => "User",
+        "app/helpers/users_helper.rb" => "User",
+        "app/mailers/user_mailer.rb" => "User",
+        "app/javascript/dead_utils.ts" => "javascript",
+        "app/jobs/sync_job.rb" => "jobs",
+        "lib/tasks/x.rb" => "Other"
+      }.each { |path, group| assert_equal group, UnusedMethodsService.group_for(path), path }
+    end
+
+    def test_reported_methods_files_and_views_carry_a_group
+      write("app/models/all_dead.rb", "class AllDead\n  def a_dead\n  end\nend\n")
+      write("app/views/users/_orphan.html.erb", "x")
+
+      result = UnusedMethodsService.call(@workspace)
+
+      assert_equal ["AllDead"], result[:methods].map { |m| m[:group] }
+      assert_equal [{ path: "app/models/all_dead.rb", group: "AllDead" }], result[:files]
+      assert_equal [{ path: "app/views/users/_orphan.html.erb", group: "User" }], result[:views]
     end
 
     def test_render_form_builder_local_uses_sibling_form_partial
@@ -129,7 +158,7 @@ module Mbeditor
       write("app/javascript/dead_utils.ts", "export function deadHelper() {}\n")
       write("config/initializers/patch.rb", "module Patch\n  def patched_x\n  end\nend\n")
 
-      assert_equal ["app/javascript/dead_utils.ts"], UnusedMethodsService.call(@workspace)[:files]
+      assert_equal ["app/javascript/dead_utils.ts"], files
     end
 
     def test_unrendered_partial_is_reported_and_layout_application_never
@@ -169,6 +198,13 @@ module Mbeditor
       write("app/views/user_mailer/welcome.text.erb", "x")
 
       assert_equal [], views
+    end
+
+    def test_migration_and_seed_methods_are_not_reported
+      write("db/migrate/20990101000001_create_things.rb", "class CreateThings\n  def change\n  end\nend\n")
+      write("db/seeds.rb", "def seed_helper\nend\n")
+
+      assert_equal [], names
     end
 
     def test_methods_defined_in_view_files_are_not_reported

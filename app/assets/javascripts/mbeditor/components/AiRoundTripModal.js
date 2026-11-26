@@ -92,9 +92,30 @@ var AiDiffHunk = function AiDiffHunk(_ref) {
     }));
 };
 
-// "Related to...": type a resource, get its files as a checklist. Direct hits
-// start ticked, one-step-out hits unticked; nothing joins the export until
-// "Add selected" hands the ticked paths to onAdd.
+// Model constants from the tree: app/models/**/*.rb minus concerns, path
+// camelized the way the server camelizes the query (admin/user_role.rb ->
+// Admin::UserRole).
+function aiModelNames(nodes, into) {
+  nodes.forEach(function (n) {
+    if (n.type === 'file') {
+      var m = /^app\/models\/(.+)\.rb$/.exec(n.path || '');
+      if (m && m[1].indexOf('concerns/') !== 0) {
+        into.push(m[1].split('/').map(function (seg) {
+          return seg.split('_').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join('');
+        }).join('::'));
+      }
+    } else {
+      aiModelNames(n.children || [], into);
+    }
+  });
+  return into;
+}
+
+// "Related to...": pick a model from the datalist, get its files as a checklist.
+// Direct hits start ticked, one-step-out hits unticked; nothing joins the export
+// until "Add selected" hands the ticked paths to onAdd. The fetch fires on its
+// own, debounced, only when the text equals a known model (case-insensitive),
+// so half-typed names never hit the server's "Enter a model name" error.
 var AiRelatedPicker = function AiRelatedPicker(_ref) {
   var h = React.createElement;
   var _q = React.useState('');
@@ -104,38 +125,50 @@ var AiRelatedPicker = function AiRelatedPicker(_ref) {
   var st = _st[0];
   var setSt = _st[1];
 
-  var find = function () {
-    if (!q.trim()) return;
-    setSt({ busy: true, error: null, result: null, ticks: {}, added: null });
-    fetch(window.mbeditorBasePath() + '/related_files?q=' + encodeURIComponent(q.trim())).then(function (r) {
-      return r.json().then(function (body) {
-        if (!r.ok) throw new Error(body.error || ('HTTP ' + r.status));
-        return body;
+  var models = React.useMemo(function () { return aiModelNames(_ref.treeData, []).sort(); }, [_ref.treeData]);
+
+  React.useEffect(function () {
+    var typed = q.trim().toLowerCase();
+    var model = typed && models.filter(function (m) { return m.toLowerCase() === typed; })[0];
+    if (!model) {
+      if (q) setSt({ busy: false, error: null, result: null, ticks: {}, added: null });
+      return undefined;
+    }
+    var cancelled = false;
+    var timer = setTimeout(function () {
+      setSt({ busy: true, error: null, result: null, ticks: {}, added: null });
+      fetch(window.mbeditorBasePath() + '/related_files?q=' + encodeURIComponent(model)).then(function (r) {
+        return r.json().then(function (body) {
+          if (!r.ok) throw new Error(body.error || ('HTTP ' + r.status));
+          return body;
+        });
+      }).then(function (body) {
+        if (cancelled) return;
+        var ticks = {};
+        body.files.forEach(function (f) { ticks[f.path] = f.direct; });
+        setSt({ busy: false, error: null, result: body, ticks: ticks, added: null });
+      }, function (err) {
+        if (!cancelled) setSt({ busy: false, error: err.message || 'Request failed', result: null, ticks: {}, added: null });
       });
-    }).then(function (body) {
-      var ticks = {};
-      body.files.forEach(function (f) { ticks[f.path] = f.direct; });
-      setSt({ busy: false, error: null, result: body, ticks: ticks, added: null });
-    }, function (err) {
-      setSt({ busy: false, error: err.message || 'Request failed', result: null, ticks: {}, added: null });
-    });
-  };
+    }, 300);
+    return function () { cancelled = true; clearTimeout(timer); };
+  }, [q, models]);
 
   var ticked = st.result ? st.result.files.filter(function (f) { return st.ticks[f.path]; }) : [];
   var add = function () {
     _ref.onAdd(ticked.map(function (f) { return f.path; }));
+    setQ('');
     setSt({ busy: false, error: null, result: null, ticks: {}, added: ticked.length });
   };
 
   return h('div', { className: 'ai-related' },
     h('div', { className: 'ai-dir-row' },
       h('input', {
-        type: 'text', value: q, placeholder: 'Related to... (e.g. User)', 'aria-label': 'Related to',
-        onChange: function (e) { setQ(e.target.value); },
-        onKeyDown: function (e) { if (e.key === 'Enter') find(); }
+        type: 'text', value: q, list: 'ai-related-models', placeholder: 'Related to... (e.g. User)', 'aria-label': 'Related to',
+        onChange: function (e) { setQ(e.target.value); }
       }),
-      h('button', { type: 'button', className: 'import-conflict-btn', disabled: st.busy || !q.trim(), onClick: find },
-        st.busy ? 'Finding...' : 'Find')),
+      h('datalist', { id: 'ai-related-models' }, models.map(function (m) { return h('option', { key: m, value: m }); }))),
+    st.busy && h('div', { className: 'ai-hint' }, 'Finding...'),
     st.error && h('div', { className: 'ai-error' }, st.error),
     st.added !== null && h('div', { className: 'ai-result' }, 'Added ' + st.added + ' file' + (st.added === 1 ? '' : 's') + ' to the export.'),
     st.result && h('div', null,
@@ -186,6 +219,9 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   // The prompt for what Download would produce right now, plus the part count
   // and size the server computed for it. Fetched ahead of the click so
   // writeText can run synchronously and keep the user gesture in Safari.
+  var _split = React.useState(false);
+  var split = _split[0];
+  var setSplit = _split[1];
   var _prompt = React.useState(null);
   var promptInfo = _prompt[0];
   var setPromptInfo = _prompt[1];
@@ -225,8 +261,8 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var selectedPaths = dirs.filter(function (d) { return !coveredBy(d); })
     .concat(topFiles ? rootFiles.map(function (f) { return f.path; }) : []);
 
-  var selectionKey = selectedPaths.join('\n');
-  var pathsQuery = selectedPaths.map(function (p) { return 'paths[]=' + encodeURIComponent(p); }).join('&');
+  var selectionKey = selectedPaths.join('\n') + (split ? '\nsplit' : '');
+  var pathsQuery = selectedPaths.map(function (p) { return 'paths[]=' + encodeURIComponent(p); }).join('&') + (split ? '&split=1' : '');
 
   // Debounced; a response for an older selection is dropped.
   React.useEffect(function () {
@@ -434,7 +470,7 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
   var summary = selectedPaths.length === 0 ? 'Nothing selected'
     : !promptInfo ? 'Checking size...'
     : promptInfo.error ? promptInfo.error
-    : splits ? 'Too big for one file: splits into ' + promptInfo.parts + ' parts, downloaded as one .zip (' + aiHumanSize(promptInfo.bytes) + ')'
+    : split && splits ? 'Too big for one file: splits into ' + promptInfo.parts + ' parts, downloaded as one .zip (' + aiHumanSize(promptInfo.bytes) + ')'
     : 'One file, ' + aiHumanSize(promptInfo.bytes);
 
   var exportPane = h('div', { className: 'ai-pane' },
@@ -445,7 +481,7 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
       h('button', {
         type: 'button', className: 'import-conflict-btn', disabled: !promptInfo || !promptInfo.text, onClick: copyPrompt
       }, 'Copy')),
-    h(AiRelatedPicker, { onAdd: addPaths }),
+    h(AiRelatedPicker, { onAdd: addPaths, treeData: treeData }),
     h('ul', { className: 'ai-dir-list' },
       treeData.filter(function (n) { return n.type === 'folder' && n.name !== '.git'; }).map(function (n) { return renderDir(n, false); }),
       dirs.filter(function (p) { return knownPaths[p] === 'file' && !coveredBy(p); }).map(function (p) {
@@ -462,6 +498,9 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
           h('label', null,
             h('input', { type: 'checkbox', checked: topFiles, onChange: toggleTop }),
             ' Top-level files (' + rootFiles.length + ')')))),
+    h('label', { className: 'ai-hint' },
+      h('input', { type: 'checkbox', checked: split, onChange: function () { setSplit(!split); } }),
+      ' Split into up to 3 files (.zip)'),
     exp.error && h('div', { className: 'ai-error' }, exp.error),
     exp.pendingCopy && h('div', { className: 'ai-error' },
       'About ' + Math.round(exp.pendingCopy.stats.bytes / 4).toLocaleString() + ' tokens. Pasted text goes entirely into the chat context and no sandbox sees it. Prefer Download .md. ',

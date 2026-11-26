@@ -4172,3 +4172,10 @@ input.ide-model-graph-search[type="search"] {
   background: var(--ide-hover-bg, rgba(128, 128, 128, 0.15)); border-top: 1px solid var(--ide-border, #3c3c3c);
 }
 .ai-hunk-row { display: flex; align-items: center; gap: 6px; }
+
+/* Scroll viewport for window.VirtualRows. */
+.virtual-rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}

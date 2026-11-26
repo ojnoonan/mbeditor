@@ -45,6 +45,16 @@ module Mbeditor
       assert_equal "20240201000000", result[:schema_version]
     end
 
+    test "models come from tables: one per table, Other when none" do
+      write("20240301000000_link_order_items.rb", "add_reference :order_items, :user\nadd_column :users, :n, :integer\n")
+      write("20240401000000_run_sql.rb", "execute 'select 1'\n")
+      by_version = with_pool(FakePool.new(FakeConn.new([]))) { MigrationStatusService.call(@root) }[:migrations].to_h { |m| [m[:version], m[:models]] }
+
+      assert_equal %w[OrderItem User], by_version["20240301000000"]
+      assert_equal %w[Other], by_version["20240401000000"]
+      assert_equal %w[Post], by_version["20240201000000"]
+    end
+
     test "unreachable database yields unknown statuses and never raises" do
       result = with_pool(FakePool.new(error: RuntimeError.new("boom"))) { MigrationStatusService.call(@root) }
       assert_equal "unavailable", result[:db]

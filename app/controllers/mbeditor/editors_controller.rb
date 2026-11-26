@@ -357,7 +357,7 @@ module Mbeditor
     end
 
     # GET /mbeditor/ai_bundle?paths[]=a — the selection as one download for a
-    # web chat: a .md, or a .zip of parts when it is too big for one file.
+    # web chat: a .md, or with split=1 a .zip of parts when it is too big for one file.
     # prompt=1 returns only the message to paste alongside it, for the file the
     # same selection would download.
     def ai_bundle
@@ -372,20 +372,21 @@ module Mbeditor
       missing = first_missing(requested, resolved)
       return render json: { error: "Not found: #{missing}" }, status: :not_found if missing
 
+      split = params[:split] == "1"
       if params[:prompt].present?
-        plan = service.plan(resolved)
+        plan = service.plan(resolved, split: split)
         response.headers["X-Mbeditor-Bundle-Parts"] = plan[:parts].to_s
         response.headers["X-Mbeditor-Bundle-Bytes"] = plan[:bytes].to_s
         return render plain: service.prompt(plan[:parts])
       end
 
-      bundle = service.build(resolved)
-      split = bundle[:parts] > 1
+      bundle = service.build(resolved, split: split)
+      zipped = bundle[:parts] > 1
       response.headers["X-Mbeditor-Bundle-Parts"] = bundle[:parts].to_s
       response.headers["X-Mbeditor-Bundle-Files"] = bundle[:files].to_s
       response.headers["X-Mbeditor-Bundle-Bytes"] = bundle[:bytes].to_s
-      send_data bundle[:data], type: split ? "application/zip" : "text/markdown", disposition: "attachment",
-                               filename: split ? AiBundleService.zip_filename(bundle_name) : bundle_name
+      send_data bundle[:data], type: zipped ? "application/zip" : "text/markdown", disposition: "attachment",
+                               filename: zipped ? AiBundleService.zip_filename(bundle_name) : bundle_name
     rescue AiBundleService::LimitExceededError => e
       render json: { error: e.message }, status: :content_too_large
     rescue StandardError => e
