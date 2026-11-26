@@ -709,10 +709,10 @@
   white-space: pre;
   font-size: 12px;
 }
-.cdiff-add  { background: rgba(137,209,133,0.10); color: #89d185; }
-.cdiff-del  { background: rgba(244,135,113,0.10); color: #f48771; }
+.cdiff-add  { background: rgba(46,160,67,0.12); color: var(--ide-success); }
+.cdiff-del  { background: rgba(248,81,73,0.12); color: var(--ide-danger); }
 .cdiff-hunk { background: rgba(86,156,214,0.08);  color: var(--ide-accent); font-style: italic; }
-.cdiff-meta { color: var(--ide-text-muted); font-size: 11px; }
+.cdiff-meta { color: var(--ide-text-dim); font-size: 11px; }
 .cdiff-file-header { color: var(--ide-text-dim); }
 
 /* ── Loading indicator ───────────────────────────────────────────────── */
@@ -762,7 +762,7 @@
   }
 }
 
-.cdiff-ctx  { color: var(--ide-text-muted); }
+.cdiff-ctx  { color: var(--ide-text); }
 
 /* ── File Reload Banner ─────────────────────────────────────────── */
 .mb-file-reload-banner {

@@ -4,7 +4,6 @@ var DiffViewer = function DiffViewer(_ref) {
   var path = _ref.path;
   var original = _ref.original;
   var modified = _ref.modified;
-  var isDark = _ref.isDark;
   var onClose = _ref.onClose;
   var editorPrefs = _ref.editorPrefs || {};
   // If path is a diff:// URI (diff://baseSha..headSha/actual/file.rb), extract
@@ -28,7 +27,6 @@ var DiffViewer = function DiffViewer(_ref) {
     var modelModified = window.monaco.editor.createModel(modified, getLanguageForPath(displayPath));
 
     var diffEditor = window.monaco.editor.createDiffEditor(containerRef.current, {
-      theme: isDark ? 'vs-dark' : 'vs',
       readOnly: true,
       automaticLayout: true,
       originalEditable: false,
@@ -64,7 +62,7 @@ var DiffViewer = function DiffViewer(_ref) {
       modelModified.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [original, modified, displayPath, isDark]);
+  }, [original, modified, displayPath]);
 
   // Update font/wrap options live when editorPrefs changes, without recreating the editor
   React.useEffect(function () {

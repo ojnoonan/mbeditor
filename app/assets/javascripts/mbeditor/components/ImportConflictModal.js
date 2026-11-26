@@ -84,7 +84,7 @@ var ImportConflictModal = function ImportConflictModal(_ref) {
           ? React.createElement('div', { className: 'import-conflict-diff' },
               React.createElement(window.DiffViewer, {
                 path: compare.path, original: compare.original, modified: compare.modified,
-                isDark: _ref.isDark, editorPrefs: _ref.editorPrefs
+                editorPrefs: _ref.editorPrefs
               }))
           : React.createElement('div', { className: 'combined-note' }, compare.note || 'Loading...')
       ),

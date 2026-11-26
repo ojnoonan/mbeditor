@@ -2232,12 +2232,10 @@ var EditorPanel = function EditorPanel(_ref) {
   }
 
   if (tab.isDiff) {
-    var isDiffDark = (editorPrefs.theme || 'vs-dark') !== 'vs' && (editorPrefs.theme || 'vs-dark') !== 'hc-light';
     return React.createElement(window.DiffViewer || DiffViewer, {
       path: tab.repoPath || tab.path,
       original: tab.diffOriginal || "",
       modified: tab.diffModified || "",
-      isDark: isDiffDark,
       editorPrefs: editorPrefs
     });
   }
