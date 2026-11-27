@@ -32,6 +32,7 @@ var SETTINGS_ROWS = [
   { key: 'wordWrap', type: 'select', label: 'Word wrap', title: 'How long lines are handled — Off: scroll horizontally, On: wrap at viewport width, Column: wrap at a fixed column', def: 'off', options: [
     ['off', 'Off'], ['on', 'On'], ['wordWrapColumn', 'Column']
   ] },
+  { key: 'aiDiffWrap', type: 'checkbox', label: 'Wrap AI diff preview', title: 'Wrap long lines in the Apply diff preview instead of scrolling sideways' },
   { key: 'lineNumbers', type: 'select', label: 'Line numbers', title: 'Show line numbers in the gutter — On, Off, or Relative (useful with Vim mode)', def: 'on', options: [
     ['on', 'On'], ['off', 'Off'], ['relative', 'Relative']
   ] },
