@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.7] - 2026-11-27
+
+### Added
+- **AI Apply diff**: a "Wrap lines" checkbox in the bottom-left of the
+  preview wraps long lines instead of scrolling sideways. It is remembered
+  with your settings and also appears under Settings > Editor as
+  "Wrap AI diff preview".
+
+### Fixed
+- The AI Apply diff preview no longer shows black and blue code on a dark
+  background when no file is open. It now uses the selected theme's colours.
+- Diff tabs use the selected theme instead of always using plain Dark or
+  Light, and follow theme changes while open.
+- Added and removed lines in diffs no longer stack two highlights, which
+  made comments unreadable in Dracula, Monokai and Nord.
+- The All Changes diff takes its colours from the theme, so added and
+  removed lines are readable in the light themes and context lines in Nord.
+
 ## [0.14.6] - 2026-11-26
 
 ### Changed
