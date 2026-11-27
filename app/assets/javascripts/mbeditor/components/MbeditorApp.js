@@ -146,6 +146,7 @@ var DEFAULT_EDITOR_PREFS = {
   autoRevealInExplorer: true,
   toolbarLabels: false,
   glass: false,
+  aiDiffWrap: false,
   rubocopLintEnabled: true,
   routeHints: true,
   prettierPrintWidth: 80,
@@ -6843,6 +6844,8 @@ var MbeditorApp = function MbeditorApp() {
 
     showAiModal && React.createElement(AiRoundTripModal, {
       treeData: treeData,
+      wrap: !!editorPrefs.aiDiffWrap,
+      onWrapChange: function (on) { setEditorPrefs(function (p) { return _extends({}, p, { aiDiffWrap: on }); }); },
       onClose: function () { setShowAiModal(false); }
     }),
 

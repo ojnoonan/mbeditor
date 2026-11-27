@@ -68,7 +68,8 @@ var AiDiffHunk = function AiDiffHunk(_ref) {
     var code = body.filter(function (l) { return l[0] !== '\\'; }).map(function (l) { return l.slice(1); });
     try {
       window.monaco.editor.colorize(code.join('\n'), lang, {}).then(function (out) {
-        var parts = out.split('<br/>');
+        // Non-breaking spaces would leave a wrapped line no break point but before the code.
+        var parts = out.replace(/&nbsp;|\u00a0/g, ' ').split('<br/>');
         if (parts.length === code.length + 1 && parts[parts.length - 1] === '') parts.pop();
         if (!cancelled && parts.length === code.length) setHtml(parts);
       }, function () { /* plain text stays */ });
@@ -539,7 +540,7 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
         setApply({ busy: false, error: null, files: null, checkedPatch: null, applied: false });
       } }, 'Edit diff')),
     apply.applied && filesList,
-    previewing && h('div', { className: 'ai-diff', tabIndex: 0, 'aria-label': 'Diff preview' },
+    previewing && h('div', { className: 'ai-diff' + (_ref.wrap ? ' ai-diff-wrap' : ''), tabIndex: 0, 'aria-label': 'Diff preview' },
       apply.parsed.map(function (f, i) {
         var s = apply.sel[i];
         var all = s.every(Boolean);
@@ -605,6 +606,9 @@ var AiRoundTripModal = function AiRoundTripModal(_ref) {
       h('div', { className: 'ai-tabs', role: 'tablist' }, tabButton('export', 'Export'), tabButton('apply', 'Apply diff'))),
     h('div', { className: 'schema-modal-body' }, tab === 'export' ? exportPane : applyPane),
     h('div', { className: 'import-conflict-actions' },
+      previewing && tab === 'apply' && h('label', { className: 'ai-wrap-toggle' },
+        h('input', { type: 'checkbox', checked: !!_ref.wrap, onChange: function (e) { _ref.onWrapChange(e.target.checked); } }),
+        'Wrap lines'),
       h('button', { type: 'button', className: 'import-conflict-btn', onClick: onClose }, 'Close'),
       footer)
   );
