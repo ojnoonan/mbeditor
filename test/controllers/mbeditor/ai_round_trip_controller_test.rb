@@ -35,7 +35,7 @@ module Mbeditor
 
       assert_response :success
       assert_equal "text/markdown", response.media_type
-      assert_match(/attachment; filename="#{File.basename(@workspace)}-bundle\.md"/, response.headers["Content-Disposition"])
+      assert_match(/attachment; filename="#{File.basename(@workspace)}-bundle-\d{8}-\d{4}\.md"/, response.headers["Content-Disposition"])
       assert_equal "2", response.headers["X-Mbeditor-Bundle-Files"]
       assert_equal response.body.bytesize.to_s, response.headers["X-Mbeditor-Bundle-Bytes"]
       assert_includes response.body, "=== FILE: lib/b.rb (1 lines) ==="
@@ -55,12 +55,13 @@ module Mbeditor
 
       assert_response :success
       assert_equal "application/zip", response.media_type
-      assert_match(/filename="#{name}-bundle\.zip"/, response.headers["Content-Disposition"])
+      assert_match(/filename="#{name}-bundle-\d{8}-\d{4}\.zip"/, response.headers["Content-Disposition"])
       assert_equal "2", response.headers["X-Mbeditor-Bundle-Parts"]
       assert_equal "2", response.headers["X-Mbeditor-Bundle-Files"]
       assert_equal "PK", response.body.b[0, 2]
-      assert_includes response.body.b, "#{name}-bundle-1-of-2.md".b
-      assert_includes response.body.b, "#{name}-bundle-2-of-2.md".b
+      stamp = response.headers["Content-Disposition"][/bundle-(\d{8}-\d{4})\.zip/, 1]
+      assert_includes response.body.b, "#{name}-bundle-#{stamp}-1-of-2.md".b
+      assert_includes response.body.b, "#{name}-bundle-#{stamp}-2-of-2.md".b
     end
 
     test "ai_bundle that fits is one md with Parts 1" do
@@ -74,7 +75,7 @@ module Mbeditor
       get "/mbeditor/ai_bundle", params: { paths: ["a.txt"], parts: 3, part: 2 }
 
       assert_response :success
-      assert_match(/-bundle\.md"/, response.headers["Content-Disposition"])
+      assert_match(/-bundle-\d{8}-\d{4}\.md"/, response.headers["Content-Disposition"])
     end
 
     test "ai_bundle prompt=1 with paths names the .md when the selection fits" do
@@ -83,7 +84,7 @@ module Mbeditor
       assert_response :success
       assert_equal "1", response.headers["X-Mbeditor-Bundle-Parts"]
       assert_equal "14", response.headers["X-Mbeditor-Bundle-Bytes"]
-      assert_includes response.body, "#{File.basename(@workspace)}-bundle.md` is a large source bundle"
+      assert_match(/#{Regexp.escape(File.basename(@workspace))}-bundle-\d{8}-\d{4}\.md` is a large source bundle/, response.body)
     end
 
     test "ai_bundle prompt=1 with paths names the one .zip when the selection splits" do
@@ -91,7 +92,7 @@ module Mbeditor
 
       assert_response :success
       assert_equal "2", response.headers["X-Mbeditor-Bundle-Parts"]
-      assert_includes response.body, "#{File.basename(@workspace)}-bundle.zip` is a zip of 2 markdown parts"
+      assert_match(/#{Regexp.escape(File.basename(@workspace))}-bundle-\d{8}-\d{4}\.zip` is a zip of 2 markdown parts/, response.body)
       refute_includes response.body, "Upload all"
     end
 
@@ -107,7 +108,7 @@ module Mbeditor
 
       assert_response :success
       assert_equal "text/plain", response.media_type
-      assert_includes response.body, "`#{File.basename(@workspace)}-bundle.md` is a large source bundle"
+      assert_match(/`#{Regexp.escape(File.basename(@workspace))}-bundle-\d{8}-\d{4}\.md` is a large source bundle/, response.body)
       assert response.body.end_with?("TASK: ")
       refute_includes response.body, "B = 1"
     end

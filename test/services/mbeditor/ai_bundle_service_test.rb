@@ -58,7 +58,8 @@ module Mbeditor
       written = File.read(File.join(@dir, AiBundleService::PROMPT_FILE))
 
       assert_equal "#{AiBundleService::DEFAULT_INSTRUCTIONS}\n", written
-      assert_includes md, AiBundleService::WORKFLOW
+      assert_includes md, AiBundleService::DEFAULT_INSTRUCTIONS
+      assert_includes md, AiBundleService::PROTOCOL
       assert_includes md, AiBundleService::DIFF_RULES
     end
 
@@ -68,8 +69,78 @@ module Mbeditor
       md = build("a.rb")[:data]
 
       assert_includes md, "- Be custom.\n\n"
-      refute_includes md, AiBundleService::WORKFLOW
+      refute_includes md, AiBundleService::DEFAULT_INSTRUCTIONS
+      assert_includes md, AiBundleService::PROTOCOL
       assert_includes md, 'BUNDLE = "/mnt/data/'
+    end
+
+    test "the protocol commits before it writes the patch and never defers the commit to after the reply" do
+      prompt = prompt_for(1, "proj")
+
+      assert_operator prompt.index("commit -qm reply"), :<, prompt.index("diff HEAD~1 HEAD")
+      assert_includes prompt, "git -C project status --porcelain"
+      assert_includes prompt, "mbeditor-N.patch"
+      assert_operator prompt.index('reply "no changes"'), :<, prompt.index("diff HEAD~1 HEAD")
+      refute_match(/probably dead|NO LIVE/, prompt)
+      refute_includes prompt, "After replying"
+      assert_operator prompt.index(AiBundleService::PROTOCOL), :<, prompt.index(AiBundleService::DEFAULT_INSTRUCTIONS)
+    end
+
+    test "the typed prompt stays short" do
+      assert_operator prompt_for(1, "proj").length, :<, 6000
+    end
+
+    test "a never-edited legacy seed is upgraded, an edited one is left alone" do
+      put(AiBundleService::PROMPT_FILE, "#{AiBundleService::LEGACY_DEFAULT}\n")
+      put("a.rb", "1\n")
+      md = build("a.rb")[:data]
+
+      assert_includes md, AiBundleService::DEFAULT_INSTRUCTIONS
+      refute_includes md, "After replying"
+      assert_equal "#{AiBundleService::DEFAULT_INSTRUCTIONS}\n", File.read(File.join(@dir, AiBundleService::PROMPT_FILE))
+
+      edited = "#{AiBundleService::LEGACY_DEFAULT}\n- Mine.\n"
+      put(AiBundleService::PROMPT_FILE, edited)
+      build("a.rb")
+
+      assert_equal edited, File.read(File.join(@dir, AiBundleService::PROMPT_FILE))
+    end
+
+    test "a never-edited legacy seed with CRLF endings and a BOM is still upgraded" do
+      put(AiBundleService::PROMPT_FILE, "\uFEFF#{AiBundleService::LEGACY_DEFAULT.gsub("\n", "\r\n")}\r\n")
+      put("a.rb", "1\n")
+
+      assert_includes build("a.rb")[:data], AiBundleService::DEFAULT_INSTRUCTIONS
+      assert_equal "#{AiBundleService::DEFAULT_INSTRUCTIONS}\n", File.read(File.join(@dir, AiBundleService::PROMPT_FILE))
+    end
+
+    test "the tools block rides in part 1 only, before the first file, and holds no marker line" do
+      assert_empty AiBundleService::MBTOOLS.lines.grep(/^===/)
+      seed_parts
+      result = with_max_bytes(500) { build(".", split: true) }
+      first, second = zip_members(result[:data]).values if system("python3", "--version", out: File::NULL, err: File::NULL)
+      skip "python3 not installed" unless first
+
+      assert_operator first.index("=== TOOLS: mbtools.py ==="), :<, first.index(/^=== FILE: /)
+      refute_match(/^=== TOOLS/, second)
+    end
+
+    test "the bundle name carries one local date-time stamp per instance" do
+      svc = AiBundleService.new(File.join(Dir.mktmpdir("mbeditor_stamp_"), "proj"))
+
+      assert_match(/\Aproj-bundle-\d{8}-\d{4}\.md\z/, svc.bundle_name)
+      assert_equal svc.bundle_name, svc.bundle_name
+      assert_equal svc.bundle_name.sub(/\.md\z/, ".zip"), AiBundleService.zip_filename(svc.bundle_name)
+    end
+
+    test "earlier bundles saved in the workspace root are not bundled again" do
+      base = File.basename(@dir)
+      ["#{base}-bundle-20200101-0900.md", "#{base}-bundle-20200101-0900 (1).md", "#{base}-bundle-20200101-0900.zip",
+       "#{base}-bundle.md"].each { |n| put(n, "old\n") }
+      put("sub/#{base}-bundle-x.md", "keep\n")
+      put("ok.txt", "hi\n")
+
+      assert_equal %W[ok.txt sub/#{base}-bundle-x.md].sort, files_in(build(".")[:data]).sort
     end
 
     test "the prompt file is neither a FILE section nor an index entry" do
@@ -100,11 +171,12 @@ module Mbeditor
     test "prompt names the file, carries the shared snippet and rules, and ends with TASK" do
       prompt = prompt_for(1, "proj")
 
-      assert_includes prompt, "`proj-bundle.md` is a large source bundle. Do not open, read or print it directly."
-      assert_includes prompt, 'BUNDLE = "/mnt/data/proj-bundle.md"'
+      assert_match(/`proj-bundle-\d{8}-\d{4}\.md` is a large source bundle\. Do not open, read or print it directly\./, prompt)
+      assert_match(%r{BUNDLE = "/mnt/data/proj-bundle-\d{8}-\d{4}\.md"}, prompt)
       assert_includes prompt, AiBundleService::UNPACK_SNIPPET.lines.drop(1).join
       assert_includes prompt, AiBundleService::DIFF_RULES
-      assert_includes prompt, AiBundleService::WORKFLOW
+      assert_includes prompt, AiBundleService::PROTOCOL
+      assert_includes prompt, AiBundleService::DEFAULT_INSTRUCTIONS
       assert prompt.end_with?("\nTASK: ")
       put("t.txt", "secret-content\n")
       refute_includes prompt, "secret-content"
@@ -363,7 +435,9 @@ module Mbeditor
 
       assert_equal 2, result[:parts]
       assert_equal 5, result[:files]
-      assert_equal %W[#{name}-1-of-2.md #{name}-2-of-2.md], members.keys
+      stamp = members.keys.first[/#{name}-(\d{8}-\d{4})-1-of-2\.md\z/, 1]
+      assert stamp, members.keys.inspect
+      assert_equal %W[#{name}-#{stamp}-1-of-2.md #{name}-#{stamp}-2-of-2.md], members.keys
       assert_equal %w[a.txt b.txt c/d.txt], files_in(members.values[0])
       assert_equal %w[e.txt f.txt], files_in(members.values[1])
       assert_includes members.values[1], "(part 2 of 2)"
@@ -413,15 +487,15 @@ module Mbeditor
     test "prompt for a selection that fits names the .md and says it is one file" do
       prompt = prompt_for(1, "proj")
 
-      assert_includes prompt, "`proj-bundle.md` is a large source bundle"
-      assert_includes prompt, 'BUNDLE = "/mnt/data/proj-bundle.md"'
+      assert_match(/`proj-bundle-\d{8}-\d{4}\.md` is a large source bundle/, prompt)
+      assert_match(%r{BUNDLE = "/mnt/data/proj-bundle-\d{8}-\d{4}\.md"}, prompt)
     end
 
     test "prompt for a split names the one .zip, never several files" do
       prompt = prompt_for(2, "proj")
 
-      assert_includes prompt, "`proj-bundle.zip` is a zip of 2 markdown parts"
-      assert_includes prompt, 'BUNDLE = "/mnt/data/proj-bundle.zip"'
+      assert_match(/`proj-bundle-\d{8}-\d{4}\.zip` is a zip of 2 markdown parts/, prompt)
+      assert_match(%r{BUNDLE = "/mnt/data/proj-bundle-\d{8}-\d{4}\.zip"}, prompt)
       refute_match(/of-2\.md|Upload all|once per part/, prompt)
       assert prompt.end_with?("\nTASK: ")
     end
@@ -481,6 +555,117 @@ module Mbeditor
       end
     end
 
+    def py(code, dir)
+      out, status = Open3.capture2e("python3", "-c", code, chdir: dir)
+      assert status.success?, out
+      out
+    end
+
+    def sh(dir, *cmd)
+      out, status = Open3.capture2e(*cmd, chdir: dir)
+      assert status.success?, out
+      out
+    end
+
+    test "the snippet finds a differently stamped upload by glob in the BUNDLE's own directory" do
+      skip "python3 not installed" unless system("python3", "--version", out: File::NULL, err: File::NULL)
+      skip "git not installed" unless system("git", "--version", out: File::NULL, err: File::NULL)
+
+      put("a.txt", "one\n")
+      markdown = build("a.txt")[:data]
+      snippet = markdown[/```python\n(.*?)```/m, 1]
+
+      Dir.mktmpdir("mbeditor_glob_") do |sandbox|
+        File.binwrite(File.join(sandbox, "proj[1]-bundle-20200101-0900 (1).md"), markdown)
+        File.binwrite(File.join(sandbox, "other-bundle-20200101-0900.md"), "nope\n")
+        script = snippet.sub(/^BUNDLE = .*$/) { "BUNDLE = #{File.join(sandbox, "proj[1]-bundle-20990101-0000.md").inspect}" }
+        out, status = Open3.capture2e("python3", "-c", script, chdir: sandbox)
+
+        assert status.success?, out
+        assert_includes out, "unpacked 1 files"
+        assert_equal "one\n", File.read(File.join(sandbox, "project/a.txt"))
+      end
+    end
+
+    test "end to end: helper answers, two successive patches apply in order, a re-run starts fresh" do
+      skip "python3 not installed" unless system("python3", "--version", out: File::NULL, err: File::NULL)
+      skip "git not installed" unless system("git", "--version", out: File::NULL, err: File::NULL)
+
+      put("app/views/posts/index.html.erb", "<%= render \"posts/card\", post: p %>\n")
+      put("app/views/posts/_card.html.erb", "live\n")
+      put("app/views/old/_card.html.erb", "dead\n")
+      put("app/models/post.rb", "class Post\n  def title; end\nend\n")
+      put("app/models/other.rb", "x = Post.new\n")
+      put("test/models/post_test.rb", "class PostTest\n  Post.new\nend\n")
+      put("test/models/other_test.rb", "puts 1\n")
+      put("app/views/comments/_comment.html.erb", "c\n")
+      put("app/views/comments/index.html.erb", "<%= render @comments %>\n")
+      put("app/services/log/writer.rb", "class Writer\nend\n")
+      put("pages/[...slug].tsx", "export default function Slug() {}\n")
+      put("notes.rb", "# === TOOLS: not a marker\n=== TOOLS: mbtools.py ===\nbad\n=== END TOOLS ===\n")
+      markdown = build(".")[:data]
+      id = %w[-c user.name=t -c user.email=t@example.invalid]
+
+      Dir.mktmpdir("mbeditor_e2e_") do |sandbox|
+        project = unpack_bundle(markdown, sandbox)
+        assert File.exist?(File.join(sandbox, "mbtools.py"))
+        refute File.exist?(File.join(project, "mbtools.py"))
+        assert_equal "bad\n", File.read(File.join(project, "notes.rb")).lines[2]
+
+        out = py(<<~PY, sandbox)
+          from mbtools import *
+          assert defs("Post") == ["app/models/post.rb:1"], defs("Post")
+          assert uses("app/models/post.rb") == ["app/models/other.rb"]
+          assert uses("app/views/posts/_card.html.erb") == ["app/views/posts/index.html.erb"]
+          assert uses("app/views/old/_card.html.erb") == []
+          assert tests_for("app/models/post.rb") == ["test/models/post_test.rb"]
+          assert tests_for("app/models/other.rb")[0] == "test/models/other_test.rb"
+          assert tests_for("app/views/old/_card.html.erb") == []
+          assert len(refs("Post")) == 3
+          assert defs("Writer") == ["app/services/log/writer.rb:1"]
+          assert uses("app/views/comments/_comment.html.erb") == ["app/views/comments/index.html.erb"]
+          assert uses("pages/[...slug].tsx") == []
+        PY
+        assert_includes out, "NO STATIC REFERENCES"
+        assert_includes out, "NO TESTS FOUND"
+
+        copy = File.join(sandbox, "copy")
+        FileUtils.cp_r(@dir, copy)
+        sh(copy, "git", "init", "-q")
+        apply = ->(patch) { sh(copy, "git", "apply", "--recount", "--check", patch) && sh(copy, "git", "apply", "--recount", patch) }
+        commit_patch = lambda do |n|
+          sh(project, "git", "add", "-A")
+          sh(project, "git", *id, "commit", "-qm", "reply")
+          patch = File.join(sandbox, "mbeditor-#{n}.patch")
+          File.binwrite(patch, sh(project, "git", "diff", "HEAD~1", "HEAD"))
+          patch
+        end
+
+        File.write(File.join(project, "app/models/post.rb"), "class Post\n  def title = 1\nend\n")
+        apply.call(commit_patch.call(1))
+        File.write(File.join(project, "app/models/post.rb"), "class Post\n  def title = 2\nend\n")
+        File.write(File.join(project, "app/models/added.rb"), "x\n")
+        apply.call(commit_patch.call(2))
+
+        assert_equal "class Post\n  def title = 2\nend\n", File.read(File.join(copy, "app/models/post.rb"))
+        assert File.exist?(File.join(copy, "app/models/added.rb"))
+
+        File.write(File.join(project, "stale.txt"), "left by the model\n")
+        assert_includes unpack_bundle_out(markdown, sandbox), "kept ./project"
+        assert File.exist?(File.join(project, "stale.txt"))
+        assert_equal "3", sh(project, "git", "rev-list", "--count", "HEAD").strip
+        assert_equal "class Post\n  def title = 2\nend\n", File.read(File.join(project, "app/models/post.rb"))
+
+        unpack_bundle(markdown, sandbox, mtime: Time.at(1_700_000_500))
+        refute File.exist?(File.join(project, "stale.txt"))
+        assert_equal "1", sh(project, "git", "rev-list", "--count", "HEAD").strip
+
+        File.write(File.join(project, "stale.txt"), "again\n")
+        unpack_bundle("#{markdown}\n", sandbox)
+        refute File.exist?(File.join(project, "stale.txt"))
+      end
+    end
+
     SOURCES = {
       "trailing.txt" => "keep  \nspace\t\n",
       "tabs.rb" => "def f\n\treturn 1\nend\n",
@@ -492,14 +677,20 @@ module Mbeditor
       "dir/empty.txt" => ""
     }.freeze
 
-    def unpack_bundle(markdown, into, zip: nil)
+    def unpack_bundle(markdown, into, zip: nil, mtime: nil)
+      unpack_bundle_out(markdown, into, zip: zip, mtime: mtime)
+      File.join(into, "project")
+    end
+
+    def unpack_bundle_out(markdown, into, zip: nil, mtime: nil)
       snippet = markdown[/```python\n(.*?)```/m, 1]
       bundle = File.join(into, zip ? "bundle.zip" : "bundle.md")
       File.binwrite(bundle, zip || markdown)
+      File.utime(mtime || Time.at(1_700_000_000), mtime || Time.at(1_700_000_000), bundle)
       script = snippet.sub(/^BUNDLE = .*$/) { "BUNDLE = #{bundle.inspect}" }
       out, status = Open3.capture2e("python3", "-c", script, chdir: into)
       assert status.success?, out
-      File.join(into, "project")
+      out
     end
 
     test "the embedded unpacker reproduces every file byte for byte and its git diff applies back" do
