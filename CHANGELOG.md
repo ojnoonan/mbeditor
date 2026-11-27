@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.8] - 2026-11-27
+
+### Added
+- **AI round trip**: the bundle ships a small search helper for the
+  assistant's sandbox (`defs`, `uses`, `tests_for`, `refs` via ripgrep or
+  `git grep`, `show`). It indexes the project once at unpack, so large
+  projects need far fewer slow search turns.
+- The prompt tells the assistant to check how code is actually used before
+  editing it, so it no longer edits a dead duplicate. It updates related
+  tests and lists missing ones, and follows minimal-code rules.
+- Bundle downloads are named `<project>-bundle-YYYYMMDD-HHMM.md`. The unpack
+  snippet falls back to the newest uploaded bundle if the exact name is
+  missing, so a reused prompt still works.
+
+### Changed
+- The assistant delivers only a patch, never replacement files or zips.
+  Patches of 150 lines or fewer are pasted for copying; longer ones come as
+  a `mbeditor-N.patch` download.
+- The steps that keep patches applying are now generated rather than kept
+  in `docs/mbeditor-ai-prompt.md`, so an edited prompt file can't lose them.
+  An unedited prompt file from an earlier release is upgraded automatically.
+
+### Fixed
+- A second AI patch no longer fails after the first one is applied. The
+  assistant now records its state before replying, so each patch holds only
+  the changes since its previous reply.
+- Re-running the unpack snippet on the same upload keeps the assistant's
+  working copy, and a new upload starts clean instead of mixing in stale
+  files.
+
 ## [0.14.7] - 2026-11-27
 
 ### Added
